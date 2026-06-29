@@ -1,8 +1,12 @@
-# VICIDIAL INSTALLATION SCRIPTS (Default is Eastern Time Zone US)
+# Modern VICIDIAL Installer
 
-## Copy & Paste the part blow:
+VICIDIAL installer for AlmaLinux/Rocky Linux with PHP 8.2, Asterisk 18, WebPhone, Dynamic Portal, SSL support, and the required conference/WebRTC configuration files.
 
-```
+## Copy & Paste the part below first
+
+Run this first on a fresh server. The updates and reboot are important before starting the installer.
+
+```bash
 dnf install -y glibc-langpack-en
 
 localectl set-locale en_US.UTF-8
@@ -15,130 +19,44 @@ yum -y install epel-release
 yum update -y
 yum install git -y
 
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config    
+sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
 
 cd /usr/src/
-git clone https://github.com/GenXoutsourcing/new_vicidial
+git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
 
 reboot
-
-````
-  
-
-This first installer is the one I keep most up to date and use personally for all my clients. it is the one I recommend that you use.
-If you do not install the SSL cert during the initiial install, you have to turn the firewall off before trying to do it after a reboot. Dont forget to turn it back on. Also, by default the firewall will leave port 443 open to the public, so you can login and change the default password. Make sure you remove it from the public zone once your setup is done. 
-
-```
-cd /usr/src/new_vicidial
-chmod +x main-installer.sh
-./main-installer.sh
-
-cd /usr/src/new_vicidial
-chmod +x alma10-php8-main.sh
-./alma10-php8-main.sh
 ```
 
-# Above installer for addon servers
+## Run the installer after reboot
 
-```
-cd /usr/src/new_vicidial
-chmod +x main-addon-installer.sh
-./main-addon-installer.sh
-```
+Log back into the server as root, then run:
 
-
-# Above installer but with PHP8 instead of PHP7 (Beta Release)
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x main-installer-php8.sh
-./main-installer-php8.sh
+```bash
+cd /usr/src/modern_vicidial_installer
+chmod +x vicidial-main-82.sh
+./vicidial-main-82.sh
 ```
 
-# NEW Installer for add on dialers on Alma or Rocky 9
+## Included files
 
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x addon-dialer-alma9.sh
-./addon-dialer-alma9.sh
-```
+This repo contains the main installer and the files it expects to find in the same directory:
 
-### Alma/Rocky 9 Installer with Dynamic portal and CyburPhone with SSL cert with Asterisk 18
+- `vicidial-main-82.sh` - main AlmaLinux/Rocky Linux installer
+- `extensions.conf` - Asterisk dialplan configuration copied during install
+- `confbridge-vicidial.conf` - VICIDIAL conference bridge configuration
+- `vicidial-enable-webrtc.sh` - WebRTC/WebPhone setup helper
+- `certbot.sh` - SSL certificate renewal helper used by cron
 
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x alma-rocky9-ast18.sh
-./alma-rocky9-ast18.sh
-```
+## SSL and firewall notes
 
-Make sure you update your SSL cert location in /etc/httpd/conf.d/viciportal-ssl.conf
+If you do not install the SSL certificate during the initial install, you may need to temporarily turn the firewall off before trying again after a reboot. Turn it back on after the certificate is working.
 
+By default, port `443` may be left open publicly so you can log in and change the default password. After setup is complete, review the firewall rules and remove public access you do not need.
 
-### Alma 8 Add on telephony server for a cluster
+If you use a public domain, make sure the domain points to the server before running the SSL/WebPhone portion of the installer.
 
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x Vici-alma-dialer-install.sh
-./Vici-alma-dialer-install.sh
-```
+## Target system
 
-### Execute Centos7 Vicidial Install
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x vicidial-install-c7.sh
-./vicidial-install-c7.sh
-```
+This installer is intended for a fresh AlmaLinux/Rocky Linux server. It installs and configures VICIDIAL components, PHP 8.2 packages, MariaDB, Asterisk 18, DAHDI/libpri pieces, Dynamic Portal files, WebRTC support, and related services.
 
-### Execute Alma/Rocky 8 Linux Vicidial Install - Ast 16
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x alma-rocky-centos8-ast16.sh
-./alma-rocky-centos8-ast16.sh
-```
-
-### Execute Alma/Rocky 8 Linux Vicidial Install - Ast 18
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x alma-rocky-centos-8-ast18.sh
-./alma-rocky-centos-8-ast18.sh
-```
-
-## USEFUL TOOLS ##
-
-## Cluster Database with 7 servers ready with 150 users and phones
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x cluster-db.sh
-./cluster-db.sh
-```
-
-# These 2 steps below can be used to cluster servers after they have been installed with one of the above installers. Example: main-installer.sh
-
-## Step 1: Add dialers into database POST install - This is to be used to add dialer servers into a cluster with conferences and confbridges
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x add-dialer-to-DB.sh
-./add-dialer-to-DB.sh
-```
-
-## Step 2: Link Dialers to the database - run this on each dialer
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x run-on-dialer-servers-cluster.sh
-./run-on-dialer-servers-cluster.s
-```
-
-## Repeat steps 1 and 2 in order as you do each server
-
-## Install Webphone and SSL cert for VICIDIAL
-## DO THIS IF YOU HAVE PUBLIC DOMAIN WITH PUBLIC IP ONLY
-
-```
-cd /usr/src/vicidial-install-scripts
-chmod +x vicidial-enable-webrtc.sh
-./vicidial-enable-webrtc.sh
-```
+Use a clean server whenever possible. Running this over an existing production VICIDIAL system can overwrite configuration files.
