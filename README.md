@@ -58,6 +58,7 @@ This repo contains the main installer and the files it expects to find in the sa
 - `confbridge-vicidial.conf` - VICIDIAL conference bridge configuration
 - `cpanfile` - required Perl module list used by `cpm install -g`
 - `vicidial-enable-webrtc.sh` - WebRTC/WebPhone setup helper
+- `viciportal-ssl.conf` - Dynamic Portal SSL vhost template used by the WebRTC helper
 - `certbot.sh` - SSL certificate renewal helper used by cron
 - `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
 - `genx-vicidial-overlay/` - agent/admin/report overlay files and hosted VICIphone assets

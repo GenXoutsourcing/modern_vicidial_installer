@@ -1,5 +1,6 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f /etc/redhat-release ]; then
 	yum -y install certbot python3-certbot-apache mod_ssl
@@ -11,6 +12,10 @@ fi
 
 echo "Enter the DOMAIN NAME HERE. ***********IF YOU DONT HAVE ONE PLEASE DONT CONTINUE: "
 read DOMAINNAME
+if [ -z "$DOMAINNAME" ]; then
+	echo "No domain entered. Exiting WebRTC/SSL setup."
+	exit 1
+fi
 
 wget -O /etc/httpd/conf.d/$DOMAINNAME.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/DOMAINNAME.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/httpd/conf.d/$DOMAINNAME.conf
@@ -66,7 +71,11 @@ echo "update the Phone tables to set is_webphone to Y deffault"
 mysql -e "use asterisk; ALTER TABLE phones MODIFY COLUMN is_webphone ENUM('Y','N','Y_API_LAUNCH') default 'Y';"
 mysql -e "use asterisk; update phones set template_id='SIP_generic';"
 
-mv /usr/src/new_vicidial/viciportal-ssl.conf /home/viciportal-ssl.conf
+if [ ! -f "$SCRIPT_DIR/viciportal-ssl.conf" ]; then
+	echo "ERROR: Missing $SCRIPT_DIR/viciportal-ssl.conf"
+	exit 1
+fi
+cp -f "$SCRIPT_DIR/viciportal-ssl.conf" /home/viciportal-ssl.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /var/www/vhosts/dynportal/inc/defaults.inc.php
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /home/viciportal-ssl.conf
 mv -f /home/viciportal-ssl.conf /etc/httpd/conf.d/viciportal-ssl.conf
