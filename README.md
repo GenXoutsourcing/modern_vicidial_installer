@@ -37,6 +37,18 @@ chmod +x vicidial-main-82.sh
 ./vicidial-main-82.sh
 ```
 
+## Optional: install the GENX modern UI overlay
+
+After VICIDIAL is installed and the web directories exist, install the modern UI overlay with:
+
+```bash
+cd /usr/src/modern_vicidial_installer
+chmod +x install-genx-overlay.sh
+./install-genx-overlay.sh
+```
+
+The overlay installer does **not** change stock VICIDIAL PHP files. It installs separate overlay files under `/var/www/html/agc/ui`, `/var/www/html/vicidial/ui`, and `/var/www/html/agc/viciphone`, then enables them with `.user.ini` `auto_prepend_file` entries.
+
 ## Included files
 
 This repo contains the main installer and the files it expects to find in the same directory:
@@ -46,10 +58,12 @@ This repo contains the main installer and the files it expects to find in the sa
 - `confbridge-vicidial.conf` - VICIDIAL conference bridge configuration
 - `vicidial-enable-webrtc.sh` - WebRTC/WebPhone setup helper
 - `certbot.sh` - SSL certificate renewal helper used by cron
+- `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
+- `genx-vicidial-overlay/` - agent/admin/report overlay files and hosted VICIphone assets
 
 ## GENX VICIDIAL overlay
 
-The `genx-vicidial-overlay/` folder contains the modern UI overlay files from the GENX VICIDIAL skin work. See `genx-vicidial-overlay/OVERLAY_README.md` for the included agent/admin overlay files and deployment notes.
+The `genx-vicidial-overlay/` folder contains the modern UI overlay files from the GENX VICIDIAL skin work. See `genx-vicidial-overlay/README.md` and `genx-vicidial-overlay/OVERLAY_README.md` for included files, deployment notes, and the required agent testing flow.
 
 ## SSL and firewall notes
 
