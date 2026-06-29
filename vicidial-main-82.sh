@@ -263,6 +263,10 @@ yum install -y perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-
 
 #CPM install
 cd "$SCRIPT_DIR"
+if [ ! -f "$SCRIPT_DIR/cpanfile" ]; then
+    echo "ERROR: Missing $SCRIPT_DIR/cpanfile. Cannot install required Perl modules."
+    exit 1
+fi
 curl -fsSL https://raw.githubusercontent.com/skaji/cpm/main/cpm | perl - install -g App::cpm
 /usr/local/bin/cpm install -g
 

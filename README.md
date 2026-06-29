@@ -56,6 +56,7 @@ This repo contains the main installer and the files it expects to find in the sa
 - `vicidial-main-82.sh` - main AlmaLinux/Rocky Linux installer
 - `extensions.conf` - Asterisk dialplan configuration copied during install
 - `confbridge-vicidial.conf` - VICIDIAL conference bridge configuration
+- `cpanfile` - required Perl module list used by `cpm install -g`
 - `vicidial-enable-webrtc.sh` - WebRTC/WebPhone setup helper
 - `certbot.sh` - SSL certificate renewal helper used by cron
 - `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
