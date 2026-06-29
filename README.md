@@ -47,6 +47,10 @@ This repo contains the main installer and the files it expects to find in the sa
 - `vicidial-enable-webrtc.sh` - WebRTC/WebPhone setup helper
 - `certbot.sh` - SSL certificate renewal helper used by cron
 
+## GENX VICIDIAL overlay
+
+The `genx-vicidial-overlay/` folder contains the modern UI overlay files from the GENX VICIDIAL skin work. See `genx-vicidial-overlay/OVERLAY_README.md` for the included agent/admin overlay files and deployment notes.
+
 ## SSL and firewall notes
 
 If you do not install the SSL certificate during the initial install, you may need to temporarily turn the firewall off before trying again after a reboot. Turn it back on after the certificate is working.

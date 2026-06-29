@@ -1,0 +1,5036 @@
+/*
+ * GENX VICIdial Agent UI overlay - lite/safe pass.
+ *
+ * Keep this intentionally conservative:
+ * - generated branding only is pointer-events:none
+ * - no z-index panels
+ * - no global repositioning
+ * - no pointer-events changes except for the hidden webphone
+ */
+
+:root {
+  --genx-bg: #08111f;
+  --genx-panel: #101d33;
+  --genx-panel-2: #13233d;
+  --genx-line: rgba(126, 220, 255, 0.28);
+  --genx-line-soft: rgba(126, 220, 255, 0.14);
+  --genx-text: #eef5ff;
+  --genx-muted: #aecaed;
+  --genx-link: #f3f7ff;
+  --genx-blue: #4ab8ff;
+  --genx-purple: #6d6cff;
+  --genx-danger: #ff5d76;
+  --genx-good: #22c55e;
+  --genx-warn: #facc15;
+  --genx-dark-text: #101624;
+}
+
+html {
+  min-width: 100vw !important;
+  min-height: 100vh !important;
+  background:
+    radial-gradient(circle at 20% -20%, rgba(74, 184, 255, 0.16), transparent 30rem),
+    linear-gradient(180deg, #08111f 0%, #0b1425 100%) !important;
+}
+
+body {
+  min-width: 100vw !important;
+  min-height: 100vh !important;
+  background:
+    radial-gradient(circle at 20% -20%, rgba(74, 184, 255, 0.16), transparent 30rem),
+    linear-gradient(180deg, #08111f 0%, #0b1425 100%) !important;
+  color: var(--genx-text) !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+body:not(:has(#login_sub)) {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  padding-left: 8px !important;
+  box-sizing: border-box !important;
+}
+
+body::before {
+  content: none !important;
+  display: none !important;
+}
+
+body::after {
+  content: none !important;
+  display: none !important;
+}
+
+body,
+body table,
+body td,
+body span,
+body div,
+body font {
+  color: inherit;
+}
+
+body table {
+  border-color: var(--genx-line) !important;
+}
+
+body td {
+  border-color: rgba(126, 220, 255, 0.18) !important;
+}
+
+body > table:first-of-type,
+body > table:first-of-type td {
+  background-color: rgba(8, 17, 31, 0.96) !important;
+  color: #eaf3ff !important;
+}
+
+body > table:first-of-type {
+  border-bottom: 1px solid var(--genx-line-soft) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24) !important;
+  max-width: calc(100vw - 8px) !important;
+  width: calc(100vw - 8px) !important;
+}
+
+/* Logged-in top status/header strip. VICIdial paints this white by default. */
+body:not(:has(#login_sub)) > table:first-of-type,
+body:not(:has(#login_sub)) > table:first-of-type tbody,
+body:not(:has(#login_sub)) > table:first-of-type tr,
+body:not(:has(#login_sub)) > table:first-of-type td,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type tbody,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type tr,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type td {
+  background: linear-gradient(180deg, rgba(8, 17, 31, 0.98), rgba(10, 23, 43, 0.98)) !important;
+  color: #f4f8ff !important;
+}
+
+body:not(:has(#login_sub)) > table:first-of-type a,
+body:not(:has(#login_sub)) > table:first-of-type font,
+body:not(:has(#login_sub)) > table:first-of-type span,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type a,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type font,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type span {
+  color: #f4f8ff !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) a[onclick*="LogouT"],
+body:not(:has(#login_sub)) a[href="#"]:has(font),
+body:not(:has(#login_sub)) a {
+  color: #ffffff !important;
+}
+
+a {
+  color: var(--genx-link) !important;
+  font-weight: 700;
+  text-decoration: none !important;
+}
+
+a:hover {
+  color: #ffffff !important;
+  text-decoration: none !important;
+}
+
+#DiaLControl a,
+#ParkControl a,
+#XferControl a,
+#HangupControl a,
+#ManuaLDiaLButtons a,
+#MDstatusSpan a,
+#CallLogButtons a,
+#CallLogLinkSpan a,
+#CallbacksButtons a,
+#CBstatusSpan a,
+#AgentTimeSpan a,
+#AgentViewLinkSpan a,
+#AgentViewLink a,
+#MainCommit a,
+#DialBlindTransfer a,
+#DialWithCustomer a,
+#ParkCustomerDial a,
+#HangupBothLines a,
+#Leave3WayCall a {
+  display: inline-block;
+  min-height: 15px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(20, 33, 56, 0.94);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  color: #f7faff !important;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+#DiaLControl a:hover,
+#ParkControl a:hover,
+#XferControl a:hover,
+#HangupControl a:hover,
+#ManuaLDiaLButtons a:hover,
+#MDstatusSpan a:hover,
+#CallLogButtons a:hover,
+#CallLogLinkSpan a:hover,
+#CallbacksButtons a:hover,
+#CBstatusSpan a:hover,
+#AgentTimeSpan a:hover,
+#AgentViewLinkSpan a:hover,
+#AgentViewLink a:hover,
+#MainCommit a:hover,
+#DialBlindTransfer a:hover,
+#DialWithCustomer a:hover,
+#ParkCustomerDial a:hover,
+#HangupBothLines a:hover,
+#Leave3WayCall a:hover {
+  filter: brightness(1.14);
+  transform: translateY(-1px);
+}
+
+#DiaLControl a,
+#ManuaLDiaLButtons a,
+#MDstatusSpan a,
+#CallLogLinkSpan a,
+#CBstatusSpan a,
+#MainCommit a,
+#DialBlindTransfer a,
+#DialWithCustomer a,
+#ParkCustomerDial a {
+  background: linear-gradient(135deg, rgba(74, 184, 255, 0.22), rgba(109, 108, 255, 0.20));
+}
+
+#HangupControl a,
+#HangupBothLines a {
+  border-color: rgba(255, 93, 118, 0.48);
+  background: rgba(255, 93, 118, 0.20);
+  color: #ffffff !important;
+}
+
+input,
+select,
+textarea {
+  background-color: #06101e !important;
+  color: #f5f8ff !important;
+  border: 1px solid rgba(126, 220, 255, 0.32) !important;
+  border-radius: 6px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  min-height: 20px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid rgba(74, 184, 255, 0.45) !important;
+  outline-offset: 1px;
+}
+
+input[type="button"],
+input[type="submit"],
+input.red_btn,
+input.green_btn,
+input.blue_btn,
+input.form_field_button {
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.36) !important;
+  background: linear-gradient(135deg, var(--genx-blue), var(--genx-purple)) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  cursor: pointer;
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+  min-height: 22px !important;
+  box-shadow: 0 8px 20px rgba(74, 184, 255, 0.18) !important;
+}
+
+input[type="button"]:hover,
+input[type="submit"]:hover,
+input.red_btn:hover,
+input.green_btn:hover,
+input.blue_btn:hover,
+input.form_field_button:hover {
+  filter: brightness(1.12);
+}
+
+/* Campaign login page: keep the controls usable after hard refresh. */
+input[name="VD_login"],
+input[name="VD_pass"] {
+  min-width: 165px !important;
+  min-height: 23px !important;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+#VD_campaign,
+select[name="VD_campaign"] {
+  min-width: 240px !important;
+  max-width: 320px !important;
+  min-height: 23px !important;
+}
+
+#login_sub {
+  min-width: 82px !important;
+  min-height: 26px !important;
+}
+
+/*
+ * Campaign login screen.
+ * Chrome supports :has(), and this lets us modernize only the login screen
+ * without touching the logged-in agent workspace.
+ */
+body:has(#login_sub) {
+  display: block !important;
+  min-width: 100vw !important;
+  overflow: hidden !important;
+  background:
+    radial-gradient(circle at 50% 10%, rgba(74, 184, 255, 0.24), transparent 34rem),
+    radial-gradient(circle at 15% 85%, rgba(109, 108, 255, 0.18), transparent 30rem),
+    linear-gradient(145deg, #07101d 0%, #0d1930 55%, #101b35 100%) !important;
+}
+
+body:has(#login_sub)::before {
+  content: "VICIdial";
+  display: block !important;
+  position: fixed;
+  left: 40px;
+  top: 34px;
+  z-index: 2;
+  pointer-events: none;
+  color: #ffffff;
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  text-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+}
+
+body:has(#login_sub)::after {
+  content: "Agent campaign login";
+  display: block !important;
+  position: fixed;
+  left: 42px;
+  top: 72px;
+  z-index: 2;
+  pointer-events: none;
+  color: var(--genx-muted);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+body:has(#login_sub) > table:first-of-type {
+  display: none !important;
+}
+
+body:has(#login_sub) a[href*="timeclock.php"],
+body:has(#login_sub) a[href*="timeclock.php"] *,
+body:has(#login_sub) .sb_text {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+body:has(#login_sub) img {
+  display: none !important;
+}
+
+body:has(#login_sub) form {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 430px !important;
+  min-height: 310px !important;
+  padding: 86px 34px 30px !important;
+  border-radius: 26px !important;
+  border: 1px solid rgba(126, 220, 255, 0.20) !important;
+  background:
+    linear-gradient(180deg, rgba(12, 24, 44, 0.985), rgba(5, 13, 26, 0.985)) !important;
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  color: var(--genx-text) !important;
+  overflow: visible !important;
+}
+
+body:has(#login_sub) form::before {
+  content: "Agent Login";
+  display: block;
+  position: absolute;
+  left: 34px;
+  top: 30px;
+  margin: 0;
+  color: #ffffff;
+  font-size: 28px;
+  line-height: 1.05;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+}
+
+body:has(#login_sub) form::after {
+  content: "Choose your campaign and continue";
+  display: block;
+  position: absolute;
+  left: 35px;
+  top: 62px;
+  margin: 0;
+  color: var(--genx-muted);
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+body:has(#login_sub) form table,
+body:has(#login_sub) form tbody,
+body:has(#login_sub) form tr,
+body:has(#login_sub) form td {
+  background: transparent !important;
+  color: var(--genx-text) !important;
+  border: 0 !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+}
+
+body:has(#login_sub) form table {
+  width: 100% !important;
+  margin-top: 0 !important;
+  border-collapse: separate !important;
+  border-spacing: 0 8px !important;
+}
+
+body:has(#login_sub) form td {
+  padding: 4px 6px !important;
+  line-height: 1.25 !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+body:has(#login_sub) form td:first-child {
+  width: 128px !important;
+  min-width: 128px !important;
+  text-align: right !important;
+  color: #eef5ff !important;
+}
+
+body:has(#login_sub) form td:nth-child(2) {
+  width: 268px !important;
+  min-width: 268px !important;
+  text-align: left !important;
+}
+
+body:has(#login_sub) form tr.genx-login-legacy-heading {
+  display: none !important;
+}
+
+body:has(#login_sub) form > center > b:first-of-type,
+body:has(#login_sub) form > center > br:first-of-type,
+body:has(#login_sub) form > center > b:first-of-type + br,
+body:has(#login_sub) form > center > b:first-of-type + br + br {
+  display: none !important;
+}
+
+body:has(#login_sub) input[name="VD_login"],
+body:has(#login_sub) input[name="VD_pass"],
+body:has(#login_sub) #VD_campaign,
+body:has(#login_sub) select[name="VD_campaign"] {
+  width: 250px !important;
+  min-width: 250px !important;
+  min-height: 32px !important;
+  padding: 4px 11px !important;
+  border-radius: 12px !important;
+  background: #050d1a !important;
+  border: 1px solid rgba(126, 220, 255, 0.42) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 20px rgba(0, 0, 0, 0.16) !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+}
+
+body:has(#login_sub) input[name="VD_login"]:-webkit-autofill,
+body:has(#login_sub) input[name="VD_pass"]:-webkit-autofill {
+  background-color: #050d1a !important;
+  background-image: none !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  box-shadow:
+    0 0 0 1000px #050d1a inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 8px 20px rgba(0, 0, 0, 0.16) !important;
+  transition: background-color 9999s ease-in-out 0s !important;
+}
+
+body:has(#login_sub) #login_sub {
+  width: 132px !important;
+  min-height: 36px !important;
+  margin-top: 10px !important;
+  margin-left: 0 !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.42) !important;
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.03em;
+  box-shadow: 0 16px 34px rgba(74, 184, 255, 0.24) !important;
+}
+
+body:has(#login_sub) #login_sub:hover {
+  filter: brightness(1.14);
+}
+
+body:has(#login_sub) #LogiNReseT {
+  display: inline-flex !important;
+  min-height: 36px !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+}
+
+body:has(#login_sub) #LogiNReseT input,
+body:has(#login_sub) input[value="Refresh Campaign List"],
+body:has(#login_sub) input[value="Refresh Campaigns"] {
+  min-width: 188px !important;
+  min-height: 36px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.36) !important;
+  background: rgba(20, 33, 56, 0.96) !important;
+  color: #ffffff !important;
+  font-size: 13px !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.01em;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22) !important;
+}
+
+/* Common agent action containers. Keep as decoration only; do not move panels. */
+#DiaLControl,
+#ParkControl,
+#XferControl,
+#HangupControl,
+#ManuaLDiaLButtons,
+#MDstatusSpan,
+#CallLogButtons,
+#CallLogLinkSpan,
+#CallbacksButtons,
+#CBstatusSpan,
+#AgentTimeSpan,
+#MainCommit {
+  border-radius: 999px;
+}
+
+#MainPanel,
+#MainTable {
+  background-color: rgba(16, 29, 51, 0.86) !important;
+}
+
+#MainPanel {
+  border: 0 !important;
+  border-radius: 0 18px 18px 0 !important;
+  box-shadow: none !important;
+  width: calc(100vw - 16px) !important;
+  max-width: none !important;
+  overflow: hidden !important;
+}
+
+#MainTable {
+  border-collapse: separate !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+#MainPanelCustInfo {
+  color: var(--genx-text) !important;
+}
+
+#MainPanelCustInfo table,
+#MainPanelCustInfo td {
+  background-color: transparent !important;
+}
+
+#MainPanelCustInfo input,
+#MainPanelCustInfo select,
+#MainPanelCustInfo textarea {
+  margin: 1px 2px !important;
+}
+
+#DiaLControl,
+#ParkControl,
+#XferControl,
+#HangupControl,
+#ManuaLDiaLButtons,
+#CallLogButtons,
+#CallbacksButtons,
+#AgentStatusSpan,
+#AgentTimeSpan {
+  font-weight: 700;
+}
+
+#AgentStatusStatus {
+  display: inline-block;
+  min-width: 30px;
+  min-height: 13px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.18);
+  color: #fff6bf !important;
+  border: 1px solid rgba(250, 204, 21, 0.26);
+}
+
+#HangupControl a,
+#HangupControl font,
+#HangupControl span {
+  color: #ffffff !important;
+}
+
+#HangupControl {
+  background-color: rgba(255, 93, 118, 0.18) !important;
+}
+
+#ParkControl,
+#XferControl {
+  background-color: rgba(74, 184, 255, 0.12) !important;
+}
+
+#DiaLControl {
+  background-color: rgba(34, 197, 94, 0.12) !important;
+}
+
+#MainCommit {
+  background-color: rgba(250, 204, 21, 0.14) !important;
+}
+
+#MaiNfooter,
+#MaiNfooterspan {
+  background-color: rgba(8, 17, 31, 0.92) !important;
+}
+
+#MaiNfooterspan {
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 12px -12px 34px rgba(0, 0, 0, 0.14) !important;
+  width: calc(100vw - 16px) !important;
+  max-width: calc(100vw - 16px) !important;
+  overflow: hidden !important;
+}
+
+#MaiNfooter {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+#MaiNfooter table,
+#MaiNfooter td,
+#MaiNfooterspan table,
+#MaiNfooterspan td {
+  background-color: transparent !important;
+}
+
+#status,
+#AgentStatusCalls,
+#AgentStatusDiaLs,
+#AgentAlertSpan,
+#callsinqueuelist,
+#ParkCounterSpan {
+  color: #eaf3ff !important;
+}
+
+/* Replace harsh legacy image-buttons with clean CSS buttons. */
+#DiaLControl img,
+#ParkControl img,
+#XferControl img,
+#HangupControl img {
+  display: none !important;
+}
+
+#DiaLControl,
+#ParkControl,
+#XferControl,
+#HangupControl {
+  position: relative;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-width: 142px;
+  min-height: 27px;
+  margin: 3px 0;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+  color: #ffffff !important;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+#DiaLControl {
+  background: linear-gradient(135deg, #1f9d55, #22c55e) !important;
+}
+
+#ParkControl {
+  background: linear-gradient(135deg, #2563eb, #4f8cff) !important;
+}
+
+#XferControl {
+  background: linear-gradient(135deg, #4f46e5, #7c6cff) !important;
+}
+
+#HangupControl {
+  background: linear-gradient(135deg, #dc2626, #f43f5e) !important;
+}
+
+#DiaLControl::after {
+  content: "Dial";
+}
+
+#ParkControl::after {
+  content: "Park Call";
+}
+
+#XferControl::after {
+  content: "Transfer";
+}
+
+#HangupControl::after {
+  content: "Hangup";
+}
+
+#DiaLControl a,
+#ParkControl a,
+#XferControl a,
+#HangupControl a {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+/* Logout / log-back-in screen. The stock page is white-on-white after the skin. */
+#LogouTBox,
+#LogouTBox table,
+#LogouTBox tbody,
+#LogouTBox tr,
+#LogouTBox td {
+  background:
+    radial-gradient(circle at 50% 16%, rgba(74, 184, 255, 0.22), transparent 34rem),
+    radial-gradient(circle at 20% 90%, rgba(109, 108, 255, 0.18), transparent 30rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+  color: #f4f8ff !important;
+}
+
+#LogouTBox {
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+#LogouTBox .loading_text,
+#LogouTBox font,
+#LogouTBox span {
+  color: #f4f8ff !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.01em;
+}
+
+#LogouTBox img {
+  filter: invert(1) brightness(1.8) drop-shadow(0 16px 34px rgba(74, 184, 255, 0.20));
+}
+
+#LogouTBoxLink {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-width: 330px;
+  min-height: 46px;
+  margin-top: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(126, 220, 255, 0.48);
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  box-shadow: 0 18px 42px rgba(74, 184, 255, 0.26);
+}
+
+#LogouTBoxLink a,
+#LogouTBoxLink font {
+  color: #ffffff !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+}
+
+/* Stock full-page notices should not fall back to white legacy screens. */
+#DeactivateDOlDSessioNSpan,
+#DeactivateDOlDSessioNSpan table,
+#DeactivateDOlDSessioNSpan tbody,
+#DeactivateDOlDSessioNSpan tr,
+#DeactivateDOlDSessioNSpan td,
+#LoadingBox,
+#LoadingBox table,
+#LoadingBox tbody,
+#LoadingBox tr,
+#LoadingBox td {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(74, 184, 255, 0.22), transparent 34rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+  color: #f4f8ff !important;
+}
+
+#DeactivateDOlDSessioNSpan,
+#LoadingBox {
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+#DeactivateDOlDSessioNSpan table,
+#LoadingBox table {
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+#DeactivateDOlDSessioNSpan .sh_text {
+  display: inline-block !important;
+  max-width: 760px !important;
+  padding: 28px 32px !important;
+  border-radius: 22px !important;
+  border: 1px solid rgba(126, 220, 255, 0.24) !important;
+  background: rgba(8, 17, 31, 0.94) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.34) !important;
+  color: #f4f8ff !important;
+  font-size: 16px !important;
+  line-height: 1.45 !important;
+}
+
+#DeactivateDOlDSessioNSpan a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 92px !important;
+  min-height: 34px !important;
+  margin-top: 16px !important;
+  border-radius: 999px !important;
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  box-shadow: 0 14px 30px rgba(74, 184, 255, 0.22) !important;
+}
+
+#AlertBox,
+#AlertBox table,
+#AlertBox td {
+  background: rgba(8, 17, 31, 0.96) !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.28) !important;
+}
+
+#AlertBox {
+  border-radius: 18px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36) !important;
+}
+
+#AlertBox font,
+#AlertBox b,
+#AlertBoxContent {
+  color: #f4f8ff !important;
+}
+
+#alert_button {
+  min-width: 78px !important;
+  min-height: 30px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.36) !important;
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+}
+
+#RecorDControl img,
+#StRecorDControl img,
+#WebFormSpan img,
+#WebFormSpanTwo img,
+#SendDTMF img {
+  display: none !important;
+}
+
+#RecorDControl,
+#StRecorDControl,
+#WebFormSpan,
+#WebFormSpanTwo,
+#SendDTMF {
+  position: relative;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-width: 142px;
+  min-height: 24px;
+  margin: 3px 0;
+  padding: 0 10px;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+  color: #ffffff !important;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  box-sizing: border-box;
+}
+
+#RecorDControl,
+#StRecorDControl {
+  background: linear-gradient(135deg, #be185d, #f43f5e) !important;
+}
+
+#WebFormSpan,
+#WebFormSpanTwo {
+  background: linear-gradient(135deg, #25324d, #38486b) !important;
+}
+
+#SendDTMF {
+  min-width: 92px;
+  background: linear-gradient(135deg, #6d28d9, #8b5cf6) !important;
+}
+
+#RecorDControl::after {
+  content: "Record";
+}
+
+#StRecorDControl::after {
+  content: "Stereo Rec";
+}
+
+#WebFormSpan::after {
+  content: "Web Form";
+}
+
+#WebFormSpanTwo::after {
+  content: "Web Form 2";
+}
+
+#SendDTMF::after {
+  content: "Send DTMF";
+}
+
+#RecorDControl a,
+#StRecorDControl a,
+#WebFormSpan a,
+#WebFormSpanTwo a,
+#SendDTMF a {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+#SendDTMFdiv {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+#SendDTMF {
+  flex: 0 0 auto !important;
+  min-width: 156px !important;
+  width: 156px !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+#SendDTMF input[name="conf_dtmf"] {
+  position: absolute !important;
+  left: 100px !important;
+  top: 0 !important;
+  flex: 0 0 56px !important;
+  width: 56px !important;
+  min-width: 56px !important;
+  margin: 0 !important;
+  z-index: 2 !important;
+}
+
+#SendDTMF::after {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 92px;
+  height: 24px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6d28d9, #8b5cf6);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+}
+
+#SendDTMF a {
+  right: auto !important;
+  width: 92px !important;
+}
+
+/* Modal/dialog boxes should be readable, but not restyled into new layout. */
+#DispoSelectBox,
+#WrapupBox,
+#CustomerGoneBox,
+#AgenTDisablEBoX,
+#LogouTBox,
+#CallBackSelectBox,
+#NeWManuaLDiaLBox,
+#CalLLoGDisplaYBox,
+#AgentTimeDisplayBox,
+#LeaDInfOBox,
+#DiaLInGrouPSelectBox {
+  color: var(--genx-text) !important;
+}
+
+#DispoSelectBox table,
+#WrapupBox table,
+#CallBackSelectBox table,
+#NeWManuaLDiaLBox table,
+#LeaDInfOBox table,
+#DiaLInGrouPSelectBox table {
+  background-color: rgba(16, 29, 51, 0.96) !important;
+  border-color: var(--genx-line) !important;
+}
+
+/* The webphone is not needed on login for this skin. Hide it without covering the page. */
+#webphoneSpan,
+#webphoneLinkSpan {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+a img {
+  border-radius: 7px;
+}
+
+/* Preserve readable text on VICIdial status colors. */
+[bgcolor="YELLOW"],
+[bgcolor="yellow"],
+[bgcolor="#FFFF00"],
+[bgcolor="#ffff00"],
+[style*="background: yellow"],
+[style*="background-color: yellow"],
+[style*="background:#ffff00"],
+[style*="background-color:#ffff00"],
+.yellow {
+  color: var(--genx-dark-text) !important;
+  text-shadow: none !important;
+}
+
+[bgcolor="WHITE"],
+[bgcolor="white"],
+[bgcolor="#FFFFFF"],
+[bgcolor="#ffffff"],
+[style*="background: white"],
+[style*="background-color: white"],
+[style*="background:#ffffff"],
+[style*="background-color:#ffffff"] {
+  color: var(--genx-dark-text) !important;
+  text-shadow: none !important;
+}
+
+[bgcolor="BLACK"],
+[bgcolor="black"],
+[bgcolor="#000000"],
+[style*="background: black"],
+[style*="background-color: black"] {
+  color: #ffffff !important;
+}
+
+/* -------------------------------------------------------------------------
+   GENX dark agent cockpit layout
+   -------------------------------------------------------------------------
+   This is intentionally an overlay: no VICIdial markup or core files change.
+   Existing controls remain in place and their original links/functions stay
+   clickable; the skin reshapes the visible workspace around them.
+*/
+
+body:not(:has(#login_sub)) {
+  --genx-topbar-h: 48px;
+  --genx-action-w: 184px;
+  --genx-right-w: 292px;
+  --genx-gap: 14px;
+  padding-left: 0 !important;
+  background:
+    radial-gradient(circle at 18% -12%, rgba(74, 184, 255, 0.14), transparent 30rem),
+    radial-gradient(circle at 82% 0%, rgba(109, 108, 255, 0.11), transparent 28rem),
+    linear-gradient(180deg, #06101e 0%, #0a1425 100%) !important;
+}
+
+/* Top status strip */
+body:not(:has(#login_sub)) > table:first-of-type,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type {
+  position: fixed !important;
+  left: 0 !important;
+  top: 0 !important;
+  z-index: 120 !important;
+  width: 100vw !important;
+  height: var(--genx-topbar-h) !important;
+  max-width: 100vw !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(8, 17, 31, 0.98), rgba(6, 15, 29, 0.98)) !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.30) !important;
+}
+
+body:not(:has(#login_sub)) > table:first-of-type td,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type td {
+  height: var(--genx-topbar-h) !important;
+  color: #f4f8ff !important;
+  vertical-align: middle !important;
+}
+
+body:not(:has(#login_sub)) > table:first-of-type::before,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type::before {
+  content: "GENX Agent";
+  position: fixed;
+  left: 16px;
+  top: 12px;
+  z-index: 122;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+  pointer-events: none;
+}
+
+body:not(:has(#login_sub)) > table:first-of-type::after,
+body:not(:has(#login_sub)) > form:first-of-type > table:first-of-type::after {
+  content: "Live Agent Workspace";
+  position: fixed;
+  left: 126px;
+  top: 16px;
+  z-index: 122;
+  color: #aecaed;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* Main dark canvas */
+body:not(:has(#login_sub)) #MainPanel {
+  position: fixed !important;
+  left: 0 !important;
+  top: var(--genx-topbar-h) !important;
+  width: 100vw !important;
+  height: calc(100vh - var(--genx-topbar-h)) !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  background:
+    linear-gradient(90deg, #08182b 0, #08182b var(--genx-action-w), transparent var(--genx-action-w)),
+    linear-gradient(180deg, rgba(13, 27, 49, 0.96), rgba(8, 17, 31, 0.96)) !important;
+  border-top: 1px solid rgba(126, 220, 255, 0.12) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::before {
+  content: "Action Board";
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  z-index: 4;
+  color: #f4f8ff;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+}
+
+body:not(:has(#login_sub)) #MainPanel::after {
+  content: "";
+  position: absolute;
+  left: var(--genx-action-w);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(126, 220, 255, 0.18);
+  box-shadow: 18px 0 36px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+  z-index: 3;
+}
+
+body:not(:has(#login_sub)) #MainTable {
+  width: 100vw !important;
+  height: calc(100vh - var(--genx-topbar-h)) !important;
+  background: transparent !important;
+}
+
+/* Center customer workspace */
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  position: absolute !important;
+  left: calc(var(--genx-action-w) + var(--genx-gap)) !important;
+  top: 48px !important;
+  width: calc(100vw - var(--genx-action-w) - var(--genx-right-w) - (var(--genx-gap) * 3)) !important;
+  min-width: 720px !important;
+  height: calc(100vh - var(--genx-topbar-h) - 72px) !important;
+  padding: 56px 24px 24px !important;
+  overflow: auto !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: rgba(11, 25, 45, 0.88) !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28) !important;
+  box-sizing: border-box !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo::before {
+  content: "Customer    Script    Form    Email    Chat Internal    Chat Customer";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  padding-left: 22px;
+  border-bottom: 1px solid rgba(126, 220, 255, 0.16);
+  background: linear-gradient(180deg, rgba(20, 39, 68, 0.96), rgba(13, 29, 52, 0.96));
+  color: #dbeafe;
+  font-size: 13px;
+  font-weight: 900;
+  word-spacing: 38px;
+  white-space: pre;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo::after {
+  content: "Customer";
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 42px;
+  width: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #42c2ff, #706cff);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+  box-shadow: 0 12px 30px rgba(74, 184, 255, 0.20);
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo table {
+  width: 100% !important;
+  border-collapse: separate !important;
+  border-spacing: 8px 8px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo td,
+body:not(:has(#login_sub)) #MainPanelCustInfo font {
+  color: #dbeafe !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo input,
+body:not(:has(#login_sub)) #MainPanelCustInfo select,
+body:not(:has(#login_sub)) #MainPanelCustInfo textarea {
+  min-height: 30px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(126, 220, 255, 0.26) !important;
+  background: rgba(5, 13, 26, 0.88) !important;
+  color: #f4f8ff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo textarea {
+  min-height: 54px !important;
+}
+
+/* Left action board: keep stock click handlers, reshape the controls. */
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #SendDTMFdiv {
+  position: absolute !important;
+  left: 14px !important;
+  width: 154px !important;
+  z-index: 5 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl { top: 46px !important; }
+body:not(:has(#login_sub)) #RecorDControl { top: 124px !important; }
+body:not(:has(#login_sub)) #WebFormSpan { top: 202px !important; }
+body:not(:has(#login_sub)) #WebFormSpanTwo { top: 236px !important; }
+body:not(:has(#login_sub)) #ParkControl { top: 284px !important; }
+body:not(:has(#login_sub)) #XferControl { top: 318px !important; }
+body:not(:has(#login_sub)) #HangupControl { top: 370px !important; }
+body:not(:has(#login_sub)) #SendDTMFdiv { top: 424px !important; }
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo {
+  min-width: 154px !important;
+  min-height: 32px !important;
+  border-radius: 12px !important;
+}
+
+body:not(:has(#login_sub)) #SendDTMF {
+  width: 154px !important;
+  min-width: 154px !important;
+  height: 30px !important;
+}
+
+body:not(:has(#login_sub)) #SendDTMF::after {
+  width: 92px !important;
+  height: 30px !important;
+  border-radius: 12px !important;
+}
+
+body:not(:has(#login_sub)) #SendDTMF input[name="conf_dtmf"] {
+  left: 100px !important;
+  width: 54px !important;
+  min-width: 54px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+}
+
+/* Left rail labels and text should not collide with the action board. */
+body:not(:has(#login_sub)) #MainPanel > font,
+body:not(:has(#login_sub)) #MainPanel > span:not(#DiaLControl):not(#RecorDControl):not(#WebFormSpan):not(#WebFormSpanTwo):not(#ParkControl):not(#XferControl):not(#HangupControl):not(#SendDTMFdiv) {
+  color: #dbeafe !important;
+}
+
+/* Right-side compact panel. We leave the webphone hidden unless opened by stock controls. */
+body:not(:has(#login_sub)) #AgentViewSpan,
+body:not(:has(#login_sub)) #AgentViewLinkSpan,
+body:not(:has(#login_sub)) #AgentViewLink {
+  position: fixed !important;
+  right: 14px !important;
+  z-index: 80 !important;
+}
+
+body:not(:has(#login_sub)) #AgentViewLinkSpan,
+body:not(:has(#login_sub)) #AgentViewLink {
+  bottom: 42px !important;
+}
+
+body:not(:has(#login_sub)) #AgentViewLink a,
+body:not(:has(#login_sub)) #AgentViewLinkSpan a {
+  min-height: 32px !important;
+  padding: 8px 14px !important;
+  border-radius: 999px !important;
+  background: rgba(20, 33, 56, 0.96) !important;
+  border: 1px solid rgba(126, 220, 255, 0.26) !important;
+}
+
+/* Footer stays readable but no longer causes browser scrollbars. */
+body:not(:has(#login_sub)) #MaiNfooterspan {
+  position: fixed !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 34px !important;
+  z-index: 70 !important;
+  padding-left: 12px !important;
+  box-sizing: border-box !important;
+  background: rgba(5, 13, 26, 0.96) !important;
+}
+
+/* v19 cockpit refinement: remove legacy edge bleed and tighten the grid. */
+html:has(body:not(:has(#login_sub))) {
+  overflow: hidden !important;
+  background: #06101e !important;
+}
+
+body:not(:has(#login_sub)) {
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel {
+  left: 0 !important;
+  width: 100vw !important;
+  background:
+    linear-gradient(90deg, #07182b 0 192px, transparent 192px),
+    linear-gradient(180deg, #081526 0%, #0b1729 100%) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel,
+body:not(:has(#login_sub)) #MainTable,
+body:not(:has(#login_sub)) #MainTable > tbody,
+body:not(:has(#login_sub)) #MainTable > tbody > tr,
+body:not(:has(#login_sub)) #MainTable > tbody > tr > td {
+  max-width: 100vw !important;
+}
+
+body:not(:has(#login_sub)) #MainTable::before {
+  content: "Dialable Leads  0     Calls in Queue  0     Agent State  No Live Call     Session  Active";
+  position: fixed;
+  left: 206px;
+  right: 18px;
+  top: 62px;
+  height: 48px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  padding-left: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(126, 220, 255, 0.18);
+  background:
+    linear-gradient(90deg,
+      rgba(74, 184, 255, 0.18) 0 25%,
+      rgba(34, 197, 94, 0.14) 25% 50%,
+      rgba(250, 204, 21, 0.13) 50% 75%,
+      rgba(109, 108, 255, 0.15) 75% 100%),
+    rgba(8, 17, 31, 0.94);
+  color: #f4f8ff;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  word-spacing: 10px;
+  pointer-events: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  left: 206px !important;
+  top: 124px !important;
+  width: calc(100vw - 224px) !important;
+  min-width: 0 !important;
+  height: calc(100vh - 178px) !important;
+  padding: 58px 26px 28px !important;
+  box-sizing: border-box !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::before {
+  left: 18px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::after {
+  left: 192px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #SendDTMFdiv {
+  left: 18px !important;
+  width: 156px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl { top: 54px !important; }
+body:not(:has(#login_sub)) #RecorDControl { top: 132px !important; }
+body:not(:has(#login_sub)) #WebFormSpan { top: 210px !important; }
+body:not(:has(#login_sub)) #WebFormSpanTwo { top: 246px !important; }
+body:not(:has(#login_sub)) #ParkControl { top: 300px !important; }
+body:not(:has(#login_sub)) #XferControl { top: 338px !important; }
+body:not(:has(#login_sub)) #HangupControl { top: 392px !important; }
+body:not(:has(#login_sub)) #SendDTMFdiv { top: 448px !important; overflow: visible !important; }
+
+body:not(:has(#login_sub)) #NoneInSessionBox,
+body:not(:has(#login_sub)) #NoneInSessionBox table,
+body:not(:has(#login_sub)) #NoneInSessionBox tbody,
+body:not(:has(#login_sub)) #NoneInSessionBox tr,
+body:not(:has(#login_sub)) #NoneInSessionBox td {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(74, 184, 255, 0.22), transparent 34rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+  color: #f4f8ff !important;
+}
+
+body:not(:has(#login_sub)) #NoneInSessionBox,
+body:not(:has(#login_sub)) #NoneInSessionBox table {
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+body:not(:has(#login_sub)) #NoneInSessionBox .sd_text {
+  display: inline-block !important;
+  max-width: 680px !important;
+  padding: 28px 32px !important;
+  border-radius: 22px !important;
+  border: 1px solid rgba(126, 220, 255, 0.24) !important;
+  background: rgba(8, 17, 31, 0.94) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.34) !important;
+  color: #f4f8ff !important;
+  font-size: 16px !important;
+  line-height: 1.45 !important;
+}
+
+body:not(:has(#login_sub)) #NoneInSessionBox a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 128px !important;
+  min-height: 34px !important;
+  margin: 12px 6px 0 !important;
+  border-radius: 999px !important;
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+}
+
+/* v20: convert the stock duplicate white nav/status bar into the real top bar. */
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type,
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type tbody,
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type tr,
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type td,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type tbody,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type tr,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type td {
+  background:
+    linear-gradient(180deg, rgba(8, 17, 31, 0.99), rgba(6, 15, 29, 0.99)) !important;
+  color: #f4f8ff !important;
+  border: 0 !important;
+}
+
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type {
+  position: fixed !important;
+  left: 0 !important;
+  top: 0 !important;
+  z-index: 220 !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: 48px !important;
+  border-bottom: 1px solid rgba(126, 220, 255, 0.22) !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34) !important;
+}
+
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type img,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type img {
+  opacity: 0.72 !important;
+  filter: brightness(1.3) contrast(0.95) !important;
+}
+
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type a,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type a {
+  color: #ffffff !important;
+}
+
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type a[href="#"],
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type a[href="#"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 84px !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255, 93, 118, 0.48) !important;
+  background: linear-gradient(135deg, #dc2626, #f43f5e) !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type font,
+body:not(:has(#login_sub)) > form#vicidial_form > table:first-of-type span,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type font,
+body:not(:has(#login_sub)) > form[name="vicidial_form"] > table:first-of-type span {
+  color: #f4f8ff !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel {
+  top: 48px !important;
+}
+
+/* v21: the real stock AGC header is #Header + #Tabs. Keep its controls, skin it dark. */
+body:not(:has(#login_sub)) #Header,
+body:not(:has(#login_sub)) #Tabs {
+  position: fixed !important;
+  left: 0 !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  overflow: hidden !important;
+  background:
+    linear-gradient(180deg, rgba(8, 17, 31, 0.99), rgba(6, 15, 29, 0.99)) !important;
+  color: #f4f8ff !important;
+  border: 0 !important;
+}
+
+body:not(:has(#login_sub)) #Header {
+  top: 0 !important;
+  height: 18px !important;
+  z-index: 250 !important;
+  box-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs {
+  top: 18px !important;
+  height: 32px !important;
+  z-index: 249 !important;
+  border-bottom: 1px solid rgba(126, 220, 255, 0.22) !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34) !important;
+}
+
+body:not(:has(#login_sub)) #Header table,
+body:not(:has(#login_sub)) #Header tbody,
+body:not(:has(#login_sub)) #Header tr,
+body:not(:has(#login_sub)) #Header td,
+body:not(:has(#login_sub)) #Tabs table,
+body:not(:has(#login_sub)) #Tabs tbody,
+body:not(:has(#login_sub)) #Tabs tr,
+body:not(:has(#login_sub)) #Tabs td {
+  max-width: 100vw !important;
+  background: transparent !important;
+  color: #f4f8ff !important;
+  border: 0 !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #Header table,
+body:not(:has(#login_sub)) #Tabs table {
+  width: 100vw !important;
+  height: 100% !important;
+}
+
+body:not(:has(#login_sub)) #Header font,
+body:not(:has(#login_sub)) #Header span,
+body:not(:has(#login_sub)) #Header a,
+body:not(:has(#login_sub)) #Tabs font,
+body:not(:has(#login_sub)) #Tabs span,
+body:not(:has(#login_sub)) #Tabs a {
+  color: #f4f8ff !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #Header .queue_text,
+body:not(:has(#login_sub)) #Tabs .queue_text {
+  color: #dbeafe !important;
+  font-size: 11px !important;
+  line-height: 16px !important;
+}
+
+body:not(:has(#login_sub)) #Header a[href="#"],
+body:not(:has(#login_sub)) #Header a[onclick*="Logout"],
+body:not(:has(#login_sub)) #Header a[onclick*="logout"],
+body:not(:has(#login_sub)) #Header a[onclick*="NormalLogout"] {
+  position: fixed !important;
+  right: 14px !important;
+  top: 8px !important;
+  z-index: 270 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 88px !important;
+  min-height: 30px !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255, 120, 140, 0.55) !important;
+  background: linear-gradient(135deg, #dc2626, #f43f5e) !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.02em !important;
+  text-decoration: none !important;
+  box-shadow: 0 10px 24px rgba(244, 63, 94, 0.22) !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[src*="vicidial_admin_web_logo"],
+body:not(:has(#login_sub)) #Tabs img[src*="vdc_tab_script"] {
+  opacity: 0.62 !important;
+  filter: brightness(1.35) saturate(0.78) contrast(0.95) !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[name="livecall"],
+body:not(:has(#login_sub)) #Tabs img[src*="livecall"] {
+  opacity: 0.78 !important;
+  filter: brightness(1.18) contrast(0.92) !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img {
+  max-height: 28px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs td:nth-child(1),
+body:not(:has(#login_sub)) #Tabs td:nth-child(2) {
+  background: rgba(74, 184, 255, 0.10) !important;
+}
+
+body:not(:has(#login_sub)) #Header td:first-child {
+  padding-left: 10px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs td:first-child {
+  padding-left: 8px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel {
+  top: 50px !important;
+}
+
+body:not(:has(#login_sub)) #MainTable::before {
+  top: 64px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  top: 126px !important;
+}
+
+/* v22: full agent cockpit cleanup. Collapse duplicate stock chrome and contain legacy tables. */
+body:not(:has(#login_sub)) {
+  --genx-header-h: 44px;
+  --genx-left-w: 192px;
+  --genx-pad: 14px;
+}
+
+body:not(:has(#login_sub)) #Header {
+  top: 0 !important;
+  left: 0 !important;
+  height: var(--genx-header-h) !important;
+  width: 100vw !important;
+  z-index: 280 !important;
+  display: block !important;
+  overflow: hidden !important;
+  background:
+    linear-gradient(90deg, rgba(7, 18, 33, 0.98), rgba(9, 25, 45, 0.98)) !important;
+  border-bottom: 1px solid rgba(126, 220, 255, 0.18) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34) !important;
+}
+
+body:not(:has(#login_sub)) #Header::before {
+  content: "GENX Agent";
+  position: fixed;
+  left: 14px;
+  top: 9px;
+  z-index: 286;
+  color: #f8fbff;
+  font-size: 17px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+}
+
+body:not(:has(#login_sub)) #Header table,
+body:not(:has(#login_sub)) #Header tbody,
+body:not(:has(#login_sub)) #Header tr,
+body:not(:has(#login_sub)) #Header td {
+  height: var(--genx-header-h) !important;
+  background: transparent !important;
+  color: #eaf3ff !important;
+}
+
+body:not(:has(#login_sub)) #Header td:first-child {
+  padding-left: 132px !important;
+  vertical-align: middle !important;
+}
+
+body:not(:has(#login_sub)) #Header .queue_text,
+body:not(:has(#login_sub)) #Header font,
+body:not(:has(#login_sub)) #Header span {
+  color: #dbeafe !important;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+body:not(:has(#login_sub)) #Header a[onclick*="NormalLogout"] {
+  top: 7px !important;
+  right: 14px !important;
+  min-width: 104px !important;
+  min-height: 30px !important;
+  background: linear-gradient(135deg, #ef4444, #e11d48) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 160, 175, 0.45) !important;
+}
+
+/* Hide the duplicate stock logo/script/live-call strip. The underlying panels still work. */
+body:not(:has(#login_sub)) #Tabs {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel {
+  top: var(--genx-header-h) !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: calc(100vh - var(--genx-header-h)) !important;
+  overflow: hidden !important;
+  background:
+    linear-gradient(90deg, #07182b 0 var(--genx-left-w), transparent var(--genx-left-w)),
+    linear-gradient(180deg, #06101e 0%, #09172a 100%) !important;
+}
+
+/* Remove the tiny legacy status row that was colliding with the left rail title. */
+body:not(:has(#login_sub)) #MainTable > tbody > tr:first-child,
+body:not(:has(#login_sub)) #MainTable > tbody > tr:nth-child(2),
+body:not(:has(#login_sub)) #BannerPanel,
+body:not(:has(#login_sub)) #SecondSspan {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::before {
+  top: 16px !important;
+  left: 16px !important;
+  width: 160px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: #f4f8ff !important;
+  font-size: 15px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::after {
+  left: var(--genx-left-w) !important;
+  top: 0 !important;
+  height: calc(100vh - var(--genx-header-h)) !important;
+  background: rgba(126, 220, 255, 0.16) !important;
+}
+
+body:not(:has(#login_sub)) #MainTable::before {
+  left: calc(var(--genx-left-w) + 14px) !important;
+  right: 16px !important;
+  top: 14px !important;
+  height: 48px !important;
+  border-radius: 14px !important;
+  content: "Dialable Leads  0     Calls in Queue  0     Agent State  No Live Call     Session Active" !important;
+  word-spacing: 6px !important;
+  padding-left: 18px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #SendDTMFdiv {
+  left: 16px !important;
+  width: 160px !important;
+  z-index: 90 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl { top: 66px !important; }
+body:not(:has(#login_sub)) #RecorDControl { top: 144px !important; }
+body:not(:has(#login_sub)) #WebFormSpan { top: 224px !important; }
+body:not(:has(#login_sub)) #WebFormSpanTwo { top: 262px !important; }
+body:not(:has(#login_sub)) #ParkControl { top: 316px !important; }
+body:not(:has(#login_sub)) #XferControl { top: 356px !important; }
+body:not(:has(#login_sub)) #HangupControl { top: 410px !important; }
+body:not(:has(#login_sub)) #SendDTMFdiv { top: 466px !important; }
+
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  left: calc(var(--genx-left-w) + 14px) !important;
+  top: 78px !important;
+  width: calc(100vw - var(--genx-left-w) - 30px) !important;
+  height: calc(100vh - var(--genx-header-h) - 126px) !important;
+  min-width: 0 !important;
+  overflow: auto !important;
+  padding: 58px 28px 30px !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: rgba(7, 19, 34, 0.94) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 20px 60px rgba(0,0,0,0.18) !important;
+  box-sizing: border-box !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo::before {
+  content: "Customer";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 132px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px 0 12px 0;
+  background: linear-gradient(135deg, #4bbcff, #6d6cff);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo > table {
+  width: min(1180px, calc(100vw - var(--genx-left-w) - 100px)) !important;
+  max-width: 1180px !important;
+  table-layout: auto !important;
+  border-collapse: separate !important;
+  border-spacing: 0 10px !important;
+  margin: 0 auto !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo table table {
+  width: 100% !important;
+  max-width: 1040px !important;
+  table-layout: fixed !important;
+  margin: 0 auto !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo td {
+  max-width: 100% !important;
+  white-space: normal !important;
+  vertical-align: middle !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo font,
+body:not(:has(#login_sub)) #MainPanelCustInfo span,
+body:not(:has(#login_sub)) #MainPanelCustInfo td {
+  color: #eef5ff !important;
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo input:not([type="hidden"]),
+body:not(:has(#login_sub)) #MainPanelCustInfo select,
+body:not(:has(#login_sub)) #MainPanelCustInfo textarea {
+  width: auto !important;
+  max-width: 100% !important;
+  min-height: 32px !important;
+  margin: 3px 5px !important;
+  padding: 6px 10px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(126, 220, 255, 0.22) !important;
+  background: #06101e !important;
+  color: #f7fbff !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04) !important;
+  box-sizing: border-box !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo #first_name,
+body:not(:has(#login_sub)) #MainPanelCustInfo #last_name,
+body:not(:has(#login_sub)) #MainPanelCustInfo #address2,
+body:not(:has(#login_sub)) #MainPanelCustInfo #address3,
+body:not(:has(#login_sub)) #MainPanelCustInfo #city,
+body:not(:has(#login_sub)) #MainPanelCustInfo #province,
+body:not(:has(#login_sub)) #MainPanelCustInfo #email {
+  width: 220px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo #address1,
+body:not(:has(#login_sub)) #MainPanelCustInfo #comments {
+  width: 520px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo #title,
+body:not(:has(#login_sub)) #MainPanelCustInfo #middle_initial,
+body:not(:has(#login_sub)) #MainPanelCustInfo #state,
+body:not(:has(#login_sub)) #MainPanelCustInfo #phone_code {
+  width: 64px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo #postal_code,
+body:not(:has(#login_sub)) #MainPanelCustInfo #alt_phone,
+body:not(:has(#login_sub)) #MainPanelCustInfo #vendor_lead_code,
+body:not(:has(#login_sub)) #MainPanelCustInfo #gender_list {
+  width: 150px !important;
+}
+
+body:not(:has(#login_sub)) #MainCommit {
+  position: fixed !important;
+  right: 330px !important;
+  top: 64px !important;
+  z-index: 130 !important;
+}
+
+body:not(:has(#login_sub)) #AgentViewLink,
+body:not(:has(#login_sub)) #AgentViewLinkSpan {
+  right: 14px !important;
+  bottom: 14px !important;
+}
+
+/* v23: remove misleading/fake status strip and suppress legacy left-column text bleed. */
+body:not(:has(#login_sub)) #MainTable::before {
+  display: none !important;
+  content: none !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  top: 78px !important;
+  height: calc(100vh - var(--genx-header-h) - 122px) !important;
+}
+
+body:not(:has(#login_sub)) #MainTable > tbody > tr:nth-child(3) > td:first-child,
+body:not(:has(#login_sub)) #MainTable > tbody > tr:nth-child(3) > td:first-child > font,
+body:not(:has(#login_sub)) #MainTable > tbody > tr:nth-child(3) > td:first-child > font > center {
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #DiaLControl *,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #RecorDControl *,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpan *,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #WebFormSpanTwo *,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #ParkControl *,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #XferControl *,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #HangupControl *,
+body:not(:has(#login_sub)) #SendDTMFdiv,
+body:not(:has(#login_sub)) #SendDTMFdiv * {
+  color: #ffffff !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+
+body:not(:has(#login_sub)) #MaiNfooterspan {
+  left: 0 !important;
+  bottom: 0 !important;
+  height: 34px !important;
+  width: 100vw !important;
+  z-index: 82 !important;
+  padding: 0 14px !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  background: rgba(5, 13, 26, 0.98) !important;
+  border-top: 1px solid rgba(126, 220, 255, 0.10) !important;
+}
+
+body:not(:has(#login_sub)) #MaiNfooterspan,
+body:not(:has(#login_sub)) #MaiNfooterspan * {
+  color: #dbeafe !important;
+  font-size: 11px !important;
+  line-height: 34px !important;
+  vertical-align: middle !important;
+}
+
+/* v25: restore real VICIdial agent functions and remove the remaining page-side gutter. */
+html:has(body:not(:has(#login_sub))),
+body:not(:has(#login_sub)) {
+  margin: 0 !important;
+  padding: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  min-width: 100vw !important;
+  max-width: 100vw !important;
+  overflow: hidden !important;
+  background: #06101e !important;
+}
+
+body:not(:has(#login_sub)) #Header,
+body:not(:has(#login_sub)) #MainPanel,
+body:not(:has(#login_sub)) #MainTable,
+body:not(:has(#login_sub)) #MaiNfooterspan {
+  left: 0 !important;
+  margin-left: 0 !important;
+}
+
+/* The stock top strip contains SCRIPT and live-call state. Keep it, but make it compact. */
+body:not(:has(#login_sub)) #Tabs {
+  display: block !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  position: fixed !important;
+  left: auto !important;
+  right: 158px !important;
+  top: 7px !important;
+  width: 430px !important;
+  height: 32px !important;
+  max-width: 430px !important;
+  overflow: hidden !important;
+  z-index: 284 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs table,
+body:not(:has(#login_sub)) #Tabs tbody,
+body:not(:has(#login_sub)) #Tabs tr {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  width: 430px !important;
+  height: 32px !important;
+  max-width: 430px !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+body:not(:has(#login_sub)) #Tabs td {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  height: 32px !important;
+  max-width: none !important;
+  padding: 0 4px !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+/* Hide only the duplicate logo cell, not functional tabs. */
+body:not(:has(#login_sub)) #Tabs td:first-child {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 86px !important;
+  height: 30px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.35) !important;
+  background: rgba(15, 35, 61, 0.92) !important;
+  color: #ffffff !important;
+  text-decoration: none !important;
+  font-size: 0 !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"]::before {
+  content: "SCRIPT";
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="MainPanelToFront"] {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[src*="vdc_tab_script"] {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[name="livecall"],
+body:not(:has(#login_sub)) #Tabs img[src*="agc_live_call"] {
+  display: inline-block !important;
+  visibility: visible !important;
+  width: 109px !important;
+  height: 30px !important;
+  max-width: 109px !important;
+  max-height: 30px !important;
+  opacity: 1 !important;
+  filter: brightness(1.1) contrast(1.05) !important;
+}
+
+body:not(:has(#login_sub)) #Tabs .body_tiny,
+body:not(:has(#login_sub)) #Tabs .body_text,
+body:not(:has(#login_sub)) #Tabs #AgentStatusCalls {
+  color: #dbeafe !important;
+  font-size: 11px !important;
+  line-height: 14px !important;
+  white-space: nowrap !important;
+}
+
+/* DiaLControl is VICIdial's READY/PAUSED state toggle, not a dial button. */
+body:not(:has(#login_sub)) #DiaLControl {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl::after {
+  content: "READY / PAUSED";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+}
+
+body:not(:has(#login_sub)) #DiaLControl img {
+  opacity: 0 !important;
+}
+
+/* Surface the real stock Manual Dial / Call Log links with their original handlers. */
+body:not(:has(#login_sub)) #DiaLlOgButtonspan {
+  position: fixed !important;
+  left: 16px !important;
+  top: 558px !important;
+  z-index: 92 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  width: 160px !important;
+  height: auto !important;
+  visibility: visible !important;
+  background: transparent !important;
+}
+
+body:not(:has(#login_sub)) #ManuaLDiaLButtons,
+body:not(:has(#login_sub)) #MDstatusSpan {
+  visibility: visible !important;
+  display: block !important;
+  width: 160px !important;
+  height: 34px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan font {
+  display: contents !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 160px !important;
+  min-height: 34px !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(126, 220, 255, 0.24) !important;
+  background: rgba(42, 64, 103, 0.95) !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.18) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaL"] {
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  background: rgba(51, 65, 95, 0.96) !important;
+}
+
+/* Keep the left rail flush and remove any decorative edge that reads as a stray bar. */
+body:not(:has(#login_sub)) #MainPanel::after {
+  width: 1px !important;
+  left: 192px !important;
+  background: rgba(126, 220, 255, 0.18) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::before {
+  left: 16px !important;
+}
+
+/* v26: make restored stock controls unmistakably visible. */
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] {
+  position: fixed !important;
+  right: 470px !important;
+  top: 7px !important;
+  z-index: 292 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 92px !important;
+  height: 30px !important;
+  min-width: 92px !important;
+  min-height: 30px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.42) !important;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.95), rgba(79, 70, 229, 0.95)) !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  text-decoration: none !important;
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.18) !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"]::before {
+  content: "SCRIPT" !important;
+  display: block !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.04em !important;
+  line-height: 30px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] img {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan,
+body:not(:has(#login_sub)) #DiaLlOgButtonspan *,
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a,
+body:not(:has(#login_sub)) #DiaLlOgButtonspan span {
+  visibility: visible !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan {
+  top: 558px !important;
+  gap: 8px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a {
+  width: 160px !important;
+  min-width: 160px !important;
+  max-width: 160px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  position: relative !important;
+  top: 0 !important;
+  background: rgba(51, 65, 95, 0.96) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan br,
+body:not(:has(#login_sub)) #DiaLlOgButtonspan font > br {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl::after {
+  content: "READY / PAUSED" !important;
+}
+
+/* v27: wider agent rail, flush left page edge, and compact readable footer. */
+body:not(:has(#login_sub)) {
+  --genx-left-w: 232px;
+  --genx-footer-h: 30px;
+}
+
+html:has(body:not(:has(#login_sub))),
+body:not(:has(#login_sub)),
+body:not(:has(#login_sub)) form {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+  border-left: 0 !important;
+  outline-left: 0 !important;
+  background-color: #06101e !important;
+}
+
+body:not(:has(#login_sub))::before,
+body:not(:has(#login_sub))::after {
+  left: 0 !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel {
+  background:
+    linear-gradient(90deg, #07182b 0 var(--genx-left-w), transparent var(--genx-left-w)),
+    linear-gradient(180deg, #06101e 0%, #09172a 100%) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::after {
+  left: var(--genx-left-w) !important;
+  width: 1px !important;
+  background: rgba(126, 220, 255, 0.20) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanel::before {
+  left: 18px !important;
+  width: calc(var(--genx-left-w) - 36px) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl,
+body:not(:has(#login_sub)) #SendDTMFdiv,
+body:not(:has(#login_sub)) #DiaLlOgButtonspan,
+body:not(:has(#login_sub)) #ManuaLDiaLButtons,
+body:not(:has(#login_sub)) #MDstatusSpan {
+  left: 18px !important;
+  width: calc(var(--genx-left-w) - 36px) !important;
+  max-width: calc(var(--genx-left-w) - 36px) !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl,
+body:not(:has(#login_sub)) #RecorDControl,
+body:not(:has(#login_sub)) #WebFormSpan,
+body:not(:has(#login_sub)) #WebFormSpanTwo,
+body:not(:has(#login_sub)) #ParkControl,
+body:not(:has(#login_sub)) #XferControl,
+body:not(:has(#login_sub)) #HangupControl {
+  height: 36px !important;
+  border-radius: 13px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLControl { top: 112px !important; }
+body:not(:has(#login_sub)) #RecorDControl { top: 188px !important; }
+body:not(:has(#login_sub)) #WebFormSpan { top: 268px !important; }
+body:not(:has(#login_sub)) #WebFormSpanTwo { top: 310px !important; }
+body:not(:has(#login_sub)) #ParkControl { top: 368px !important; }
+body:not(:has(#login_sub)) #XferControl { top: 410px !important; }
+body:not(:has(#login_sub)) #HangupControl { top: 468px !important; }
+body:not(:has(#login_sub)) #SendDTMFdiv { top: 524px !important; }
+body:not(:has(#login_sub)) #DiaLlOgButtonspan { top: 576px !important; }
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a {
+  width: calc(var(--genx-left-w) - 36px) !important;
+  min-width: calc(var(--genx-left-w) - 36px) !important;
+  max-width: calc(var(--genx-left-w) - 36px) !important;
+  height: 36px !important;
+  min-height: 36px !important;
+}
+
+body:not(:has(#login_sub)) #SendDTMFdiv input {
+  width: 66px !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo {
+  left: calc(var(--genx-left-w) + 14px) !important;
+  width: calc(100vw - var(--genx-left-w) - 30px) !important;
+  height: calc(100vh - var(--genx-header-h) - var(--genx-footer-h) - 92px) !important;
+  bottom: calc(var(--genx-footer-h) + 14px) !important;
+}
+
+body:not(:has(#login_sub)) #MainPanelCustInfo > table {
+  width: min(1180px, calc(100vw - var(--genx-left-w) - 100px)) !important;
+}
+
+body:not(:has(#login_sub)) #MainTable > tbody > tr:last-child,
+body:not(:has(#login_sub)) #MainTable > tbody > tr[height],
+body:not(:has(#login_sub)) #MainTable > tbody > tr > td[height="725px"] {
+  background: transparent !important;
+}
+
+body:not(:has(#login_sub)) #MaiNfooterspan {
+  position: fixed !important;
+  left: 0 !important;
+  bottom: 0 !important;
+  top: auto !important;
+  width: 100vw !important;
+  height: var(--genx-footer-h) !important;
+  min-height: var(--genx-footer-h) !important;
+  max-height: var(--genx-footer-h) !important;
+  padding: 0 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  overflow: hidden !important;
+  z-index: 310 !important;
+  background: rgba(5, 13, 26, 0.98) !important;
+  border-top: 1px solid rgba(126, 220, 255, 0.18) !important;
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.24) !important;
+}
+
+body:not(:has(#login_sub)) #MaiNfooterspan,
+body:not(:has(#login_sub)) #MaiNfooterspan *,
+body:not(:has(#login_sub)) #MaiNfooterspan font,
+body:not(:has(#login_sub)) #MaiNfooterspan span {
+  color: #dbeafe !important;
+  font-size: 11px !important;
+  line-height: var(--genx-footer-h) !important;
+  white-space: nowrap !important;
+  text-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #AgentViewLink,
+body:not(:has(#login_sub)) #AgentViewLinkSpan {
+  bottom: calc(var(--genx-footer-h) + 12px) !important;
+}
+
+/* v28: fixed vertical positions for the stock manual dial/call-log links. */
+body:not(:has(#login_sub)) #DiaLlOgButtonspan {
+  height: 136px !important;
+  gap: 0 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"] {
+  position: fixed !important;
+  left: 18px !important;
+  top: 576px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  position: fixed !important;
+  left: 18px !important;
+  top: 620px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  position: fixed !important;
+  left: 18px !important;
+  top: 664px !important;
+}
+
+/* v29: place SCRIPT with the workspace tabs, not the right-side status/logout area. */
+body:not(:has(#login_sub)) #Tabs {
+  right: 158px !important;
+  width: 300px !important;
+  max-width: 300px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs table,
+body:not(:has(#login_sub)) #Tabs tbody,
+body:not(:has(#login_sub)) #Tabs tr {
+  width: 300px !important;
+  max-width: 300px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] {
+  position: fixed !important;
+  left: calc(var(--genx-left-w) + 144px) !important;
+  top: 124px !important;
+  right: auto !important;
+  width: 118px !important;
+  min-width: 118px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  border-radius: 0 0 12px 0 !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  border-left: 0 !important;
+  background: rgba(15, 35, 61, 0.94) !important;
+  box-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"]::before {
+  line-height: 42px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[name="livecall"],
+body:not(:has(#login_sub)) #Tabs img[src*="agc_live_call"] {
+  position: fixed !important;
+  right: 164px !important;
+  top: 8px !important;
+}
+
+body:not(:has(#login_sub)) #Tabs #AgentStatusCalls,
+body:not(:has(#login_sub)) #Tabs .body_text {
+  position: relative !important;
+}
+
+/* v30: state-specific fixes for script, live-call badge, and logout screen. */
+
+/* The top-right stock status text was colliding with the live-call image. Keep the live badge, hide duplicated tiny text. */
+body:not(:has(#login_sub)) #Tabs .body_tiny,
+body:not(:has(#login_sub)) #Tabs #status,
+body:not(:has(#login_sub)) #Tabs #sessionIDspan,
+body:not(:has(#login_sub)) #Tabs #AgentStatusCalls,
+body:not(:has(#login_sub)) #Tabs .body_text {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs img[name="livecall"],
+body:not(:has(#login_sub)) #Tabs img[src*="agc_live_call"] {
+  position: fixed !important;
+  right: 168px !important;
+  top: 9px !important;
+  z-index: 294 !important;
+  width: 109px !important;
+  height: 30px !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
+}
+
+/* Restore the original Customer/MainPanel tab beside Script. */
+body:not(:has(#login_sub)) #Tabs a[onclick*="MainPanelToFront"] {
+  position: fixed !important;
+  left: calc(var(--genx-left-w) + 14px) !important;
+  top: 124px !important;
+  z-index: 292 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 132px !important;
+  height: 42px !important;
+  border-radius: 18px 0 0 0 !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: linear-gradient(135deg, #4bbcff, #6d6cff) !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  text-decoration: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="MainPanelToFront"]::before {
+  content: "CUSTOMER" !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.03em !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="MainPanelToFront"] img {
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] {
+  left: calc(var(--genx-left-w) + 146px) !important;
+  top: 124px !important;
+  width: 118px !important;
+  height: 42px !important;
+  z-index: 292 !important;
+  border-radius: 0 0 12px 0 !important;
+}
+
+/* Script panel should match the dark cockpit instead of the stock white panel. */
+body:not(:has(#login_sub)) #ScriptPanel,
+body:not(:has(#login_sub)) #Script2Panel {
+  left: calc(var(--genx-left-w) + 14px) !important;
+  top: 122px !important;
+  width: calc(100vw - var(--genx-left-w) - 30px) !important;
+  height: calc(100vh - var(--genx-header-h) - var(--genx-footer-h) - 92px) !important;
+  overflow: auto !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: rgba(7, 19, 34, 0.96) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 20px 60px rgba(0,0,0,0.18) !important;
+  box-sizing: border-box !important;
+}
+
+body:not(:has(#login_sub)) #ScriptPanel table,
+body:not(:has(#login_sub)) #ScriptPanel tbody,
+body:not(:has(#login_sub)) #ScriptPanel tr,
+body:not(:has(#login_sub)) #ScriptPanel td,
+body:not(:has(#login_sub)) #Script2Panel table,
+body:not(:has(#login_sub)) #Script2Panel tbody,
+body:not(:has(#login_sub)) #Script2Panel tr,
+body:not(:has(#login_sub)) #Script2Panel td,
+body:not(:has(#login_sub)) #ScriptContents,
+body:not(:has(#login_sub)) #Script2Contents {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 100% !important;
+  background: transparent !important;
+  color: #eef5ff !important;
+  border: 0 !important;
+}
+
+body:not(:has(#login_sub)) #ScriptContents,
+body:not(:has(#login_sub)) #Script2Contents {
+  padding: 66px 28px 28px !important;
+  box-sizing: border-box !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+}
+
+body:not(:has(#login_sub)) #ScriptPanel::before,
+body:not(:has(#login_sub)) #Script2Panel::before {
+  content: "Script";
+  position: absolute;
+  left: 146px;
+  top: 0;
+  width: 118px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 0 12px 0;
+  background: rgba(15, 35, 61, 0.98);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+}
+
+/* Logout/none-in-session screens are not live agent screens: hide agent-only controls. */
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #Tabs,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #MainPanel,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #AgentViewLink,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #AgentViewLinkSpan,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #AgentViewSpan,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #DiaLlOgButtonspan,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #ManuaLDiaLButtons,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #MDstatusSpan,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #ScriptPanel,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #Script2Panel,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #MaiNfooterspan {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #Header {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox table,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox tbody,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox tr,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox td {
+  background:
+    radial-gradient(circle at 50% 18%, rgba(74, 184, 255, 0.22), transparent 34rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+  color: #f4f8ff !important;
+}
+
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox a {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background-image: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  text-decoration: none !important;
+}
+
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox a::before,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox a::after,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox a *::before,
+body:has(#NoneInSessionBox[style*="visibility: visible"]) #NoneInSessionBox a *::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* v31: align workspace controls, remove duplicate tab paint, and clear DTMF area. */
+
+/* Use the real Customer tab only; this removes the duplicate overlay badge. */
+body:not(:has(#login_sub)) #MainPanelCustInfo::before {
+  content: none !important;
+  display: none !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="MainPanelToFront"] {
+  left: calc(var(--genx-left-w) + 14px) !important;
+  top: 122px !important;
+  width: 132px !important;
+  height: 44px !important;
+  border-radius: 18px 0 0 0 !important;
+  z-index: 296 !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"] {
+  left: calc(var(--genx-left-w) + 146px) !important;
+  top: 122px !important;
+  width: 118px !important;
+  height: 44px !important;
+  border-radius: 0 0 12px 0 !important;
+  z-index: 296 !important;
+}
+
+body:not(:has(#login_sub)) #Tabs a[onclick*="ScriptPanelToFront"]::before {
+  line-height: 44px !important;
+}
+
+/* Move commit into the workspace header area beside the customer/script card, not the top bar. */
+body:not(:has(#login_sub)) #MainCommit {
+  position: fixed !important;
+  right: 42px !important;
+  left: auto !important;
+  top: 132px !important;
+  z-index: 298 !important;
+  width: 74px !important;
+  min-width: 74px !important;
+  max-width: 74px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+body:not(:has(#login_sub)) #MainCommit a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 74px !important;
+  height: 28px !important;
+  padding: 0 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.22) !important;
+  background: rgba(51, 65, 95, 0.96) !important;
+  color: #ffffff !important;
+  text-decoration: none !important;
+}
+
+body:not(:has(#login_sub)) #MainCommit font {
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  line-height: 28px !important;
+}
+
+/* v34: restore visible Customer tab and move manual stack below DTMF. */
+body:not(:has(#login_sub)) #Tabs td:first-child {
+  display: inline-flex !important;
+  width: 132px !important;
+  height: 44px !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+body:not(:has(#login_sub)) #Tabs td:first-child a[onclick*="MainPanelToFront"] {
+  display: flex !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+body:not(:has(#login_sub)) #Tabs td:first-child img {
+  display: none !important;
+}
+
+/* Keep DTMF unobstructed and put manual/call-log actions underneath it. */
+body:not(:has(#login_sub)) #SendDTMFdiv {
+  top: 524px !important;
+  height: 38px !important;
+  z-index: 94 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan {
+  top: 620px !important;
+  height: 144px !important;
+  z-index: 92 !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"] {
+  top: 620px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  top: 666px !important;
+}
+
+body:not(:has(#login_sub)) #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  top: 712px !important;
+}
+
+body:not(:has(#login_sub)) #ScriptPanel::before,
+body:not(:has(#login_sub)) #Script2Panel::before {
+  display: none !important;
+  content: none !important;
+}
+
+/* v33: reliable logout-state cleanup via overlay state class. */
+body.genx-agent-logout #Header,
+body.genx-agent-logout #Tabs,
+body.genx-agent-logout #MainPanel,
+body.genx-agent-logout #MainCommit,
+body.genx-agent-logout #AgentViewLink,
+body.genx-agent-logout #AgentViewLinkSpan,
+body.genx-agent-logout #AgentViewSpan,
+body.genx-agent-logout #DiaLlOgButtonspan,
+body.genx-agent-logout #ManuaLDiaLButtons,
+body.genx-agent-logout #MDstatusSpan,
+body.genx-agent-logout #ScriptPanel,
+body.genx-agent-logout #Script2Panel,
+body.genx-agent-logout #MaiNfooterspan {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.genx-agent-logout {
+  overflow: hidden !important;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(74, 184, 255, 0.18), transparent 34rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+}
+
+body.genx-agent-logout #NoneInSessionBox,
+body.genx-agent-logout #NoneInSessionBox table,
+body.genx-agent-logout #NoneInSessionBox tbody,
+body.genx-agent-logout #NoneInSessionBox tr,
+body.genx-agent-logout #NoneInSessionBox td {
+  width: 100vw !important;
+  height: 100vh !important;
+  background: transparent !important;
+  color: #f4f8ff !important;
+}
+
+body.genx-agent-logout a {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  background-image: none !important;
+}
+
+body.genx-agent-logout a::before,
+body.genx-agent-logout a::after,
+body.genx-agent-logout a *::before,
+body.genx-agent-logout a *::after {
+  content: none !important;
+  display: none !important;
+}
+
+body.genx-agent-logout a[href*="vicidial.php"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 280px !important;
+  min-height: 38px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(126, 220, 255, 0.30) !important;
+  background: linear-gradient(135deg, #42c2ff, #706cff) !important;
+  color: #ffffff !important;
+  font-size: 13px !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  text-shadow: none !important;
+}
+
+/* v35: regression pass for tab overlap, DTMF overlap, commit placement, script panel, and logout leakage. */
+body.genx-agent-live {
+  --genx-left-w: 248px !important;
+  --genx-header-h: 48px !important;
+  --genx-footer-h: 28px !important;
+}
+
+body.genx-agent-live #MainPanel {
+  background:
+    linear-gradient(90deg, #07182b 0 var(--genx-left-w), transparent var(--genx-left-w)),
+    linear-gradient(180deg, #06101e 0%, #09172a 100%) !important;
+}
+
+body.genx-agent-live #MainPanel::after {
+  left: var(--genx-left-w) !important;
+}
+
+body.genx-agent-live #MainPanel::before {
+  left: 14px !important;
+  width: calc(var(--genx-left-w) - 28px) !important;
+}
+
+body.genx-agent-live #DiaLControl,
+body.genx-agent-live #RecorDControl,
+body.genx-agent-live #WebFormSpan,
+body.genx-agent-live #WebFormSpanTwo,
+body.genx-agent-live #ParkControl,
+body.genx-agent-live #XferControl,
+body.genx-agent-live #HangupControl,
+body.genx-agent-live #SendDTMFdiv,
+body.genx-agent-live #DiaLlOgButtonspan,
+body.genx-agent-live #ManuaLDiaLButtons,
+body.genx-agent-live #MDstatusSpan {
+  left: 14px !important;
+  width: calc(var(--genx-left-w) - 28px) !important;
+  max-width: calc(var(--genx-left-w) - 28px) !important;
+  box-sizing: border-box !important;
+}
+
+body.genx-agent-live #DiaLControl { top: 112px !important; }
+body.genx-agent-live #RecorDControl { top: 188px !important; }
+body.genx-agent-live #WebFormSpan { top: 268px !important; }
+body.genx-agent-live #WebFormSpanTwo { top: 310px !important; }
+body.genx-agent-live #ParkControl { top: 368px !important; }
+body.genx-agent-live #XferControl { top: 410px !important; }
+body.genx-agent-live #HangupControl { top: 468px !important; }
+
+body.genx-agent-live #SendDTMFdiv {
+  top: 526px !important;
+  height: 42px !important;
+  min-height: 42px !important;
+  z-index: 120 !important;
+}
+
+body.genx-agent-live #DiaLlOgButtonspan {
+  top: 626px !important;
+  height: 150px !important;
+  min-height: 150px !important;
+  z-index: 118 !important;
+  gap: 8px !important;
+}
+
+body.genx-agent-live #DiaLlOgButtonspan a {
+  left: 14px !important;
+  width: calc(var(--genx-left-w) - 28px) !important;
+  min-width: calc(var(--genx-left-w) - 28px) !important;
+  max-width: calc(var(--genx-left-w) - 28px) !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  border-radius: 13px !important;
+  box-sizing: border-box !important;
+}
+
+body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"] {
+  top: 626px !important;
+}
+
+body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  top: 672px !important;
+}
+
+body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  top: 718px !important;
+  background: rgba(51, 65, 95, 0.98) !important;
+}
+
+body.genx-agent-live #Tabs,
+body.genx-agent-live #Tabs table,
+body.genx-agent-live #Tabs tbody,
+body.genx-agent-live #Tabs tr {
+  width: 310px !important;
+  max-width: 310px !important;
+  height: 46px !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+
+body.genx-agent-live #Tabs td:first-child,
+body.genx-agent-live #Tabs td:nth-child(2) {
+  display: inline-flex !important;
+  width: auto !important;
+  height: 46px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+  visibility: visible !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="MainPanelToFront"],
+body.genx-agent-live #Tabs a[onclick*="ScriptPanelToFront"] {
+  top: 92px !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  z-index: 420 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: transparent !important;
+  font-size: 0 !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  box-sizing: border-box !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="MainPanelToFront"] {
+  left: calc(var(--genx-left-w) + 16px) !important;
+  width: 150px !important;
+  border-radius: 18px 0 0 0 !important;
+  background: linear-gradient(135deg, #4bbcff, #6d6cff) !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="ScriptPanelToFront"] {
+  left: calc(var(--genx-left-w) + 166px) !important;
+  width: 124px !important;
+  border-radius: 0 0 12px 0 !important;
+  border-left: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: rgba(15, 35, 61, 0.96) !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="MainPanelToFront"]::before {
+  content: "CUSTOMER" !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.03em !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="ScriptPanelToFront"]::before {
+  content: "SCRIPT" !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.03em !important;
+  line-height: 44px !important;
+}
+
+body.genx-agent-live #Tabs a[onclick*="MainPanelToFront"] img,
+body.genx-agent-live #Tabs a[onclick*="ScriptPanelToFront"] img {
+  display: none !important;
+}
+
+body.genx-agent-live #MainPanelCustInfo,
+body.genx-agent-live #ScriptPanel,
+body.genx-agent-live #Script2Panel {
+  left: calc(var(--genx-left-w) + 16px) !important;
+  top: 92px !important;
+  width: calc(100vw - var(--genx-left-w) - 36px) !important;
+  height: calc(100vh - 138px) !important;
+  max-height: calc(100vh - 138px) !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(126, 220, 255, 0.18) !important;
+  background: rgba(5, 14, 26, 0.96) !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+body.genx-agent-live #MainPanelCustInfo {
+  padding-top: 58px !important;
+}
+
+body.genx-agent-live #MainPanelCustInfo > table {
+  margin-top: 34px !important;
+}
+
+body.genx-agent-live #ScriptPanel,
+body.genx-agent-live #Script2Panel {
+  padding-top: 58px !important;
+  color: #eef5ff !important;
+}
+
+body.genx-agent-live #ScriptPanel *,
+body.genx-agent-live #Script2Panel *,
+body.genx-agent-live #ScriptContents,
+body.genx-agent-live #Script2Contents {
+  background-color: transparent !important;
+  color: #eef5ff !important;
+}
+
+body.genx-agent-live #MainCommit {
+  position: fixed !important;
+  right: 46px !important;
+  top: 104px !important;
+  left: auto !important;
+  z-index: 430 !important;
+  width: 86px !important;
+  min-width: 86px !important;
+  max-width: 86px !important;
+  height: 32px !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+body.genx-agent-live #MainCommit a {
+  min-width: 86px !important;
+  height: 32px !important;
+  border-radius: 999px !important;
+  background: rgba(51, 65, 95, 0.98) !important;
+}
+
+body.genx-agent-live #Tabs img[name="livecall"],
+body.genx-agent-live #Tabs img[src*="agc_live_call"] {
+  position: fixed !important;
+  right: 164px !important;
+  top: 8px !important;
+  width: 109px !important;
+  height: 30px !important;
+  z-index: 430 !important;
+}
+
+body.genx-agent-live #Tabs .body_tiny,
+body.genx-agent-live #Tabs #status,
+body.genx-agent-live #Tabs #sessionIDspan,
+body.genx-agent-live #Tabs #AgentStatusCalls,
+body.genx-agent-live #Tabs .body_text {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.genx-agent-logout #DiaLControl,
+body.genx-agent-logout #RecorDControl,
+body.genx-agent-logout #WebFormSpan,
+body.genx-agent-logout #WebFormSpanTwo,
+body.genx-agent-logout #ParkControl,
+body.genx-agent-logout #XferControl,
+body.genx-agent-logout #HangupControl,
+body.genx-agent-logout #SendDTMFdiv,
+body.genx-agent-logout #DiaLlOgButtonspan,
+body.genx-agent-logout #ManuaLDiaLButtons,
+body.genx-agent-logout #MDstatusSpan,
+body.genx-agent-logout #CallLogButtons,
+body.genx-agent-logout #CallLogLinkSpan,
+body.genx-agent-logout #AgentViewLink,
+body.genx-agent-logout #AgentViewLinkSpan,
+body.genx-agent-logout #AgentViewSpan,
+body.genx-agent-logout #ScriptPanel,
+body.genx-agent-logout #Script2Panel,
+body.genx-agent-logout #MainCommit,
+body.genx-agent-logout #Tabs,
+body.genx-agent-logout #MainPanel,
+body.genx-agent-logout #MaiNfooterspan {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.genx-agent-logout a[href*="vicidial.php"]::before,
+body.genx-agent-logout a[href*="vicidial.php"]::after,
+body.genx-agent-logout a[href*="vicidial.php"] font::before,
+body.genx-agent-logout a[href*="vicidial.php"] font::after,
+body.genx-agent-logout a[href*="vicidial.php"] span::before,
+body.genx-agent-logout a[href*="vicidial.php"] span::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* v36: keep floating controls inside the cockpit, and make logout a true clean page. */
+body.genx-agent-live #MainCommit {
+  right: auto !important;
+  left: calc(var(--genx-left-w) + 306px) !important;
+  top: 104px !important;
+  width: 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+}
+
+body.genx-agent-live #MainCommit a {
+  min-width: 92px !important;
+  width: 92px !important;
+}
+
+body.genx-agent-live #AgentViewLink,
+body.genx-agent-live #AgentViewLinkSpan,
+body.genx-agent-live #AgentViewSpan {
+  position: fixed !important;
+  left: 14px !important;
+  right: auto !important;
+  bottom: 42px !important;
+  width: calc(var(--genx-left-w) - 28px) !important;
+  max-width: calc(var(--genx-left-w) - 28px) !important;
+  height: 38px !important;
+  z-index: 260 !important;
+}
+
+body.genx-agent-live #AgentViewLink a,
+body.genx-agent-live #AgentViewLinkSpan a,
+body.genx-agent-live #AgentViewSpan a {
+  width: 100% !important;
+  min-width: 100% !important;
+  height: 38px !important;
+  border-radius: 13px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(51, 65, 95, 0.98) !important;
+  color: #ffffff !important;
+}
+
+html body.genx-agent-logout #Header,
+html body.genx-agent-logout #Tabs,
+html body.genx-agent-logout #MainPanel,
+html body.genx-agent-logout #MainPanelCustInfo,
+html body.genx-agent-logout #MainCommit,
+html body.genx-agent-logout #DiaLControl,
+html body.genx-agent-logout #RecorDControl,
+html body.genx-agent-logout #WebFormSpan,
+html body.genx-agent-logout #WebFormSpanTwo,
+html body.genx-agent-logout #ParkControl,
+html body.genx-agent-logout #XferControl,
+html body.genx-agent-logout #HangupControl,
+html body.genx-agent-logout #SendDTMFdiv,
+html body.genx-agent-logout #DiaLlOgButtonspan,
+html body.genx-agent-logout #ManuaLDiaLButtons,
+html body.genx-agent-logout #MDstatusSpan,
+html body.genx-agent-logout #CallLogButtons,
+html body.genx-agent-logout #CallLogLinkSpan,
+html body.genx-agent-logout #CallbacksButtons,
+html body.genx-agent-logout #CBstatusSpan,
+html body.genx-agent-logout #AgentTimeSpan,
+html body.genx-agent-logout #AgentViewLink,
+html body.genx-agent-logout #AgentViewLinkSpan,
+html body.genx-agent-logout #AgentViewSpan,
+html body.genx-agent-logout #ScriptPanel,
+html body.genx-agent-logout #Script2Panel,
+html body.genx-agent-logout #ScriptContents,
+html body.genx-agent-logout #Script2Contents,
+html body.genx-agent-logout #MaiNfooterspan {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  left: -99999px !important;
+  top: -99999px !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: -1 !important;
+}
+
+html body.genx-agent-logout #DiaLlOgButtonspan *,
+html body.genx-agent-logout #ManuaLDiaLButtons *,
+html body.genx-agent-logout #MDstatusSpan *,
+html body.genx-agent-logout #CallLogButtons *,
+html body.genx-agent-logout #CallLogLinkSpan *,
+html body.genx-agent-logout #AgentViewLink *,
+html body.genx-agent-logout #AgentViewLinkSpan *,
+html body.genx-agent-logout #AgentViewSpan *,
+html body.genx-agent-logout #Tabs *,
+html body.genx-agent-logout #MainPanel *,
+html body.genx-agent-logout #ScriptPanel *,
+html body.genx-agent-logout #Script2Panel * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-logout #NoneInSessionBox,
+html body.genx-agent-logout #NoneInSessionBox *,
+html body.genx-agent-logout #LogouTBox,
+html body.genx-agent-logout #LogouTBox * {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+html body.genx-agent-logout #NoneInSessionBox,
+html body.genx-agent-logout #LogouTBox {
+  display: block !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 1000 !important;
+}
+
+/* v37: Agents View belongs in the Action Board; commit belongs beside the tabs. */
+html body.genx-agent-live #MainCommit {
+  position: fixed !important;
+  inset: auto !important;
+  left: 558px !important;
+  top: 104px !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: 440 !important;
+  width: 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+  height: 32px !important;
+}
+
+html body.genx-agent-live #MainCommit a {
+  width: 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  border: 1px solid rgba(255, 231, 122, 0.78) !important;
+  background: linear-gradient(135deg, #facc15, #f59e0b) !important;
+  color: #111827 !important;
+  box-shadow: 0 14px 30px rgba(250, 204, 21, 0.24) !important;
+}
+
+html body.genx-agent-live #MainCommit a *,
+html body.genx-agent-live #MainCommit font,
+html body.genx-agent-live #MainCommit span {
+  color: #111827 !important;
+  text-shadow: none !important;
+}
+
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan {
+  position: fixed !important;
+  inset: auto !important;
+  left: 14px !important;
+  top: 764px !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 220px !important;
+  min-width: 220px !important;
+  max-width: 220px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  z-index: 265 !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+html body.genx-agent-live #AgentViewLink a,
+html body.genx-agent-live #AgentViewLinkSpan a {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 220px !important;
+  min-width: 220px !important;
+  max-width: 220px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 13px !important;
+  border: 1px solid rgba(126, 220, 255, 0.22) !important;
+  background: rgba(51, 65, 95, 0.98) !important;
+  color: #ffffff !important;
+  font-size: 12px !important;
+  font-weight: 950 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.02em !important;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.20) !important;
+  box-sizing: border-box !important;
+}
+
+html body.genx-agent-logout #AgentViewLink,
+html body.genx-agent-logout #AgentViewLinkSpan,
+html body.genx-agent-logout #AgentViewSpan,
+html body.genx-agent-logout #AgentViewLink *,
+html body.genx-agent-logout #AgentViewLinkSpan *,
+html body.genx-agent-logout #AgentViewSpan * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* v44: AgentViewSpan is the stock panel, not the button. Keep the button separate. */
+html body.genx-agent-live #AgentViewSpan {
+  left: 246px !important;
+  top: 92px !important;
+  width: 420px !important;
+  max-width: 420px !important;
+  height: 420px !important;
+  max-height: 420px !important;
+  overflow: auto !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(126, 220, 255, 0.22) !important;
+  background: rgba(7, 19, 34, 0.98) !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28) !important;
+  color: #eef5ff !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[style*="visibility: hidden"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #AgentViewSpan table,
+html body.genx-agent-live #AgentViewSpan td,
+html body.genx-agent-live #AgentViewSpan span,
+html body.genx-agent-live #AgentViewSpan font {
+  background: transparent !important;
+  color: #eef5ff !important;
+}
+
+/* v45: stock popup/overlay panels must stay dark and readable. */
+html body.genx-agent-live #CalLLoGDisplaYBox,
+html body.genx-agent-live #CalLLoGDisplaYBox *,
+html body.genx-agent-live #CallLogSpan,
+html body.genx-agent-live #CallLogSpan *,
+html body.genx-agent-live #NeWManuaLDiaLBox,
+html body.genx-agent-live #NeWManuaLDiaLBox *,
+html body.genx-agent-live #LeaDInfOBox,
+html body.genx-agent-live #LeaDInfOBox *,
+html body.genx-agent-live #ManualValidateBox,
+html body.genx-agent-live #ManualValidateBox *,
+html body.genx-agent-live #SearcHContactsDisplaYBox,
+html body.genx-agent-live #SearcHContactsDisplaYBox *,
+html body.genx-agent-live #SearcHForMDisplaYBox,
+html body.genx-agent-live #SearcHForMDisplaYBox *,
+html body.genx-agent-live #SearcHResultSContactsBox,
+html body.genx-agent-live #SearcHResultSContactsBox *,
+html body.genx-agent-live #CallBacKsLisTBox,
+html body.genx-agent-live #CallBacKsLisTBox *,
+html body.genx-agent-live #CloserSelectBox,
+html body.genx-agent-live #CloserSelectBox * {
+  color: #eef5ff !important;
+  text-shadow: none !important;
+}
+
+html body.genx-agent-live #CalLLoGDisplaYBox,
+html body.genx-agent-live #NeWManuaLDiaLBox,
+html body.genx-agent-live #LeaDInfOBox,
+html body.genx-agent-live #ManualValidateBox,
+html body.genx-agent-live #SearcHContactsDisplaYBox,
+html body.genx-agent-live #SearcHForMDisplaYBox,
+html body.genx-agent-live #SearcHResultSContactsBox,
+html body.genx-agent-live #CallBacKsLisTBox,
+html body.genx-agent-live #CloserSelectBox {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(74, 184, 255, 0.16), transparent 32rem),
+    linear-gradient(180deg, rgba(7, 19, 34, 0.99), rgba(5, 13, 26, 0.99)) !important;
+}
+
+html body.genx-agent-live #CalLLoGDisplaYBox table,
+html body.genx-agent-live #CalLLoGDisplaYBox tr,
+html body.genx-agent-live #CalLLoGDisplaYBox td,
+html body.genx-agent-live #CallLogSpan,
+html body.genx-agent-live #CallLogSpan table,
+html body.genx-agent-live #CallLogSpan tr,
+html body.genx-agent-live #CallLogSpan td,
+html body.genx-agent-live #NeWManuaLDiaLBox table,
+html body.genx-agent-live #NeWManuaLDiaLBox tr,
+html body.genx-agent-live #NeWManuaLDiaLBox td,
+html body.genx-agent-live #LeaDInfOBox table,
+html body.genx-agent-live #LeaDInfOBox tr,
+html body.genx-agent-live #LeaDInfOBox td,
+html body.genx-agent-live #ManualValidateBox table,
+html body.genx-agent-live #ManualValidateBox tr,
+html body.genx-agent-live #ManualValidateBox td,
+html body.genx-agent-live #SearcHContactsDisplaYBox table,
+html body.genx-agent-live #SearcHContactsDisplaYBox tr,
+html body.genx-agent-live #SearcHContactsDisplaYBox td,
+html body.genx-agent-live #SearcHForMDisplaYBox table,
+html body.genx-agent-live #SearcHForMDisplaYBox tr,
+html body.genx-agent-live #SearcHForMDisplaYBox td,
+html body.genx-agent-live #SearcHResultSContactsBox table,
+html body.genx-agent-live #SearcHResultSContactsBox tr,
+html body.genx-agent-live #SearcHResultSContactsBox td {
+  background: transparent !important;
+  color: #eef5ff !important;
+  border-color: rgba(126, 220, 255, 0.18) !important;
+}
+
+html body.genx-agent-live #CalLLoGDisplaYBox a,
+html body.genx-agent-live #NeWManuaLDiaLBox a,
+html body.genx-agent-live #LeaDInfOBox a,
+html body.genx-agent-live #ManualValidateBox a,
+html body.genx-agent-live #SearcHContactsDisplaYBox a,
+html body.genx-agent-live #SearcHForMDisplaYBox a,
+html body.genx-agent-live #SearcHResultSContactsBox a {
+  color: #9bdcff !important;
+}
+
+html body.genx-agent-live #CalLLoGDisplaYBox a:hover,
+html body.genx-agent-live #NeWManuaLDiaLBox a:hover,
+html body.genx-agent-live #LeaDInfOBox a:hover,
+html body.genx-agent-live #ManualValidateBox a:hover,
+html body.genx-agent-live #SearcHContactsDisplaYBox a:hover,
+html body.genx-agent-live #SearcHForMDisplaYBox a:hover,
+html body.genx-agent-live #SearcHResultSContactsBox a:hover {
+  color: #ffffff !important;
+}
+
+html body.genx-agent-live #CalLLoGDisplaYBox input,
+html body.genx-agent-live #CalLLoGDisplaYBox select,
+html body.genx-agent-live #NeWManuaLDiaLBox input,
+html body.genx-agent-live #NeWManuaLDiaLBox select,
+html body.genx-agent-live #NeWManuaLDiaLBox textarea,
+html body.genx-agent-live #ManualValidateBox input,
+html body.genx-agent-live #ManualValidateBox select {
+  background: #06101e !important;
+  color: #f7fbff !important;
+  border: 1px solid rgba(126, 220, 255, 0.32) !important;
+}
+
+/* v41: hide normal agent controls during loading/call-log overlays; clean top-right call status. */
+html body.genx-agent-loading #MainCommit,
+html body.genx-agent-loading #MainCommit *,
+html body.genx-agent-loading #Tabs a[onclick*="MainPanelToFront"],
+html body.genx-agent-loading #Tabs a[onclick*="ScriptPanelToFront"],
+html body.genx-agent-loading #DiaLlOgButtonspan,
+html body.genx-agent-loading #DiaLlOgButtonspan *,
+html body.genx-agent-loading #AgentViewLink,
+html body.genx-agent-loading #AgentViewLink *,
+html body.genx-agent-loading #AgentViewLinkSpan,
+html body.genx-agent-loading #AgentViewLinkSpan *,
+html body.genx-agent-loading #AgentViewSpan,
+html body.genx-agent-loading #AgentViewSpan *,
+html body.genx-agent-calllog #MainCommit,
+html body.genx-agent-calllog #MainCommit *,
+html body.genx-agent-calllog #Tabs a[onclick*="MainPanelToFront"],
+html body.genx-agent-calllog #Tabs a[onclick*="ScriptPanelToFront"],
+html body.genx-agent-calllog #DiaLlOgButtonspan,
+html body.genx-agent-calllog #DiaLlOgButtonspan *,
+html body.genx-agent-calllog #AgentViewLink,
+html body.genx-agent-calllog #AgentViewLink *,
+html body.genx-agent-calllog #AgentViewLinkSpan,
+html body.genx-agent-calllog #AgentViewLinkSpan *,
+html body.genx-agent-calllog #AgentViewSpan,
+html body.genx-agent-calllog #AgentViewSpan * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-modal #MainCommit,
+html body.genx-agent-modal #MainCommit *,
+html body.genx-agent-modal #Tabs a[onclick*="MainPanelToFront"],
+html body.genx-agent-modal #Tabs a[onclick*="ScriptPanelToFront"],
+html body.genx-agent-modal #DiaLlOgButtonspan,
+html body.genx-agent-modal #DiaLlOgButtonspan *,
+html body.genx-agent-modal #AgentViewLink,
+html body.genx-agent-modal #AgentViewLink *,
+html body.genx-agent-modal #AgentViewLinkSpan,
+html body.genx-agent-modal #AgentViewLinkSpan *,
+html body.genx-agent-modal #AgentViewSpan,
+html body.genx-agent-modal #AgentViewSpan * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #Tabs {
+  font-size: 0 !important;
+  color: transparent !important;
+}
+
+html body.genx-agent-live #Tabs td,
+html body.genx-agent-live #Tabs font,
+html body.genx-agent-live #Tabs span,
+html body.genx-agent-live #Tabs .body_text,
+html body.genx-agent-live #Tabs .body_tiny {
+  color: transparent !important;
+  text-shadow: none !important;
+}
+
+html body.genx-agent-live #Tabs img[name="livecall"],
+html body.genx-agent-live #Tabs img[src*="agc_live_call"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* v39: when Logout is clicked, remove all agent chrome immediately, including the top row. */
+html body.genx-agent-logout-pending #Header,
+html body.genx-agent-logout-pending #Header *,
+html body.genx-agent-logout-pending #Tabs,
+html body.genx-agent-logout-pending #Tabs *,
+html body.genx-agent-logout-pending #MainPanel,
+html body.genx-agent-logout-pending #MainPanel *,
+html body.genx-agent-logout-pending #MainPanelCustInfo,
+html body.genx-agent-logout-pending #MainPanelCustInfo *,
+html body.genx-agent-logout-pending #MainCommit,
+html body.genx-agent-logout-pending #MainCommit *,
+html body.genx-agent-logout-pending #DiaLControl,
+html body.genx-agent-logout-pending #DiaLControl *,
+html body.genx-agent-logout-pending #RecorDControl,
+html body.genx-agent-logout-pending #RecorDControl *,
+html body.genx-agent-logout-pending #WebFormSpan,
+html body.genx-agent-logout-pending #WebFormSpan *,
+html body.genx-agent-logout-pending #WebFormSpanTwo,
+html body.genx-agent-logout-pending #WebFormSpanTwo *,
+html body.genx-agent-logout-pending #ParkControl,
+html body.genx-agent-logout-pending #ParkControl *,
+html body.genx-agent-logout-pending #XferControl,
+html body.genx-agent-logout-pending #XferControl *,
+html body.genx-agent-logout-pending #HangupControl,
+html body.genx-agent-logout-pending #HangupControl *,
+html body.genx-agent-logout-pending #SendDTMFdiv,
+html body.genx-agent-logout-pending #SendDTMFdiv *,
+html body.genx-agent-logout-pending #DiaLlOgButtonspan,
+html body.genx-agent-logout-pending #DiaLlOgButtonspan *,
+html body.genx-agent-logout-pending #AgentViewLink,
+html body.genx-agent-logout-pending #AgentViewLink *,
+html body.genx-agent-logout-pending #AgentViewLinkSpan,
+html body.genx-agent-logout-pending #AgentViewLinkSpan *,
+html body.genx-agent-logout-pending #AgentViewSpan,
+html body.genx-agent-logout-pending #AgentViewSpan *,
+html body.genx-agent-logout #Header,
+html body.genx-agent-logout #Header * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  left: -100000px !important;
+  top: -100000px !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* v47 absolute-final overrides: appended after all legacy duplicate blocks. */
+html body:not(:has(#login_sub)) #DiaLControl::after {
+  content: attr(data-genx-status) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused {
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  border-color: rgba(255, 231, 122, 0.82) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused::after {
+  color: #111827 !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+  border-color: rgba(134, 239, 172, 0.62) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready::after {
+  color: #ffffff !important;
+}
+
+html body.genx-agent-live:not(.genx-webphone-open) #webphoneSpan,
+html body.genx-agent-live:not(.genx-webphone-open) #webphonecontent,
+html body.genx-agent-live:not(.genx-webphone-open) #webphone {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan {
+  position: fixed !important;
+  left: 18px !important;
+  top: 941px !important;
+  width: 212px !important;
+  height: 36px !important;
+  z-index: 445 !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink {
+  width: 212px !important;
+  height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  text-transform: uppercase !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(147, 197, 253, 0.55) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22) !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  right: 18px !important;
+  top: 70px !important;
+  width: 360px !important;
+  height: 520px !important;
+  z-index: 700 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 262px !important;
+  top: 78px !important;
+  width: 430px !important;
+  max-width: 430px !important;
+  height: auto !important;
+  min-height: 120px !important;
+  z-index: 680 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  color: #f4f8ff !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  padding: 14px !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] *,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] table,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] tr,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] td {
+  background: transparent !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox,
+html body.genx-agent-calllog #CalLLoGDisplaYBox *,
+html body.genx-agent-calllog #CallLogSpan,
+html body.genx-agent-calllog #CallLogSpan *,
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #AlertBox *,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox *,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #ManualValidateBox *,
+html body.genx-agent-modal #LeaDInfOBox,
+html body.genx-agent-modal #LeaDInfOBox * {
+  background: rgba(8, 20, 36, 0.96) !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox a,
+html body.genx-agent-calllog #CallLogSpan a,
+html body.genx-agent-modal #AlertBox a,
+html body.genx-agent-modal #NeWManuaLDiaLBox a,
+html body.genx-agent-modal #ManualValidateBox a,
+html body.genx-agent-modal #LeaDInfOBox a {
+  color: #8fd8ff !important;
+  text-shadow: none !important;
+}
+
+/* v52: show the whole embedded VICIphone instead of a tiny scrolled iframe. */
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  right: 24px !important;
+  top: 70px !important;
+  width: 520px !important;
+  height: 760px !important;
+  max-width: calc(100vw - 300px) !important;
+  max-height: calc(100vh - 96px) !important;
+  padding: 14px !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphoneSpan center,
+html body.genx-agent-live.genx-webphone-open #webphoneSpan table,
+html body.genx-agent-live.genx-webphone-open #webphoneSpan tr,
+html body.genx-agent-live.genx-webphone-open #webphoneSpan td,
+html body.genx-agent-live.genx-webphone-open #webphonecontent {
+  width: 100% !important;
+  height: auto !important;
+  max-width: none !important;
+  overflow: visible !important;
+  box-sizing: border-box !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphone {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 480px !important;
+  height: 670px !important;
+  max-width: calc(100vw - 340px) !important;
+  max-height: calc(100vh - 150px) !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+/* v52: repeat manual dial title/readability fix at the true end of the file. */
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox center,
+html body.genx-agent-modal #NeWManuaLDiaLBox font,
+html body.genx-agent-modal #NeWManuaLDiaLBox b,
+html body.genx-agent-modal #NeWManuaLDiaLBox strong,
+html body.genx-agent-modal #NeWManuaLDiaLBox span,
+html body.genx-agent-modal #NeWManuaLDiaLBox td,
+html body.genx-agent-modal #NeWManuaLDiaLBox div {
+  color: #f8fbff !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85) !important;
+}
+
+/* v58 EOF override: make the live script's six lower Action Board controls uniform. */
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+}
+
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 10px !important;
+  line-height: 1 !important;
+  text-align: center !important;
+}
+
+html body.genx-agent-live #genxMuteLink {
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  color: #111827 !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(255, 231, 122, 0.75) !important;
+  box-shadow: 0 14px 30px rgba(245, 158, 11, 0.18) !important;
+}
+
+html body.genx-agent-live #genxMuteLink.genx-muted {
+  background: linear-gradient(135deg, #ef4444, #fb7185) !important;
+  color: #ffffff !important;
+  border-color: rgba(254, 202, 202, 0.75) !important;
+}
+
+/* v65: overlay-owned lower utility buttons for Webphone and Agents View. */
+html body.genx-agent-live #genxWebphoneUtilitySpan,
+html body.genx-agent-live #genxAgentsUtilitySpan {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  box-sizing: border-box !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #genxWebphoneUtilityLink,
+html body.genx-agent-live #genxAgentsUtilityLink {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: static !important;
+  left: auto !important;
+  top: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  padding: 0 10px !important;
+  box-sizing: border-box !important;
+  border-radius: 12px !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.02em !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  text-shadow: none !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #genxWebphoneUtilityLink {
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+  border: 1px solid rgba(147, 197, 253, 0.55) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22) !important;
+}
+
+html body.genx-agent-live #genxAgentsUtilityLink {
+  background: rgba(15, 31, 55, 0.96) !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18) !important;
+}
+
+/* v61 true-final: lower Action Board stack must never show during logout/login/loading.
+   Older overlay experiments used broad body:not(:has(#login_sub)) rules; this block lives
+   at EOF so transition states cannot flash MUTE/WEBPHONE/MANUAL controls. */
+html body:not(.genx-agent-live) #genxMuteLinkSpan,
+html body:not(.genx-agent-live) #genxMuteLinkSpan *,
+html body:not(.genx-agent-live) #webphoneLinkSpan,
+html body:not(.genx-agent-live) #webphoneLinkSpan *,
+html body:not(.genx-agent-live) #DiaLlOgButtonspan,
+html body:not(.genx-agent-live) #DiaLlOgButtonspan *,
+html body:not(.genx-agent-live) #ManuaLDiaLButtons,
+html body:not(.genx-agent-live) #ManuaLDiaLButtons *,
+html body:not(.genx-agent-live) #MDstatusSpan,
+html body:not(.genx-agent-live) #MDstatusSpan *,
+html body:not(.genx-agent-live) #CallLogButtons,
+html body:not(.genx-agent-live) #CallLogButtons *,
+html body:not(.genx-agent-live) #CallLogLinkSpan,
+html body:not(.genx-agent-live) #CallLogLinkSpan *,
+html body:not(.genx-agent-live) #AgentViewLink,
+html body:not(.genx-agent-live) #AgentViewLink *,
+html body:not(.genx-agent-live) #AgentViewLinkSpan,
+html body:not(.genx-agent-live) #AgentViewLinkSpan *,
+html body.genx-agent-logout-pending #genxMuteLinkSpan,
+html body.genx-agent-logout-pending #genxMuteLinkSpan *,
+html body.genx-agent-logout-pending #webphoneLinkSpan,
+html body.genx-agent-logout-pending #webphoneLinkSpan *,
+html body.genx-agent-logout-pending #DiaLlOgButtonspan,
+html body.genx-agent-logout-pending #DiaLlOgButtonspan *,
+html body.genx-agent-logout-pending #ManuaLDiaLButtons,
+html body.genx-agent-logout-pending #ManuaLDiaLButtons *,
+html body.genx-agent-logout-pending #MDstatusSpan,
+html body.genx-agent-logout-pending #MDstatusSpan *,
+html body.genx-agent-logout-pending #CallLogButtons,
+html body.genx-agent-logout-pending #CallLogButtons *,
+html body.genx-agent-logout-pending #CallLogLinkSpan,
+html body.genx-agent-logout-pending #CallLogLinkSpan *,
+html body.genx-agent-logout-pending #AgentViewLink,
+html body.genx-agent-logout-pending #AgentViewLink *,
+html body.genx-agent-logout-pending #AgentViewLinkSpan,
+html body.genx-agent-logout-pending #AgentViewLinkSpan *,
+html body.genx-agent-login #genxMuteLinkSpan,
+html body.genx-agent-login #genxMuteLinkSpan *,
+html body.genx-agent-login #webphoneLinkSpan,
+html body.genx-agent-login #webphoneLinkSpan *,
+html body.genx-agent-login #DiaLlOgButtonspan,
+html body.genx-agent-login #DiaLlOgButtonspan *,
+html body.genx-agent-loading #genxMuteLinkSpan,
+html body.genx-agent-loading #genxMuteLinkSpan *,
+html body.genx-agent-loading #webphoneLinkSpan,
+html body.genx-agent-loading #webphoneLinkSpan *,
+html body.genx-agent-loading #DiaLlOgButtonspan,
+html body.genx-agent-loading #DiaLlOgButtonspan * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"],
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live > a[onclick*="VieWCalLLoG"],
+html body.genx-agent-live #AgentViewLinkSpan {
+  width: 222px !important;
+  height: 38px !important;
+  min-width: 222px !important;
+  min-height: 38px !important;
+  max-width: 222px !important;
+  max-height: 38px !important;
+}
+
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live > a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 10px !important;
+  box-sizing: border-box !important;
+  border-radius: 12px !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  font-weight: 950 !important;
+  letter-spacing: 0.02em !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  text-shadow: none !important;
+  border: 1px solid rgba(147, 197, 253, 0.42) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.16) !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live > a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+}
+
+html body.genx-agent-live > a[onclick*="VieWCalLLoG"] {
+  background: rgba(51, 65, 95, 0.96) !important;
+}
+
+/* v58 true-final: Action Board lower stack including real local-phone mute. */
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  padding: 0 10px !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  line-height: 1 !important;
+  font-size: 13px !important;
+  box-sizing: border-box !important;
+}
+
+html body.genx-agent-live #genxMuteLink {
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  color: #111827 !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(255, 231, 122, 0.75) !important;
+  box-shadow: 0 14px 30px rgba(245, 158, 11, 0.18) !important;
+}
+
+html body.genx-agent-live #genxMuteLink.genx-muted {
+  background: linear-gradient(135deg, #ef4444, #fb7185) !important;
+  color: #ffffff !important;
+  border-color: rgba(254, 202, 202, 0.75) !important;
+}
+
+html body:not(.genx-agent-live) #genxMuteLinkSpan,
+html body.genx-agent-calllog #genxMuteLinkSpan,
+html body.genx-agent-modal #genxMuteLinkSpan,
+html body.genx-agent-loading #genxMuteLinkSpan,
+html body.genx-agent-login #genxMuteLinkSpan,
+html body.genx-agent-logout #genxMuteLinkSpan,
+html body.genx-agent-logout-pending #genxMuteLinkSpan {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* v58: bottom-stack Action Board controls. Keep these identical whether
+   Chrome debugging is attached or not; every lower pill has same width. */
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  position: fixed !important;
+  left: 16px !important;
+  right: auto !important;
+  top: auto !important;
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan {
+  bottom: 194px !important;
+}
+
+html body.genx-agent-live #genxMuteLinkSpan {
+  bottom: 240px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"] {
+  bottom: 148px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  bottom: 102px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  bottom: 56px !important;
+}
+
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan {
+  bottom: 10px !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  white-space: nowrap !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  font-size: 13px !important;
+  box-sizing: border-box !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #genxMuteLink {
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+}
+
+html body.genx-agent-live #genxMuteLink {
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  color: #111827 !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(255, 231, 122, 0.75) !important;
+  box-shadow: 0 14px 30px rgba(245, 158, 11, 0.18) !important;
+}
+
+html body.genx-agent-live #genxMuteLink.genx-muted {
+  background: linear-gradient(135deg, #ef4444, #fb7185) !important;
+  color: #ffffff !important;
+  border-color: rgba(254, 202, 202, 0.75) !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan {
+  left: 0 !important;
+  width: 254px !important;
+  height: 190px !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #webphoneLinkSpan {
+  pointer-events: auto !important;
+}
+
+html body:not(.genx-agent-live) #genxMuteLinkSpan,
+html body.genx-agent-calllog #genxMuteLinkSpan,
+html body.genx-agent-modal #genxMuteLinkSpan,
+html body.genx-agent-loading #genxMuteLinkSpan,
+html body.genx-agent-login #genxMuteLinkSpan,
+html body.genx-agent-logout #genxMuteLinkSpan,
+html body.genx-agent-logout-pending #genxMuteLinkSpan {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* v57: keep the lower Action Board controls as one evenly spaced stack.
+   Chrome's debugging banner changes viewport height, so JS supplies the top
+   positions and this block locks size/spacing/visibility. */
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  left: 14px !important;
+  width: 212px !important;
+  height: 36px !important;
+  min-width: 212px !important;
+  min-height: 36px !important;
+  max-width: 212px !important;
+  max-height: 36px !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  white-space: nowrap !important;
+  line-height: 1 !important;
+  padding: 0 10px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan {
+  left: 0 !important;
+  width: 240px !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a {
+  pointer-events: auto !important;
+}
+
+/* v54: keep the full webphone inside the viewport. */
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  left: auto !important;
+  right: 24px !important;
+  width: 520px !important;
+  max-width: min(520px, calc(100vw - 300px)) !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  width: 480px !important;
+  max-width: calc(100% - 28px) !important;
+}
+
+/* v55: open webphone beside the Action Board so the full phone is visible. */
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  left: 272px !important;
+  right: auto !important;
+  top: 70px !important;
+  width: 560px !important;
+  height: 760px !important;
+  max-width: calc(100vw - 300px) !important;
+  max-height: calc(100vh - 96px) !important;
+  overflow: visible !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  width: 520px !important;
+  height: 670px !important;
+  max-width: calc(100% - 24px) !important;
+  max-height: calc(100% - 64px) !important;
+}
+
+/* v53: keep manual dial content below the fixed agent header. */
+html body.genx-agent-modal #NeWManuaLDiaLBox {
+  top: 50px !important;
+  height: calc(100vh - 50px) !important;
+  min-height: calc(100vh - 50px) !important;
+  box-sizing: border-box !important;
+  overflow: auto !important;
+}
+
+html body.genx-agent-modal #NeWManuaLDiaLBox > table,
+html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody,
+html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody > tr,
+html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody > tr > td {
+  height: auto !important;
+  min-height: calc(100vh - 50px) !important;
+}
+
+html body.genx-agent-modal #NeWManuaLDiaLBox input,
+html body.genx-agent-modal #NeWManuaLDiaLBox select,
+html body.genx-agent-modal #NeWManuaLDiaLBox textarea {
+  color: #f8fbff !important;
+  text-shadow: none !important;
+}
+
+/* v56: webphone belongs on the right, but fully inside the viewport. */
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  left: auto !important;
+  right: 24px !important;
+  top: 70px !important;
+  width: 560px !important;
+  height: 760px !important;
+  max-width: min(560px, calc(100vw - 320px)) !important;
+  max-height: calc(100vh - 96px) !important;
+  overflow: visible !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  width: 520px !important;
+  height: 670px !important;
+  max-width: calc(100% - 24px) !important;
+  max-height: calc(100% - 64px) !important;
+}
+
+/* v51: manual dial header/title must be readable on the dark modal. */
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox center,
+html body.genx-agent-modal #NeWManuaLDiaLBox font,
+html body.genx-agent-modal #NeWManuaLDiaLBox b,
+html body.genx-agent-modal #NeWManuaLDiaLBox strong,
+html body.genx-agent-modal #NeWManuaLDiaLBox span,
+html body.genx-agent-modal #NeWManuaLDiaLBox td,
+html body.genx-agent-modal #NeWManuaLDiaLBox div {
+  color: #f8fbff !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85) !important;
+}
+
+html body.genx-agent-modal #NeWManuaLDiaLBox > center:first-child,
+html body.genx-agent-modal #NeWManuaLDiaLBox center:first-of-type,
+html body.genx-agent-modal #NeWManuaLDiaLBox b:first-child,
+html body.genx-agent-modal #NeWManuaLDiaLBox font:first-child {
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.01em !important;
+}
+
+html body.genx-agent-modal #NeWManuaLDiaLBox input,
+html body.genx-agent-modal #NeWManuaLDiaLBox select,
+html body.genx-agent-modal #NeWManuaLDiaLBox textarea {
+  color: #f8fbff !important;
+  text-shadow: none !important;
+}
+
+/* v50: prevent the stock dialog container from eating clicks on lower rail buttons. */
+html body.genx-agent-live #DiaLlOgButtonspan {
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a,
+html body.genx-agent-live #ManuaLDiaLButtons,
+html body.genx-agent-live #ManuaLDiaLButtons a,
+html body.genx-agent-live #CallLogButtons,
+html body.genx-agent-live #CallLogButtons a,
+html body.genx-agent-live #CallLogLinkSpan,
+html body.genx-agent-live #CallLogLinkSpan a {
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a {
+  z-index: 620 !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a {
+  z-index: 620 !important;
+  pointer-events: auto !important;
+}
+
+/* v47 final overrides: these live last so older experimental rules cannot win. */
+html body:not(:has(#login_sub)) #DiaLControl::after {
+  content: attr(data-genx-status) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused {
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  border-color: rgba(255, 231, 122, 0.82) !important;
+  box-shadow: 0 16px 34px rgba(245, 158, 11, 0.24) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused::after {
+  color: #111827 !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+  border-color: rgba(134, 239, 172, 0.62) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready::after {
+  color: #ffffff !important;
+}
+
+html body.genx-agent-live:not(.genx-webphone-open) #webphoneSpan,
+html body.genx-agent-live:not(.genx-webphone-open) #webphonecontent,
+html body.genx-agent-live:not(.genx-webphone-open) #webphone {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan {
+  position: fixed !important;
+  left: 18px !important;
+  top: 941px !important;
+  width: 212px !important;
+  height: 36px !important;
+  z-index: 445 !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink {
+  width: 212px !important;
+  height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  text-transform: uppercase !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(147, 197, 253, 0.55) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22) !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  right: 18px !important;
+  top: 70px !important;
+  width: 360px !important;
+  height: 520px !important;
+  z-index: 700 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 262px !important;
+  top: 78px !important;
+  width: 430px !important;
+  max-width: 430px !important;
+  height: auto !important;
+  min-height: 120px !important;
+  z-index: 680 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  color: #f4f8ff !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  padding: 14px !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] *,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] table,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] tr,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] td {
+  background: transparent !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox,
+html body.genx-agent-calllog #CalLLoGDisplaYBox *,
+html body.genx-agent-calllog #CallLogSpan,
+html body.genx-agent-calllog #CallLogSpan *,
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #AlertBox *,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox *,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #ManualValidateBox *,
+html body.genx-agent-modal #LeaDInfOBox,
+html body.genx-agent-modal #LeaDInfOBox * {
+  background: rgba(8, 20, 36, 0.96) !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox a,
+html body.genx-agent-calllog #CallLogSpan a,
+html body.genx-agent-modal #AlertBox a,
+html body.genx-agent-modal #NeWManuaLDiaLBox a,
+html body.genx-agent-modal #ManualValidateBox a,
+html body.genx-agent-modal #LeaDInfOBox a {
+  color: #8fd8ff !important;
+  text-shadow: none !important;
+}
+
+html body.genx-agent-modal #DiaLControl,
+html body.genx-agent-modal #DiaLControl *,
+html body.genx-agent-modal #RecorDControl,
+html body.genx-agent-modal #RecorDControl *,
+html body.genx-agent-modal #WebFormSpan,
+html body.genx-agent-modal #WebFormSpan *,
+html body.genx-agent-modal #WebFormSpanTwo,
+html body.genx-agent-modal #WebFormSpanTwo *,
+html body.genx-agent-modal #ParkControl,
+html body.genx-agent-modal #ParkControl *,
+html body.genx-agent-modal #XferControl,
+html body.genx-agent-modal #XferControl *,
+html body.genx-agent-modal #HangupControl,
+html body.genx-agent-modal #HangupControl *,
+html body.genx-agent-modal #SendDTMFdiv,
+html body.genx-agent-modal #SendDTMFdiv * {
+  pointer-events: none !important;
+  opacity: 0.22 !important;
+}
+
+/* v47: state-aware Ready/Pause button, webphone access, and dark readable stock overlays. */
+html body:not(:has(#login_sub)) #DiaLControl::after {
+  content: attr(data-genx-status) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused {
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  border-color: rgba(255, 231, 122, 0.82) !important;
+  box-shadow: 0 16px 34px rgba(245, 158, 11, 0.24) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused::after {
+  color: #111827 !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+  border-color: rgba(134, 239, 172, 0.62) !important;
+  box-shadow: 0 16px 34px rgba(34, 197, 94, 0.22) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready::after {
+  color: #f8fafc !important;
+}
+
+html body.genx-agent-live #webphone_content,
+html body.genx-agent-live #WebPhone,
+html body.genx-agent-live #webphone,
+html body.genx-agent-live iframe[name*="webphone" i],
+html body.genx-agent-live iframe[id*="webphone" i] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+html body.genx-agent-live #WebPhoneViewLink,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live a[onclick*="webphone" i],
+html body.genx-agent-live a[href*="webphone" i] {
+  display: flex !important;
+  position: fixed !important;
+  left: 18px !important;
+  top: 941px !important;
+  width: 212px !important;
+  height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  text-transform: uppercase !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(147, 197, 253, 0.55) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22) !important;
+  z-index: 430 !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox,
+html body.genx-agent-calllog #CalLLoGDisplaYBox *,
+html body.genx-agent-calllog #CallLogSpan,
+html body.genx-agent-calllog #CallLogSpan *,
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #AlertBox *,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox *,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #ManualValidateBox *,
+html body.genx-agent-modal #LeaDInfOBox,
+html body.genx-agent-modal #LeaDInfOBox * {
+  background: rgba(8, 20, 36, 0.96) !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox,
+html body.genx-agent-calllog #CallLogSpan,
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #LeaDInfOBox {
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox a,
+html body.genx-agent-calllog #CallLogSpan a,
+html body.genx-agent-modal #AlertBox a,
+html body.genx-agent-modal #NeWManuaLDiaLBox a,
+html body.genx-agent-modal #ManualValidateBox a,
+html body.genx-agent-modal #LeaDInfOBox a {
+  color: #8fd8ff !important;
+  text-shadow: none !important;
+}
+
+html body.genx-agent-modal #DiaLControl,
+html body.genx-agent-modal #DiaLControl *,
+html body.genx-agent-modal #RecorDControl,
+html body.genx-agent-modal #RecorDControl *,
+html body.genx-agent-modal #WebFormSpan,
+html body.genx-agent-modal #WebFormSpan *,
+html body.genx-agent-modal #WebFormSpanTwo,
+html body.genx-agent-modal #WebFormSpanTwo *,
+html body.genx-agent-modal #ParkControl,
+html body.genx-agent-modal #ParkControl *,
+html body.genx-agent-modal #XferControl,
+html body.genx-agent-modal #XferControl *,
+html body.genx-agent-modal #HangupControl,
+html body.genx-agent-modal #HangupControl *,
+html body.genx-agent-modal #SendDTMFdiv,
+html body.genx-agent-modal #SendDTMFdiv * {
+  pointer-events: none !important;
+  opacity: 0.22 !important;
+}
+
+html body.genx-agent-logout-pending {
+  background:
+    radial-gradient(circle at 50% 20%, rgba(74, 184, 255, 0.18), transparent 34rem),
+    linear-gradient(145deg, #050b16 0%, #091527 55%, #0b1323 100%) !important;
+}
+
+/* v38: final logout cleanup and lowered left utility stack. */
+html body.genx-agent-live #DiaLlOgButtonspan {
+  top: 660px !important;
+  height: 190px !important;
+  min-height: 190px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"] {
+  top: 660px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"] {
+  top: 706px !important;
+}
+
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  top: 752px !important;
+}
+
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan {
+  top: 798px !important;
+}
+
+html body.genx-agent-logout #Tabs,
+html body.genx-agent-logout #Tabs *,
+html body.genx-agent-logout #MainCommit,
+html body.genx-agent-logout #MainCommit *,
+html body.genx-agent-logout #MainPanel,
+html body.genx-agent-logout #MainPanel *,
+html body.genx-agent-logout #MainPanelCustInfo,
+html body.genx-agent-logout #MainPanelCustInfo *,
+html body.genx-agent-logout #ScriptPanel,
+html body.genx-agent-logout #ScriptPanel *,
+html body.genx-agent-logout #Script2Panel,
+html body.genx-agent-logout #Script2Panel *,
+html body.genx-agent-logout #DiaLControl,
+html body.genx-agent-logout #DiaLControl *,
+html body.genx-agent-logout #RecorDControl,
+html body.genx-agent-logout #RecorDControl *,
+html body.genx-agent-logout #WebFormSpan,
+html body.genx-agent-logout #WebFormSpan *,
+html body.genx-agent-logout #WebFormSpanTwo,
+html body.genx-agent-logout #WebFormSpanTwo *,
+html body.genx-agent-logout #ParkControl,
+html body.genx-agent-logout #ParkControl *,
+html body.genx-agent-logout #XferControl,
+html body.genx-agent-logout #XferControl *,
+html body.genx-agent-logout #HangupControl,
+html body.genx-agent-logout #HangupControl *,
+html body.genx-agent-logout #SendDTMFdiv,
+html body.genx-agent-logout #SendDTMFdiv *,
+html body.genx-agent-logout #DiaLlOgButtonspan,
+html body.genx-agent-logout #DiaLlOgButtonspan *,
+html body.genx-agent-logout #AgentViewLink,
+html body.genx-agent-logout #AgentViewLink *,
+html body.genx-agent-logout #AgentViewLinkSpan,
+html body.genx-agent-logout #AgentViewLinkSpan *,
+html body.genx-agent-logout #AgentViewSpan,
+html body.genx-agent-logout #AgentViewSpan * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  left: -100000px !important;
+  top: -100000px !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* v47 true-final overrides: appended after the last v38 duplicate block. */
+html body:not(:has(#login_sub)) #DiaLControl::after {
+  content: attr(data-genx-status) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused {
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  border-color: rgba(255, 231, 122, 0.82) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-paused::after {
+  color: #111827 !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+  border-color: rgba(134, 239, 172, 0.62) !important;
+}
+
+html body:not(:has(#login_sub)) #DiaLControl.genx-state-ready::after {
+  color: #ffffff !important;
+}
+
+html body.genx-agent-live:not(.genx-webphone-open) #webphoneSpan,
+html body.genx-agent-live:not(.genx-webphone-open) #webphonecontent,
+html body.genx-agent-live:not(.genx-webphone-open) #webphone {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan {
+  position: fixed !important;
+  left: 18px !important;
+  top: 941px !important;
+  width: 212px !important;
+  height: 36px !important;
+  z-index: 445 !important;
+}
+
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #webphoneLink {
+  width: 212px !important;
+  height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+  color: #ffffff !important;
+  font-weight: 900 !important;
+  font-size: 13px !important;
+  text-transform: uppercase !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(147, 197, 253, 0.55) !important;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22) !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  right: 18px !important;
+  top: 70px !important;
+  width: 360px !important;
+  height: 520px !important;
+  z-index: 700 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 262px !important;
+  top: 78px !important;
+  width: 430px !important;
+  max-width: 430px !important;
+  height: auto !important;
+  min-height: 120px !important;
+  z-index: 680 !important;
+  background: rgba(8, 20, 36, 0.98) !important;
+  color: #f4f8ff !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42) !important;
+  padding: 14px !important;
+}
+
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] *,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] table,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] tr,
+html body.genx-agent-live #AgentViewSpan[data-genx-open="1"] td {
+  background: transparent !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox,
+html body.genx-agent-calllog #CalLLoGDisplaYBox *,
+html body.genx-agent-calllog #CallLogSpan,
+html body.genx-agent-calllog #CallLogSpan *,
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #AlertBox *,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox *,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #ManualValidateBox *,
+html body.genx-agent-modal #LeaDInfOBox,
+html body.genx-agent-modal #LeaDInfOBox * {
+  background: rgba(8, 20, 36, 0.96) !important;
+  color: #f4f8ff !important;
+  border-color: rgba(126, 220, 255, 0.24) !important;
+}
+
+html body.genx-agent-calllog #CalLLoGDisplaYBox a,
+html body.genx-agent-calllog #CallLogSpan a,
+html body.genx-agent-modal #AlertBox a,
+html body.genx-agent-modal #NeWManuaLDiaLBox a,
+html body.genx-agent-modal #ManualValidateBox a,
+html body.genx-agent-modal #LeaDInfOBox a {
+  color: #8fd8ff !important;
+  text-shadow: none !important;
+}
+
+/* v52 true-final: full webphone and readable manual dial title. */
+html body.genx-agent-live.genx-webphone-open #webphoneSpan {
+  right: 24px !important;
+  top: 70px !important;
+  width: 520px !important;
+  height: 760px !important;
+  max-width: calc(100vw - 300px) !important;
+  max-height: calc(100vh - 96px) !important;
+  padding: 14px !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+html body.genx-agent-live.genx-webphone-open #webphonecontent,
+html body.genx-agent-live.genx-webphone-open #webphone {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 480px !important;
+  height: 670px !important;
+  max-width: calc(100vw - 340px) !important;
+  max-height: calc(100vh - 150px) !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox center,
+html body.genx-agent-modal #NeWManuaLDiaLBox font,
+html body.genx-agent-modal #NeWManuaLDiaLBox b,
+html body.genx-agent-modal #NeWManuaLDiaLBox strong,
+html body.genx-agent-modal #NeWManuaLDiaLBox span,
+html body.genx-agent-modal #NeWManuaLDiaLBox td,
+html body.genx-agent-modal #NeWManuaLDiaLBox div {
+  color: #f8fbff !important;
+  opacity: 1 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85) !important;
+}
+
+/* v58 actual EOF override: uniform lower Action Board stack. */
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #genxMuteLinkSpan,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan,
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+}
+
+html body.genx-agent-live #genxMuteLink,
+html body.genx-agent-live #webphoneLink,
+html body.genx-agent-live #webphoneLinkSpan a,
+html body.genx-agent-live #AgentViewLink,
+html body.genx-agent-live #AgentViewLinkSpan,
+html body.genx-agent-live #AgentViewLinkSpan a,
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('NO'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="NeWManuaLDiaLCalL('FAST'"],
+html body.genx-agent-live #DiaLlOgButtonspan a[onclick*="VieWCalLLoG"] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 10px !important;
+  line-height: 1 !important;
+  text-align: center !important;
+}
+
+html body.genx-agent-live #genxMuteLink {
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, #f59e0b, #facc15) !important;
+  color: #111827 !important;
+  font-weight: 950 !important;
+  text-decoration: none !important;
+  border: 1px solid rgba(255, 231, 122, 0.75) !important;
+  box-shadow: 0 14px 30px rgba(245, 158, 11, 0.18) !important;
+}
+
+html body.genx-agent-live #genxMuteLink.genx-muted {
+  background: linear-gradient(135deg, #ef4444, #fb7185) !important;
+  color: #ffffff !important;
+  border-color: rgba(254, 202, 202, 0.75) !important;
+}
+/*
+ * GENX VICIdial Agent UI overlay stylesheet.
+ *
+ * Overlay-only: loaded by work/agent_ui/bootstrap-lite.php and deployed to
+ * /var/www/html/agc/ui/assets/css/agent-lite.css.
+ *
+ * Maintenance warning:
+ * This file contains historical override blocks from iterative UI testing.
+ * The final blocks at the end intentionally win over older rules. For small
+ * bug fixes, prefer appending a clearly versioned final override rather than
+ * editing older sections, unless you are deliberately cleaning a duplicate.
+ */
