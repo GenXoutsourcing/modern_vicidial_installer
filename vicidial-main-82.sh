@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "Vicidial installation AlmaLinux/RockyLinux with WebPhone and Dynamic portal"
 
 # Function to prompt user for input
@@ -260,7 +262,7 @@ echo "Install Perl"
 yum install -y perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-DBI perl-DBD-MySQL perl-GD perl-Env perl-Term-ReadLine-Gnu perl-SelfLoader perl-open.noarch 
 
 #CPM install
-cd /usr/src/new_vicidial
+cd "$SCRIPT_DIR"
 curl -fsSL https://raw.githubusercontent.com/skaji/cpm/main/cpm | perl - install -g App::cpm
 /usr/local/bin/cpm install -g
 
@@ -590,7 +592,7 @@ cat <<CRONTAB>> /root/crontab-file
 0 2 * * * /usr/share/astguiclient/ADMIN_backup.pl
 
 ###certbot renew
-@weekly /usr/src/new_vicidial/certbot.sh
+@weekly $SCRIPT_DIR/certbot.sh
 
 ### recording mixing/compressing/ftping scripts
 #0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_mix.pl
@@ -926,9 +928,9 @@ EOF
 ##EOF
 
 ##confbridge fix
-cd /usr/src/new_vicidial/
-yes | cp -rf extensions.conf /etc/asterisk/extensions.conf
-mv confbridge-vicidial.conf /etc/asterisk/
+cd "$SCRIPT_DIR"
+yes | cp -rf "$SCRIPT_DIR/extensions.conf" /etc/asterisk/extensions.conf
+cp -f "$SCRIPT_DIR/confbridge-vicidial.conf" /etc/asterisk/
 
 tee -a /etc/asterisk/confbridge.conf <<EOF
 
@@ -944,7 +946,7 @@ cat <<WELCOME>> /var/www/html/index.html
 Please Hold while I redirect you!
 WELCOME
 
-#cd /usr/src/new_vicidial
+#cd "$SCRIPT_DIR"
 #chmod +x confbridges.sh
 #./confbridges.sh
 
@@ -966,7 +968,7 @@ EOF
 yum in certbot -y
 systemctl enable certbot-renew.timer
 systemctl start certbot-renew.timer
-cd /usr/src/new_vicidial
+cd "$SCRIPT_DIR"
 chmod +x vicidial-enable-webrtc.sh
 service firewalld stop
 ./vicidial-enable-webrtc.sh
@@ -989,12 +991,12 @@ firewall-cmd --permanent --remove-service=cockpit
 firewall-cmd --permanent --remove-service=dhcpv6-client
 firewall-cmd --reload
 
-chmod +x /usr/src/new_vicidial/certbot.sh
+chmod +x "$SCRIPT_DIR/certbot.sh"
 
 chmod -R 777 /var/spool/asterisk/
 chown -R apache:apache /var/spool/asterisk/
 
-## mv /usr/src/new_vicidial/viciportal-ssl.conf /home/viciportal-ssl.conf
+## mv "$SCRIPT_DIR/viciportal-ssl.conf" /home/viciportal-ssl.conf
 ## sed -i s/DOMAINNAME/"$DOMAINNAME"/g /var/www/vhosts/dynportal/inc/defaults.inc.php
 ## sed -i s/DOMAINNAME/"$DOMAINNAME"/g /home/viciportal-ssl.conf
 
