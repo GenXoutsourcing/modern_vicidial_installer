@@ -13,6 +13,13 @@ prompt() {
     export $varname="${input:-$default_value}"
 }
 
+fix_vicidial_web_permissions() {
+    mkdir -p /var/www/html
+    chown -R apache:apache /var/www/html
+    find /var/www/html -type d -exec chmod 2775 {} \;
+    find /var/www/html -type f -exec chmod 664 {} \;
+}
+
 echo "Getting Machine info - No hostname? Enter the IP Address"
 echo "**************************************************************************"
 prompt hostname "Enter the hostname:" "$hostname"
@@ -564,6 +571,7 @@ sed -i s/SERVERIP/"$ip_address"/g /etc/astguiclient.conf
 
 echo "Install VICIDIAL"
 perl install.pl --no-prompt --copy_sample_conf_files=Y
+fix_vicidial_web_permissions
 
 #Secure Manager 
 sed -i s/0.0.0.0/127.0.0.1/g /etc/asterisk/manager.conf
@@ -949,6 +957,7 @@ cat <<WELCOME>> /var/www/html/index.html
 <META HTTP-EQUIV=REFRESH CONTENT="1; URL=/vicidial/welcome.php">
 Please Hold while I redirect you!
 WELCOME
+fix_vicidial_web_permissions
 
 #cd "$SCRIPT_DIR"
 #chmod +x confbridges.sh
