@@ -437,7 +437,8 @@ if [ ! -f "$SCRIPT_DIR/cpanfile" ]; then
     echo "ERROR: Missing $SCRIPT_DIR/cpanfile. Cannot install required Perl modules."
     exit 1
 fi
-curl -fsSL https://raw.githubusercontent.com/skaji/cpm/main/cpm | perl - install -g App::cpm
+copy_asset cpm /usr/local/bin/cpm
+chmod +x /usr/local/bin/cpm
 /usr/local/bin/cpm install -g
 
 #Install Asterisk Perl
@@ -457,7 +458,7 @@ dnf install -y elfutils-libelf-devel libedit-devel
 #Install Lame
 cd /usr/src
 rm -rf lame-3.99.5
-wget -N http://downloads.sourceforge.net/project/lame/lame/3.99/lame-3.99.5.tar.gz
+copy_asset lame-3.99.5.tar.gz
 tar -zxf lame-3.99.5.tar.gz
 cd lame-3.99.5
 ./configure
@@ -468,7 +469,7 @@ make install
 #Install Jansson
 cd /usr/src/
 rm -rf jansson-2.13
-wget -N https://digip.org/jansson/releases/jansson-2.13.tar.gz
+copy_asset jansson-2.13.tar.gz
 tar xvzf jansson-2.13.tar.gz
 cd jansson-2.13
 ./configure
@@ -581,14 +582,14 @@ read -p 'Press Enter to continue to Asterisk install: '
 rm -rf /usr/src/asterisk /usr/src/libsrtp-2.1.0
 mkdir -p /usr/src/asterisk
 cd /usr/src/asterisk
-wget -N https://downloads.asterisk.org/pub/telephony/libpri/libpri-1.6.1.tar.gz
+copy_asset libpri-1.6.1.tar.gz
 copy_asset asterisk-18.21.0-vici.tar.gz
 tar -xvzf asterisk-18.21.0-vici.tar.gz
 tar -xvzf libpri-*
 
 cd /usr/src
-wget -N https://github.com/cisco/libsrtp/archive/v2.1.0.tar.gz
-tar xfv v2.1.0.tar.gz
+copy_asset libsrtp-2.1.0.tar.gz
+tar xfv libsrtp-2.1.0.tar.gz
 cd libsrtp-2.1.0
 ./configure --prefix=/usr --enable-openssl
 make shared_library && sudo make install
@@ -1000,7 +1001,7 @@ ln -sf /usr/share/astguiclient/ip_relay/ip_relay_linux_x86_64 /usr/local/bin/ip_
 ip_relay -h >/dev/null 2>&1 || true
 
 cd /usr/lib64/asterisk/modules
-wget -N http://asterisk.hosting.lv/bin/codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so
+copy_asset codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so
 cp -f codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so codec_g729.so
 chmod 777 codec_g729.so
 
@@ -1030,15 +1031,15 @@ EOF
 ##Install Sounds
 
 cd /usr/src
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-core-sounds-en-ulaw-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-core-sounds-en-wav-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-core-sounds-en-gsm-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-extra-sounds-en-ulaw-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-extra-sounds-en-wav-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-extra-sounds-en-gsm-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-moh-opsound-gsm-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-moh-opsound-ulaw-current.tar.gz
-wget -N http://downloads.asterisk.org/pub/telephony/sounds/asterisk-moh-opsound-wav-current.tar.gz
+copy_asset asterisk-core-sounds-en-ulaw-current.tar.gz
+copy_asset asterisk-core-sounds-en-wav-current.tar.gz
+copy_asset asterisk-core-sounds-en-gsm-current.tar.gz
+copy_asset asterisk-extra-sounds-en-ulaw-current.tar.gz
+copy_asset asterisk-extra-sounds-en-wav-current.tar.gz
+copy_asset asterisk-extra-sounds-en-gsm-current.tar.gz
+copy_asset asterisk-moh-opsound-gsm-current.tar.gz
+copy_asset asterisk-moh-opsound-ulaw-current.tar.gz
+copy_asset asterisk-moh-opsound-wav-current.tar.gz
 
 #Place the audio files in their proper places:
 cd /var/lib/asterisk/sounds

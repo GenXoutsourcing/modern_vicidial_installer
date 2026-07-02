@@ -1,6 +1,17 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ASSET_DIR="$SCRIPT_DIR/assets"
+
+copy_asset() {
+	local asset_name=$1
+	local destination=${2:-$asset_name}
+	if [ ! -f "$ASSET_DIR/$asset_name" ]; then
+		echo "ERROR: Missing installer asset: $ASSET_DIR/$asset_name"
+		exit 1
+	fi
+	cp -f "$ASSET_DIR/$asset_name" "$destination"
+}
 
 install_certbot_required() {
 	if command -v certbot >/dev/null 2>&1; then
@@ -58,7 +69,7 @@ else
 	MYSQL=(mysql -u root -p"$MYSQL_ROOT_PASS")
 fi
 
-wget -O /etc/httpd/conf.d/$DOMAINNAME.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/DOMAINNAME.conf
+copy_asset DOMAINNAME.conf "/etc/httpd/conf.d/$DOMAINNAME.conf"
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/httpd/conf.d/$DOMAINNAME.conf
 
 CERTBOT_STAGING="${CERTBOT_STAGING:-no}"
@@ -108,11 +119,11 @@ if [ ! -s "/etc/letsencrypt/live/$DOMAINNAME/fullchain.pem" ] || [ ! -s "/etc/le
 fi
 
 echo "Change http.conf in Asterisk"
-wget -O /etc/asterisk/http.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/asterisk-http.conf
+copy_asset asterisk-http.conf /etc/asterisk/http.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/http.conf
 
 echo "Change sip.conf in Asterisk"
-wget -O /etc/asterisk/sip.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/asterisk-sip.conf
+copy_asset asterisk-sip.conf /etc/asterisk/sip.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/sip.conf
 
 echo "Reloading Asterisk"
