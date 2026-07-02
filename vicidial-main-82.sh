@@ -431,6 +431,8 @@ cd /usr/src/asterisk/asterisk-18.21.0-vici/
 yum in libuuid-devel libxml2-devel -y
 
 : ${JOBS:=$(( $(nproc) + $(nproc) / 2 ))}
+copy_asset jansson-2.14.tar.bz2 /tmp/jansson-2.14.tar.bz2
+copy_asset pjproject-2.13.1.tar.bz2 /tmp/pjproject-2.13.1.tar.bz2
 ./configure --libdir=/usr/lib64 --with-gsm=internal --enable-opus --enable-srtp --with-ssl --enable-asteriskssl --with-pjproject-bundled --with-jansson-bundled
 
 make menuselect/menuselect menuselect-tree menuselect.makeopts
