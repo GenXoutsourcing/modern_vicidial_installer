@@ -112,6 +112,18 @@ configure_agc_options() {
     chmod 664 /var/www/html/agc/options.php
 }
 
+configure_audio_store_directory() {
+    local audio_dir
+    audio_dir=$("${MYSQL[@]}" -Nse "use asterisk; select sounds_web_directory from system_settings limit 1;" | tr -d '\r\n')
+    if [ -n "$audio_dir" ]; then
+        mkdir -p "/var/www/html/$audio_dir"
+        chown -R apache:apache "/var/www/html/$audio_dir"
+        chmod 2775 "/var/www/html/$audio_dir"
+    fi
+    chown apache:apache /var/www/html
+    chmod 2775 /var/www/html
+}
+
 echo "Getting Machine info - No hostname? Enter the IP Address"
 echo "**************************************************************************"
 prompt hostname "Enter the hostname:" "$hostname"
@@ -1181,6 +1193,7 @@ chown -R apache:apache /var/spool/asterisk/
 ## sed -i s/DOMAINNAME/"$DOMAINNAME"/g /home/viciportal-ssl.conf
 
 "${MYSQL[@]}" -e "use asterisk; update system_settings set active_voicemail_server='$ip_address', webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname';"
+configure_audio_store_directory
 
 if [[ "$REBOOT_AFTER_INSTALL" =~ ^[Yy] ]]; then
     echo "Restarting AlmaLinux"
