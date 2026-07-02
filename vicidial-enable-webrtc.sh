@@ -61,7 +61,12 @@ fi
 wget -O /etc/httpd/conf.d/$DOMAINNAME.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/DOMAINNAME.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/httpd/conf.d/$DOMAINNAME.conf
 
+CERTBOT_STAGING="${CERTBOT_STAGING:-no}"
 CERTBOT_ARGS=(--apache -d "$DOMAINNAME" --non-interactive --agree-tos --register-unsafely-without-email)
+if [[ "$CERTBOT_STAGING" =~ ^[Yy] ]]; then
+	CERTBOT_ARGS+=(--staging)
+	echo "Using Let's Encrypt staging environment for this certificate request."
+fi
 
 echo "Requesting Let's Encrypt certificate for $DOMAINNAME with no-email registration"
 FIREWALLD_WAS_ACTIVE=no

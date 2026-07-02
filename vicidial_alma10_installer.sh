@@ -8,6 +8,7 @@ DEFAULT_CRON_DB_PASS="1234"
 DEFAULT_CUSTOM_DB_PASS="custom1234"
 OLD_SERVER_IP="${OLD_SERVER_IP:-10.10.10.15}"
 REBOOT_AFTER_INSTALL="${REBOOT_AFTER_INSTALL:-yes}"
+CERTBOT_STAGING="${CERTBOT_STAGING:-no}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -1165,7 +1166,7 @@ cd "$SCRIPT_DIR"
 chmod +x vicidial-enable-webrtc.sh
 systemctl enable firewalld
 systemctl start firewalld
-DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh || exit 1
+DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" ./vicidial-enable-webrtc.sh || exit 1
 
 firewall-cmd --add-service=http --permanent --zone=trusted
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='74.208.178.234' accept"
