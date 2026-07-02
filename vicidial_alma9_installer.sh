@@ -128,7 +128,7 @@ configure_audio_store_directory() {
 verify_required_perl_modules() {
     local missing=0
     local module
-    for module in DBI DBD::mysql Net::Server Time::HiRes Asterisk::AGI Mail::Sendmail MIME::QuotedPrint Tk Tk::TableMatrix String::CRC; do
+    for module in DBI DBD::mysql Net::Server Time::HiRes Mail::Sendmail MIME::QuotedPrint Tk Tk::TableMatrix String::CRC; do
         if ! perl -M"$module" -e 1 >/dev/null 2>&1; then
             echo "ERROR: Missing required Perl module: $module"
             missing=1
@@ -204,9 +204,13 @@ else
     echo "WARNING: php:remi-8.2 module stream was not listed. Continuing with enabled EL9/Remi PHP packages."
 fi
 
-# MariaDB 10.5 appstream module for AlmaLinux/RockyLinux 9.
-dnf module reset mariadb -y
-dnf module enable mariadb:10.5 -y
+# MariaDB 10.5 appstream module when available; otherwise use Alma/Rocky 9 defaults.
+if dnf -q module list mariadb 2>/dev/null | grep -q '10.5'; then
+    dnf module reset mariadb -y
+    dnf module enable mariadb:10.5 -y
+else
+    echo "INFO: MariaDB 10.5 module stream was not listed; using AlmaLinux 9 default MariaDB packages."
+fi
 
 dnf -y install dnf-plugins-core
 
@@ -447,6 +451,7 @@ cd asterisk-perl-0.08
 perl Makefile.PL
 make all
 make install 
+perl -MAsterisk::AGI -e 1 || { echo "ERROR: Missing required Perl module: Asterisk::AGI"; exit 1; }
 
 dnf install libsrtp-devel -y
 dnf install -y elfutils-libelf-devel libedit-devel
