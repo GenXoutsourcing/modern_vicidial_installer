@@ -942,8 +942,9 @@ firewall-offline-cmd --add-port=446/tcp --zone=public
 cd /usr/src/astguiclient/trunk/extras/ip_relay/
 rm -rf ip_relay_1.1
 unzip -o ip_relay_1.1.112705.zip
+grep -q '#include <unistd.h>' ip_relay_1.1/src/lib_ip_relay.c || sed -i '/#include <stdio.h>/a #include <unistd.h>' ip_relay_1.1/src/lib_ip_relay.c
 cd ip_relay_1.1/src/unix/
-make
+make || { echo "ERROR: ip_relay build failed"; exit 1; }
 cp ip_relay ip_relay2
 mv -f ip_relay /usr/bin/
 mv -f ip_relay2 /usr/local/bin/ip_relay
