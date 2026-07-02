@@ -41,7 +41,6 @@ requires 'Spreadsheet::Read';
 requires 'Spreadsheet::ReadSXC';
 requires 'Spreadsheet::WriteExcel';
 requires 'Spreadsheet::XLSX';
-requires 'String::CRC';
 requires 'Switch';
 requires 'Term::ANSIColor';
 requires 'Term::ReadKey';

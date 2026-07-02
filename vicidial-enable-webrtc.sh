@@ -61,14 +61,9 @@ fi
 wget -O /etc/httpd/conf.d/$DOMAINNAME.conf https://raw.githubusercontent.com/jaganthoutam/vicidial-install-scripts/main/DOMAINNAME.conf
 sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/httpd/conf.d/$DOMAINNAME.conf
 
-CERTBOT_ARGS=(--apache -d "$DOMAINNAME" --non-interactive --agree-tos --no-eff-email)
-if [ -n "${LETSENCRYPT_EMAIL:-}" ]; then
-	CERTBOT_ARGS+=(--email "$LETSENCRYPT_EMAIL")
-else
-	CERTBOT_ARGS+=(--register-unsafely-without-email)
-fi
+CERTBOT_ARGS=(--apache -d "$DOMAINNAME" --non-interactive --agree-tos --register-unsafely-without-email)
 
-echo "Requesting Let's Encrypt certificate for $DOMAINNAME"
+echo "Requesting Let's Encrypt certificate for $DOMAINNAME with no-email registration"
 certbot "${CERTBOT_ARGS[@]}"
 
 echo "Change http.conf in Asterisk"

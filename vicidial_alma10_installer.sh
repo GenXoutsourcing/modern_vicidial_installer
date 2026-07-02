@@ -123,14 +123,12 @@ CRON_DB_PASS="${CRON_DB_PASS:-$DEFAULT_CRON_DB_PASS}"
 CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
 
 prompt DOMAINNAME "Domain name for SSL/WebRTC" "${DOMAINNAME:-$hostname}"
-read -p "Let's Encrypt email [${LETSENCRYPT_EMAIL:-admin@$DOMAINNAME}]: " LETSENCRYPT_EMAIL_INPUT
-LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL_INPUT:-${LETSENCRYPT_EMAIL:-admin@$DOMAINNAME}}"
 
 read -p "Reboot automatically after install? [${REBOOT_AFTER_INSTALL}]: " REBOOT_INPUT
 REBOOT_AFTER_INSTALL="${REBOOT_INPUT:-$REBOOT_AFTER_INSTALL}"
 
 export LC_ALL=C
-export DOMAINNAME LETSENCRYPT_EMAIL MYSQL_ROOT_PASS
+export DOMAINNAME MYSQL_ROOT_PASS
 
 
 dnf groupinstall "Development Tools" -y
@@ -385,7 +383,7 @@ systemctl restart mariadb.service
 
 echo "Install Perl"
 
-dnf install -y perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-DBI perl-DBD-MySQL perl-GD perl-Env perl-Term-ReadLine-Gnu perl-SelfLoader perl-open.noarch 
+dnf install -y perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-DBI perl-DBD-MySQL perl-GD perl-Env perl-Term-ReadLine-Gnu perl-SelfLoader perl-open.noarch perl-Tk
 
 #CPM install
 cd "$SCRIPT_DIR"
@@ -479,11 +477,27 @@ xargs -r sed -i 's|\(static int [a-zA-Z0-9_]*_match(struct device \*dev, \)struc
 sed -i 's/class_create(THIS_MODULE, "dahdi")/class_create("dahdi")/' \
 linux/drivers/dahdi/dahdi-sysfs-chan.c
 
+# Kernel 6.12 objtool rejects the binary vpmadt032 loader object. It is not
+# needed for virtual/non-Digium-hardware VICIDIAL installs, so skip that module.
+python3 - <<'PY'
+from pathlib import Path
+p = Path("linux/drivers/dahdi/Kbuild")
+orig = Path("linux/drivers/dahdi/Kbuild.original")
+if not orig.exists():
+    orig.write_text(p.read_text())
+lines = []
+for line in p.read_text().splitlines():
+    if "obj-" in line and "dahdi_vpmadt032_loader.o" in line and not line.lstrip().startswith("#"):
+        line = "# disabled on EL10 kernel 6.12: " + line
+    lines.append(line)
+p.write_text("\n".join(lines) + "\n")
+PY
+
 # Build DAHDI kernel modules + tools
 make clean
-make all
-make install
-make install-config
+make all || { echo "ERROR: DAHDI build failed"; exit 1; }
+make install || { echo "ERROR: DAHDI install failed"; exit 1; }
+make install-config || { echo "ERROR: DAHDI install-config failed"; exit 1; }
 ldconfig
 
 dnf install -y dahdi-tools-libs || true
@@ -503,7 +517,7 @@ if [ -f /etc/dahdi/system.conf.sample ]; then
     cp -f /etc/dahdi/system.conf.sample /etc/dahdi/system.conf
 fi
 
-modprobe dahdi
+modprobe dahdi || { echo "ERROR: DAHDI kernel module did not load"; exit 1; }
 
 # dahdi_dummy may not exist on DAHDI 3.x / newer kernels
 modprobe dahdi_dummy || true
@@ -1111,7 +1125,7 @@ fi
 cd "$SCRIPT_DIR"
 chmod +x vicidial-enable-webrtc.sh
 service firewalld stop
-DOMAINNAME="$DOMAINNAME" LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh
+DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh
 service firewalld start
 systemctl enable firewalld
 
