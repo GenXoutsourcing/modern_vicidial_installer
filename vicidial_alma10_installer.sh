@@ -1098,7 +1098,7 @@ systemctl daemon-reload
 systemctl enable rc-local.service
 systemctl start rc-local.service
 
-cat <<WELCOME>> /var/www/html/index.html
+cat <<WELCOME > /var/www/html/index.html
 <META HTTP-EQUIV=REFRESH CONTENT="1; URL=/vicidial/welcome.php">
 Please Hold while I redirect you!
 WELCOME
