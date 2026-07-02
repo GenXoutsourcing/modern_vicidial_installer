@@ -1,6 +1,7 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ASSET_DIR="$SCRIPT_DIR/assets"
 
 echo "Vicidial installation AlmaLinux/RockyLinux with WebPhone and Dynamic portal"
 
@@ -18,6 +19,16 @@ fix_vicidial_web_permissions() {
     chown -R apache:apache /var/www/html
     find /var/www/html -type d -exec chmod 2775 {} \;
     find /var/www/html -type f -exec chmod 664 {} \;
+}
+
+copy_asset() {
+    local asset_name=$1
+    local destination=${2:-$asset_name}
+    if [ ! -f "$ASSET_DIR/$asset_name" ]; then
+        echo "ERROR: Missing installer asset: $ASSET_DIR/$asset_name"
+        exit 1
+    fi
+    cp -f "$ASSET_DIR/$asset_name" "$destination"
 }
 
 echo "Getting Machine info - No hostname? Enter the IP Address"
@@ -279,7 +290,7 @@ curl -fsSL https://raw.githubusercontent.com/skaji/cpm/main/cpm | perl - install
 
 #Install Asterisk Perl
 cd /usr/src
-wget https://dialer.demo.genxcontactcenter.com/asterisk-perl-0.08.tar.gz
+copy_asset asterisk-perl-0.08.tar.gz
 tar xzf asterisk-perl-0.08.tar.gz
 cd asterisk-perl-0.08
 perl Makefile.PL
@@ -317,14 +328,14 @@ ln -sf /usr/lib/modules/$(uname -r)/vmlinux.xz /boot/
 
 mkdir -p /etc/include
 cd /etc/include || exit 1
-wget -N https://dialer.demo.genxcontactcenter.com/newt.h
+copy_asset newt.h
 
 cd /usr/src/ || exit 1
 rm -rf dahdi-linux-complete-3.4.0+3.4.0
 mkdir dahdi-linux-complete-3.4.0+3.4.0
 cd dahdi-linux-complete-3.4.0+3.4.0 || exit 1
 
-wget -N https://dialer.demo.genxcontactcenter.com/dahdi-9.5-fix.zip
+copy_asset dahdi-9.5-fix.zip
 unzip -o dahdi-9.5-fix.zip
 
 yum install -y newt newt-devel slang-devel ncurses-devel
@@ -401,7 +412,7 @@ echo 'Continuing...'
 mkdir /usr/src/asterisk
 cd /usr/src/asterisk
 wget https://downloads.asterisk.org/pub/telephony/libpri/libpri-1.6.1.tar.gz
-wget https://dialer.demo.genxcontactcenter.com/asterisk-18.21.0-vici.tar.gz
+copy_asset asterisk-18.21.0-vici.tar.gz
 tar -xvzf asterisk-18.21.0-vici.tar.gz
 tar -xvzf libpri-*
 
@@ -781,10 +792,10 @@ systemctl start rc-local
 ##Install Dynportal
 yum install -y firewalld
 cd /home
-wget https://dialer.demo.genxcontactcenter.com/dynportal.zip
-wget https://dialer.demo.genxcontactcenter.com/firewall.zip
-wget https://dialer.demo.genxcontactcenter.com/aggregate
-wget https://dialer.demo.genxcontactcenter.com/VB-firewall
+copy_asset dynportal.zip
+copy_asset firewall.zip
+copy_asset aggregate
+copy_asset VB-firewall
 
 mkdir -p /var/www/vhosts/dynportal
 mv /home/dynportal.zip /var/www/vhosts/dynportal/
