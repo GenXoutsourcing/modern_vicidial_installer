@@ -37,33 +37,14 @@ chmod +x vicidial-main-82.sh
 ./vicidial-main-82.sh
 ```
 
-## AlmaLinux 10 installer
+## AlmaLinux 9 installer
 
-Run this first on a fresh AlmaLinux 10 server. The updates and reboot are important before starting the AlmaLinux 10 installer.
-
-```bash
-dnf install -y glibc-langpack-en
-localectl set-locale en_US.UTF-8
-timedatectl set-timezone America/New_York
-
-dnf check-update || true
-dnf update -y
-dnf install -y epel-release git
-
-sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
-
-cd /usr/src
-git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
-
-reboot
-```
-
-After reboot, log back into the server as root, then run:
+For the updated AlmaLinux 9 installer with the newer local assets, SSL/WebRTC fixes, rerun safety, AGC options, and audio-store directory setup, run:
 
 ```bash
 cd /usr/src/modern_vicidial_installer
-chmod +x vicidial_alma10_installer.sh
-./vicidial_alma10_installer.sh
+chmod +x vicidial_alma9_installer.sh
+./vicidial_alma9_installer.sh
 ```
 
 ## Optional: install the GENX modern UI overlay
@@ -83,6 +64,7 @@ The overlay installer does **not** change stock VICIDIAL PHP files. It installs 
 This repo contains the main installer and the files it expects to find in the same directory:
 
 - `vicidial-main-82.sh` - main AlmaLinux/Rocky Linux installer
+- `vicidial_alma9_installer.sh` - updated AlmaLinux/Rocky Linux 9 installer
 - `extensions.conf` - Asterisk dialplan configuration copied during install
 - `confbridge-vicidial.conf` - VICIDIAL conference bridge configuration
 - `cpanfile` - required Perl module list used by `cpm install -g`

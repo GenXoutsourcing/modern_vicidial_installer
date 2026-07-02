@@ -27,9 +27,13 @@ install_certbot_required() {
 
 		echo "DNF certbot install failed. Trying isolated Python venv fallback."
 		dnf install -y python3 python3-pip python3-devel augeas-libs augeas-devel gcc openssl-devel libffi-devel mod_ssl
+		if [ ! -d "$ASSET_DIR/python-wheels" ]; then
+			echo "ERROR: Missing Certbot wheelhouse: $ASSET_DIR/python-wheels"
+			exit 1
+		fi
 		python3 -m venv /opt/certbot
-		/opt/certbot/bin/pip install --upgrade pip wheel
-		/opt/certbot/bin/pip install certbot certbot-apache
+		/opt/certbot/bin/pip install --no-index --find-links "$ASSET_DIR/python-wheels" --upgrade pip wheel setuptools packaging
+		/opt/certbot/bin/pip install --no-index --find-links "$ASSET_DIR/python-wheels" certbot==5.6.0 certbot-apache==5.6.0
 		ln -sf /opt/certbot/bin/certbot /usr/local/bin/certbot
 	fi
 

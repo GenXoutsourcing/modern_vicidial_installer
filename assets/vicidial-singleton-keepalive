@@ -1,0 +1,30 @@
+#!/bin/bash
+set -u
+
+dedupe_screen_name() {
+    local screen_name=$1
+    local session
+    mapfile -t sessions < <(screen -ls 2>/dev/null | awk -v n="[.]"${screen_name}"[[:space:]]" '$0 ~ n {print $1}' | sort -n)
+    if [ "${#sessions[@]}" -le 1 ]; then
+        return 0
+    fi
+    for session in "${sessions[@]:1}"; do
+        screen -S "$session" -X quit >/dev/null 2>&1 || true
+    done
+}
+
+ensure_screen_process() {
+    local screen_name=$1
+    local process_pattern=$2
+    shift 2
+
+    dedupe_screen_name "$screen_name"
+    if ! pgrep -f "$process_pattern" >/dev/null 2>&1; then
+        screen -d -m -S "$screen_name" "$@"
+    fi
+    dedupe_screen_name "$screen_name"
+}
+
+ensure_screen_process ASTVDadFILL '/usr/share/astguiclient/AST_VDauto_dial_FILL\.pl' /usr/share/astguiclient/AST_VDauto_dial_FILL.pl --debug
+ensure_screen_process ASTemail '/usr/share/astguiclient/VD_email_inbound\.pl' /usr/share/astguiclient/VD_email_inbound.pl
+ensure_screen_process ASTconf3way '/usr/share/astguiclient/AST_conf_update_3way\.pl' /usr/share/astguiclient/AST_conf_update_3way.pl --debug
