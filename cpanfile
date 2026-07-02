@@ -52,7 +52,5 @@ requires 'Text::CSV_PP';
 requires 'Text::CSV_XS';
 requires 'Time::HiRes';
 requires 'Time::Local';
-requires 'Tk';
-requires 'Tk::TableMatrix';
 requires 'Unicode::Map';
 requires 'YAML';
