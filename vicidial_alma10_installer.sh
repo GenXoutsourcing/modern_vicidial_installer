@@ -100,6 +100,18 @@ fix_vicidial_web_permissions() {
     find /var/www/html -type f -exec chmod 664 {} \;
 }
 
+configure_agc_options() {
+    if [ ! -f /var/www/html/agc/options-example.php ]; then
+        echo "ERROR: Missing /var/www/html/agc/options-example.php"
+        exit 1
+    fi
+    cp -f /var/www/html/agc/options-example.php /var/www/html/agc/options.php
+    sed -i "s/^\(\$user_login_first[[:space:]]*=[[:space:]]*\)'0'/\1'1'/" /var/www/html/agc/options.php
+    sed -i "s/^\(\$webphone_call_seconds[[:space:]]*=[[:space:]]*\)'0'/\1'1'/" /var/www/html/agc/options.php
+    chown apache:apache /var/www/html/agc/options.php
+    chmod 664 /var/www/html/agc/options.php
+}
+
 echo "Getting Machine info - No hostname? Enter the IP Address"
 echo "**************************************************************************"
 prompt hostname "Enter the hostname:" "$hostname"
@@ -709,6 +721,7 @@ sed -i s/SERVERIP/"$ip_address"/g /etc/astguiclient.conf
 echo "Install VICIDIAL"
 perl install.pl --no-prompt --copy_sample_conf_files=Y
 fix_vicidial_web_permissions
+configure_agc_options
 
 #Secure Manager 
 sed -i s/0.0.0.0/127.0.0.1/g /etc/asterisk/manager.conf
