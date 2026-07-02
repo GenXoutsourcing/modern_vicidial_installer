@@ -89,10 +89,15 @@ fi
 CRON_DB_PASS="${CRON_DB_PASS:-$DEFAULT_CRON_DB_PASS}"
 CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
 
+prompt DOMAINNAME "Domain name for SSL/WebRTC" "${DOMAINNAME:-$hostname}"
+read -p "Let's Encrypt email [${LETSENCRYPT_EMAIL:-admin@$DOMAINNAME}]: " LETSENCRYPT_EMAIL_INPUT
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL_INPUT:-${LETSENCRYPT_EMAIL:-admin@$DOMAINNAME}}"
+
 read -p "Reboot automatically after install? [${REBOOT_AFTER_INSTALL}]: " REBOOT_INPUT
 REBOOT_AFTER_INSTALL="${REBOOT_INPUT:-$REBOOT_AFTER_INSTALL}"
 
 export LC_ALL=C
+export DOMAINNAME LETSENCRYPT_EMAIL MYSQL_ROOT_PASS
 
 
 dnf groupinstall "Development Tools" -y
@@ -1039,13 +1044,13 @@ eventfilter=Event: Meetme
 eventfilter=Event: Confbridge
 EOF
 
-dnf install certbot -y
+dnf install certbot python3-certbot-apache -y
 systemctl enable certbot-renew.timer
 systemctl start certbot-renew.timer
 cd "$SCRIPT_DIR"
 chmod +x vicidial-enable-webrtc.sh
 service firewalld stop
-./vicidial-enable-webrtc.sh
+DOMAINNAME="$DOMAINNAME" LETSENCRYPT_EMAIL="$LETSENCRYPT_EMAIL" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh
 service firewalld start
 systemctl enable firewalld
 
