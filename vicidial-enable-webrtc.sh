@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f /etc/redhat-release ]; then
-	dnf -y install certbot python3-certbot-apache mod_ssl || yum -y install certbot python3-certbot-apache mod_ssl
+	dnf -y --nobest install certbot python3-certbot-apache mod_ssl || yum -y install certbot python3-certbot-apache mod_ssl
 fi
 if [ -f /etc/lsb-release ]; then
 	sudo add-apt-repository ppa:certbot/certbot
@@ -16,6 +16,11 @@ if [ -z "${DOMAINNAME:-}" ]; then
 fi
 if [ -z "$DOMAINNAME" ]; then
 	echo "No domain entered. Exiting WebRTC/SSL setup."
+	exit 1
+fi
+
+if ! command -v certbot >/dev/null 2>&1; then
+	echo "ERROR: certbot is not installed. Resolve the repository/dependency issue before continuing."
 	exit 1
 fi
 
