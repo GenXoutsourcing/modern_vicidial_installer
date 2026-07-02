@@ -953,11 +953,14 @@ cd /usr/src/astguiclient/trunk/extras/ip_relay/
 rm -rf ip_relay_1.1
 unzip -o ip_relay_1.1.112705.zip
 grep -q '#include <unistd.h>' ip_relay_1.1/src/lib_ip_relay.c || sed -i '/#include <stdio.h>/a #include <unistd.h>' ip_relay_1.1/src/lib_ip_relay.c
+grep -q '#include <stdlib.h>' ip_relay_1.1/src/ip_relay.c || sed -i '/#include <stdio.h>/a #include <stdlib.h>' ip_relay_1.1/src/ip_relay.c
 cd ip_relay_1.1/src/unix/
 make || { echo "ERROR: ip_relay build failed"; exit 1; }
-cp ip_relay ip_relay2
-mv -f ip_relay /usr/bin/
-mv -f ip_relay2 /usr/local/bin/ip_relay
+install -m 755 ip_relay /usr/share/astguiclient/ip_relay/ip_relay_linux_x86_64
+ln -sf /usr/share/astguiclient/ip_relay/ip_relay_linux_x86_64 /usr/share/astguiclient/ip_relay/ip_relay
+ln -sf /usr/share/astguiclient/ip_relay/ip_relay_linux_x86_64 /usr/bin/ip_relay
+ln -sf /usr/share/astguiclient/ip_relay/ip_relay_linux_x86_64 /usr/local/bin/ip_relay
+ip_relay -h >/dev/null 2>&1 || true
 
 cd /usr/lib64/asterisk/modules
 wget -N http://asterisk.hosting.lv/bin/codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so
