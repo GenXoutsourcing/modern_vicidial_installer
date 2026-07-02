@@ -2,8 +2,36 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+install_certbot_required() {
+	if command -v certbot >/dev/null 2>&1; then
+		certbot --version
+		return 0
+	fi
+
+	if [ -f /etc/redhat-release ]; then
+		if dnf -y --nobest install certbot python3-certbot-apache mod_ssl; then
+			certbot --version
+			return 0
+		fi
+
+		echo "DNF certbot install failed. Trying isolated Python venv fallback."
+		dnf install -y python3 python3-pip python3-devel augeas-libs augeas-devel gcc openssl-devel libffi-devel mod_ssl
+		python3 -m venv /opt/certbot
+		/opt/certbot/bin/pip install --upgrade pip wheel
+		/opt/certbot/bin/pip install certbot certbot-apache
+		ln -sf /opt/certbot/bin/certbot /usr/local/bin/certbot
+	fi
+
+	if ! command -v certbot >/dev/null 2>&1; then
+		echo "ERROR: certbot did not install. Resolve the repository/dependency issue before continuing."
+		exit 1
+	fi
+
+	certbot --version
+}
+
 if [ -f /etc/redhat-release ]; then
-	dnf -y --nobest install certbot python3-certbot-apache mod_ssl || yum -y install certbot python3-certbot-apache mod_ssl
+	install_certbot_required
 fi
 if [ -f /etc/lsb-release ]; then
 	sudo add-apt-repository ppa:certbot/certbot

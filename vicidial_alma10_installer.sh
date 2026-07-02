@@ -59,6 +59,32 @@ replace_managed_block() {
     cat >> "$file"
 }
 
+install_certbot_required() {
+    if command -v certbot >/dev/null 2>&1; then
+        certbot --version
+        return 0
+    fi
+
+    if dnf install -y --nobest certbot python3-certbot-apache mod_ssl; then
+        certbot --version
+        return 0
+    fi
+
+    echo "DNF certbot install failed. Trying isolated Python venv fallback."
+    dnf install -y python3 python3-pip python3-devel augeas-libs augeas-devel gcc openssl-devel libffi-devel mod_ssl
+    python3 -m venv /opt/certbot
+    /opt/certbot/bin/pip install --upgrade pip wheel
+    /opt/certbot/bin/pip install certbot certbot-apache
+    ln -sf /opt/certbot/bin/certbot /usr/local/bin/certbot
+
+    if ! command -v certbot >/dev/null 2>&1; then
+        echo "ERROR: certbot did not install. Resolve the repository/dependency issue before continuing."
+        exit 1
+    fi
+
+    certbot --version
+}
+
 fix_vicidial_web_permissions() {
     mkdir -p /var/www/html
     chown -R apache:apache /var/www/html
@@ -1075,11 +1101,7 @@ eventfilter=Event: Confbridge
 # END GENX_VICIDIAL_CONFCRON
 EOF
 
-dnf install -y --nobest certbot python3-certbot-apache mod_ssl
-if ! command -v certbot >/dev/null 2>&1; then
-    echo "ERROR: certbot did not install. Resolve the repository/dependency issue before continuing."
-    exit 1
-fi
+install_certbot_required
 if systemctl list-unit-files certbot-renew.timer >/dev/null 2>&1; then
     systemctl enable certbot-renew.timer
     systemctl start certbot-renew.timer
