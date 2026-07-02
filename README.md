@@ -37,6 +37,35 @@ chmod +x vicidial-main-82.sh
 ./vicidial-main-82.sh
 ```
 
+## AlmaLinux 10 installer
+
+Run this first on a fresh AlmaLinux 10 server. The updates and reboot are important before starting the AlmaLinux 10 installer.
+
+```bash
+dnf install -y glibc-langpack-en
+localectl set-locale en_US.UTF-8
+timedatectl set-timezone America/New_York
+
+dnf check-update || true
+dnf update -y
+dnf install -y epel-release git
+
+sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
+
+cd /usr/src
+git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
+
+reboot
+```
+
+After reboot, log back into the server as root, then run:
+
+```bash
+cd /usr/src/modern_vicidial_installer
+chmod +x vicidial_alma10_installer.sh
+./vicidial_alma10_installer.sh
+```
+
 ## Optional: install the GENX modern UI overlay
 
 After VICIDIAL is installed and the web directories exist, install the modern UI overlay with:
