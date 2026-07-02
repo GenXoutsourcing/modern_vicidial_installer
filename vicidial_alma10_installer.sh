@@ -59,6 +59,14 @@ replace_managed_block() {
     cat >> "$file"
 }
 
+validate_fqdn() {
+    local name=$1
+    if [[ ! "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]; then
+        echo "ERROR: Invalid fully qualified domain name: $name"
+        exit 1
+    fi
+}
+
 install_certbot_required() {
     if command -v certbot >/dev/null 2>&1; then
         certbot --version
@@ -95,7 +103,8 @@ fix_vicidial_web_permissions() {
 echo "Getting Machine info - No hostname? Enter the IP Address"
 echo "**************************************************************************"
 prompt hostname "Enter the hostname:" "$hostname"
-hostnamectl set-hostname $hostname
+validate_fqdn "$hostname"
+hostnamectl set-hostname "$hostname"
 # Retrieve the Hostname
 hostname=$(hostname | awk '{print $1}')
 echo "Hostname\t: $hostname"
@@ -123,6 +132,7 @@ CRON_DB_PASS="${CRON_DB_PASS:-$DEFAULT_CRON_DB_PASS}"
 CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
 
 prompt DOMAINNAME "Domain name for SSL/WebRTC" "${DOMAINNAME:-$hostname}"
+validate_fqdn "$DOMAINNAME"
 
 read -p "Reboot automatically after install? [${REBOOT_AFTER_INSTALL}]: " REBOOT_INPUT
 REBOOT_AFTER_INSTALL="${REBOOT_INPUT:-$REBOOT_AFTER_INSTALL}"
