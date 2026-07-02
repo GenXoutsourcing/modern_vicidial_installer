@@ -64,26 +64,38 @@ sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/httpd/conf.d/$DOMAINNAME.conf
 CERTBOT_ARGS=(--apache -d "$DOMAINNAME" --non-interactive --agree-tos --register-unsafely-without-email)
 
 echo "Requesting Let's Encrypt certificate for $DOMAINNAME with no-email registration"
-HTTP_OPENED_FOR_CERTBOT=no
-if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-	if ! firewall-cmd --query-service=http >/dev/null 2>&1; then
-		firewall-cmd --add-service=http
-		HTTP_OPENED_FOR_CERTBOT=yes
+FIREWALLD_WAS_ACTIVE=no
+VICIPORTAL_SSL_CONF=/etc/httpd/conf.d/viciportal-ssl.conf
+VICIPORTAL_SSL_DISABLED=/etc/httpd/conf.d/viciportal-ssl.conf.certbot-disabled
+
+restore_certbot_window() {
+	if [ -f "$VICIPORTAL_SSL_DISABLED" ]; then
+		mv -f "$VICIPORTAL_SSL_DISABLED" "$VICIPORTAL_SSL_CONF"
 	fi
+	if [ "$FIREWALLD_WAS_ACTIVE" = "yes" ]; then
+		systemctl start firewalld || true
+	fi
+}
+
+trap restore_certbot_window EXIT
+
+if systemctl is-active --quiet firewalld; then
+	FIREWALLD_WAS_ACTIVE=yes
+	systemctl stop firewalld
+fi
+
+if [ -f "$VICIPORTAL_SSL_CONF" ]; then
+	mv -f "$VICIPORTAL_SSL_CONF" "$VICIPORTAL_SSL_DISABLED"
 fi
 
 if ! certbot "${CERTBOT_ARGS[@]}"; then
-	if [ "$HTTP_OPENED_FOR_CERTBOT" = "yes" ]; then
-		firewall-cmd --remove-service=http || true
-	fi
 	rm -f "/etc/httpd/conf.d/$DOMAINNAME.conf"
 	echo "ERROR: Let's Encrypt certificate request failed for $DOMAINNAME."
 	exit 1
 fi
 
-if [ "$HTTP_OPENED_FOR_CERTBOT" = "yes" ]; then
-	firewall-cmd --remove-service=http || true
-fi
+restore_certbot_window
+trap - EXIT
 
 if [ ! -s "/etc/letsencrypt/live/$DOMAINNAME/fullchain.pem" ] || [ ! -s "/etc/letsencrypt/live/$DOMAINNAME/privkey.pem" ]; then
 	echo "ERROR: Let's Encrypt certificate files are missing for $DOMAINNAME."

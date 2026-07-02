@@ -1135,10 +1135,9 @@ else
 fi
 cd "$SCRIPT_DIR"
 chmod +x vicidial-enable-webrtc.sh
-service firewalld stop
-DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh
-service firewalld start
 systemctl enable firewalld
+systemctl start firewalld
+DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" ./vicidial-enable-webrtc.sh || exit 1
 
 firewall-cmd --add-service=http --permanent --zone=trusted
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='74.208.178.234' accept"
