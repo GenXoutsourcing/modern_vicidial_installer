@@ -154,6 +154,38 @@ WHERE NOT EXISTS (
     WHERE ip_list_id='ViciWhite'
       AND ip_address='${server_ip}'
 );
+
+INSERT INTO vicidial_campaigns
+    (campaign_id, campaign_name, active, user_group, allow_closers,
+     campaign_allow_inbound, default_xfer_group, dial_statuses, lead_order,
+     list_order_mix, lead_filter_id, hopper_level, dial_method,
+     auto_dial_level, adaptive_intensity, campaign_script, get_call_launch,
+     campaign_description, campaign_changedate)
+VALUES
+    ('TESTCAMP', 'Test Campaign', 'Y', '---ALL---', 'Y',
+     'Y', '---NONE---', ' NEW -', 'DOWN',
+     'DISABLED', 'NONE', 100, 'RATIO',
+     '1', '0', '', 'NONE',
+     '', NOW())
+ON DUPLICATE KEY UPDATE
+    campaign_name=VALUES(campaign_name),
+    active=VALUES(active),
+    user_group=VALUES(user_group),
+    allow_closers=VALUES(allow_closers),
+    campaign_allow_inbound=VALUES(campaign_allow_inbound),
+    default_xfer_group=VALUES(default_xfer_group),
+    dial_statuses=VALUES(dial_statuses),
+    lead_order=VALUES(lead_order),
+    list_order_mix=VALUES(list_order_mix),
+    lead_filter_id=VALUES(lead_filter_id),
+    hopper_level=VALUES(hopper_level),
+    dial_method=VALUES(dial_method),
+    auto_dial_level=VALUES(auto_dial_level),
+    adaptive_intensity=VALUES(adaptive_intensity),
+    campaign_script=VALUES(campaign_script),
+    get_call_launch=VALUES(get_call_launch),
+    campaign_description=VALUES(campaign_description),
+    campaign_changedate=NOW();
 MYSQLDEFAULTS
 }
 
