@@ -933,6 +933,7 @@ sed -i s/SERVERIP/"$ip_address"/g /etc/astguiclient.conf
 
 echo "Install VICIDIAL"
 perl install.pl --no-prompt --copy_sample_conf_files=Y
+apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 fix_vicidial_web_permissions
 configure_agc_options
 
