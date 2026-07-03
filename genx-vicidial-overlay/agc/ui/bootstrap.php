@@ -31,13 +31,13 @@ ob_start(static function ($html) {
         return $html;
     }
 
-    $asset = '<link id="genx-agent-clean-css" rel="stylesheet" type="text/css" href="/agc/ui/assets/css/agent-clean.css?v=5">' . "\n" .
+    $asset = '<link id="genx-agent-clean-css" rel="stylesheet" type="text/css" href="/agc/ui/assets/css/agent-clean.css?v=6">' . "\n" .
         '<script id="genx-agent-clean-js">' . "\n" .
         '(function(){' .
         'function ready(fn){if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",fn);}else{fn();}}' .
         'ready(function(){' .
         'function visible(e){if(!e){return false;}var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)!==0&&r.width>0&&r.height>0;}' .
-        'function mark(){var b=document.body;if(!b){return;}var t=(b.textContent||"").replace(/\s+/g," ");var login=!!document.getElementById("login_sub");var logout=/LOGOUT PROCESS COMPLETE|CLICK HERE TO LOG IN AGAIN|YOU MAY NOW CLOSE YOUR BROWSER/i.test(t);var loading=visible(document.getElementById("LoadingBox"))||/Loading\.\.\./i.test(t);b.classList.toggle("genx-agent-login",login);b.classList.toggle("genx-agent-loading",!login&&!logout&&loading);b.classList.toggle("genx-agent-logout",logout);b.classList.toggle("genx-agent-active",!login&&!logout&&!loading);}' .
+        'function mark(){var b=document.body;if(!b){return;}var t=(b.textContent||"").replace(/\s+/g," ");var login=!!document.getElementById("login_sub");var logout=/LOGOUT PROCESS COMPLETE|CLICK HERE TO LOG IN AGAIN|YOU MAY NOW CLOSE YOUR BROWSER/i.test(t);var loading=visible(document.getElementById("LoadingBox"));b.classList.toggle("genx-agent-login",login);b.classList.toggle("genx-agent-loading",!login&&!logout&&loading);b.classList.toggle("genx-agent-logout",logout);b.classList.toggle("genx-agent-active",!login&&!logout&&!loading);}' .
         'mark();window.setInterval(mark,1000);' .
         '});' .
         '})();' . "\n" .

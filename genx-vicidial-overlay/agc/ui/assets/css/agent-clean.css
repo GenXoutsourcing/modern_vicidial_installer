@@ -749,3 +749,21 @@ font.preview_text,
 font.preview_text_red {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
 }
+
+/* v6: default to a clean agent canvas with the webphone panel collapsed. */
+#webphoneSpan,
+#webphone,
+#webphonecontent {
+  visibility: hidden !important;
+  display: none !important;
+}
+
+#webphoneLinkSpan {
+  visibility: visible !important;
+  display: inline-block !important;
+  opacity: 0.72 !important;
+}
+
+#webphoneLinkSpan:hover {
+  opacity: 1 !important;
+}
