@@ -767,3 +767,33 @@ font.preview_text_red {
 #webphoneLinkSpan:hover {
   opacity: 1 !important;
 }
+
+/* v7: remove the old webphone gutter from the visible canvas. */
+html,
+body {
+  min-height: 100vh !important;
+  background-color: #07101d !important;
+  background-attachment: fixed !important;
+}
+
+#vicidial_form {
+  min-height: 100vh !important;
+  background:
+    radial-gradient(circle at 78% 12%, rgba(47, 125, 244, 0.12), transparent 30rem),
+    linear-gradient(180deg, #07101d 0%, #081323 54%, #060d18 100%) !important;
+}
+
+#webphoneLinkSpan {
+  position: fixed !important;
+  left: auto !important;
+  right: 14px !important;
+  top: 5px !important;
+  z-index: 30020 !important;
+  width: auto !important;
+}
+
+#webphoneLinkSpan a,
+#webphoneLinkSpan span,
+#webphoneLink {
+  white-space: nowrap !important;
+}
