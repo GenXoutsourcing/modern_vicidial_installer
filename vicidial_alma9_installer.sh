@@ -125,6 +125,21 @@ configure_audio_store_directory() {
     chmod 2775 /var/www/html
 }
 
+install_audio_store_directory_helper() {
+    cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
+#!/bin/bash
+audio_dir=$(mysql -u root -Nse 'use asterisk; select sounds_web_directory from system_settings limit 1;' 2>/dev/null | tr -d '\r\n')
+if [ -n "$audio_dir" ]; then
+    mkdir -p "/var/www/html/$audio_dir"
+    chown -R apache:apache "/var/www/html/$audio_dir"
+    chmod 2775 "/var/www/html/$audio_dir"
+    chown apache:apache /var/www/html
+    chmod 2775 /var/www/html
+fi
+AUDIOSTOREDIR
+    chmod 755 /usr/local/bin/vicidial-audio-store-dir
+}
+
 verify_required_perl_modules() {
     local missing=0
     local module
@@ -757,8 +772,13 @@ echo "Replacing default VICIdial IP $OLD_SERVER_IP with current server IP $ip_ad
 
 perl install.pl --no-prompt
 
+install_audio_store_directory_helper
+
 #Install Crontab
 cat <<CRONTAB>> /root/crontab-file
+
+### VICIDIAL audio-store web directory helper
+* * * * * /usr/local/bin/vicidial-audio-store-dir >/dev/null 2>&1
 
 ###Audio Sync hourly
 * 1 * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl --upload --quiet
