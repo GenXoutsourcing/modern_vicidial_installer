@@ -96,9 +96,10 @@ copy_asset() {
 
 fix_vicidial_web_permissions() {
     mkdir -p /var/www/html
-    chown -R apache:apache /var/www/html
-    find /var/www/html -type d -exec chmod 2775 {} \;
-    find /var/www/html -type f -exec chmod 664 {} \;
+    chown -R root:root /var/www/html
+    find /var/www/html -type d -exec chmod g-s {} \;
+    find /var/www/html -type d -exec chmod 0777 {} \;
+    find /var/www/html -type f -exec chmod 644 {} \;
 }
 
 configure_agc_options() {
@@ -109,8 +110,8 @@ configure_agc_options() {
     cp -f /var/www/html/agc/options-example.php /var/www/html/agc/options.php
     sed -i "s/^\(\$user_login_first[[:space:]]*=[[:space:]]*\)'0'/\1'1'/" /var/www/html/agc/options.php
     sed -i "s/^\(\$webphone_call_seconds[[:space:]]*=[[:space:]]*\)'0'/\1'1'/" /var/www/html/agc/options.php
-    chown apache:apache /var/www/html/agc/options.php
-    chmod 664 /var/www/html/agc/options.php
+    chown root:root /var/www/html/agc/options.php
+    chmod 644 /var/www/html/agc/options.php
 }
 
 configure_audio_store_directory() {
@@ -118,11 +119,13 @@ configure_audio_store_directory() {
     audio_dir=$("${MYSQL[@]}" -Nse "use asterisk; select sounds_web_directory from system_settings limit 1;" | tr -d '\r\n')
     if [ -n "$audio_dir" ]; then
         mkdir -p "/var/www/html/$audio_dir"
-        chown -R apache:apache "/var/www/html/$audio_dir"
-        chmod 2775 "/var/www/html/$audio_dir"
+        chown -R root:root "/var/www/html/$audio_dir"
+        chmod g-s "/var/www/html/$audio_dir"
+        chmod 0777 "/var/www/html/$audio_dir"
     fi
-    chown apache:apache /var/www/html
-    chmod 2775 /var/www/html
+    chown root:root /var/www/html
+    chmod g-s /var/www/html
+    chmod 0777 /var/www/html
 }
 
 install_audio_store_directory_helper() {
@@ -131,10 +134,12 @@ install_audio_store_directory_helper() {
 audio_dir=$(mysql -u root -Nse 'use asterisk; select sounds_web_directory from system_settings limit 1;' 2>/dev/null | tr -d '\r\n')
 if [ -n "$audio_dir" ]; then
     mkdir -p "/var/www/html/$audio_dir"
-    chown -R apache:apache "/var/www/html/$audio_dir"
-    chmod 2775 "/var/www/html/$audio_dir"
-    chown apache:apache /var/www/html
-    chmod 2775 /var/www/html
+    chown -R root:root "/var/www/html/$audio_dir"
+    chmod g-s "/var/www/html/$audio_dir"
+    chmod 0777 "/var/www/html/$audio_dir"
+    chown root:root /var/www/html
+    chmod g-s /var/www/html
+    chmod 0777 /var/www/html
 fi
 AUDIOSTOREDIR
     chmod 755 /usr/local/bin/vicidial-audio-store-dir
