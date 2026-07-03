@@ -128,6 +128,39 @@ configure_audio_store_directory() {
     chmod 0777 /var/www/html
 }
 
+generate_password_25() {
+    local password=""
+    while [ "${#password}" -lt 25 ]; do
+        password=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 25)
+    done
+    printf '%s' "$password"
+}
+
+secure_vicidial_default_passwords() {
+    local reg_pass login_pass server_pass
+
+    reg_pass=$("${MYSQL[@]}" -Nse "use asterisk; select default_phone_registration_password from system_settings limit 1;" | tr -d '\r\n')
+    login_pass=$("${MYSQL[@]}" -Nse "use asterisk; select default_phone_login_password from system_settings limit 1;" | tr -d '\r\n')
+    server_pass=$("${MYSQL[@]}" -Nse "use asterisk; select default_server_password from system_settings limit 1;" | tr -d '\r\n')
+
+    if [ -z "$reg_pass" ] || [ "$reg_pass" = "test" ]; then
+        reg_pass=$(generate_password_25)
+    fi
+    if [ -z "$login_pass" ] || [ "$login_pass" = "test" ]; then
+        login_pass=$(generate_password_25)
+    fi
+    if [ -z "$server_pass" ] || [ "$server_pass" = "test" ]; then
+        server_pass=$(generate_password_25)
+    fi
+
+    "${MYSQL[@]}" asterisk <<MYSQLPASSDEFAULTS
+UPDATE system_settings
+SET default_phone_registration_password='${reg_pass}',
+    default_phone_login_password='${login_pass}',
+    default_server_password='${server_pass}';
+MYSQLPASSDEFAULTS
+}
+
 apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
@@ -245,6 +278,13 @@ ON DUPLICATE KEY UPDATE
     conf_secret=VALUES(conf_secret),
     is_webphone=VALUES(is_webphone),
     user_group=VALUES(user_group);
+
+UPDATE vicidial_users vu
+JOIN system_settings ss
+SET vu.phone_login='9176',
+    vu.phone_pass=ss.default_phone_login_password,
+    vu.active='Y'
+WHERE vu.user='6666';
 MYSQLDEFAULTS
 }
 
@@ -792,6 +832,7 @@ else
 fi
 
 "${MYSQL[@]}" -e "USE asterisk; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
+secure_vicidial_default_passwords
 apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 
 #Get astguiclient.conf file
