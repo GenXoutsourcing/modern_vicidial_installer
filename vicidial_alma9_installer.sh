@@ -164,9 +164,26 @@ MYSQLPASSDEFAULTS
 apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
+    local server_id
+
+    server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
     "${MYSQL[@]}" asterisk <<MYSQLDEFAULTS
 UPDATE system_settings SET allow_ip_lists='1';
+
+UPDATE servers
+SET server_id='${server_id}',
+    server_description='${cert_domain}',
+    asterisk_version='18.21.1-vici',
+    max_vicidial_trunks=125,
+    outbound_calls_per_second=10,
+    recording_web_link='ALT_IP',
+    alt_server_ip='${cert_domain}',
+    conf_engine='CONFBRIDGE',
+    auto_restart_asterisk='Y'
+WHERE server_ip='${server_ip}'
+   OR server_id='${server_id}'
+   OR server_id=LOWER('${server_id}');
 
 INSERT INTO vicidial_ip_lists
     (ip_list_id, ip_list_name, active, user_group)
