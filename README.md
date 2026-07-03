@@ -7,22 +7,25 @@ VICIDIAL installer for AlmaLinux/Rocky Linux with PHP 8.2, Asterisk 18, WebPhone
 Run this first on a fresh server. The updates and reboot are important before starting the installer.
 
 ```bash
-dnf install -y glibc-langpack-en
+dnf install -y glibc-langpack-en dnf-plugins-core yum-utils
 
 localectl set-locale en_US.UTF-8
 
 timedatectl set-timezone America/New_York
 
-yum check-update
-yum update -y
-yum -y install epel-release
-yum update -y
-yum install git -y
+dnf update -y
+dnf install -y epel-release git
+dnf config-manager --set-enabled crb || true
 
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
 
-cd /usr/src/
-git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
+cd /usr/src
+if [ -d modern_vicidial_installer ]; then
+    cd modern_vicidial_installer
+    git pull --ff-only
+else
+    git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
+fi
 
 reboot
 ```
