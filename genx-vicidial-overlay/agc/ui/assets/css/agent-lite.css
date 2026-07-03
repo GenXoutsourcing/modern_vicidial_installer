@@ -5576,3 +5576,63 @@ html body.genx-agent-modal #AlertBox input[type="submit"] {
   cursor: pointer !important;
   pointer-events: auto !important;
 }
+
+/* v71 true EOF: do not show VICIdial's placeholder alert shell. */
+html body:not(.genx-agent-alert-open) #AlertBox,
+html body:not(.genx-agent-alert-open) #AlertBox * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-alert-open #AlertBox {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(640px, calc(100vw - 96px)) !important;
+  min-width: 420px !important;
+  max-width: 640px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 130px) !important;
+  overflow: auto !important;
+  padding: 24px !important;
+  box-sizing: border-box !important;
+  z-index: 2300 !important;
+  background: linear-gradient(180deg, rgba(19, 33, 58, 0.99), rgba(8, 18, 33, 0.99)) !important;
+  color: #f8fbff !important;
+  border: 1px solid rgba(126, 220, 255, 0.34) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 34px 100px rgba(0, 0, 0, 0.62), 0 0 0 9999px rgba(3, 9, 18, 0.72) !important;
+  pointer-events: auto !important;
+}
+
+html body.genx-agent-alert-open #AlertBox *,
+html body.genx-agent-alert-open #AlertBox table,
+html body.genx-agent-alert-open #AlertBox tbody,
+html body.genx-agent-alert-open #AlertBox tr,
+html body.genx-agent-alert-open #AlertBox td,
+html body.genx-agent-alert-open #AlertBox font,
+html body.genx-agent-alert-open #AlertBox b {
+  background: transparent !important;
+  color: #f8fbff !important;
+  text-shadow: none !important;
+  border-color: rgba(126, 220, 255, 0.22) !important;
+}
