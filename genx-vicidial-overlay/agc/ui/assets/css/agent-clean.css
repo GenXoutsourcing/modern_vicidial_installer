@@ -431,21 +431,9 @@ input[type="checkbox"] + label {
   color: var(--genx-text) !important;
 }
 
-/* v3: centered stock modals. Scoped to stock visibility state. */
-body.genx-agent-login #NeWManuaLDiaLBox,
-body.genx-agent-login #ManualValidateBox,
-body.genx-agent-login #TimerSpan,
-body.genx-agent-loading #NeWManuaLDiaLBox,
-body.genx-agent-loading #ManualValidateBox,
-body.genx-agent-loading #TimerSpan,
-body.genx-agent-logout #NeWManuaLDiaLBox,
-body.genx-agent-logout #ManualValidateBox,
-body.genx-agent-logout #TimerSpan {
-  visibility: hidden !important;
-}
-
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"],
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] {
+/* v4: centered stock modals. Only follows VICIdial's own visible state. */
+#NeWManuaLDiaLBox[style*="visibility: visible"],
+#ManualValidateBox[style*="visibility: visible"] {
   position: fixed !important;
   left: 50% !important;
   top: 58px !important;
@@ -462,40 +450,40 @@ body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58) !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] > table,
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] > table {
+#NeWManuaLDiaLBox[style*="visibility: visible"] > table,
+#ManualValidateBox[style*="visibility: visible"] > table {
   width: 100% !important;
   height: auto !important;
   background: transparent !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] > table > tbody > tr > td,
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] > table > tbody > tr > td {
+#NeWManuaLDiaLBox[style*="visibility: visible"] > table > tbody > tr > td,
+#ManualValidateBox[style*="visibility: visible"] > table > tbody > tr > td {
   width: auto !important;
   height: auto !important;
   background: transparent !important;
   padding: 0 !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] table table {
+#NeWManuaLDiaLBox[style*="visibility: visible"] table table {
   width: auto !important;
   max-width: 100% !important;
   margin: 16px auto !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] td,
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] td {
+#NeWManuaLDiaLBox[style*="visibility: visible"] td,
+#ManualValidateBox[style*="visibility: visible"] td {
   line-height: 1.35 !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]),
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]) {
+#NeWManuaLDiaLBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]),
+#ManualValidateBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]) {
   height: 26px !important;
   padding: 2px 7px !important;
 }
 
-body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] a,
-body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] a {
+#NeWManuaLDiaLBox[style*="visibility: visible"] a,
+#ManualValidateBox[style*="visibility: visible"] a {
   display: inline-block !important;
   margin-top: 4px !important;
   padding: 8px 14px !important;
@@ -506,7 +494,7 @@ body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] a {
   text-decoration: none !important;
 }
 
-body.genx-agent-active #TimerSpan[style*="visibility: visible"] {
+#TimerSpan[style*="visibility: visible"] {
   position: fixed !important;
   left: 50% !important;
   top: 50% !important;
@@ -520,7 +508,7 @@ body.genx-agent-active #TimerSpan[style*="visibility: visible"] {
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58) !important;
 }
 
-body.genx-agent-active #TimerSpan[style*="visibility: visible"] table {
+#TimerSpan[style*="visibility: visible"] table {
   width: 100% !important;
   height: auto !important;
   min-height: 180px !important;
@@ -528,21 +516,21 @@ body.genx-agent-active #TimerSpan[style*="visibility: visible"] table {
   border-collapse: separate !important;
 }
 
-body.genx-agent-active #TimerSpan[style*="visibility: visible"] td {
+#TimerSpan[style*="visibility: visible"] td {
   padding: 28px 34px !important;
   background: transparent !important;
   color: var(--genx-text) !important;
 }
 
-body.genx-agent-active #TimerContentSpan,
-body.genx-agent-active #TimerContentSpan b,
-body.genx-agent-active #TimerContentSpan font,
-body.genx-agent-active #TimerContentSpan span {
+#TimerContentSpan,
+#TimerContentSpan b,
+#TimerContentSpan font,
+#TimerContentSpan span {
   color: var(--genx-text) !important;
   background: transparent !important;
 }
 
-body.genx-agent-active #TimerSpan[style*="visibility: visible"] a {
+#TimerSpan[style*="visibility: visible"] a {
   display: inline-block !important;
   padding: 8px 14px !important;
   color: #92e5ff !important;
