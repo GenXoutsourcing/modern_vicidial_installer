@@ -1464,6 +1464,7 @@ systemctl enable firewalld
 systemctl start firewalld
 DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" ./vicidial-enable-webrtc.sh || exit 1
 configure_dynportal_defaults
+apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 
 firewall-cmd --add-service=http --permanent --zone=trusted
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='74.208.178.234' accept"

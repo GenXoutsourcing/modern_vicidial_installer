@@ -166,7 +166,6 @@ dtlssetup=actpass' where template_id='SIP_generic';"
 
 echo "update the Phone tables to set is_webphone to Y deffault"
 "${MYSQL[@]}" -e "use asterisk; ALTER TABLE phones MODIFY COLUMN is_webphone ENUM('Y','N','Y_API_LAUNCH') default 'Y';"
-"${MYSQL[@]}" -e "use asterisk; update phones set template_id='SIP_generic';"
 
 if [ ! -f "$SCRIPT_DIR/viciportal-ssl.conf" ]; then
 	echo "ERROR: Missing $SCRIPT_DIR/viciportal-ssl.conf"
