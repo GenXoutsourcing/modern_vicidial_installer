@@ -128,6 +128,35 @@ configure_audio_store_directory() {
     chmod 0777 /var/www/html
 }
 
+apply_vicidial_database_defaults() {
+    local server_ip=$1
+
+    "${MYSQL[@]}" asterisk <<MYSQLDEFAULTS
+UPDATE system_settings SET allow_ip_lists='1';
+
+INSERT INTO vicidial_ip_lists
+    (ip_list_id, ip_list_name, active, user_group)
+VALUES
+    ('ViciWhite', 'White List for ViciBox firewall ACL', 'Y', '---ALL---')
+ON DUPLICATE KEY UPDATE
+    ip_list_name=VALUES(ip_list_name),
+    active=VALUES(active),
+    user_group=VALUES(user_group);
+
+INSERT INTO vicidial_ip_list_entries
+    (ip_list_id, ip_address)
+SELECT
+    'ViciWhite', '${server_ip}'
+FROM DUAL
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM vicidial_ip_list_entries
+    WHERE ip_list_id='ViciWhite'
+      AND ip_address='${server_ip}'
+);
+MYSQLDEFAULTS
+}
+
 install_audio_store_directory_helper() {
     cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
 #!/bin/bash
@@ -672,6 +701,7 @@ else
 fi
 
 "${MYSQL[@]}" -e "USE asterisk; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
+apply_vicidial_database_defaults "$ip_address"
 
 #Get astguiclient.conf file
 cat <<ASTGUI>> /etc/astguiclient.conf
