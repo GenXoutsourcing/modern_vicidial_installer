@@ -103,6 +103,11 @@ fix_vicidial_web_permissions() {
     find /var/www/html -type d -exec chmod g-s {} \;
     find /var/www/html -type d -exec chmod 0777 {} \;
     find /var/www/html -type f -exec chmod 644 {} \;
+    if [ -d /var/www/html/agc ]; then
+        touch /var/www/html/agc/vicidial_auth_entries.txt
+        chown apache:apache /var/www/html/agc/vicidial_auth_entries.txt
+        chmod 0664 /var/www/html/agc/vicidial_auth_entries.txt
+    fi
 }
 
 configure_agc_options() {
