@@ -219,6 +219,32 @@ ON DUPLICATE KEY UPDATE
     template_name=VALUES(template_name),
     user_group=VALUES(user_group),
     template_contents=VALUES(template_contents);
+
+INSERT INTO phones
+    (extension, dialplan_number, voicemail_id, phone_ip, computer_ip, server_ip,
+     login, pass, active, protocol, login_user, login_pass, template_id,
+     conf_secret, is_webphone, user_group)
+SELECT
+    '9176', '9176', '9176', NULL, NULL, '${server_ip}',
+    '9176', default_phone_login_password, 'Y', 'SIP', NULL, NULL, 'WEBRTC',
+    default_phone_registration_password, 'Y', '---ALL---'
+FROM system_settings
+LIMIT 1
+ON DUPLICATE KEY UPDATE
+    dialplan_number=VALUES(dialplan_number),
+    voicemail_id=VALUES(voicemail_id),
+    phone_ip=VALUES(phone_ip),
+    computer_ip=VALUES(computer_ip),
+    login=VALUES(login),
+    pass=VALUES(pass),
+    active=VALUES(active),
+    protocol=VALUES(protocol),
+    login_user=VALUES(login_user),
+    login_pass=VALUES(login_pass),
+    template_id=VALUES(template_id),
+    conf_secret=VALUES(conf_secret),
+    is_webphone=VALUES(is_webphone),
+    user_group=VALUES(user_group);
 MYSQLDEFAULTS
 }
 
