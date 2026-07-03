@@ -1,0 +1,246 @@
+/*
+ * GENX VICIdial Agent clean overlay.
+ *
+ * Clean-start rules:
+ * - Do not hide, move, clone or intercept VICIdial call controls.
+ * - Do not override modal display state.
+ * - Only apply readable colors, spacing and basic visual polish.
+ */
+
+:root {
+  --genx-bg: #07101d;
+  --genx-panel: #0c1a2d;
+  --genx-panel-2: #13233a;
+  --genx-line: #254461;
+  --genx-text: #f6f9ff;
+  --genx-muted: #b8c5d8;
+  --genx-blue: #2f7df4;
+  --genx-cyan: #7ddcff;
+  --genx-red: #ef334d;
+  --genx-green: #22b45b;
+}
+
+html,
+body {
+  background: var(--genx-bg) !important;
+  color: var(--genx-text) !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+  letter-spacing: 0 !important;
+}
+
+body,
+table,
+td,
+th,
+div,
+span,
+font,
+label {
+  color: var(--genx-text) !important;
+  text-shadow: none !important;
+}
+
+a,
+a font {
+  color: #b9e8ff !important;
+  text-shadow: none !important;
+}
+
+input,
+select,
+textarea {
+  background: #071322 !important;
+  color: var(--genx-text) !important;
+  border: 1px solid var(--genx-line) !important;
+  border-radius: 5px !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--genx-blue);
+}
+
+input[type="button"],
+input[type="submit"],
+button {
+  background: linear-gradient(135deg, #1a9ddb, #286de7) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(126, 220, 255, 0.38) !important;
+  border-radius: 7px !important;
+  font-weight: 800 !important;
+  cursor: pointer !important;
+}
+
+/* Header and broad work surface, without changing control behavior. */
+#Header,
+#TopPanel,
+#AgentHeader,
+#MainTable,
+#MainPanel,
+#MainPanelCustInfo {
+  background-color: transparent !important;
+  border-color: var(--genx-line) !important;
+}
+
+#MainPanel {
+  background: linear-gradient(180deg, #071322, #09182a) !important;
+  border-right: 1px solid var(--genx-line) !important;
+}
+
+#MainPanelCustInfo {
+  background: #07101d !important;
+}
+
+#Tabs,
+#CustomerTab,
+#ScriptTab,
+#FormTab,
+#FormTab2 {
+  background: transparent !important;
+}
+
+#CustomerTab,
+#ScriptTab {
+  border-color: rgba(126, 220, 255, 0.32) !important;
+}
+
+/* Existing VICIdial controls retain their original handlers and state. */
+#DiaLControl,
+#RecorDControl,
+#WebFormSpan,
+#WebFormSpanTwo,
+#ParkControl,
+#XferControl,
+#HangupControl,
+#SendDTMFdiv,
+#ManuaLDiaLButtons,
+#MDstatusSpan,
+#CallLogButtons,
+#CallLogLinkSpan,
+#AgentViewLink,
+#AgentViewLinkSpan,
+#webphoneLinkSpan {
+  border-radius: 8px !important;
+  border-color: rgba(126, 220, 255, 0.28) !important;
+  color: #ffffff !important;
+}
+
+#DiaLControl a,
+#RecorDControl a,
+#WebFormSpan a,
+#WebFormSpanTwo a,
+#ParkControl a,
+#XferControl a,
+#HangupControl a,
+#SendDTMFdiv a,
+#ManuaLDiaLButtons a,
+#MDstatusSpan a,
+#CallLogButtons a,
+#CallLogLinkSpan a,
+#AgentViewLink a,
+#AgentViewLinkSpan a,
+#webphoneLinkSpan a {
+  color: #ffffff !important;
+  text-decoration: none !important;
+}
+
+#HangupControl,
+#HangupBothLines,
+#HangupControl a,
+#HangupBothLines a {
+  cursor: pointer !important;
+}
+
+/* Modals and stock message boxes: readable, but display state remains stock. */
+#AlertBox,
+#DispoSelectBox,
+#NeWManuaLDiaLBox,
+#ManualValidateBox,
+#CustomerGoneBox,
+#LeaDInfOBox,
+#SearcHContactsDisplaYBox,
+#SearcHForMDisplaYBox,
+#SearcHResultSContactsBox,
+#CallBacKsLisTBox,
+#CloserSelectBox,
+#NoneInSessionBox,
+#CalLLoGDisplaYBox,
+#LoadingBox,
+#LogouTBox {
+  color: var(--genx-text) !important;
+  border-color: rgba(126, 220, 255, 0.30) !important;
+}
+
+#AlertBox table,
+#DispoSelectBox table,
+#NeWManuaLDiaLBox table,
+#ManualValidateBox table,
+#CustomerGoneBox table,
+#LeaDInfOBox table,
+#SearcHContactsDisplaYBox table,
+#SearcHForMDisplaYBox table,
+#SearcHResultSContactsBox table,
+#CallBacKsLisTBox table,
+#CloserSelectBox table,
+#NoneInSessionBox table,
+#CalLLoGDisplaYBox table,
+#LoadingBox table,
+#LogouTBox table {
+  background-color: var(--genx-panel) !important;
+  color: var(--genx-text) !important;
+  border-color: rgba(126, 220, 255, 0.30) !important;
+}
+
+#AlertBox td,
+#DispoSelectBox td,
+#NeWManuaLDiaLBox td,
+#ManualValidateBox td,
+#CustomerGoneBox td,
+#LeaDInfOBox td,
+#SearcHContactsDisplaYBox td,
+#SearcHForMDisplaYBox td,
+#SearcHResultSContactsBox td,
+#CallBacKsLisTBox td,
+#CloserSelectBox td,
+#NoneInSessionBox td,
+#CalLLoGDisplaYBox td,
+#LoadingBox td,
+#LogouTBox td {
+  background-color: transparent !important;
+  color: var(--genx-text) !important;
+}
+
+/* Login page polish only. */
+body.genx-agent-login {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(47, 125, 244, 0.20), transparent 32rem),
+    var(--genx-bg) !important;
+}
+
+body.genx-agent-login form table {
+  background: var(--genx-panel) !important;
+  border: 1px solid rgba(126, 220, 255, 0.28) !important;
+  border-radius: 8px !important;
+}
+
+body.genx-agent-loading {
+  background: var(--genx-bg) !important;
+}
+
+font.preview_text,
+font.preview_text_red {
+  display: inline-block !important;
+  padding: 2px 7px !important;
+  border-radius: 5px !important;
+  background: var(--genx-panel-2) !important;
+  color: #dbeafe !important;
+  border: 1px solid rgba(126, 220, 255, 0.24) !important;
+  font-weight: 800 !important;
+}
+
+font.preview_text_red {
+  color: #fecaca !important;
+  background: rgba(69, 22, 37, 0.94) !important;
+  border-color: rgba(248, 113, 113, 0.30) !important;
+}
