@@ -5174,8 +5174,25 @@ html body.genx-agent-live #genxMuteLink.genx-muted {
  * editing older sections, unless you are deliberately cleaning a duplicate.
  */
 
-/* v67 true EOF: manual dial must be a centered readable dialog. */
-html body.genx-agent-modal #NeWManuaLDiaLBox {
+/* v68 true EOF: manual dial is event-driven, never auto-opened after login. */
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html body.genx-agent-manual-open #NeWManuaLDiaLBox {
   display: block !important;
   visibility: visible !important;
   opacity: 1 !important;
@@ -5200,23 +5217,24 @@ html body.genx-agent-modal #NeWManuaLDiaLBox {
   border: 1px solid rgba(126, 220, 255, 0.34) !important;
   border-radius: 18px !important;
   box-shadow: 0 34px 100px rgba(0, 0, 0, 0.62), 0 0 0 9999px rgba(3, 9, 18, 0.72) !important;
+  pointer-events: auto !important;
 }
 
-html body.genx-agent-modal #NeWManuaLDiaLBox *,
-html body.genx-agent-modal #NeWManuaLDiaLBox table,
-html body.genx-agent-modal #NeWManuaLDiaLBox tbody,
-html body.genx-agent-modal #NeWManuaLDiaLBox tr,
-html body.genx-agent-modal #NeWManuaLDiaLBox td {
+html body.genx-agent-manual-open #NeWManuaLDiaLBox *,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox table,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox tbody,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox tr,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox td {
   background: transparent !important;
   color: #f8fbff !important;
   text-shadow: none !important;
   border-color: rgba(126, 220, 255, 0.22) !important;
 }
 
-html body.genx-agent-modal #NeWManuaLDiaLBox > table,
-html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody,
-html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody > tr,
-html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody > tr > td {
+html body.genx-agent-manual-open #NeWManuaLDiaLBox > table,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox > table > tbody,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox > table > tbody > tr,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox > table > tbody > tr > td {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
@@ -5226,17 +5244,17 @@ html body.genx-agent-modal #NeWManuaLDiaLBox > table > tbody > tr > td {
   overflow: visible !important;
 }
 
-html body.genx-agent-modal #NeWManuaLDiaLBox center,
-html body.genx-agent-modal #NeWManuaLDiaLBox b,
-html body.genx-agent-modal #NeWManuaLDiaLBox strong,
-html body.genx-agent-modal #NeWManuaLDiaLBox font {
+html body.genx-agent-manual-open #NeWManuaLDiaLBox center,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox b,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox strong,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox font {
   color: #ffffff !important;
   font-weight: 900 !important;
 }
 
-html body.genx-agent-modal #NeWManuaLDiaLBox input:not([type="checkbox"]):not([type="radio"]),
-html body.genx-agent-modal #NeWManuaLDiaLBox select,
-html body.genx-agent-modal #NeWManuaLDiaLBox textarea {
+html body.genx-agent-manual-open #NeWManuaLDiaLBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-manual-open #NeWManuaLDiaLBox select,
+html body.genx-agent-manual-open #NeWManuaLDiaLBox textarea {
   background: rgba(7, 16, 29, 0.96) !important;
   color: #f8fbff !important;
   border: 1px solid rgba(126, 220, 255, 0.34) !important;
