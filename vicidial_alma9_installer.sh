@@ -1,4 +1,7 @@
 #!/bin/bash
+set -Ee -o pipefail
+
+trap 'echo "ERROR: Installer failed at line $LINENO while running: $BASH_COMMAND"; exit 1' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASSET_DIR="$SCRIPT_DIR/assets"
@@ -126,6 +129,35 @@ configure_audio_store_directory() {
     chown root:root /var/www/html
     chmod g-s /var/www/html
     chmod 0777 /var/www/html
+}
+
+configure_dynportal_defaults() {
+    local redirect_url="https://${DOMAINNAME}/vicidial/welcome.php"
+
+    if [ -f /var/www/vhosts/dynportal/valid8.php ]; then
+        sed -i 's/CyburDial - All rights reserved\./Genx ContactCenter - All rights reserved./g' /var/www/vhosts/dynportal/valid8.php
+        php -l /var/www/vhosts/dynportal/valid8.php >/dev/null
+    fi
+
+    if [ -f /var/www/vhosts/dynportal/inc/defaults.inc.php ]; then
+        python3 - /var/www/vhosts/dynportal/inc/defaults.inc.php "$redirect_url" <<'PY'
+import sys
+
+path, redirect_url = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as handle:
+    lines = handle.readlines()
+
+for index, line in enumerate(lines):
+    if line.startswith("$PORTAL_redirecturl="):
+        lines[index] = f"$PORTAL_redirecturl='{redirect_url}'; // X = Disabled, otherwise set to a url like https://server.ip/agc/vicidial.php\n"
+    elif line.startswith("$PORTAL_redirectadmin="):
+        lines[index] = f"$PORTAL_redirectadmin='{redirect_url}'; // Only matters if the above is not X and the valued of the $PORTAL_adminfield in vicidial_users equals 'admin'\n"
+
+with open(path, "w", encoding="utf-8") as handle:
+    handle.writelines(lines)
+PY
+        php -l /var/www/vhosts/dynportal/inc/defaults.inc.php >/dev/null
+    fi
 }
 
 generate_password_25() {
@@ -758,9 +790,6 @@ systemctl enable dahdi
 systemctl restart dahdi || service dahdi start
 systemctl status dahdi --no-pager || service dahdi status
 
-echo "DAHDI install/config checkpoint. Review the DAHDI status output above before continuing."
-read -p 'Press Enter to continue to Asterisk install: '
-
 #Install Asterisk and LibPRI
 rm -rf /usr/src/asterisk /usr/src/libsrtp-2.1.0
 mkdir -p /usr/src/asterisk
@@ -1160,6 +1189,7 @@ cd /var/www/vhosts/dynportal/
 unzip -o dynportal.zip
 chmod -R 755 *
 chown -R apache:apache *
+configure_dynportal_defaults
 cd etc/httpd/conf.d/
 cp -f viciportal.conf /etc/httpd/conf.d/
 cd /etc/firewalld/
@@ -1372,6 +1402,7 @@ chmod +x vicidial-enable-webrtc.sh
 systemctl enable firewalld
 systemctl start firewalld
 DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" ./vicidial-enable-webrtc.sh || exit 1
+configure_dynportal_defaults
 
 firewall-cmd --add-service=http --permanent --zone=trusted
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='74.208.178.234' accept"
