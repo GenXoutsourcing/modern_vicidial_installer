@@ -430,3 +430,124 @@ input[type="checkbox"] + span,
 input[type="checkbox"] + label {
   color: var(--genx-text) !important;
 }
+
+/* v3: centered stock modals. Scoped to stock visibility state. */
+body.genx-agent-login #NeWManuaLDiaLBox,
+body.genx-agent-login #ManualValidateBox,
+body.genx-agent-login #TimerSpan,
+body.genx-agent-loading #NeWManuaLDiaLBox,
+body.genx-agent-loading #ManualValidateBox,
+body.genx-agent-loading #TimerSpan,
+body.genx-agent-logout #NeWManuaLDiaLBox,
+body.genx-agent-logout #ManualValidateBox,
+body.genx-agent-logout #TimerSpan {
+  visibility: hidden !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"],
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] {
+  position: fixed !important;
+  left: 50% !important;
+  top: 58px !important;
+  width: min(880px, calc(100vw - 48px)) !important;
+  height: auto !important;
+  max-height: calc(100vh - 94px) !important;
+  overflow: auto !important;
+  transform: translateX(-50%) !important;
+  z-index: 30000 !important;
+  padding: 22px 28px !important;
+  background: #0c1a2d !important;
+  border: 1px solid rgba(126, 220, 255, 0.42) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58) !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] > table,
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] > table {
+  width: 100% !important;
+  height: auto !important;
+  background: transparent !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] > table > tbody > tr > td,
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] > table > tbody > tr > td {
+  width: auto !important;
+  height: auto !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] table table {
+  width: auto !important;
+  max-width: 100% !important;
+  margin: 16px auto !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] td,
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] td {
+  line-height: 1.35 !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]),
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] input:not([type="checkbox"]):not([type="radio"]) {
+  height: 26px !important;
+  padding: 2px 7px !important;
+}
+
+body.genx-agent-active #NeWManuaLDiaLBox[style*="visibility: visible"] a,
+body.genx-agent-active #ManualValidateBox[style*="visibility: visible"] a {
+  display: inline-block !important;
+  margin-top: 4px !important;
+  padding: 8px 14px !important;
+  color: #92e5ff !important;
+  background: rgba(19, 35, 58, 0.92) !important;
+  border: 1px solid rgba(126, 220, 255, 0.30) !important;
+  border-radius: 7px !important;
+  text-decoration: none !important;
+}
+
+body.genx-agent-active #TimerSpan[style*="visibility: visible"] {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  width: min(560px, calc(100vw - 44px)) !important;
+  height: auto !important;
+  transform: translate(-50%, -50%) !important;
+  z-index: 30010 !important;
+  background: #0c1a2d !important;
+  border: 1px solid rgba(126, 220, 255, 0.42) !important;
+  border-radius: 9px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58) !important;
+}
+
+body.genx-agent-active #TimerSpan[style*="visibility: visible"] table {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 180px !important;
+  background: transparent !important;
+  border-collapse: separate !important;
+}
+
+body.genx-agent-active #TimerSpan[style*="visibility: visible"] td {
+  padding: 28px 34px !important;
+  background: transparent !important;
+  color: var(--genx-text) !important;
+}
+
+body.genx-agent-active #TimerContentSpan,
+body.genx-agent-active #TimerContentSpan b,
+body.genx-agent-active #TimerContentSpan font,
+body.genx-agent-active #TimerContentSpan span {
+  color: var(--genx-text) !important;
+  background: transparent !important;
+}
+
+body.genx-agent-active #TimerSpan[style*="visibility: visible"] a {
+  display: inline-block !important;
+  padding: 8px 14px !important;
+  color: #92e5ff !important;
+  background: rgba(19, 35, 58, 0.92) !important;
+  border: 1px solid rgba(126, 220, 255, 0.30) !important;
+  border-radius: 7px !important;
+  text-decoration: none !important;
+}
