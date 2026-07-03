@@ -132,14 +132,14 @@ install_audio_store_directory_helper() {
     cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
 #!/bin/bash
 audio_dir=$(mysql -u root -Nse 'use asterisk; select sounds_web_directory from system_settings limit 1;' 2>/dev/null | tr -d '\r\n')
+chown root:root /var/www/html
+chmod g-s /var/www/html
+chmod 0777 /var/www/html
 if [ -n "$audio_dir" ]; then
     mkdir -p "/var/www/html/$audio_dir"
     chown -R root:root "/var/www/html/$audio_dir"
     chmod g-s "/var/www/html/$audio_dir"
     chmod 0777 "/var/www/html/$audio_dir"
-    chown root:root /var/www/html
-    chmod g-s /var/www/html
-    chmod 0777 /var/www/html
 fi
 AUDIOSTOREDIR
     chmod 755 /usr/local/bin/vicidial-audio-store-dir
@@ -1163,7 +1163,7 @@ fix_vicidial_web_permissions
 #./confbridges.sh
 
 
-chkconfig asterisk off
+chkconfig --list asterisk >/dev/null 2>&1 && chkconfig asterisk off || true
 
 ## add confcron user
 sed -i '/^\[confcron\]$/,/^eventfilter=Event: Confbridge$/d' /etc/asterisk/manager.conf 2>/dev/null || true
