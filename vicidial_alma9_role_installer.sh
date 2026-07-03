@@ -1794,10 +1794,9 @@ if [ "$ROLE_INSTALL_WEBRTC" = "yes" ]; then
         echo "certbot-renew.timer not found; weekly certbot.sh cron entry will handle renewals if certbot is installed."
     fi
     cd "$SCRIPT_DIR"
-    chmod +x vicidial-enable-webrtc.sh
     systemctl enable firewalld
     systemctl start firewalld
-    DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" ./vicidial-enable-webrtc.sh || exit 1
+    DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" bash ./vicidial-enable-webrtc.sh || exit 1
     configure_dynportal_defaults
 else
     echo "Skipping WebRTC/certificate setup because neither Web nor Telephony role is selected."
@@ -1827,8 +1826,6 @@ else
     systemctl stop firewalld || true
     systemctl disable firewalld || true
 fi
-
-chmod +x "$SCRIPT_DIR/certbot.sh"
 
 chmod -R 777 /var/spool/asterisk/
 chown -R apache:apache /var/spool/asterisk/
