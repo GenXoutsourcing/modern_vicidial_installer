@@ -3858,6 +3858,145 @@ html body.genx-agent-live #genxMuteLink.genx-muted {
   border-color: rgba(254, 202, 202, 0.75) !important;
 }
 
+/* v66: force stock AGC disposition/alert popups into the GENX modal layer. */
+html body.genx-agent-modal #MainCommit,
+html body.genx-agent-modal #MainCommit *,
+html body.genx-agent-modal #Tabs,
+html body.genx-agent-modal #Tabs *,
+html body.genx-agent-modal #genxMuteLinkSpan,
+html body.genx-agent-modal #genxWebphoneUtilitySpan,
+html body.genx-agent-modal #genxAgentsUtilitySpan,
+html body.genx-agent-modal #DiaLlOgButtonspan,
+html body.genx-agent-modal #DiaLlOgButtonspan *,
+html body.genx-agent-modal #AgentViewLink,
+html body.genx-agent-modal #AgentViewLinkSpan,
+html body.genx-agent-modal #webphoneLink,
+html body.genx-agent-modal #webphoneLinkSpan {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body #AlertBox,
+html body #DispoSelectBox,
+html body #CustomerGoneBox,
+html body #NeWManuaLDiaLBox,
+html body #ManualValidateBox,
+html body #LeaDInfOBox {
+  z-index: 2000 !important;
+}
+
+html body.genx-agent-modal #AlertBox,
+html body.genx-agent-modal #DispoSelectBox,
+html body.genx-agent-modal #CustomerGoneBox,
+html body.genx-agent-modal #NeWManuaLDiaLBox,
+html body.genx-agent-modal #ManualValidateBox,
+html body.genx-agent-modal #LeaDInfOBox {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(760px, calc(100vw - 96px)) !important;
+  min-width: 420px !important;
+  max-width: 760px !important;
+  height: auto !important;
+  max-height: calc(100vh - 120px) !important;
+  overflow: auto !important;
+  padding: 24px !important;
+  box-sizing: border-box !important;
+  background: linear-gradient(180deg, rgba(19, 33, 58, 0.98), rgba(10, 20, 36, 0.99)) !important;
+  color: #f8fbff !important;
+  border: 1px solid rgba(126, 220, 255, 0.32) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 34px 100px rgba(0, 0, 0, 0.62), 0 0 0 9999px rgba(3, 9, 18, 0.72) !important;
+  text-align: center !important;
+}
+
+html body.genx-agent-modal #AlertBox *,
+html body.genx-agent-modal #DispoSelectBox *,
+html body.genx-agent-modal #CustomerGoneBox *,
+html body.genx-agent-modal #NeWManuaLDiaLBox *,
+html body.genx-agent-modal #ManualValidateBox *,
+html body.genx-agent-modal #LeaDInfOBox * {
+  color: #f8fbff !important;
+  text-shadow: none !important;
+  border-color: rgba(126, 220, 255, 0.22) !important;
+}
+
+html body.genx-agent-modal #AlertBox table,
+html body.genx-agent-modal #AlertBox tbody,
+html body.genx-agent-modal #AlertBox tr,
+html body.genx-agent-modal #AlertBox td,
+html body.genx-agent-modal #DispoSelectBox table,
+html body.genx-agent-modal #DispoSelectBox tbody,
+html body.genx-agent-modal #DispoSelectBox tr,
+html body.genx-agent-modal #DispoSelectBox td,
+html body.genx-agent-modal #CustomerGoneBox table,
+html body.genx-agent-modal #CustomerGoneBox tbody,
+html body.genx-agent-modal #CustomerGoneBox tr,
+html body.genx-agent-modal #CustomerGoneBox td,
+html body.genx-agent-modal #NeWManuaLDiaLBox table,
+html body.genx-agent-modal #NeWManuaLDiaLBox tbody,
+html body.genx-agent-modal #NeWManuaLDiaLBox tr,
+html body.genx-agent-modal #NeWManuaLDiaLBox td,
+html body.genx-agent-modal #ManualValidateBox table,
+html body.genx-agent-modal #ManualValidateBox tbody,
+html body.genx-agent-modal #ManualValidateBox tr,
+html body.genx-agent-modal #ManualValidateBox td,
+html body.genx-agent-modal #LeaDInfOBox table,
+html body.genx-agent-modal #LeaDInfOBox tbody,
+html body.genx-agent-modal #LeaDInfOBox tr,
+html body.genx-agent-modal #LeaDInfOBox td {
+  background: transparent !important;
+}
+
+html body.genx-agent-modal #DispoSelectBox a,
+html body.genx-agent-modal #DispoSelectBox font,
+html body.genx-agent-modal #DispoSelectBox b,
+html body.genx-agent-modal #DispoSelectBox strong,
+html body.genx-agent-modal #CustomerGoneBox a,
+html body.genx-agent-modal #AlertBox a {
+  color: #dbeafe !important;
+  font-weight: 800 !important;
+}
+
+html body.genx-agent-modal #DispoSelectBox a:hover,
+html body.genx-agent-modal #CustomerGoneBox a:hover,
+html body.genx-agent-modal #AlertBox a:hover {
+  color: #ffffff !important;
+}
+
+html body.genx-agent-modal #AlertBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #DispoSelectBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #CustomerGoneBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #NeWManuaLDiaLBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #ManualValidateBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #LeaDInfOBox input:not([type="checkbox"]):not([type="radio"]),
+html body.genx-agent-modal #AlertBox select,
+html body.genx-agent-modal #DispoSelectBox select,
+html body.genx-agent-modal #CustomerGoneBox select,
+html body.genx-agent-modal #NeWManuaLDiaLBox select,
+html body.genx-agent-modal #ManualValidateBox select,
+html body.genx-agent-modal #LeaDInfOBox select,
+html body.genx-agent-modal #AlertBox textarea,
+html body.genx-agent-modal #DispoSelectBox textarea,
+html body.genx-agent-modal #CustomerGoneBox textarea,
+html body.genx-agent-modal #NeWManuaLDiaLBox textarea,
+html body.genx-agent-modal #ManualValidateBox textarea,
+html body.genx-agent-modal #LeaDInfOBox textarea {
+  background: rgba(7, 16, 29, 0.96) !important;
+  color: #f8fbff !important;
+  border: 1px solid rgba(126, 220, 255, 0.32) !important;
+  border-radius: 10px !important;
+}
+
+html body.genx-agent-modal #AlertBox input[type="checkbox"],
+html body.genx-agent-modal #DispoSelectBox input[type="checkbox"],
+html body.genx-agent-modal #CustomerGoneBox input[type="checkbox"] {
+  accent-color: #38bdf8 !important;
+}
+
 /* v65: overlay-owned lower utility buttons for Webphone and Agents View. */
 html body.genx-agent-live #genxWebphoneUtilitySpan,
 html body.genx-agent-live #genxAgentsUtilitySpan {
