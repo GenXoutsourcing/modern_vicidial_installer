@@ -398,102 +398,6 @@ WHERE vu.user='6666';
 MYSQLDEFAULTS
 }
 
-install_genx_db_defaults_helper() {
-    local server_ip=$1
-    local cert_domain=$2
-    local server_id
-
-    server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
-
-    cat > /usr/local/bin/genx-vicidial-db-defaults <<GENXDBDEFAULTS
-#!/bin/bash
-mysql -u root asterisk <<'MYSQLGENXDEFAULTS'
-UPDATE servers
-SET server_id='${server_id}',
-    server_description='${cert_domain}',
-    asterisk_version='18.21.1-vici',
-    max_vicidial_trunks=120,
-    outbound_calls_per_second=10,
-    recording_web_link='ALT_IP',
-    alt_server_ip='${cert_domain}',
-    conf_engine='CONFBRIDGE',
-    auto_restart_asterisk='Y'
-WHERE server_ip='${server_ip}'
-   OR server_id='${server_id}'
-   OR server_id=LOWER('${server_id}')
-   OR server_id='TESTast';
-
-UPDATE vicidial_users vu
-JOIN system_settings ss
-SET vu.phone_login='9176',
-    vu.phone_pass=ss.default_phone_login_password,
-    vu.active='Y',
-    vu.user_level=9,
-    vu.user_group='ADMIN',
-    vu.delete_users='1',
-    vu.delete_user_groups='1',
-    vu.delete_lists='1',
-    vu.delete_campaigns='1',
-    vu.delete_ingroups='1',
-    vu.delete_remote_agents='1',
-    vu.load_leads='1',
-    vu.campaign_detail='1',
-    vu.ast_admin_access='1',
-    vu.ast_delete_phones='1',
-    vu.delete_scripts='1',
-    vu.modify_leads='1',
-    vu.change_agent_campaign='1',
-    vu.delete_filters='1',
-    vu.alter_agent_interface_options='1',
-    vu.delete_call_times='1',
-    vu.modify_call_times='1',
-    vu.modify_users='1',
-    vu.modify_campaigns='1',
-    vu.modify_lists='1',
-    vu.modify_scripts='1',
-    vu.modify_filters='1',
-    vu.modify_ingroups='1',
-    vu.modify_usergroups='1',
-    vu.modify_remoteagents='1',
-    vu.modify_servers='1',
-    vu.view_reports='1',
-    vu.qc_enabled='1',
-    vu.add_timeclock_log='1',
-    vu.modify_timeclock_log='1',
-    vu.delete_timeclock_log='1',
-    vu.vdc_agent_api_access='1',
-    vu.modify_inbound_dids='1',
-    vu.delete_inbound_dids='1',
-    vu.download_lists='1',
-    vu.export_reports='1',
-    vu.delete_from_dnc='1',
-    vu.modify_shifts='1',
-    vu.modify_phones='1',
-    vu.modify_carriers='1',
-    vu.modify_labels='1',
-    vu.modify_statuses='1',
-    vu.modify_voicemail='1',
-    vu.modify_audiostore='1',
-    vu.modify_moh='1',
-    vu.modify_tts='1',
-    vu.modify_contacts='1',
-    vu.modify_email_accounts='1',
-    vu.modify_custom_dialplans='1',
-    vu.modify_languages='1',
-    vu.modify_colors='1',
-    vu.modify_auto_reports='1',
-    vu.modify_ip_lists='1',
-    vu.modify_dial_prefix='1',
-    vu.modify_settings_containers='1',
-    vu.ignore_ip_list='0',
-    vu.admin_hide_lead_data='0',
-    vu.admin_hide_phone_data='0'
-WHERE vu.user='6666';
-MYSQLGENXDEFAULTS
-GENXDBDEFAULTS
-    chmod 755 /usr/local/bin/genx-vicidial-db-defaults
-}
-
 install_audio_store_directory_helper() {
     cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
 #!/bin/bash
@@ -1266,7 +1170,6 @@ crontab /root/crontab-file
 crontab -l
 
 #Install rc.local
-install_genx_db_defaults_helper "$ip_address" "$DOMAINNAME"
 
 cat > /etc/rc.d/rc.local <<EOF
 #!/bin/bash
@@ -1304,7 +1207,6 @@ systemctl start httpd.service
 ### clear the server-related records from the database
 
 /usr/share/astguiclient/AST_reset_mysql_vars.pl
-/usr/local/bin/genx-vicidial-db-defaults
 
 
 ### load dahdi drivers
