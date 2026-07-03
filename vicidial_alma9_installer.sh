@@ -130,6 +130,7 @@ configure_audio_store_directory() {
 
 apply_vicidial_database_defaults() {
     local server_ip=$1
+    local cert_domain=$2
 
     "${MYSQL[@]}" asterisk <<MYSQLDEFAULTS
 UPDATE system_settings SET allow_ip_lists='1';
@@ -186,6 +187,38 @@ ON DUPLICATE KEY UPDATE
     get_call_launch=VALUES(get_call_launch),
     campaign_description=VALUES(campaign_description),
     campaign_changedate=NOW();
+
+INSERT INTO vicidial_conf_templates
+    (template_id, template_name, user_group, template_contents)
+VALUES
+    ('WEBRTC', 'WEBRTC Default Phones', '---ALL---',
+'type=friend
+host=dynamic
+context=default
+host=dynamic
+trustrpid=yes
+sendrpid=no
+qualify=yes
+qualifyfreq=600
+transport=ws,wss,udp
+encryption=yes
+avpf=yes
+icesupport=yes
+rtcp_mux=yes
+directmedia=no
+disallow=all
+allow=ulaw,opus,vp8,h264
+nat=yes
+directmedia=no
+dtlsenable=yes
+dtlsverify=no
+dtlscertfile=/etc/letsencrypt/live/${cert_domain}/cert.pem
+dtlsprivatekey=/etc/letsencrypt/live/${cert_domain}/privkey.pem
+dtlssetup=actpass')
+ON DUPLICATE KEY UPDATE
+    template_name=VALUES(template_name),
+    user_group=VALUES(user_group),
+    template_contents=VALUES(template_contents);
 MYSQLDEFAULTS
 }
 
@@ -733,7 +766,7 @@ else
 fi
 
 "${MYSQL[@]}" -e "USE asterisk; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
-apply_vicidial_database_defaults "$ip_address"
+apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 
 #Get astguiclient.conf file
 cat <<ASTGUI>> /etc/astguiclient.conf
