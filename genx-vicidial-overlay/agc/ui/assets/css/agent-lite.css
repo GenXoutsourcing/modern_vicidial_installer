@@ -5728,3 +5728,124 @@ html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout
   border-color: rgba(248, 113, 113, 0.32) !important;
   background: rgba(69, 22, 37, 0.94) !important;
 }
+
+/* v73 true EOF: do not invent Hangup; style it only when VICIdial enables it. */
+html body.genx-agent-login #AlertBox,
+html body.genx-agent-login #AlertBox *,
+html body.genx-agent-loading #AlertBox,
+html body.genx-agent-loading #AlertBox *,
+html body.genx-agent-logout #AlertBox,
+html body.genx-agent-logout #AlertBox *,
+html body.genx-agent-login #NeWManuaLDiaLBox,
+html body.genx-agent-login #NeWManuaLDiaLBox *,
+html body.genx-agent-loading #NeWManuaLDiaLBox,
+html body.genx-agent-loading #NeWManuaLDiaLBox *,
+html body.genx-agent-logout #NeWManuaLDiaLBox,
+html body.genx-agent-logout #NeWManuaLDiaLBox *,
+html body.genx-agent-login #DispoSelectBox,
+html body.genx-agent-login #DispoSelectBox *,
+html body.genx-agent-loading #DispoSelectBox,
+html body.genx-agent-loading #DispoSelectBox *,
+html body.genx-agent-logout #DispoSelectBox,
+html body.genx-agent-logout #DispoSelectBox * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines {
+  z-index: 160 !important;
+  overflow: hidden !important;
+  pointer-events: auto !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl:not(:has(a[onclick*="hangup_customer_button_click"]))::after,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines:not(:has(a[onclick*="hangup_customer_button_click"]))::after {
+  content: none !important;
+  display: none !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl:not(:has(a[onclick*="hangup_customer_button_click"])),
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines:not(:has(a[onclick*="hangup_customer_button_click"])) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  cursor: default !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl:has(a[onclick*="hangup_customer_button_click"]),
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines:has(a[onclick*="hangup_customer_button_click"]) {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 18px !important;
+  top: 468px !important;
+  width: calc(var(--genx-left-w) - 36px) !important;
+  min-width: calc(var(--genx-left-w) - 36px) !important;
+  max-width: calc(var(--genx-left-w) - 36px) !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  border-radius: 13px !important;
+  border: 1px solid rgba(254, 202, 202, 0.42) !important;
+  background: linear-gradient(135deg, #dc2626, #f43f5e) !important;
+  color: #ffffff !important;
+  cursor: pointer !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl:has(a[onclick*="hangup_customer_button_click"])::after,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines:has(a[onclick*="hangup_customer_button_click"])::after {
+  content: "HANGUP" !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1 !important;
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 950 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-shadow: none !important;
+  pointer-events: none !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl a[onclick*="hangup_customer_button_click"],
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines a[onclick*="hangup_customer_button_click"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 0.01 !important;
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  max-height: 100% !important;
+  z-index: 3 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl a[onclick*="hangup_customer_button_click"] img,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines a[onclick*="hangup_customer_button_click"] img {
+  display: none !important;
+}

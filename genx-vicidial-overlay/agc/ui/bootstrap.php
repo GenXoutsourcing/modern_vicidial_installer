@@ -38,7 +38,7 @@ ob_start(static function ($html) {
         return $html;
     }
 
-    $asset = '<link id="genx-agent-lite-css" rel="stylesheet" type="text/css" href="/agc/ui/assets/css/agent-lite.css?v=72">' . "\n" .
+    $asset = '<link id="genx-agent-lite-css" rel="stylesheet" type="text/css" href="/agc/ui/assets/css/agent-lite.css?v=73">' . "\n" .
         '<script id="genx-agent-login-js">' . "\n" .
         '(function(){' .
         'function ready(fn){if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",fn);}else{fn();}}' .
