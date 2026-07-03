@@ -167,6 +167,36 @@ body {
   max-width: 1380px;
 }
 
+.ui-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  width: 100%;
+  max-width: 1380px;
+}
+
+.ui-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+.ui-metric {
+  min-width: 0;
+}
+
+.ui-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+
+.ui-summary-card {
+  min-width: 0;
+}
+
 .ui-card {
   width: 100%;
   overflow-x: auto;
@@ -231,6 +261,10 @@ body.ui-sidebar-collapsed .ui-nav-icon {
     padding: 18px 12px 28px;
   }
 
+  .ui-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   body.ui-sidebar-collapsed .ui-app {
     grid-template-columns: 1fr;
   }
@@ -239,5 +273,12 @@ body.ui-sidebar-collapsed .ui-nav-icon {
   body.ui-sidebar-collapsed .ui-nav-text,
   body.ui-sidebar-collapsed .ui-nav-arrow {
     display: inline-flex;
+  }
+}
+
+@media (max-width: 560px) {
+  .ui-metric-grid,
+  .ui-summary-grid {
+    grid-template-columns: 1fr;
   }
 }
