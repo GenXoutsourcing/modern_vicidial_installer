@@ -5192,6 +5192,27 @@ html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox {
   overflow: hidden !important;
 }
 
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox *,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox input,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox select,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox textarea,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox table,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox tr,
+html body:not(.genx-agent-manual-open) #NeWManuaLDiaLBox td {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: static !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
 html body.genx-agent-manual-open #NeWManuaLDiaLBox {
   display: block !important;
   visibility: visible !important;
@@ -5259,4 +5280,64 @@ html body.genx-agent-manual-open #NeWManuaLDiaLBox textarea {
   color: #f8fbff !important;
   border: 1px solid rgba(126, 220, 255, 0.34) !important;
   border-radius: 10px !important;
+}
+
+html body:not(.genx-agent-dispo-open) #DispoSelectBox {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html body:not(.genx-agent-dispo-open) #DispoSelectBox * {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body.genx-agent-dispo-open #DispoSelectBox {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(860px, calc(100vw - 96px)) !important;
+  min-width: 560px !important;
+  max-width: 860px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: calc(100vh - 130px) !important;
+  overflow: auto !important;
+  padding: 22px !important;
+  box-sizing: border-box !important;
+  z-index: 2200 !important;
+  background: linear-gradient(180deg, rgba(19, 33, 58, 0.99), rgba(8, 18, 33, 0.99)) !important;
+  color: #f8fbff !important;
+  border: 1px solid rgba(126, 220, 255, 0.34) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 34px 100px rgba(0, 0, 0, 0.62), 0 0 0 9999px rgba(3, 9, 18, 0.72) !important;
+}
+
+html body.genx-agent-dispo-open #DispoSelectBox *,
+html body.genx-agent-dispo-open #DispoSelectBox table,
+html body.genx-agent-dispo-open #DispoSelectBox tbody,
+html body.genx-agent-dispo-open #DispoSelectBox tr,
+html body.genx-agent-dispo-open #DispoSelectBox td {
+  background: transparent !important;
+  color: #f8fbff !important;
+  text-shadow: none !important;
+  border-color: rgba(126, 220, 255, 0.22) !important;
 }
