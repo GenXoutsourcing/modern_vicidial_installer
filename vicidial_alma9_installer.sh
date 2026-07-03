@@ -229,7 +229,7 @@ dnf install -y php-opcache mariadb-devel
 dnf install -y libss7 'libss7*' 'libopen*' || true
 sleep 1
 dnf install -y initscripts pv python3-pip 
-dnf install -y python3-mysql-connector || python3 -m pip install mysql-connector-python
+python3 -c 'import mysql.connector' 2>/dev/null || python3 -m pip install mysql-connector-python
 dnf copr enable irontec/sngrep -y
 dnf install sngrep bind-utils -y
 
