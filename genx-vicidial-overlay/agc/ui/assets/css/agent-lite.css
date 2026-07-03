@@ -5636,3 +5636,95 @@ html body.genx-agent-alert-open #AlertBox b {
   text-shadow: none !important;
   border-color: rgba(126, 220, 255, 0.22) !important;
 }
+
+/* v72 true EOF: keep Hangup functional and make Lead Preview intentional. */
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  position: fixed !important;
+  left: 16px !important;
+  top: 468px !important;
+  width: 222px !important;
+  min-width: 222px !important;
+  max-width: 222px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  z-index: 2400 !important;
+  overflow: hidden !important;
+  border-radius: 13px !important;
+  border: 1px solid rgba(254, 202, 202, 0.42) !important;
+  background: linear-gradient(135deg, #dc2626, #f43f5e) !important;
+  color: #ffffff !important;
+  cursor: pointer !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl::after {
+  content: "HANGUP" !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1 !important;
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 950 !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+  text-shadow: none !important;
+  pointer-events: none !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl a,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines a {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 0.01 !important;
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  max-height: 100% !important;
+  z-index: 3 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupControl img,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) #HangupBothLines img {
+  display: none !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) font.preview_text,
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) font.preview_text_red {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 24px !important;
+  padding: 2px 8px !important;
+  border-radius: 7px !important;
+  background: rgba(23, 38, 66, 0.96) !important;
+  color: #dbeafe !important;
+  border: 1px solid rgba(126, 220, 255, 0.26) !important;
+  font-size: 14px !important;
+  font-weight: 850 !important;
+  line-height: 1 !important;
+  text-shadow: none !important;
+  white-space: nowrap !important;
+}
+
+html body:not(.genx-agent-login):not(.genx-agent-loading):not(.genx-agent-logout) font.preview_text_red {
+  color: #fecaca !important;
+  border-color: rgba(248, 113, 113, 0.32) !important;
+  background: rgba(69, 22, 37, 0.94) !important;
+}
