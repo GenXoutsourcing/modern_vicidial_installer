@@ -136,6 +136,20 @@ configure_audio_store_directory() {
     chmod 0777 /var/www/html
 }
 
+configure_pjsip_external_ip() {
+    local server_ip=$1
+    local pjsip_conf=/etc/asterisk/pjsip.conf
+
+    if [ ! -f "$pjsip_conf" ]; then
+        echo "WARNING: $pjsip_conf not found; skipping PJSIP external IP update."
+        return 0
+    fi
+
+    sed -i "s/SERVER_EXTERNAL_IP/${server_ip}/g" "$pjsip_conf"
+    sed -i "s/^\([[:space:]]*external_media_address[[:space:]]*=[[:space:]]*\).*/\1${server_ip}/" "$pjsip_conf"
+    sed -i "s/^\([[:space:]]*external_signaling_address[[:space:]]*=[[:space:]]*\).*/\1${server_ip}/" "$pjsip_conf"
+}
+
 configure_dynportal_defaults() {
     local redirect_url="https://${DOMAINNAME}/vicidial/welcome.php"
 
@@ -1052,6 +1066,7 @@ echo "Replacing default VICIdial IP $OLD_SERVER_IP with current server IP $ip_ad
 
 perl install.pl --no-prompt
 
+configure_pjsip_external_ip "$ip_address"
 install_audio_store_directory_helper
 
 #Install Crontab
