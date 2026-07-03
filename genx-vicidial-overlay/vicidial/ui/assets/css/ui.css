@@ -1,0 +1,243 @@
+/*
+ * GENX VICIdial admin shell layout.
+ * This file provides the structural sidebar/topbar layout; theme.css owns color.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+.ui-app {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 100vh;
+  width: 100%;
+}
+
+.ui-sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  min-height: 100vh;
+  padding: 18px 14px;
+  overflow-y: auto;
+}
+
+.ui-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.ui-brand {
+  font-size: 23px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ui-sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.ui-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ui-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ui-nav-item,
+.ui-nav-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  text-decoration: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.ui-nav-sub {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 14px;
+}
+
+.ui-nav-group.open .ui-nav-sub {
+  display: flex;
+}
+
+.ui-nav-icon {
+  flex: 0 0 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ui-nav-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-nav-arrow {
+  margin-left: auto;
+}
+
+.ui-nav-group.open .ui-nav-arrow {
+  transform: rotate(90deg);
+}
+
+.ui-main {
+  min-width: 0;
+}
+
+.ui-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+  padding: 16px 26px;
+}
+
+.ui-title {
+  line-height: 1.2;
+}
+
+.ui-toplinks {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.ui-toplinks a {
+  text-decoration: none;
+}
+
+.ui-content {
+  min-width: 0;
+  padding: 26px;
+}
+
+.ui-page {
+  width: 100%;
+  max-width: 1380px;
+}
+
+.ui-card {
+  width: 100%;
+  overflow-x: auto;
+}
+
+body.ui-sidebar-collapsed .ui-app {
+  grid-template-columns: 78px minmax(0, 1fr);
+}
+
+body.ui-sidebar-collapsed .ui-sidebar {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+body.ui-sidebar-collapsed .ui-brand,
+body.ui-sidebar-collapsed .ui-nav-text,
+body.ui-sidebar-collapsed .ui-nav-arrow {
+  display: none;
+}
+
+body.ui-sidebar-collapsed .ui-brand-row {
+  justify-content: center;
+}
+
+body.ui-sidebar-collapsed .ui-nav-sub {
+  padding-left: 0;
+}
+
+body.ui-sidebar-collapsed .ui-nav-item,
+body.ui-sidebar-collapsed .ui-nav-group-title {
+  justify-content: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+body.ui-sidebar-collapsed .ui-nav-icon {
+  flex-basis: 32px;
+}
+
+@media (max-width: 900px) {
+  .ui-app {
+    grid-template-columns: 1fr;
+  }
+
+  .ui-sidebar {
+    position: relative;
+    height: auto;
+    min-height: 0;
+  }
+
+  .ui-topbar {
+    position: relative;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ui-toplinks {
+    justify-content: flex-start;
+  }
+
+  .ui-content {
+    padding: 18px 12px 28px;
+  }
+
+  body.ui-sidebar-collapsed .ui-app {
+    grid-template-columns: 1fr;
+  }
+
+  body.ui-sidebar-collapsed .ui-brand,
+  body.ui-sidebar-collapsed .ui-nav-text,
+  body.ui-sidebar-collapsed .ui-nav-arrow {
+    display: inline-flex;
+  }
+}

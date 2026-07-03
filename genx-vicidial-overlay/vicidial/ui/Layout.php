@@ -25,7 +25,7 @@ class Layout
 <title>' . htmlspecialchars($documentTitle) . '</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ' . $headAssets . '
-<link rel="stylesheet" href="/vicidial/ui/assets/css/ui.css?v=12">
+<link rel="stylesheet" href="/vicidial/ui/assets/css/ui.css?v=13">
 <link rel="stylesheet" href="/vicidial/ui/assets/css/theme.css?v=33">
 
 <style id="genx-critical-paint">
