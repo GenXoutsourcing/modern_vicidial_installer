@@ -1384,7 +1384,7 @@ configure_pjsip_external_ip "$ip_address"
 install_audio_store_directory_helper
 
 #Install Crontab
-cat <<CRONTAB>> /root/crontab-file
+cat <<CRONTAB > /root/crontab-file
 
 ### VICIDIAL audio-store web directory helper
 * * * * * /usr/local/bin/vicidial-audio-store-dir >/dev/null 2>&1
