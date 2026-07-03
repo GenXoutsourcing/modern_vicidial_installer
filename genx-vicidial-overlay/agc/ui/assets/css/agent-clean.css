@@ -797,3 +797,512 @@ body {
 #webphoneLink {
   white-space: nowrap !important;
 }
+
+/* v8: make the stock agent screen feel intentional without changing behavior. */
+#Header {
+  height: 38px !important;
+  width: 100vw !important;
+  padding: 0 18px !important;
+  box-sizing: border-box !important;
+  background: rgba(7, 16, 29, 0.96) !important;
+  border-bottom: 1px solid rgba(125, 220, 255, 0.16) !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+#Header,
+#Header font,
+#Header a {
+  font-size: 13px !important;
+  line-height: 38px !important;
+}
+
+#Header a {
+  padding: 4px 9px !important;
+  border-radius: 6px !important;
+  background: rgba(19, 35, 58, 0.75) !important;
+  border: 1px solid rgba(125, 220, 255, 0.18) !important;
+}
+
+#MainPanel {
+  top: 46px !important;
+  background:
+    linear-gradient(90deg, rgba(7, 16, 29, 0.98) 0 156px, rgba(8, 19, 35, 0.98) 156px),
+    radial-gradient(circle at 50% 20%, rgba(47, 125, 244, 0.10), transparent 34rem) !important;
+}
+
+#MainPanel::before {
+  content: "Action Board";
+  position: absolute;
+  left: 12px;
+  top: 11px;
+  color: #f7fbff;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+#MainPanelCustInfo {
+  display: inline-block !important;
+  margin: 22px 0 0 18px !important;
+  padding: 18px 22px !important;
+  width: min(760px, calc(100vw - 210px)) !important;
+  min-height: 245px !important;
+  background:
+    linear-gradient(180deg, rgba(16, 34, 58, 0.72), rgba(8, 19, 35, 0.72)) !important;
+  border: 1px solid rgba(125, 220, 255, 0.18) !important;
+  border-radius: 9px !important;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+
+#MainPanelCustInfo > table {
+  width: 100% !important;
+}
+
+#MainPanelCustInfo table table {
+  width: 100% !important;
+}
+
+#MainPanelCustInfo .body_text,
+#MainPanelCustInfo font {
+  font-size: 13px !important;
+}
+
+#MainPanelCustInfo input:not([type="checkbox"]):not([type="radio"]),
+#MainPanelCustInfo select,
+#MainPanelCustInfo textarea {
+  min-height: 27px !important;
+  padding: 3px 8px !important;
+  border-radius: 7px !important;
+  background: rgba(5, 14, 26, 0.92) !important;
+}
+
+#DiaLControl,
+#RecorDControl,
+#WebFormSpan,
+#WebFormSpanTwo,
+#ParkControl,
+#XferControl,
+#HangupControl {
+  position: relative !important;
+  display: block !important;
+  width: 144px !important;
+  height: 38px !important;
+  margin: 10px 6px !important;
+  border-radius: 9px !important;
+  overflow: hidden !important;
+}
+
+#DiaLControl a,
+#RecorDControl a,
+#WebFormSpan a,
+#WebFormSpanTwo a,
+#ParkControl a,
+#XferControl a,
+#HangupControl a {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#DiaLControl img,
+#RecorDControl img,
+#WebFormSpan img,
+#WebFormSpanTwo img,
+#ParkControl img,
+#XferControl img,
+#HangupControl img {
+  opacity: 0 !important;
+}
+
+#DiaLControl::after,
+#RecorDControl::after,
+#WebFormSpan::after,
+#WebFormSpanTwo::after,
+#ParkControl::after,
+#XferControl::after,
+#HangupControl::after {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+#DiaLControl {
+  margin-top: 36px !important;
+  background: linear-gradient(135deg, #20b55f, #178c4b) !important;
+}
+
+#DiaLControl::after {
+  content: "Paused";
+}
+
+#RecorDControl {
+  background: linear-gradient(135deg, #d83d7d, #b81855) !important;
+}
+
+#RecorDControl::after {
+  content: "Record";
+}
+
+#WebFormSpan,
+#WebFormSpanTwo {
+  background: linear-gradient(135deg, #324562, #253650) !important;
+}
+
+#WebFormSpan::after {
+  content: "Web Form";
+}
+
+#WebFormSpanTwo::after {
+  content: "Web Form 2";
+}
+
+#ParkControl {
+  background: linear-gradient(135deg, #367cf2, #245fd0) !important;
+}
+
+#ParkControl::after {
+  content: "Park Call";
+}
+
+#XferControl {
+  background: linear-gradient(135deg, #7167f4, #574be0) !important;
+}
+
+#XferControl::after {
+  content: "Transfer";
+}
+
+#HangupControl {
+  background: linear-gradient(135deg, #ef334d, #c91e35) !important;
+}
+
+#HangupControl::after {
+  content: "Hangup";
+}
+
+#SendDTMFdiv {
+  width: 150px !important;
+  margin: 14px 6px !important;
+  overflow: hidden !important;
+}
+
+#SendDTMF {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: transparent !important;
+  width: 142px !important;
+  overflow: hidden !important;
+}
+
+#SendDTMF a {
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 78px !important;
+  height: 32px !important;
+  border-radius: 9px !important;
+  background: linear-gradient(135deg, #8b46f6, #6636d8) !important;
+  border: 1px solid rgba(125, 220, 255, 0.24) !important;
+}
+
+#SendDTMF a img {
+  opacity: 0 !important;
+}
+
+#SendDTMF a::after {
+  content: "DTMF";
+  position: absolute;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+#SendDTMF input {
+  width: 48px !important;
+  height: 30px !important;
+  box-sizing: border-box !important;
+}
+
+#DiaLlOgButtonspan {
+  left: 296px !important;
+  bottom: 132px !important;
+  top: auto !important;
+  width: auto !important;
+  height: auto !important;
+  padding: 8px !important;
+  background: rgba(7, 16, 29, 0.64) !important;
+  border: 1px solid rgba(125, 220, 255, 0.14) !important;
+  border-radius: 9px !important;
+}
+
+#DiaLlOgButtonspan a {
+  padding: 7px 12px !important;
+  min-width: 96px !important;
+  text-align: center !important;
+}
+
+#AgentViewLinkSpan {
+  position: fixed !important;
+  right: 18px !important;
+  bottom: 34px !important;
+  left: auto !important;
+  top: auto !important;
+  z-index: 30020 !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+#AgentViewLinkSpan table,
+#AgentViewLinkSpan tbody,
+#AgentViewLinkSpan tr,
+#AgentViewLinkSpan td,
+#AgentViewLinkSpan font {
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+#AgentViewLink,
+#AgentViewLink a {
+  display: inline-block !important;
+}
+
+#AgentViewLink a {
+  padding: 9px 13px !important;
+  border-radius: 9px !important;
+  background: linear-gradient(135deg, rgba(47, 125, 244, 0.30), rgba(19, 35, 58, 0.92)) !important;
+  border: 1px solid rgba(125, 220, 255, 0.30) !important;
+  color: #eaf8ff !important;
+}
+
+/* v9: hide the remaining stock chrome and make the active screen read as one UI. */
+body.genx-agent-active #Tabs {
+  display: none !important;
+}
+
+body.genx-agent-active #Header {
+  left: 0 !important;
+  top: 0 !important;
+  width: 100vw !important;
+  height: 52px !important;
+  padding: 0 22px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  background:
+    linear-gradient(180deg, rgba(10, 24, 43, 0.98), rgba(7, 16, 29, 0.98)) !important;
+  border-bottom: 1px solid rgba(125, 220, 255, 0.18) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18) !important;
+  z-index: 30015 !important;
+}
+
+body.genx-agent-active #Header::before {
+  content: "GENX Agent";
+  margin-right: 14px;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+body.genx-agent-active #MainPanel {
+  top: 52px !important;
+  left: 0 !important;
+  width: calc(100vw - 12px) !important;
+  min-height: calc(100vh - 52px) !important;
+  border-right: 0 !important;
+}
+
+body.genx-agent-active #MainTable {
+  width: 100% !important;
+}
+
+body.genx-agent-active #DiaLControl,
+body.genx-agent-active #RecorDControl,
+body.genx-agent-active #WebFormSpan,
+body.genx-agent-active #WebFormSpanTwo,
+body.genx-agent-active #ParkControl,
+body.genx-agent-active #XferControl,
+body.genx-agent-active #HangupControl,
+body.genx-agent-active #SendDTMFdiv {
+  left: 18px !important;
+}
+
+body.genx-agent-active #DiaLControl,
+body.genx-agent-active #RecorDControl,
+body.genx-agent-active #WebFormSpan,
+body.genx-agent-active #WebFormSpanTwo,
+body.genx-agent-active #ParkControl,
+body.genx-agent-active #XferControl,
+body.genx-agent-active #HangupControl {
+  width: 152px !important;
+  height: 40px !important;
+  margin-top: 12px !important;
+  margin-bottom: 12px !important;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.20),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+body.genx-agent-active #DiaLControl::after,
+body.genx-agent-active #RecorDControl::after,
+body.genx-agent-active #WebFormSpan::after,
+body.genx-agent-active #WebFormSpanTwo::after,
+body.genx-agent-active #ParkControl::after,
+body.genx-agent-active #XferControl::after,
+body.genx-agent-active #HangupControl::after {
+  font-size: 12px !important;
+  letter-spacing: 0 !important;
+}
+
+body.genx-agent-active #SendDTMFdiv {
+  margin-top: 12px !important;
+}
+
+body.genx-agent-active #DiaLlOgButtonspan {
+  position: fixed !important;
+  left: 208px !important;
+  bottom: 24px !important;
+  top: auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 7px !important;
+  background: rgba(9, 22, 39, 0.92) !important;
+  border: 1px solid rgba(125, 220, 255, 0.22) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28) !important;
+  z-index: 30019 !important;
+}
+
+body.genx-agent-active #DiaLlOgButtonspan a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 104px !important;
+  min-height: 30px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  background: rgba(47, 125, 244, 0.14) !important;
+  border: 1px solid rgba(125, 220, 255, 0.20) !important;
+  color: #d9f4ff !important;
+  font-size: 11px !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+}
+
+body.genx-agent-active #DiaLlOgButtonspan a:hover {
+  background: rgba(47, 125, 244, 0.28) !important;
+  border-color: rgba(125, 220, 255, 0.42) !important;
+}
+
+body.genx-agent-active #webphoneLinkSpan {
+  top: 14px !important;
+  right: 140px !important;
+  left: auto !important;
+}
+
+body.genx-agent-active #AgentViewLinkSpan {
+  right: 22px !important;
+  bottom: 24px !important;
+}
+
+/* v10: strip out the last visible stock table bars. */
+body.genx-agent-active #Header table,
+body.genx-agent-active #Header tbody,
+body.genx-agent-active #Header tr,
+body.genx-agent-active #Header td {
+  background: transparent !important;
+}
+
+body.genx-agent-active #Header table {
+  width: auto !important;
+  flex: 1 1 auto !important;
+  margin: 0 !important;
+}
+
+body.genx-agent-active #Header td {
+  height: 52px !important;
+  vertical-align: middle !important;
+}
+
+body.genx-agent-active #Header .queue_text,
+body.genx-agent-active #Header font {
+  color: rgba(232, 244, 255, 0.86) !important;
+  font-size: 12px !important;
+}
+
+body.genx-agent-active #Header a {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  background: rgba(125, 220, 255, 0.10) !important;
+  border: 1px solid rgba(125, 220, 255, 0.24) !important;
+  color: #e9f8ff !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+}
+
+body.genx-agent-active #MaiNfooterspan,
+body.genx-agent-active #MaiNfooter {
+  display: none !important;
+}
+
+body.genx-agent-active #MainTable > tbody > tr:first-child {
+  display: none !important;
+}
+
+/* v11: remove leftover rail label clutter after the stock status row is hidden. */
+body.genx-agent-active #MainPanel::before {
+  left: 34px !important;
+}
+
+body.genx-agent-active #MainTable > tbody > tr:nth-child(2) > td:first-child > font.body_text {
+  color: transparent !important;
+}
+
+/* v12: give the rail title room and suppress leftover stock text nodes. */
+body.genx-agent-active #DiaLControl {
+  margin-top: 54px !important;
+}
+
+body.genx-agent-active #MainTable > tbody > tr:nth-child(2) > td:first-child > font.body_text,
+body.genx-agent-active #MainTable > tbody > tr:nth-child(2) > td:first-child > font.body_text center {
+  color: transparent !important;
+}
+
+body.genx-agent-active #MainTable > tbody > tr:nth-child(2) > td:first-child > font.body_text center {
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* v13: match VICIdial's generated rail row after the first status row is hidden. */
+body.genx-agent-active #MainTable > tbody > tr > td:first-child > font.body_text {
+  color: transparent !important;
+}
+
+body.genx-agent-active #MainTable > tbody > tr > td:first-child > font.body_text > center:first-of-type {
+  height: 0 !important;
+  overflow: hidden !important;
+  color: transparent !important;
+}
