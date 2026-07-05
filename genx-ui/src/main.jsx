@@ -70,6 +70,9 @@ const NAV_ITEMS = [
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
   { key: 'dids', label: 'DIDs', eyebrow: 'Inbound', title: 'DID Routing', icon: PhoneCall },
   { key: 'phones', label: 'Phones', eyebrow: 'Platform', title: 'Phones and Webphones', icon: PhoneCall },
+  { key: 'scripts', label: 'Scripts', eyebrow: 'Admin', title: 'Scripts and Agent Prompts', icon: FileText },
+  { key: 'leadFilters', label: 'Filters', eyebrow: 'Admin', title: 'Lead Filters', icon: SlidersHorizontal },
+  { key: 'callTimes', label: 'Call Times', eyebrow: 'Admin', title: 'Call Times', icon: Timer },
   { key: 'reports', label: 'Reports', eyebrow: 'Reporting', title: 'Reporting Center', icon: FileText },
   { key: 'recordings', label: 'Recordings', eyebrow: 'Reports', title: 'Recent Recordings', icon: Activity },
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
@@ -227,6 +230,9 @@ function userCan(user, entity) {
   if (entity === 'inbound') return Boolean(user?.modifyIngroups);
   if (entity === 'dids') return Boolean(user?.modifyInboundDids);
   if (entity === 'phones') return Boolean(user?.modifyPhones);
+  if (entity === 'scripts') return Boolean(user?.modifyScripts);
+  if (entity === 'leadFilters') return Boolean(user?.modifyFilters);
+  if (entity === 'callTimes') return Boolean(user?.modifyCallTimes);
   return false;
 }
 
@@ -583,6 +589,63 @@ function actionDefaults(entity, admin) {
     };
   }
 
+  if (entity === 'scripts') {
+    return {
+      script_id: '',
+      script_name: '',
+      script_comments: '',
+      script_text: '',
+      active: 'Y',
+      user_group: group,
+      script_color: 'white',
+    };
+  }
+
+  if (entity === 'leadFilters') {
+    return {
+      lead_filter_id: '',
+      lead_filter_name: '',
+      lead_filter_comments: '',
+      lead_filter_sql: '',
+      user_group: group,
+    };
+  }
+
+  if (entity === 'callTimes') {
+    return {
+      call_time_id: '',
+      call_time_name: '',
+      call_time_comments: '',
+      ct_default_start: '900',
+      ct_default_stop: '2100',
+      ct_sunday_start: '0',
+      ct_sunday_stop: '0',
+      ct_monday_start: '0',
+      ct_monday_stop: '0',
+      ct_tuesday_start: '0',
+      ct_tuesday_stop: '0',
+      ct_wednesday_start: '0',
+      ct_wednesday_stop: '0',
+      ct_thursday_start: '0',
+      ct_thursday_stop: '0',
+      ct_friday_start: '0',
+      ct_friday_stop: '0',
+      ct_saturday_start: '0',
+      ct_saturday_stop: '0',
+      ct_state_call_times: '',
+      default_afterhours_filename_override: '',
+      sunday_afterhours_filename_override: '',
+      monday_afterhours_filename_override: '',
+      tuesday_afterhours_filename_override: '',
+      wednesday_afterhours_filename_override: '',
+      thursday_afterhours_filename_override: '',
+      friday_afterhours_filename_override: '',
+      saturday_afterhours_filename_override: '',
+      user_group: group,
+      ct_holidays: '',
+    };
+  }
+
   return {
     group_id: '',
     group_name: '',
@@ -899,6 +962,66 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'scripts') {
+    return [
+      { key: 'script_id', label: 'Script ID', disabled: mode === 'edit' },
+      { key: 'script_name', label: 'Script Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'script_color', label: 'Script Color' },
+      { key: 'script_comments', label: 'Comments', wide: true },
+      { key: 'script_text', label: 'Script Text', type: 'textarea', wide: true },
+    ];
+  }
+
+  if (entity === 'leadFilters') {
+    return [
+      { key: 'lead_filter_id', label: 'Filter ID', disabled: mode === 'edit' },
+      { key: 'lead_filter_name', label: 'Filter Name' },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'lead_filter_comments', label: 'Comments', wide: true },
+      { key: 'lead_filter_sql', label: 'Filter SQL', type: 'textarea', wide: true },
+    ];
+  }
+
+  if (entity === 'callTimes') {
+    return [
+      { key: 'call_time_id', label: 'Call Time ID', disabled: mode === 'edit' },
+      { key: 'call_time_name', label: 'Call Time Name' },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'call_time_comments', label: 'Comments', wide: true },
+      { section: 'Default Hours' },
+      { key: 'ct_default_start', label: 'Default Start', type: 'number' },
+      { key: 'ct_default_stop', label: 'Default Stop', type: 'number' },
+      { key: 'default_afterhours_filename_override', label: 'Default Afterhours Audio', wide: true },
+      { section: 'Daily Hours' },
+      { key: 'ct_sunday_start', label: 'Sunday Start', type: 'number' },
+      { key: 'ct_sunday_stop', label: 'Sunday Stop', type: 'number' },
+      { key: 'sunday_afterhours_filename_override', label: 'Sunday Audio' },
+      { key: 'ct_monday_start', label: 'Monday Start', type: 'number' },
+      { key: 'ct_monday_stop', label: 'Monday Stop', type: 'number' },
+      { key: 'monday_afterhours_filename_override', label: 'Monday Audio' },
+      { key: 'ct_tuesday_start', label: 'Tuesday Start', type: 'number' },
+      { key: 'ct_tuesday_stop', label: 'Tuesday Stop', type: 'number' },
+      { key: 'tuesday_afterhours_filename_override', label: 'Tuesday Audio' },
+      { key: 'ct_wednesday_start', label: 'Wednesday Start', type: 'number' },
+      { key: 'ct_wednesday_stop', label: 'Wednesday Stop', type: 'number' },
+      { key: 'wednesday_afterhours_filename_override', label: 'Wednesday Audio' },
+      { key: 'ct_thursday_start', label: 'Thursday Start', type: 'number' },
+      { key: 'ct_thursday_stop', label: 'Thursday Stop', type: 'number' },
+      { key: 'thursday_afterhours_filename_override', label: 'Thursday Audio' },
+      { key: 'ct_friday_start', label: 'Friday Start', type: 'number' },
+      { key: 'ct_friday_stop', label: 'Friday Stop', type: 'number' },
+      { key: 'friday_afterhours_filename_override', label: 'Friday Audio' },
+      { key: 'ct_saturday_start', label: 'Saturday Start', type: 'number' },
+      { key: 'ct_saturday_stop', label: 'Saturday Stop', type: 'number' },
+      { key: 'saturday_afterhours_filename_override', label: 'Saturday Audio' },
+      { section: 'States and Holidays' },
+      { key: 'ct_state_call_times', label: 'State Call Times', type: 'textarea', wide: true },
+      { key: 'ct_holidays', label: 'Holidays', type: 'textarea', wide: true },
+    ];
+  }
+
   return [
     { key: 'group_id', label: 'Group ID', disabled: mode === 'edit' },
     { key: 'group_name', label: 'Group Name' },
@@ -925,6 +1048,9 @@ function entityLabel(entity) {
     inbound: 'Inbound Group',
     dids: 'DID',
     phones: 'Phone',
+    scripts: 'Script',
+    leadFilters: 'Lead Filter',
+    callTimes: 'Call Time',
   }[entity] || 'Record';
 }
 
@@ -938,12 +1064,17 @@ function entityId(entity, row) {
     inbound: row.group_id,
     dids: row.did_pattern,
     phones: `${row.extension}__${row.server_ip}`,
+    scripts: row.script_id,
+    leadFilters: row.lead_filter_id,
+    callTimes: row.call_time_id,
   }[entity];
 }
 
 function entityPath(entity) {
   return {
     userGroups: 'user-groups',
+    leadFilters: 'lead-filters',
+    callTimes: 'call-times',
   }[entity] || entity;
 }
 
@@ -1415,6 +1546,9 @@ function AdminSummary({ admin }) {
     { icon: Headphones, label: 'Inbound', value: counts.activeInboundGroups, detail: `${formatNumber(counts.inboundGroups)} total`, accent: '#ffd166' },
     { icon: PhoneCall, label: 'DIDs', value: counts.activeDids, detail: `${formatNumber(counts.dids)} total`, accent: '#00ffa8' },
     { icon: PhoneCall, label: 'Phones', value: counts.activePhones, detail: `${formatNumber(counts.phones)} total`, accent: '#b9f2ff' },
+    { icon: FileText, label: 'Scripts', value: counts.activeScripts, detail: `${formatNumber(counts.scripts)} total`, accent: '#c7a8ff' },
+    { icon: SlidersHorizontal, label: 'Filters', value: counts.leadFilters, detail: 'Lead filter rules', accent: '#ffdf7b' },
+    { icon: Timer, label: 'Call Times', value: counts.callTimes, detail: 'Dialing windows', accent: '#ff9f7b' },
     { icon: Server, label: 'Servers', value: counts.activeServers, detail: `${formatNumber(counts.servers)} total`, accent: '#7bb7ff' },
     { icon: PhoneCall, label: 'Carriers', value: counts.activeCarriers, detail: `${formatNumber(counts.carriers)} total`, accent: '#2d7dff' },
   ];
@@ -1826,6 +1960,141 @@ function PhonesView({ admin, user, onAction }) {
   );
 }
 
+function ScriptsView({ admin, user, onAction }) {
+  const scripts = admin?.scripts || [];
+  const canManage = userCan(user, 'scripts');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="scripts" label="Script" user={user} onAction={onAction}>
+        <p className="action-copy">Manage agent scripts, prompt text, active state, color, and user-group ownership.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Agent Screen" title="Scripts and Agent Prompts" icon={FileText} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No scripts returned"
+            rows={scripts.map((row) => ({ ...row, id: row.script_id }))}
+            columns={[
+              {
+                key: 'script',
+                label: 'Script',
+                render: (row) => (
+                  <>
+                    <strong>{row.script_id}</strong>
+                    <span>{row.script_name || row.script_comments || 'Unnamed script'}</span>
+                  </>
+                ),
+              },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'script_color', label: 'Color', render: (row) => row.script_color || 'white' },
+              { key: 'script_text', label: 'Text', render: (row) => `${String(row.script_text || '').length} chars` },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('scripts', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Usage" title="Script Mix" icon={Activity}>
+          <div className="quick-stack">
+            <MetricCard icon={FileText} label="Active Scripts" value={formatNumber(scripts.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(scripts.length)} configured`} accent="#00d9ff" />
+            <MetricCard icon={ShieldCheck} label="Scoped Scripts" value={formatNumber(scripts.filter((row) => row.user_group && row.user_group !== '---ALL---').length)} detail="Assigned to a group" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function LeadFiltersView({ admin, user, onAction }) {
+  const filters = admin?.leadFilters || [];
+  const canManage = userCan(user, 'leadFilters');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="leadFilters" label="Filter" user={user} onAction={onAction}>
+        <p className="action-copy">Manage VICIdial lead filter rules used by campaigns and manual dialing controls.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Lead Admin" title="Lead Filters" icon={SlidersHorizontal} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No lead filters returned"
+            rows={filters.map((row) => ({ ...row, id: row.lead_filter_id }))}
+            columns={[
+              {
+                key: 'filter',
+                label: 'Filter',
+                render: (row) => (
+                  <>
+                    <strong>{row.lead_filter_id}</strong>
+                    <span>{row.lead_filter_name || row.lead_filter_comments || 'Unnamed filter'}</span>
+                  </>
+                ),
+              },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'lead_filter_sql', label: 'SQL', render: (row) => `${String(row.lead_filter_sql || '').length} chars` },
+              { key: 'lead_filter_comments', label: 'Comments', render: (row) => row.lead_filter_comments || 'None' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('leadFilters', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Rules" title="Filter Mix" icon={Database}>
+          <div className="quick-stack">
+            <MetricCard icon={SlidersHorizontal} label="Lead Filters" value={formatNumber(filters.length)} detail="Configured filters" accent="#00d9ff" />
+            <MetricCard icon={ShieldCheck} label="Scoped Filters" value={formatNumber(filters.filter((row) => row.user_group && row.user_group !== '---ALL---').length)} detail="Assigned to a group" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function CallTimesView({ admin, user, onAction }) {
+  const callTimes = admin?.callTimes || [];
+  const canManage = userCan(user, 'callTimes');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="callTimes" label="Call Time" user={user} onAction={onAction}>
+        <p className="action-copy">Manage dialing windows, day-specific overrides, after-hours audio, state rules, and holiday blocks.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Schedule" title="Call Times" icon={Timer} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No call times returned"
+            rows={callTimes.map((row) => ({ ...row, id: row.call_time_id }))}
+            columns={[
+              {
+                key: 'call_time',
+                label: 'Call Time',
+                render: (row) => (
+                  <>
+                    <strong>{row.call_time_id}</strong>
+                    <span>{row.call_time_name || row.call_time_comments || 'Unnamed call time'}</span>
+                  </>
+                ),
+              },
+              { key: 'default_window', label: 'Default', render: (row) => `${row.ct_default_start}-${row.ct_default_stop}` },
+              { key: 'monday', label: 'Monday', render: (row) => `${row.ct_monday_start}-${row.ct_monday_stop}` },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'ct_state_call_times', label: 'States', render: (row) => String(row.ct_state_call_times || '').trim() ? 'Configured' : 'None' },
+              { key: 'ct_holidays', label: 'Holidays', render: (row) => String(row.ct_holidays || '').trim() ? 'Configured' : 'None' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('callTimes', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Windows" title="Call Time Mix" icon={Clock3}>
+          <div className="quick-stack">
+            <MetricCard icon={Timer} label="Call Times" value={formatNumber(callTimes.length)} detail="Configured windows" accent="#00d9ff" />
+            <MetricCard icon={CalendarDays} label="Holiday Rules" value={formatNumber(callTimes.filter((row) => String(row.ct_holidays || '').trim()).length)} detail="Call times with holidays" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function CatalogPanels({ groups, query, emptyLabel }) {
   const normalized = query.trim().toLowerCase();
   const filtered = groups
@@ -1925,7 +2194,7 @@ function MapView() {
       <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
         <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
         <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
-        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="7" detail="Campaigns, users, groups, lists, inbound, DIDs, phones" accent="#a8c7ff" />
+        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="10" detail="Campaigns, users, groups, lists, inbound, DIDs, phones, scripts, filters, call times" accent="#a8c7ff" />
         <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
       </section>
 
@@ -2036,6 +2305,9 @@ function AdminPage({ activeView, dashboard, admin, user, onAction }) {
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'phones') return <PhonesView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'scripts') return <ScriptsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'leadFilters') return <LeadFiltersView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'callTimes') return <CallTimesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} />;

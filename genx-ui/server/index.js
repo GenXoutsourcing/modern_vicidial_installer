@@ -739,6 +739,10 @@ async function adminData(user) {
   const phoneWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', phoneParams);
   const callTimeParams = [];
   const callTimeWhere = scopeWhere(user?.permissions?.adminViewableCallTimes, 'call_time_id', callTimeParams);
+  const scriptParams = [];
+  const scriptWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', scriptParams);
+  const filterParams = [];
+  const filterWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', filterParams);
   const campaignStatusParams = [];
   const campaignStatusWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', campaignStatusParams);
   const [
@@ -1102,7 +1106,36 @@ async function adminData(user) {
       [],
     ),
     rows(
-      `SELECT call_time_id, call_time_name
+      `SELECT call_time_id,
+              call_time_name,
+              call_time_comments,
+              ct_default_start,
+              ct_default_stop,
+              ct_sunday_start,
+              ct_sunday_stop,
+              ct_monday_start,
+              ct_monday_stop,
+              ct_tuesday_start,
+              ct_tuesday_stop,
+              ct_wednesday_start,
+              ct_wednesday_stop,
+              ct_thursday_start,
+              ct_thursday_stop,
+              ct_friday_start,
+              ct_friday_stop,
+              ct_saturday_start,
+              ct_saturday_stop,
+              ct_state_call_times,
+              default_afterhours_filename_override,
+              sunday_afterhours_filename_override,
+              monday_afterhours_filename_override,
+              tuesday_afterhours_filename_override,
+              wednesday_afterhours_filename_override,
+              thursday_afterhours_filename_override,
+              friday_afterhours_filename_override,
+              saturday_afterhours_filename_override,
+              user_group,
+              ct_holidays
        FROM vicidial_call_times
        WHERE ${callTimeWhere}
        ORDER BY call_time_id ASC
@@ -1111,19 +1144,31 @@ async function adminData(user) {
       [],
     ),
     rows(
-      `SELECT script_id, script_name
+      `SELECT script_id,
+              script_name,
+              script_comments,
+              script_text,
+              active,
+              user_group,
+              script_color
        FROM vicidial_scripts
+       WHERE ${scriptWhere}
        ORDER BY script_id ASC
        LIMIT 200`,
-      [],
+      scriptParams,
       [],
     ),
     rows(
-      `SELECT lead_filter_id, lead_filter_name
+      `SELECT lead_filter_id,
+              lead_filter_name,
+              lead_filter_comments,
+              lead_filter_sql,
+              user_group
        FROM vicidial_lead_filters
+       WHERE ${filterWhere}
        ORDER BY lead_filter_id ASC
        LIMIT 200`,
-      [],
+      filterParams,
       [],
     ),
     rows(
@@ -1255,6 +1300,10 @@ async function adminData(user) {
       activeDids: dids.filter((item) => item.did_active === 'Y').length,
       phones: phones.length,
       activePhones: phones.filter((item) => item.active === 'Y').length,
+      scripts: scripts.length,
+      activeScripts: scripts.filter((item) => item.active === 'Y').length,
+      leadFilters: leadFilters.length,
+      callTimes: callTimes.length,
       servers: servers.length,
       activeServers: servers.filter((item) => item.active === 'Y').length,
       carriers: carriers.length,
@@ -1288,6 +1337,9 @@ async function adminData(user) {
     userGroups,
     dids,
     phones,
+    scripts,
+    leadFilters,
+    callTimes,
     recordings: recordings.map((item) => ({
       ...item,
       length_in_sec: Number(item.length_in_sec || 0),
@@ -2265,6 +2317,189 @@ async function savePhone(req, res, mode) {
   }
 }
 
+function scopedUserGroupAllowed(user, userGroup) {
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  return scopeAllows(user?.permissions?.adminViewableGroups, userGroup);
+}
+
+async function recordUserGroup(table, idColumn, id) {
+  const [record] = await rows(
+    `SELECT user_group FROM ${quoteId(table)} WHERE ${quoteId(idColumn)} = ? LIMIT 1`,
+    [id],
+    [],
+  );
+  return record?.user_group || '';
+}
+
+function scriptPayload(body) {
+  return {
+    script_name: cleanText(body.script_name, 50) || 'New Script',
+    script_comments: cleanText(body.script_comments, 255),
+    script_text: cleanText(body.script_text, 12000),
+    active: ynFlag(body.active, 'Y'),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    script_color: cleanText(body.script_color, 20) || 'white',
+  };
+}
+
+async function saveScript(req, res, mode) {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  const id = cleanId(mode === 'create' ? req.body?.script_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_script_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_scripts', 'script_id', id))) {
+    return res.status(403).json({ ok: false, error: 'script_not_allowed' });
+  }
+  const payload = scriptPayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'script_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_scripts
+         SET script_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'SCRIPTS', 'ADD', id, 'GENX ADD SCRIPT', 'INSERT INTO vicidial_scripts', payload.script_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_scripts
+         SET ${assignments}
+         WHERE script_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'script_not_found' });
+      await adminLog(req, 'SCRIPTS', 'MODIFY', id, 'GENX MODIFY SCRIPT', 'UPDATE vicidial_scripts', payload.script_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'script_exists' : 'script_write_failed' });
+  }
+}
+
+function leadFilterPayload(body) {
+  return {
+    lead_filter_name: cleanText(body.lead_filter_name, 30) || 'New Filter',
+    lead_filter_comments: cleanText(body.lead_filter_comments, 255),
+    lead_filter_sql: cleanText(body.lead_filter_sql, 12000),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+  };
+}
+
+async function saveLeadFilter(req, res, mode) {
+  if (!requireModify(req, res, 'modifyFilters')) return;
+  const id = cleanId(mode === 'create' ? req.body?.lead_filter_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_lead_filter_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_lead_filters', 'lead_filter_id', id))) {
+    return res.status(403).json({ ok: false, error: 'lead_filter_not_allowed' });
+  }
+  const payload = leadFilterPayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'lead_filter_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_lead_filters
+         SET lead_filter_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'FILTERS', 'ADD', id, 'GENX ADD LEAD FILTER', 'INSERT INTO vicidial_lead_filters', payload.lead_filter_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_lead_filters
+         SET ${assignments}
+         WHERE lead_filter_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'lead_filter_not_found' });
+      await adminLog(req, 'FILTERS', 'MODIFY', id, 'GENX MODIFY LEAD FILTER', 'UPDATE vicidial_lead_filters', payload.lead_filter_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'lead_filter_exists' : 'lead_filter_write_failed' });
+  }
+}
+
+function callTimeValue(value, fallback = 0) {
+  return cleanInt(value, fallback, 0, 2400);
+}
+
+function callTimePayload(body) {
+  return {
+    call_time_name: cleanText(body.call_time_name, 30) || 'New Call Time',
+    call_time_comments: cleanText(body.call_time_comments, 255),
+    ct_default_start: callTimeValue(body.ct_default_start, 900),
+    ct_default_stop: callTimeValue(body.ct_default_stop, 2100),
+    ct_sunday_start: callTimeValue(body.ct_sunday_start, 0),
+    ct_sunday_stop: callTimeValue(body.ct_sunday_stop, 0),
+    ct_monday_start: callTimeValue(body.ct_monday_start, 0),
+    ct_monday_stop: callTimeValue(body.ct_monday_stop, 0),
+    ct_tuesday_start: callTimeValue(body.ct_tuesday_start, 0),
+    ct_tuesday_stop: callTimeValue(body.ct_tuesday_stop, 0),
+    ct_wednesday_start: callTimeValue(body.ct_wednesday_start, 0),
+    ct_wednesday_stop: callTimeValue(body.ct_wednesday_stop, 0),
+    ct_thursday_start: callTimeValue(body.ct_thursday_start, 0),
+    ct_thursday_stop: callTimeValue(body.ct_thursday_stop, 0),
+    ct_friday_start: callTimeValue(body.ct_friday_start, 0),
+    ct_friday_stop: callTimeValue(body.ct_friday_stop, 0),
+    ct_saturday_start: callTimeValue(body.ct_saturday_start, 0),
+    ct_saturday_stop: callTimeValue(body.ct_saturday_stop, 0),
+    ct_state_call_times: cleanText(body.ct_state_call_times, 12000),
+    default_afterhours_filename_override: cleanText(body.default_afterhours_filename_override, 255),
+    sunday_afterhours_filename_override: cleanText(body.sunday_afterhours_filename_override, 255),
+    monday_afterhours_filename_override: cleanText(body.monday_afterhours_filename_override, 255),
+    tuesday_afterhours_filename_override: cleanText(body.tuesday_afterhours_filename_override, 255),
+    wednesday_afterhours_filename_override: cleanText(body.wednesday_afterhours_filename_override, 255),
+    thursday_afterhours_filename_override: cleanText(body.thursday_afterhours_filename_override, 255),
+    friday_afterhours_filename_override: cleanText(body.friday_afterhours_filename_override, 255),
+    saturday_afterhours_filename_override: cleanText(body.saturday_afterhours_filename_override, 255),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    ct_holidays: cleanText(body.ct_holidays, 12000),
+  };
+}
+
+async function saveCallTime(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCallTimes')) return;
+  const id = cleanId(mode === 'create' ? req.body?.call_time_id : req.params.id, 10);
+  if (!id) return badRequest(res, 'invalid_call_time_id');
+  if (mode !== 'create' && !scopeAllows(req.genxUser?.permissions?.adminViewableCallTimes, id)) {
+    return res.status(403).json({ ok: false, error: 'call_time_not_allowed' });
+  }
+  const payload = callTimePayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'call_time_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_call_times
+         SET call_time_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'CALLTIMES', 'ADD', id, 'GENX ADD CALL TIME', 'INSERT INTO vicidial_call_times', payload.call_time_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_call_times
+         SET ${assignments}
+         WHERE call_time_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'call_time_not_found' });
+      await adminLog(req, 'CALLTIMES', 'MODIFY', id, 'GENX MODIFY CALL TIME', 'UPDATE vicidial_call_times', payload.call_time_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'call_time_exists' : 'call_time_write_failed' });
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     const system = await systemStatus();
@@ -2335,6 +2570,12 @@ app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'crea
 app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
 app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
 app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
+app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
+app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
+app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(req, res, 'create'));
+app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
+app.post('/api/admin/call-times', requireAccess, (req, res) => saveCallTime(req, res, 'create'));
+app.put('/api/admin/call-times/:id', requireAccess, (req, res) => saveCallTime(req, res, 'update'));
 
 app.use(express.static(distDir, {
   etag: true,
