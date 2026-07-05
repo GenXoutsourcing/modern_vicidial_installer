@@ -25,6 +25,11 @@ const config = {
 
 const app = express();
 const pool = mysql.createPool(config.db);
+const ranges = {
+  today: { key: 'today', label: 'Today', days: 1 },
+  '7d': { key: '7d', label: '7 Days', days: 7 },
+  '30d': { key: '30d', label: '30 Days', days: 30 },
+};
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '64kb' }));
@@ -61,6 +66,26 @@ async function rows(sql, params = [], fallback = []) {
   }
 }
 
+function resolveRange(value) {
+  return ranges[value] || ranges.today;
+}
+
+function dateWhere(column, range) {
+  if (range.key === 'today') {
+    return `${column} >= CURDATE()`;
+  }
+
+  return `${column} >= DATE_SUB(CURDATE(), INTERVAL ${range.days - 1} DAY)`;
+}
+
+function secondsLabel(seconds) {
+  const total = Number(seconds || 0);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 async function systemStatus() {
   const [identity] = await rows(
     "SELECT @@hostname AS hostname, @@version AS version, DATABASE() AS database_name, NOW() AS db_time",
@@ -77,7 +102,59 @@ async function systemStatus() {
   };
 }
 
-async function dashboardData() {
+async function activitySeries(range) {
+  const outboundWhere = dateWhere('call_date', range);
+
+  if (range.key === 'today') {
+    const hourlyCalls = await rows(
+      `SELECT HOUR(call_date) AS bucket, COUNT(*) AS calls
+       FROM (
+         SELECT call_date FROM vicidial_log WHERE ${outboundWhere}
+         UNION ALL
+         SELECT call_date FROM vicidial_closer_log WHERE ${outboundWhere}
+       ) c
+       GROUP BY HOUR(call_date)
+       ORDER BY bucket`,
+      [],
+      [],
+    );
+    const hourlyMap = new Map(hourlyCalls.map((item) => [Number(item.bucket), Number(item.calls)]));
+    return Array.from({ length: 24 }, (_, hour) => ({
+      key: String(hour),
+      label: String(hour),
+      calls: hourlyMap.get(hour) || 0,
+    }));
+  }
+
+  const dailyCalls = await rows(
+    `SELECT DATE_FORMAT(call_date, '%Y-%m-%d') AS bucket, COUNT(*) AS calls
+     FROM (
+       SELECT call_date FROM vicidial_log WHERE ${outboundWhere}
+       UNION ALL
+       SELECT call_date FROM vicidial_closer_log WHERE ${outboundWhere}
+     ) c
+     GROUP BY DATE_FORMAT(call_date, '%Y-%m-%d')
+     ORDER BY bucket`,
+    [],
+    [],
+  );
+  const dailyMap = new Map(dailyCalls.map((item) => [String(item.bucket), Number(item.calls || 0)]));
+  return Array.from({ length: range.days }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (range.days - index - 1));
+    const key = date.toISOString().slice(0, 10);
+    return {
+      key,
+      label: new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric' }).format(date),
+      calls: dailyMap.get(key) || 0,
+    };
+  });
+}
+
+async function dashboardData(selectedRange = 'today') {
+  const range = resolveRange(selectedRange);
+  const outboundWhere = dateWhere('call_date', range);
+  const inboundWhere = dateWhere('call_date', range);
   const [
     activeAgents,
     pausedAgents,
@@ -87,11 +164,15 @@ async function dashboardData() {
     inboundGroupsActive,
     listsActive,
     leadsTotal,
-    callsTodayOutbound,
-    callsTodayInbound,
-    recordingsToday,
+    callsRangeOutbound,
+    callsRangeInbound,
+    talkSeconds,
+    recordingsRange,
     system,
-    hourlyCalls,
+    callSeries,
+    campaignPerformance,
+    statusBreakdown,
+    leadStatusBreakdown,
     campaigns,
     agents,
   ] = await Promise.all([
@@ -103,19 +184,57 @@ async function dashboardData() {
     scalar("SELECT COUNT(*) AS value FROM vicidial_inbound_groups WHERE active = 'Y'", [], 0),
     scalar("SELECT COUNT(*) AS value FROM vicidial_lists WHERE active = 'Y'", [], 0),
     scalar('SELECT COUNT(*) AS value FROM vicidial_list', [], 0),
-    scalar('SELECT COUNT(*) AS value FROM vicidial_log WHERE call_date >= CURDATE()', [], 0),
-    scalar('SELECT COUNT(*) AS value FROM vicidial_closer_log WHERE call_date >= CURDATE()', [], 0),
-    scalar('SELECT COUNT(*) AS value FROM recording_log WHERE start_time >= CURDATE()', [], 0),
-    systemStatus(),
-    rows(
-      `SELECT HOUR(call_date) AS hour, COUNT(*) AS calls
+    scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${outboundWhere}`, [], 0),
+    scalar(`SELECT COUNT(*) AS value FROM vicidial_closer_log WHERE ${inboundWhere}`, [], 0),
+    scalar(
+      `SELECT COALESCE(SUM(length_in_sec), 0) AS value
        FROM (
-         SELECT call_date FROM vicidial_log WHERE call_date >= CURDATE()
+         SELECT length_in_sec FROM vicidial_log WHERE ${outboundWhere}
          UNION ALL
-         SELECT call_date FROM vicidial_closer_log WHERE call_date >= CURDATE()
+         SELECT length_in_sec FROM vicidial_closer_log WHERE ${inboundWhere}
+       ) c`,
+      [],
+      0,
+    ),
+    scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0),
+    systemStatus(),
+    activitySeries(range),
+    rows(
+      `SELECT campaign_id,
+              COUNT(*) AS calls,
+              COUNT(DISTINCT user) AS users,
+              COALESCE(SUM(length_in_sec), 0) AS talk_seconds,
+              ROUND(AVG(NULLIF(length_in_sec, 0))) AS avg_seconds
+       FROM (
+         SELECT campaign_id, user, length_in_sec FROM vicidial_log WHERE ${outboundWhere}
+         UNION ALL
+         SELECT campaign_id, user, length_in_sec FROM vicidial_closer_log WHERE ${inboundWhere}
        ) c
-       GROUP BY HOUR(call_date)
-       ORDER BY hour`,
+       GROUP BY campaign_id
+       ORDER BY calls DESC, campaign_id ASC
+       LIMIT 12`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT status, COUNT(*) AS calls
+       FROM (
+         SELECT status FROM vicidial_log WHERE ${outboundWhere}
+         UNION ALL
+         SELECT status FROM vicidial_closer_log WHERE ${inboundWhere}
+       ) c
+       GROUP BY status
+       ORDER BY calls DESC, status ASC
+       LIMIT 10`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT status, COUNT(*) AS leads
+       FROM vicidial_list
+       GROUP BY status
+       ORDER BY leads DESC, status ASC
+       LIMIT 10`,
       [],
       [],
     ),
@@ -137,14 +256,12 @@ async function dashboardData() {
     ),
   ]);
 
-  const hourlyMap = new Map(hourlyCalls.map((item) => [Number(item.hour), Number(item.calls)]));
-  const series = Array.from({ length: 24 }, (_, hour) => ({
-    hour,
-    calls: hourlyMap.get(hour) || 0,
-  }));
+  const callsInRange = Number(callsRangeOutbound) + Number(callsRangeInbound);
+  const averageSeconds = callsInRange > 0 ? Math.round(Number(talkSeconds || 0) / callsInRange) : 0;
 
   return {
     generatedAt: new Date().toISOString(),
+    range,
     metrics: {
       activeAgents: Number(activeAgents),
       pausedAgents: Number(pausedAgents),
@@ -154,11 +271,32 @@ async function dashboardData() {
       inboundGroupsActive: Number(inboundGroupsActive),
       listsActive: Number(listsActive),
       leadsTotal: Number(leadsTotal),
-      callsToday: Number(callsTodayOutbound) + Number(callsTodayInbound),
-      recordingsToday: Number(recordingsToday),
+      callsToday: callsInRange,
+      outboundCalls: Number(callsRangeOutbound),
+      inboundCalls: Number(callsRangeInbound),
+      talkSeconds: Number(talkSeconds || 0),
+      talkTimeLabel: secondsLabel(talkSeconds),
+      averageSeconds,
+      recordingsToday: Number(recordingsRange),
     },
     system,
-    hourlyCalls: series,
+    hourlyCalls: callSeries,
+    campaignPerformance: campaignPerformance.map((item) => ({
+      ...item,
+      calls: Number(item.calls || 0),
+      users: Number(item.users || 0),
+      talk_seconds: Number(item.talk_seconds || 0),
+      avg_seconds: Number(item.avg_seconds || 0),
+      talk_time_label: secondsLabel(item.talk_seconds),
+    })),
+    statusBreakdown: statusBreakdown.map((item) => ({
+      ...item,
+      calls: Number(item.calls || 0),
+    })),
+    leadStatusBreakdown: leadStatusBreakdown.map((item) => ({
+      ...item,
+      leads: Number(item.leads || 0),
+    })),
     campaigns,
     agents,
   };
@@ -189,9 +327,9 @@ app.post('/api/login', (req, res) => {
   return res.status(401).json({ ok: false, error: 'invalid_access_code' });
 });
 
-app.get('/api/dashboard', requireAccess, async (_req, res) => {
+app.get('/api/dashboard', requireAccess, async (req, res) => {
   try {
-    res.json({ ok: true, data: await dashboardData() });
+    res.json({ ok: true, data: await dashboardData(req.query.range) });
   } catch (error) {
     res.status(500).json({ ok: false, error: 'dashboard_unavailable' });
   }

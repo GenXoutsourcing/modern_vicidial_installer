@@ -3,8 +3,10 @@ import { createRoot } from 'react-dom/client';
 import {
   Activity,
   BarChart3,
+  CalendarDays,
   Clock3,
   Database,
+  Gauge,
   Headphones,
   LayoutDashboard,
   LockKeyhole,
@@ -16,6 +18,8 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
+  Timer,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 import './styles.css';
@@ -42,6 +46,18 @@ function durationLabel(value) {
   if (minutes < 1) return 'Just now';
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+}
+
+function formatSeconds(value) {
+  const seconds = Number(value || 0);
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+  }
+  if (minutes > 0) return `${minutes}m ${remainder}s`;
+  return `${seconds}s`;
 }
 
 async function apiFetch(path, token, options = {}) {
@@ -129,6 +145,30 @@ function StatusPill({ ok, children }) {
   return <span className={`status-pill ${ok ? 'ok' : 'warn'}`}>{children}</span>;
 }
 
+function RangeControl({ value, onChange }) {
+  const options = [
+    { key: 'today', label: 'Today' },
+    { key: '7d', label: '7 Days' },
+    { key: '30d', label: '30 Days' },
+  ];
+
+  return (
+    <div className="range-control" aria-label="Reporting range">
+      <CalendarDays size={16} aria-hidden="true" />
+      {options.map((option) => (
+        <button
+          type="button"
+          key={option.key}
+          className={option.key === value ? 'active' : ''}
+          onClick={() => onChange(option.key)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function MetricCard({ icon: Icon, label, value, detail, accent }) {
   return (
     <article className="metric-card" style={{ '--accent': accent }}>
@@ -144,22 +184,25 @@ function MetricCard({ icon: Icon, label, value, detail, accent }) {
   );
 }
 
-function HourlyChart({ data }) {
+function ActivityChart({ data, rangeLabel }) {
   const max = Math.max(...data.map((item) => item.calls), 1);
-  const labels = new Set([0, 6, 12, 18, 23]);
+  const hourLabels = new Set(['0', '6', '12', '18', '23']);
 
   return (
     <section className="panel chart-panel">
       <div className="panel-title">
         <div>
-          <p className="eyebrow">Today</p>
+          <p className="eyebrow">{rangeLabel}</p>
           <h2>Call Flow</h2>
         </div>
         <BarChart3 size={22} aria-hidden="true" />
       </div>
       <div className="bar-chart" aria-label="Calls by hour">
-        {data.map((item) => (
-          <div className="bar-column" key={item.hour}>
+        {data.map((item, index) => {
+          const label = item.label ?? String(item.hour ?? index);
+          const showLabel = data.length <= 12 || hourLabels.has(label) || index === data.length - 1;
+          return (
+          <div className="bar-column" key={item.key || label}>
             <div className="bar-track">
               <div
                 className="bar-fill"
@@ -167,9 +210,87 @@ function HourlyChart({ data }) {
                 title={`${item.calls} calls`}
               />
             </div>
-            <span>{labels.has(item.hour) ? item.hour : ''}</span>
+            <span>{showLabel ? label : ''}</span>
           </div>
-        ))}
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey, emptyLabel }) {
+  const total = items.reduce((sum, item) => sum + Number(item[valueKey] || 0), 0);
+
+  return (
+    <section className="panel breakdown-panel">
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+        </div>
+        <Icon size={22} aria-hidden="true" />
+      </div>
+      <div className="breakdown-list">
+        {items.map((item) => {
+          const value = Number(item[valueKey] || 0);
+          const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+          return (
+            <div className="breakdown-row" key={item[labelKey] || item.status}>
+              <div className="breakdown-copy">
+                <strong>{item[labelKey] || item.status || 'Unknown'}</strong>
+                <span>{formatNumber(value)} | {pct}%</span>
+              </div>
+              <div className="breakdown-track" aria-hidden="true">
+                <div className="breakdown-fill" style={{ width: `${Math.max(4, pct)}%` }} />
+              </div>
+            </div>
+          );
+        })}
+        {!items.length && <div className="empty-state">{emptyLabel}</div>}
+      </div>
+    </section>
+  );
+}
+
+function CampaignPerformance({ rows }) {
+  return (
+    <section className="panel performance-panel">
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">Performance</p>
+          <h2>Campaign Throughput</h2>
+        </div>
+        <TrendingUp size={22} aria-hidden="true" />
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Campaign</th>
+              <th>Calls</th>
+              <th>Agents</th>
+              <th>Talk Time</th>
+              <th>Avg</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.campaign_id || 'unknown'}>
+                <td><strong>{row.campaign_id || 'Unknown'}</strong></td>
+                <td>{formatNumber(row.calls)}</td>
+                <td>{formatNumber(row.users)}</td>
+                <td>{row.talk_time_label || formatSeconds(row.talk_seconds)}</td>
+                <td>{formatSeconds(row.avg_seconds)}</td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td colSpan="5" className="empty-row">No call activity in this range</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -241,7 +362,7 @@ function AgentList({ agents }) {
             <div className="agent-avatar">{String(agent.user || '?').slice(0, 2).toUpperCase()}</div>
             <div className="agent-copy">
               <strong>{agent.user}</strong>
-              <span>{agent.campaign_id || 'No campaign'} · {durationLabel(agent.last_call_time)}</span>
+              <span>{agent.campaign_id || 'No campaign'} | {durationLabel(agent.last_call_time)}</span>
             </div>
             <StatusPill ok={agent.status !== 'PAUSED'}>
               {agent.status || agent.pause_code || 'Ready'}
@@ -255,6 +376,7 @@ function AgentList({ agents }) {
 }
 
 function Dashboard({ token, onLogout }) {
+  const [range, setRange] = useState('today');
   const [state, setState] = useState({
     loading: true,
     error: '',
@@ -263,7 +385,7 @@ function Dashboard({ token, onLogout }) {
 
   const load = useCallback(async () => {
     try {
-      const payload = await apiFetch('/dashboard', token);
+      const payload = await apiFetch(`/dashboard?range=${encodeURIComponent(range)}`, token);
       setState({ loading: false, error: '', data: payload.data });
     } catch (error) {
       if (error.status === 401) {
@@ -276,7 +398,7 @@ function Dashboard({ token, onLogout }) {
         error: 'Dashboard data is temporarily unavailable',
       }));
     }
-  }, [onLogout, token]);
+  }, [onLogout, range, token]);
 
   useEffect(() => {
     load();
@@ -286,6 +408,7 @@ function Dashboard({ token, onLogout }) {
 
   const metrics = state.data?.metrics || {};
   const system = state.data?.system || {};
+  const rangeLabel = state.data?.range?.label || 'Today';
   const updatedLabel = state.data?.generatedAt ? formatTime(state.data.generatedAt) : 'Loading';
 
   const metricCards = useMemo(() => ([
@@ -294,37 +417,44 @@ function Dashboard({ token, onLogout }) {
       label: 'Agents Live',
       value: formatNumber(metrics.activeAgents),
       detail: `${formatNumber(metrics.pausedAgents)} paused`,
-      accent: '#0f9f8f',
+      accent: '#00d9ff',
     },
     {
       icon: PhoneCall,
-      label: 'Calls Today',
+      label: `Calls ${rangeLabel}`,
       value: formatNumber(metrics.callsToday),
-      detail: `${formatNumber(metrics.currentCalls)} in motion`,
-      accent: '#d45d3f',
+      detail: `${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`,
+      accent: '#2d7dff',
+    },
+    {
+      icon: Timer,
+      label: 'Talk Time',
+      value: metrics.talkTimeLabel || '0m',
+      detail: `${formatSeconds(metrics.averageSeconds)} avg call`,
+      accent: '#7bb7ff',
     },
     {
       icon: LayoutDashboard,
       label: 'Campaigns',
       value: formatNumber(metrics.campaignsActive),
       detail: `${formatNumber(metrics.campaignsTotal)} configured`,
-      accent: '#6c7a20',
+      accent: '#73fbd3',
     },
     {
       icon: Database,
       label: 'Lead Pool',
       value: formatNumber(metrics.leadsTotal),
       detail: `${formatNumber(metrics.listsActive)} active lists`,
-      accent: '#8061a8',
+      accent: '#a8c7ff',
     },
     {
       icon: Activity,
       label: 'Inbound Groups',
       value: formatNumber(metrics.inboundGroupsActive),
       detail: `${formatNumber(metrics.recordingsToday)} recordings today`,
-      accent: '#c08426',
+      accent: '#ffd166',
     },
-  ]), [metrics]);
+  ]), [metrics, rangeLabel]);
 
   return (
     <main className="app-shell">
@@ -356,9 +486,10 @@ function Dashboard({ token, onLogout }) {
           <h2>VICIdial command layer</h2>
         </div>
         <div className="strip-items">
+          <RangeControl value={range} onChange={setRange} />
           <span><Clock3 size={16} aria-hidden="true" /> Updated {updatedLabel}</span>
           <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
-          <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.1</span>
+          <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.2</span>
         </div>
       </section>
 
@@ -372,8 +503,27 @@ function Dashboard({ token, onLogout }) {
       </section>
 
       <section className="content-grid">
-        <HourlyChart data={state.data?.hourlyCalls || []} />
+        <ActivityChart data={state.data?.hourlyCalls || []} rangeLabel={rangeLabel} />
         <AgentList agents={state.data?.agents || []} />
+        <CampaignPerformance rows={state.data?.campaignPerformance || []} />
+        <BreakdownPanel
+          eyebrow="Call Outcomes"
+          title="Status Mix"
+          icon={Gauge}
+          items={state.data?.statusBreakdown || []}
+          valueKey="calls"
+          labelKey="status"
+          emptyLabel="No call statuses in this range"
+        />
+        <BreakdownPanel
+          eyebrow="Lead Inventory"
+          title="Lead Status"
+          icon={Activity}
+          items={state.data?.leadStatusBreakdown || []}
+          valueKey="leads"
+          labelKey="status"
+          emptyLabel="No leads returned"
+        />
         <CampaignTable campaigns={state.data?.campaigns || []} />
       </section>
 
