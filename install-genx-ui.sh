@@ -10,6 +10,7 @@ SERVICE_FILE="/etc/systemd/system/genx-ui.service"
 APACHE_FILE="/etc/httpd/conf.d/genx-ui.conf"
 BASE_PATH="/genx/"
 PORT="3200"
+DEFAULT_MIN_USER_LEVEL="7"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "ERROR: Run as root."
@@ -39,15 +40,6 @@ quote_env() {
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   printf '"%s"' "$value"
-}
-
-generate_token() {
-  local token=""
-  while [ "${#token}" -lt 32 ]; do
-    token="$(od -An -N32 -tx1 /dev/urandom)"
-    token="${token//[[:space:]]/}"
-  done
-  printf '%s' "${token:0:32}"
 }
 
 ensure_node() {
@@ -84,11 +76,11 @@ db_port="$(get_conf VARDB_port)"
 [ -n "$db_user" ] || db_user="cron"
 [ -n "$db_port" ] || db_port="3306"
 
-existing_token=""
+min_user_level="$DEFAULT_MIN_USER_LEVEL"
 if [ -f "$ENV_FILE" ]; then
-  existing_token="$(grep -E '^GENX_UI_ACCESS_CODE=' "$ENV_FILE" | sed -E 's/^GENX_UI_ACCESS_CODE=//; s/^"//; s/"$//' || true)"
+  existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_MIN_USER_LEVEL=//; s/^"//; s/"$//' || true)"
+  [ -n "$existing_min_level" ] && min_user_level="$existing_min_level"
 fi
-access_code="${existing_token:-$(generate_token)}"
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "$APP_ROOT" --shell /sbin/nologin "$APP_USER"
@@ -114,7 +106,7 @@ umask 077
 cat > "$ENV_FILE" <<EOF
 GENX_UI_PORT=$PORT
 GENX_UI_BASE_PATH=$(quote_env "$BASE_PATH")
-GENX_UI_ACCESS_CODE=$(quote_env "$access_code")
+GENX_UI_MIN_USER_LEVEL=$min_user_level
 GENX_UI_DB_HOST=$(quote_env "$db_host")
 GENX_UI_DB_PORT=$db_port
 GENX_UI_DB_NAME=$(quote_env "$db_name")
@@ -162,4 +154,5 @@ curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null
 
 echo "GenX UI installed."
 echo "URL path: $BASE_PATH"
-echo "Access code stored in $ENV_FILE"
+echo "VICIdial auth required. Minimum user level: $min_user_level"
+echo "Settings stored in $ENV_FILE"

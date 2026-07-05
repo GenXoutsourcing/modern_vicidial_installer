@@ -10,7 +10,9 @@ The installer deploys the app to `/opt/genx-ui/current`, runs it on `127.0.0.1:3
 sudo ./install-genx-ui.sh
 ```
 
-The access code and database connection settings are stored in `/etc/genx-ui.env`.
+The database connection settings and minimum VICIdial user level are stored in `/etc/genx-ui.env`.
+
+Human login requires an active VICIdial user with a valid password and `user_level` at or above `GENX_UI_MIN_USER_LEVEL`, which defaults to `7`.
 
 ## First Dashboard
 

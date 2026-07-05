@@ -71,7 +71,7 @@ cd /usr/src/modern_vicidial_installer
 sudo ./install-genx-ui.sh
 ```
 
-The app runs locally on the server and is exposed through Apache at `/genx/`. It keeps its own service, build output, and access code outside VICIDIAL core files.
+The app runs locally on the server and is exposed through Apache at `/genx/`. It keeps its own service and build output outside VICIDIAL core files. Human login requires an active VICIdial user at or above the configured minimum user level.
 
 ## Included files
 
