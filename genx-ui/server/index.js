@@ -63,6 +63,28 @@ const NEXT_AGENT_CALL_OPTIONS = ['random', 'oldest_call_start', 'oldest_call_fin
 const TALLY_THRESHOLD_OPTIONS = ['DISABLED', 'LOGGED-IN_AGENTS', 'NON-PAUSED_AGENTS', 'WAITING_AGENTS'];
 const CONCURRENT_TRANSFER_OPTIONS = ['AUTO', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '15', '20', '25', '30', '40', '50', '60', '80', '100', '1000', '10000'];
 const INBOUND_QUEUE_NO_DIAL_OPTIONS = ['DISABLED', 'ENABLED', 'ALL_SERVERS', 'ENABLED_WITH_CHAT', 'ALL_SERVERS_WITH_CHAT'];
+const INGROUP_DROP_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
+const INGROUP_AFTER_HOURS_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
+const INGROUP_NO_AGENT_ACTION_OPTIONS = ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'];
+const INGROUP_GET_CALL_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'EMAIL'];
+const INGROUP_QC_GET_RECORD_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'WEBFORM', 'QCSCRIPT', 'QCWEBFORM'];
+const INGROUP_RECORDING_OPTIONS = ['DISABLED', 'NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'];
+const INGROUP_STEREO_RECORDING_OPTIONS = ['DISABLED', 'BOTH_CHANNELS', 'CUSTOMER_ONLY', 'CUSTOMER_MUTE'];
+const INGROUP_PLAY_WELCOME_OPTIONS = ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'];
+const INGROUP_NO_AGENT_NO_QUEUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_READY'];
+const INGROUP_IN_QUEUE_NANQUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_PAUSED_EXCEPTIONS', 'NO_READY'];
+const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'CALLBACK'];
+const INGROUP_WAIT_HOLD_PRIORITY_OPTIONS = ['WAIT', 'HOLD', 'BOTH'];
+const INGROUP_MAX_CALLS_METHOD_OPTIONS = ['TOTAL', 'IN_QUEUE', 'DISABLED'];
+const INGROUP_MAX_CALLS_ACTION_OPTIONS = ['DROP', 'AFTERHOURS', 'NO_AGENT_NO_QUEUE', 'AREACODE_FILTER'];
+const INGROUP_AREACODE_FILTER_OPTIONS = ['DISABLED', 'ALLOW_ONLY', 'DROP_ONLY'];
+const INGROUP_POPULATE_STATE_OPTIONS = ['DISABLED', 'NEW_LEAD_ONLY', 'OVERWRITE_ALWAYS'];
+const INGROUP_ADD_LEAD_TIMEZONE_OPTIONS = ['SERVER', 'PHONE_CODE_AREACODE'];
+const INGROUP_ANSWER_SIGNAL_OPTIONS = ['START', 'ROUTE', 'NONE'];
+const PHONE_PROTOCOL_OPTIONS = ['SIP', 'PJSIP', 'Zap', 'IAX2', 'EXTERNAL'];
+const PHONE_WEBPHONE_OPTIONS = ['Y', 'N', 'Y_API_LAUNCH'];
+const PHONE_WEBPHONE_DIALPAD_OPTIONS = ['Y', 'N', 'TOGGLE', 'TOGGLE_OFF'];
+const CALL_MENU_ROUTE_OPTIONS = ['CALLMENU', 'INGROUP', 'DID', 'HANGUP', 'EXTENSION', 'PHONE', 'VOICEMAIL', 'VMAIL_NO_INST', 'AGI'];
 const CUSTOM_CID_OPTIONS = ['Y', 'N', 'AREACODE', 'USER_CUSTOM_1', 'USER_CUSTOM_2', 'USER_CUSTOM_3', 'USER_CUSTOM_4', 'USER_CUSTOM_5'];
 const AGENT_SEARCH_OPTIONS = ['', 'LB', 'LO', 'SO'];
 const TRANSFER_BUTTON_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM'];
@@ -805,6 +827,10 @@ async function adminData(user) {
   const didWhere = `(${didQueueWhere} OR ${didUserGroupWhere})`;
   const phoneParams = [];
   const phoneWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', phoneParams);
+  const serverParams = [];
+  const serverWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', serverParams);
+  const carrierParams = [];
+  const carrierWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', carrierParams);
   const callTimeParams = [];
   const callTimeWhere = scopeWhere(user?.permissions?.adminViewableCallTimes, 'call_time_id', callTimeParams);
   const scriptParams = [];
@@ -814,6 +840,9 @@ async function adminData(user) {
   const callMenuParams = [];
   const callMenuScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', callMenuParams);
   const callMenuWhere = `(${callMenuScopeWhere} OR user_group = '---ALL---')`;
+  const callMenuOptionParams = [];
+  const callMenuOptionScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'm.user_group', callMenuOptionParams);
+  const callMenuOptionWhere = `(${callMenuOptionScopeWhere} OR m.user_group = '---ALL---')`;
   const shiftParams = [];
   const shiftScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', shiftParams);
   const shiftWhere = `(${shiftScopeWhere} OR user_group = '---ALL---')`;
@@ -841,6 +870,7 @@ async function adminData(user) {
     dids,
     phones,
     callMenus,
+    callMenuOptions,
     shifts,
     phoneCodes,
     cidGroups,
@@ -1412,18 +1442,7 @@ async function adminData(user) {
       [],
     ),
     requiredRows(
-      `SELECT group_id,
-              group_name,
-              group_color,
-              active,
-              next_agent_call,
-              queue_priority,
-              drop_call_seconds,
-              drop_action,
-              call_time_id,
-              play_welcome_message,
-              no_agent_action,
-              hold_time_option
+      `SELECT *
        FROM vicidial_inbound_groups
        WHERE ${inboundWhere}
        ORDER BY active DESC, group_id ASC
@@ -1455,32 +1474,68 @@ async function adminData(user) {
               active_asterisk_server,
               asterisk_version,
               max_vicidial_trunks,
+              telnet_host,
+              telnet_port,
+              local_gmt,
+              voicemail_dump_exten_no_inst,
+              ext_context,
+              sys_perf_log,
+              vd_server_logs,
+              agi_output,
+              vicidial_balance_active,
+              balance_trunks_offlimits,
+              recording_web_link,
+              alt_server_ip,
               sysload,
               channels_total,
               cpu_idle_percent,
               disk_usage,
+              generate_vicidial_conf,
+              rebuild_conf_files,
+              outbound_calls_per_second,
+              sounds_update,
+              vicidial_recording_limit,
+              carrier_logging_active,
+              active_agent_login_server,
+              external_server_ip,
+              custom_dialplan_entry,
+              user_group,
               system_uptime,
+              auto_restart_asterisk,
+              asterisk_temp_no_restart,
+              gather_asterisk_output,
               conf_engine,
+              conf_qualify,
+              routing_prefix,
+              conf_update_interval,
               web_socket_url,
-              external_web_socket_url
+              external_web_socket_url,
+              ara_url
        FROM servers
+       WHERE ${serverWhere}
        ORDER BY active DESC, server_id ASC
        LIMIT 50`,
-      [],
+      serverParams,
       [],
     ),
     requiredRows(
       `SELECT carrier_id,
               carrier_name,
+              registration_string,
+              template_id,
+              account_entry,
               protocol,
+              globals_string,
+              dialplan_entry,
               server_ip,
               active,
               carrier_description,
               user_group
        FROM vicidial_server_carriers
+       WHERE ${carrierWhere}
        ORDER BY active DESC, carrier_id ASC
        LIMIT 100`,
-      [],
+      carrierParams,
       [],
     ),
     rows(
@@ -1779,22 +1834,86 @@ async function adminData(user) {
               active,
               phone_type,
               fullname,
+              company,
+              picture,
+              messages,
+              old_messages,
               protocol,
               local_gmt,
+              ASTmgrUSERNAME,
+              login_user,
+              login_campaign,
+              park_on_extension,
+              conf_on_extension,
+              VICIDIAL_park_on_extension,
+              VICIDIAL_park_on_filename,
+              monitor_prefix,
+              recording_exten,
+              voicemail_exten,
+              voicemail_dump_exten,
+              voicemail_dump_exten_no_inst,
+              ext_context,
+              dtmf_send_extension,
+              call_out_number_group,
+              client_browser,
+              install_directory,
+              local_web_callerID_URL,
+              VICIDIAL_web_URL,
+              AGI_call_logging_enabled,
+              user_switching_enabled,
+              conferencing_enabled,
+              admin_hangup_enabled,
+              admin_hijack_enabled,
+              admin_monitor_enabled,
+              call_parking_enabled,
+              updater_check_enabled,
+              AFLogging_enabled,
+              QUEUE_ACTION_enabled,
+              CallerID_popup_enabled,
+              voicemail_button_enabled,
+              enable_fast_refresh,
+              fast_refresh_rate,
+              enable_persistant_mysql,
+              auto_dial_next_number,
+              VDstop_rec_after_each_call,
               outbound_cid,
+              outbound_alt_cid,
+              enable_sipsak_messages,
               email,
               template_id,
+              conf_override,
               phone_context,
               phone_ring_timeout,
               conf_secret,
+              delete_vm_after_email,
               is_webphone,
+              use_external_server_ip,
+              codecs_list,
+              codecs_with_template,
+              on_hook_agent,
+              voicemail_timezone,
+              voicemail_options,
               user_group,
+              voicemail_greeting,
+              voicemail_instructions,
+              on_login_report,
+              unavail_dialplan_fwd_exten,
+              unavail_dialplan_fwd_context,
+              nva_call_url,
+              nva_search_method,
+              nva_error_filename,
+              nva_new_list_id,
+              nva_new_phone_code,
+              nva_new_status,
               webphone_dialpad,
               webphone_auto_answer,
               webphone_dialbox,
               webphone_mute,
               webphone_volume,
               webphone_debug,
+              conf_qualify,
+              webphone_layout,
+              mohsuggest,
               webphone_settings,
               peer_status
        FROM phones
@@ -1828,6 +1947,23 @@ async function adminData(user) {
        ORDER BY menu_id ASC
        LIMIT 500`,
       callMenuParams,
+      [],
+    ),
+    rows(
+      `SELECT o.menu_id,
+              o.option_value,
+              o.option_description,
+              o.option_route,
+              o.option_route_value,
+              o.option_route_value_context,
+              m.menu_name,
+              m.user_group
+       FROM vicidial_call_menu_options o
+       JOIN vicidial_call_menu m ON m.menu_id = o.menu_id
+       WHERE ${callMenuOptionWhere}
+       ORDER BY o.menu_id ASC, o.option_value ASC
+       LIMIT 1000`,
+      callMenuOptionParams,
       [],
     ),
     rows(
@@ -1913,6 +2049,7 @@ async function adminData(user) {
       leadRecycle: leadRecycle.length,
       listMixes: listMixes.length,
       callMenus: callMenus.length,
+      callMenuOptions: callMenuOptions.length,
       shifts: shifts.length,
       servers: servers.length,
       activeServers: servers.filter((item) => item.active === 'Y').length,
@@ -1957,6 +2094,7 @@ async function adminData(user) {
     leadRecycle,
     listMixes,
     callMenus,
+    callMenuOptions,
     shifts,
     recordings: recordings.map((item) => ({
       ...item,
@@ -2860,18 +2998,218 @@ async function saveList(req, res, mode) {
 }
 
 function inboundPayload(body) {
+  const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
+  const longText = (value) => cleanText(value, 12000);
+
   return {
     group_name: cleanText(body.group_name, 30) || 'New In-Group',
     group_color: cleanChoice(body.group_color, ADMIN_COLOR_OPTIONS, 'WHITE'),
     active: ynFlag(body.active, 'N'),
-    next_agent_call: cleanExactChoice(body.next_agent_call, NEXT_AGENT_CALL_OPTIONS, 'longest_wait_time'),
-    queue_priority: cleanInt(body.queue_priority, 0, -99, 99),
-    drop_call_seconds: cleanInt(body.drop_call_seconds, 360, 0, 9999),
-    drop_action: cleanChoice(body.drop_action, ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'], 'MESSAGE'),
+    user_group: routeCode(body.user_group, 20, '---ALL---'),
     call_time_id: cleanId(body.call_time_id, 20) || '24hours',
-    play_welcome_message: cleanChoice(body.play_welcome_message, ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'], 'ALWAYS'),
-    no_agent_action: cleanChoice(body.no_agent_action, ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'], 'MESSAGE'),
+    next_agent_call: cleanExactChoice(body.next_agent_call, NEXT_AGENT_CALL_OPTIONS, 'longest_wait_time'),
+    agent_search_method: cleanExactChoice(body.agent_search_method, AGENT_SEARCH_OPTIONS, '', 4),
+    fronter_display: ynFlag(body.fronter_display, 'Y'),
+    default_group_alias: cleanText(body.default_group_alias, 30),
+    dial_ingroup_cid: cleanText(body.dial_ingroup_cid, 20),
+    queue_priority: cleanInt(body.queue_priority, 0, -99, 99),
     group_handling: cleanChoice(body.group_handling, ['PHONE', 'EMAIL', 'CHAT'], 'PHONE'),
+    voicemail_ext: routeCode(body.voicemail_ext, 10),
+    web_form_address: longText(body.web_form_address),
+    web_form_address_two: longText(body.web_form_address_two),
+    web_form_address_three: longText(body.web_form_address_three),
+    ingroup_script: cleanId(body.ingroup_script, 20),
+    ingroup_script_two: cleanId(body.ingroup_script_two, 20),
+    get_call_launch: cleanChoice(body.get_call_launch, INGROUP_GET_CALL_LAUNCH_OPTIONS, 'NONE'),
+    ignore_list_script_override: ynFlag(body.ignore_list_script_override, 'N'),
+    start_call_url: longText(body.start_call_url),
+    dispo_call_url: longText(body.dispo_call_url),
+    na_call_url: longText(body.na_call_url),
+    add_lead_url: longText(body.add_lead_url),
+    enter_ingroup_url: longText(body.enter_ingroup_url),
+    waiting_call_url_on: longText(body.waiting_call_url_on),
+    waiting_call_url_off: longText(body.waiting_call_url_off),
+    waiting_call_count: cleanInt(body.waiting_call_count, 0, 0, 99999),
+    drop_call_seconds: cleanInt(body.drop_call_seconds, 360, 0, 9999),
+    drop_call_seconds_override: cleanInt(body.drop_call_seconds_override, 0, 0, 9999),
+    drop_action: cleanChoice(body.drop_action, INGROUP_DROP_ACTION_OPTIONS, 'MESSAGE'),
+    drop_exten: routeCode(body.drop_exten, 255),
+    drop_inbound_group: routeCode(body.drop_inbound_group, 20, '---NONE---'),
+    drop_callmenu: routeCode(body.drop_callmenu, 50, '---NONE---'),
+    drop_lead_reset: ynFlag(body.drop_lead_reset, 'N'),
+    after_hours_action: cleanChoice(body.after_hours_action, INGROUP_AFTER_HOURS_ACTION_OPTIONS, 'MESSAGE'),
+    after_hours_message_filename: routeCode(body.after_hours_message_filename, 255),
+    after_hours_exten: routeCode(body.after_hours_exten, 255),
+    after_hours_voicemail: routeCode(body.after_hours_voicemail, 255),
+    afterhours_xfer_group: routeCode(body.afterhours_xfer_group, 20, '---NONE---'),
+    after_hours_callmenu: routeCode(body.after_hours_callmenu, 50, '---NONE---'),
+    after_hours_lead_reset: ynFlag(body.after_hours_lead_reset, 'N'),
+    welcome_message_filename: routeCode(body.welcome_message_filename, 255),
+    play_welcome_message: cleanChoice(body.play_welcome_message, INGROUP_PLAY_WELCOME_OPTIONS, 'ALWAYS'),
+    moh_context: routeCode(body.moh_context, 100, 'default'),
+    park_file_name: routeCode(body.park_file_name, 100),
+    onhold_prompt_filename: routeCode(body.onhold_prompt_filename, 255),
+    onhold_prompt_no_block: ynFlag(body.onhold_prompt_no_block, 'N'),
+    onhold_prompt_seconds: cleanInt(body.onhold_prompt_seconds, 10, 0, 9999),
+    prompt_interval: cleanInt(body.prompt_interval, 60, 0, 9999),
+    play_place_in_line: ynFlag(body.play_place_in_line, 'N'),
+    play_estimate_hold_time: ynFlag(body.play_estimate_hold_time, 'N'),
+    calculate_estimated_hold_seconds: cleanInt(body.calculate_estimated_hold_seconds, 0, 0, 99999),
+    place_in_line_caller_number_filename: routeCode(body.place_in_line_caller_number_filename, 255),
+    place_in_line_you_next_filename: routeCode(body.place_in_line_you_next_filename, 255),
+    hold_time_option: cleanExactChoice(body.hold_time_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    hold_time_second_option: cleanExactChoice(body.hold_time_second_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    hold_time_third_option: cleanExactChoice(body.hold_time_third_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    hold_time_option_seconds: cleanInt(body.hold_time_option_seconds, 120, 0, 99999),
+    hold_time_option_minimum: cleanInt(body.hold_time_option_minimum, 0, 0, 99999),
+    hold_time_option_exten: routeCode(body.hold_time_option_exten, 255),
+    hold_time_option_voicemail: routeCode(body.hold_time_option_voicemail, 255),
+    hold_time_option_xfer_group: routeCode(body.hold_time_option_xfer_group, 20, '---NONE---'),
+    hold_time_option_callmenu: routeCode(body.hold_time_option_callmenu, 50, '---NONE---'),
+    hold_time_option_callback_filename: routeCode(body.hold_time_option_callback_filename, 255),
+    hold_time_option_callback_list_id: cleanInt(body.hold_time_option_callback_list_id, 0, 0, 999999999),
+    hold_time_option_press_filename: routeCode(body.hold_time_option_press_filename, 255),
+    hold_time_option_no_block: ynFlag(body.hold_time_option_no_block, 'N'),
+    hold_time_option_prompt_seconds: cleanInt(body.hold_time_option_prompt_seconds, 10, 0, 9999),
+    hold_recall_xfer_group: routeCode(body.hold_recall_xfer_group, 20, '---NONE---'),
+    hold_time_lead_reset: ynFlag(body.hold_time_lead_reset, 'N'),
+    wait_hold_option_priority: cleanChoice(body.wait_hold_option_priority, INGROUP_WAIT_HOLD_PRIORITY_OPTIONS, 'WAIT'),
+    wait_time_option: cleanExactChoice(body.wait_time_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    wait_time_second_option: cleanExactChoice(body.wait_time_second_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    wait_time_third_option: cleanExactChoice(body.wait_time_third_option, INGROUP_HOLD_WAIT_ROUTE_OPTIONS, 'NONE'),
+    wait_time_option_seconds: cleanInt(body.wait_time_option_seconds, 120, 0, 99999),
+    wait_time_option_exten: routeCode(body.wait_time_option_exten, 255),
+    wait_time_option_voicemail: routeCode(body.wait_time_option_voicemail, 255),
+    wait_time_option_xfer_group: routeCode(body.wait_time_option_xfer_group, 20, '---NONE---'),
+    wait_time_option_callmenu: routeCode(body.wait_time_option_callmenu, 50, '---NONE---'),
+    wait_time_option_callback_filename: routeCode(body.wait_time_option_callback_filename, 255),
+    wait_time_option_callback_list_id: cleanInt(body.wait_time_option_callback_list_id, 0, 0, 999999999),
+    wait_time_option_press_filename: routeCode(body.wait_time_option_press_filename, 255),
+    wait_time_option_no_block: ynFlag(body.wait_time_option_no_block, 'N'),
+    wait_time_option_prompt_seconds: cleanInt(body.wait_time_option_prompt_seconds, 10, 0, 9999),
+    wait_time_lead_reset: ynFlag(body.wait_time_lead_reset, 'N'),
+    eht_minimum_prompt_filename: routeCode(body.eht_minimum_prompt_filename, 255),
+    eht_minimum_prompt_no_block: ynFlag(body.eht_minimum_prompt_no_block, 'N'),
+    eht_minimum_prompt_seconds: cleanInt(body.eht_minimum_prompt_seconds, 10, 0, 9999),
+    no_agent_no_queue: cleanChoice(body.no_agent_no_queue, INGROUP_NO_AGENT_NO_QUEUE_OPTIONS, 'N'),
+    no_agent_action: cleanChoice(body.no_agent_action, INGROUP_NO_AGENT_ACTION_OPTIONS, 'MESSAGE'),
+    no_agent_action_value: routeCode(body.no_agent_action_value, 255),
+    no_agent_delay: cleanInt(body.no_agent_delay, 0, 0, 9999),
+    in_queue_nanque: cleanChoice(body.in_queue_nanque, INGROUP_IN_QUEUE_NANQUE_OPTIONS, 'N'),
+    in_queue_nanque_exceptions: cleanText(body.in_queue_nanque_exceptions, 255),
+    nanq_lead_reset: ynFlag(body.nanq_lead_reset, 'N'),
+    default_xfer_group: routeCode(body.default_xfer_group, 20, '---NONE---'),
+    action_xfer_cid: routeCode(body.action_xfer_cid, 50, 'CUSTOMER'),
+    extension_appended_cidname: cleanChoice(body.extension_appended_cidname, ['N', 'Y', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN'], 'N'),
+    xferconf_a_dtmf: routeCode(body.xferconf_a_dtmf, 50),
+    xferconf_a_number: routeCode(body.xferconf_a_number, 50),
+    xferconf_b_dtmf: routeCode(body.xferconf_b_dtmf, 50),
+    xferconf_b_number: routeCode(body.xferconf_b_number, 50),
+    xferconf_c_number: routeCode(body.xferconf_c_number, 50),
+    xferconf_d_number: routeCode(body.xferconf_d_number, 50),
+    xferconf_e_number: routeCode(body.xferconf_e_number, 50),
+    xfer_talk_minimum: cleanChoice(body.xfer_talk_minimum, ['DISABLED', 'ENABLED'], 'DISABLED'),
+    xfer_talk_minimum_sec: cleanInt(body.xfer_talk_minimum_sec, 5, 0, 9999),
+    ingroup_recording_override: cleanChoice(body.ingroup_recording_override, INGROUP_RECORDING_OPTIONS, 'DISABLED'),
+    ingroup_rec_filename: routeCode(body.ingroup_rec_filename, 255),
+    routing_initiated_recordings: ynFlag(body.routing_initiated_recordings, 'N'),
+    stereo_recording: cleanChoice(body.stereo_recording, INGROUP_STEREO_RECORDING_OPTIONS, 'DISABLED'),
+    stereo_rec_filename: routeCode(body.stereo_rec_filename, 255),
+    stereo_parallel_recording: ynFlag(body.stereo_parallel_recording, 'N'),
+    parallel_rec_co_filename: routeCode(body.parallel_rec_co_filename, 255),
+    parallel_rec_cm_filename: routeCode(body.parallel_rec_cm_filename, 255),
+    parallel_rec_fr_filename: routeCode(body.parallel_rec_fr_filename, 255),
+    recording_dtmf_muting: cleanChoice(body.recording_dtmf_muting, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    stereo_recording_agent: cleanChoice(body.stereo_recording_agent, INGROUP_RECORDING_OPTIONS, 'DISABLED'),
+    qc_enabled: ynFlag(body.qc_enabled, 'N'),
+    qc_statuses: cleanText(body.qc_statuses, 255),
+    qc_shift_id: routeCode(body.qc_shift_id, 20),
+    qc_get_record_launch: cleanChoice(body.qc_get_record_launch, INGROUP_QC_GET_RECORD_LAUNCH_OPTIONS, 'NONE'),
+    qc_show_recording: ynFlag(body.qc_show_recording, 'N'),
+    qc_web_form_address: longText(body.qc_web_form_address),
+    qc_script: cleanId(body.qc_script, 20),
+    qc_scorecard_id: routeCode(body.qc_scorecard_id, 20),
+    qc_statuses_id: routeCode(body.qc_statuses_id, 20),
+    max_calls_method: cleanChoice(body.max_calls_method, INGROUP_MAX_CALLS_METHOD_OPTIONS, 'DISABLED'),
+    max_calls_count: cleanInt(body.max_calls_count, 0, 0, 999999),
+    max_calls_action: cleanChoice(body.max_calls_action, INGROUP_MAX_CALLS_ACTION_OPTIONS, 'DROP'),
+    areacode_filter: cleanChoice(body.areacode_filter, INGROUP_AREACODE_FILTER_OPTIONS, 'DISABLED'),
+    areacode_filter_seconds: cleanInt(body.areacode_filter_seconds, 0, 0, 99999),
+    areacode_filter_action: cleanChoice(body.areacode_filter_action, INGROUP_NO_AGENT_ACTION_OPTIONS, 'MESSAGE'),
+    areacode_filter_action_value: routeCode(body.areacode_filter_action_value, 255),
+    timer_action: cleanChoice(body.timer_action, TIMER_ACTION_OPTIONS, 'NONE'),
+    timer_action_message: routeCode(body.timer_action_message, 255),
+    timer_action_seconds: cleanInt(body.timer_action_seconds, 0, 0, 99999),
+    timer_action_destination: routeCode(body.timer_action_destination, 255),
+    no_delay_call_route: ynFlag(body.no_delay_call_route, 'N'),
+    on_hook_ring_time: cleanInt(body.on_hook_ring_time, 0, 0, 9999),
+    on_hook_cid: cleanText(body.on_hook_cid, 20),
+    on_hook_cid_number: cleanText(body.on_hook_cid_number, 20),
+    uniqueid_status_display: cleanChoice(body.uniqueid_status_display, ['DISABLED', 'ENABLED', 'ENABLED_PREFIX', 'ENABLED_PRESERVE'], 'DISABLED'),
+    uniqueid_status_prefix: routeCode(body.uniqueid_status_prefix, 20),
+    status_group_id: routeCode(body.status_group_id, 20),
+    answer_signal: cleanChoice(body.answer_signal, INGROUP_ANSWER_SIGNAL_OPTIONS, 'START'),
+    inbound_survey: cleanChoice(body.inbound_survey, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    inbound_survey_filename: routeCode(body.inbound_survey_filename, 255),
+    inbound_survey_accept_digit: routeCode(body.inbound_survey_accept_digit, 1, '1'),
+    inbound_survey_question_filename: routeCode(body.inbound_survey_question_filename, 255),
+    inbound_survey_callmenu: routeCode(body.inbound_survey_callmenu, 50, '---NONE---'),
+    icbq_expiration_hours: cleanInt(body.icbq_expiration_hours, 0, 0, 99999),
+    icbq_call_time_id: cleanId(body.icbq_call_time_id, 20),
+    icbq_dial_filter: routeCode(body.icbq_dial_filter, 20, 'NONE'),
+    closing_time_action: cleanChoice(body.closing_time_action, INGROUP_NO_AGENT_ACTION_OPTIONS, 'MESSAGE'),
+    closing_time_now_trigger: ynFlag(body.closing_time_now_trigger, 'N'),
+    closing_time_filename: routeCode(body.closing_time_filename, 255),
+    closing_time_end_filename: routeCode(body.closing_time_end_filename, 255),
+    closing_time_lead_reset: ynFlag(body.closing_time_lead_reset, 'N'),
+    closing_time_option_exten: routeCode(body.closing_time_option_exten, 255),
+    closing_time_option_callmenu: routeCode(body.closing_time_option_callmenu, 50, '---NONE---'),
+    closing_time_option_voicemail: routeCode(body.closing_time_option_voicemail, 255),
+    closing_time_option_xfer_group: routeCode(body.closing_time_option_xfer_group, 20, '---NONE---'),
+    closing_time_option_callback_list_id: cleanInt(body.closing_time_option_callback_list_id, 0, 0, 999999999),
+    cid_cb_confirm_number: ynFlag(body.cid_cb_confirm_number, 'N'),
+    cid_cb_invalid_filter_phone_group: routeCode(body.cid_cb_invalid_filter_phone_group, 20),
+    cid_cb_valid_length: cleanInt(body.cid_cb_valid_length, 10, 0, 20),
+    cid_cb_valid_filename: routeCode(body.cid_cb_valid_filename, 255),
+    cid_cb_confirmed_filename: routeCode(body.cid_cb_confirmed_filename, 255),
+    cid_cb_enter_filename: routeCode(body.cid_cb_enter_filename, 255),
+    cid_cb_you_entered_filename: routeCode(body.cid_cb_you_entered_filename, 255),
+    cid_cb_press_to_confirm_filename: routeCode(body.cid_cb_press_to_confirm_filename, 255),
+    cid_cb_invalid_filename: routeCode(body.cid_cb_invalid_filename, 255),
+    cid_cb_reenter_filename: routeCode(body.cid_cb_reenter_filename, 255),
+    cid_cb_error_filename: routeCode(body.cid_cb_error_filename, 255),
+    populate_lead_ingroup: cleanChoice(body.populate_lead_ingroup, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    populate_lead_province: routeCode(body.populate_lead_province, 50, 'DISABLED'),
+    populate_state_areacode: cleanChoice(body.populate_state_areacode, INGROUP_POPULATE_STATE_OPTIONS, 'DISABLED'),
+    populate_lead_source: cleanText(body.populate_lead_source, 255),
+    populate_lead_vendor: cleanText(body.populate_lead_vendor, 255),
+    populate_lead_comments: cleanText(body.populate_lead_comments, 255),
+    populate_lead_owner: routeCode(body.populate_lead_owner, 50),
+    add_lead_timezone: cleanChoice(body.add_lead_timezone, INGROUP_ADD_LEAD_TIMEZONE_OPTIONS, 'SERVER'),
+    customer_chat_screen_colors: cleanText(body.customer_chat_screen_colors, 50),
+    customer_chat_survey_link: longText(body.customer_chat_survey_link),
+    customer_chat_survey_text: cleanText(body.customer_chat_survey_text, 1000),
+    agent_alert_exten: routeCode(body.agent_alert_exten, 20),
+    agent_alert_delay: cleanInt(body.agent_alert_delay, 0, 0, 9999),
+    browser_alert_sound: routeCode(body.browser_alert_sound, 255),
+    browser_alert_volume: cleanInt(body.browser_alert_volume, 50, 0, 100),
+    second_alert_trigger: routeCode(body.second_alert_trigger, 50),
+    second_alert_trigger_seconds: cleanInt(body.second_alert_trigger_seconds, 0, 0, 99999),
+    second_alert_filename: routeCode(body.second_alert_filename, 255),
+    second_alert_delay: cleanInt(body.second_alert_delay, 0, 0, 99999),
+    second_alert_container: routeCode(body.second_alert_container, 50),
+    second_alert_only: ynFlag(body.second_alert_only, 'N'),
+    third_alert_trigger: routeCode(body.third_alert_trigger, 50),
+    third_alert_trigger_seconds: cleanInt(body.third_alert_trigger_seconds, 0, 0, 99999),
+    third_alert_filename: routeCode(body.third_alert_filename, 255),
+    third_alert_delay: cleanInt(body.third_alert_delay, 0, 0, 99999),
+    third_alert_container: routeCode(body.third_alert_container, 50),
+    third_alert_only: ynFlag(body.third_alert_only, 'N'),
+    custom_one: cleanText(body.custom_one, 255),
+    custom_two: cleanText(body.custom_two, 255),
+    custom_three: cleanText(body.custom_three, 255),
+    custom_four: cleanText(body.custom_four, 255),
+    custom_five: cleanText(body.custom_five, 255),
   };
 }
 
@@ -2880,68 +3218,29 @@ async function saveInboundGroup(req, res, mode) {
   const id = cleanId(mode === 'create' ? req.body?.group_id : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_group_id');
   const payload = inboundPayload(req.body || {});
+  if (!scopeAllows(req.genxUser?.permissions?.allowedQueueGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'ingroup_not_allowed' });
+  }
+  if (payload.user_group !== '---ALL---' && !scopeAllows(req.genxUser?.permissions?.adminViewableGroups, payload.user_group)) {
+    return res.status(403).json({ ok: false, error: 'ingroup_user_group_scope_required' });
+  }
+  const { assignments, values } = dynamicAssignments(payload);
 
   try {
     if (mode === 'create') {
       await execute(
         `INSERT INTO vicidial_inbound_groups
          SET group_id = ?,
-             group_name = ?,
-             group_color = ?,
-             active = ?,
-             next_agent_call = ?,
-             queue_priority = ?,
-             drop_call_seconds = ?,
-             drop_action = ?,
-             call_time_id = ?,
-             play_welcome_message = ?,
-             no_agent_action = ?,
-             group_handling = ?`,
-        [
-          id,
-          payload.group_name,
-          payload.group_color,
-          payload.active,
-          payload.next_agent_call,
-          payload.queue_priority,
-          payload.drop_call_seconds,
-          payload.drop_action,
-          payload.call_time_id,
-          payload.play_welcome_message,
-          payload.no_agent_action,
-          payload.group_handling,
-        ],
+             ${assignments}`,
+        [id, ...values],
       );
       await adminLog(req, 'INGROUPS', 'ADD', id, 'GENX ADD INBOUND GROUP', 'INSERT INTO vicidial_inbound_groups', payload.group_name);
     } else {
       const result = await execute(
         `UPDATE vicidial_inbound_groups
-         SET group_name = ?,
-             group_color = ?,
-             active = ?,
-             next_agent_call = ?,
-             queue_priority = ?,
-             drop_call_seconds = ?,
-             drop_action = ?,
-             call_time_id = ?,
-             play_welcome_message = ?,
-             no_agent_action = ?,
-             group_handling = ?
+         SET ${assignments}
          WHERE group_id = ?`,
-        [
-          payload.group_name,
-          payload.group_color,
-          payload.active,
-          payload.next_agent_call,
-          payload.queue_priority,
-          payload.drop_call_seconds,
-          payload.drop_action,
-          payload.call_time_id,
-          payload.play_welcome_message,
-          payload.no_agent_action,
-          payload.group_handling,
-          id,
-        ],
+        [...values, id],
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ingroup_not_found' });
       await adminLog(req, 'INGROUPS', 'MODIFY', id, 'GENX MODIFY INBOUND GROUP', 'UPDATE vicidial_inbound_groups', payload.group_name);
@@ -3183,28 +3482,94 @@ function phonePayload(body, mode) {
     login: cleanText(body.login, 20),
     status: cleanChoice(body.status, ['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING'], 'ACTIVE'),
     active: ynFlag(body.active, 'Y'),
-    phone_type: cleanExactChoice(body.phone_type, ['SIP', 'Zap', 'IAX2', 'EXTERNAL'], 'SIP'),
+    phone_type: cleanText(body.phone_type, 50) || 'SIP',
     fullname: cleanText(body.fullname, 50),
-    protocol: cleanExactChoice(body.protocol, ['SIP', 'Zap', 'IAX2', 'EXTERNAL'], 'SIP'),
+    company: cleanText(body.company, 10),
+    picture: cleanText(body.picture, 19),
+    messages: cleanInt(body.messages, 0, 0, 9999),
+    old_messages: cleanInt(body.old_messages, 0, 0, 9999),
+    protocol: cleanExactChoice(body.protocol, PHONE_PROTOCOL_OPTIONS, 'SIP'),
     local_gmt: cleanExactChoice(body.local_gmt, GMT_OPTIONS, '-5.00', 6),
+    ASTmgrUSERNAME: cleanText(body.ASTmgrUSERNAME, 20) || 'cron',
+    login_user: cleanText(body.login_user, 20),
+    login_campaign: cleanId(body.login_campaign, 10),
+    park_on_extension: cleanText(body.park_on_extension, 10) || '8301',
+    conf_on_extension: cleanText(body.conf_on_extension, 10) || '8302',
+    VICIDIAL_park_on_extension: cleanText(body.VICIDIAL_park_on_extension, 10) || '8301',
+    VICIDIAL_park_on_filename: cleanText(body.VICIDIAL_park_on_filename, 10) || 'park',
+    monitor_prefix: cleanText(body.monitor_prefix, 10) || '8612',
+    recording_exten: cleanText(body.recording_exten, 10) || '8309',
+    voicemail_exten: cleanText(body.voicemail_exten, 10) || '8501',
+    voicemail_dump_exten: cleanText(body.voicemail_dump_exten, 20) || '85026666666666',
+    voicemail_dump_exten_no_inst: cleanText(body.voicemail_dump_exten_no_inst, 20) || '85026666666667',
+    ext_context: cleanText(body.ext_context, 20) || 'default',
+    dtmf_send_extension: cleanText(body.dtmf_send_extension, 100) || 'local/8500998@default',
+    call_out_number_group: cleanText(body.call_out_number_group, 100) || 'Zap/g2/',
+    client_browser: cleanText(body.client_browser, 100),
+    install_directory: cleanText(body.install_directory, 100),
+    local_web_callerID_URL: cleanText(body.local_web_callerID_URL, 255),
+    VICIDIAL_web_URL: cleanText(body.VICIDIAL_web_URL, 255),
+    AGI_call_logging_enabled: boolFlag(body.AGI_call_logging_enabled, '1', '0'),
+    user_switching_enabled: boolFlag(body.user_switching_enabled, '1', '0'),
+    conferencing_enabled: boolFlag(body.conferencing_enabled, '1', '0'),
+    admin_hangup_enabled: boolFlag(body.admin_hangup_enabled, '1', '0'),
+    admin_hijack_enabled: boolFlag(body.admin_hijack_enabled, '1', '0'),
+    admin_monitor_enabled: boolFlag(body.admin_monitor_enabled, '1', '0'),
+    call_parking_enabled: boolFlag(body.call_parking_enabled, '1', '0'),
+    updater_check_enabled: boolFlag(body.updater_check_enabled, '1', '0'),
+    AFLogging_enabled: boolFlag(body.AFLogging_enabled, '1', '0'),
+    QUEUE_ACTION_enabled: boolFlag(body.QUEUE_ACTION_enabled, '1', '0'),
+    CallerID_popup_enabled: boolFlag(body.CallerID_popup_enabled, '1', '0'),
+    voicemail_button_enabled: boolFlag(body.voicemail_button_enabled, '1', '0'),
+    enable_fast_refresh: boolFlag(body.enable_fast_refresh, '1', '0'),
+    fast_refresh_rate: cleanInt(body.fast_refresh_rate, 1000, 0, 99999),
+    enable_persistant_mysql: boolFlag(body.enable_persistant_mysql, '1', '0'),
+    auto_dial_next_number: boolFlag(body.auto_dial_next_number, '1', '0'),
+    VDstop_rec_after_each_call: boolFlag(body.VDstop_rec_after_each_call, '1', '0'),
     outbound_cid: cleanText(body.outbound_cid, 20),
+    outbound_alt_cid: cleanText(body.outbound_alt_cid, 20),
+    enable_sipsak_messages: boolFlag(body.enable_sipsak_messages, '1', '0'),
     email: cleanText(body.email, 100),
     template_id: cleanText(body.template_id, 20),
+    conf_override: cleanText(body.conf_override, 12000),
     phone_context: cleanText(body.phone_context, 20) || 'default',
     phone_ring_timeout: cleanInt(body.phone_ring_timeout, 60, 0, 999),
     conf_secret: cleanText(body.conf_secret, 20),
-    is_webphone: ynFlag(body.is_webphone, 'N'),
+    delete_vm_after_email: ynFlag(body.delete_vm_after_email, 'N'),
+    is_webphone: cleanChoice(body.is_webphone, PHONE_WEBPHONE_OPTIONS, 'N'),
+    use_external_server_ip: ynFlag(body.use_external_server_ip, 'N'),
+    codecs_list: cleanText(body.codecs_list, 100),
+    codecs_with_template: boolFlag(body.codecs_with_template, '1', '0'),
+    on_hook_agent: ynFlag(body.on_hook_agent, 'N'),
+    voicemail_timezone: cleanText(body.voicemail_timezone, 30),
+    voicemail_options: cleanText(body.voicemail_options, 255),
     user_group: codeText(body.user_group, 20, '---ALL---'),
-    webphone_dialpad: ynFlag(body.webphone_dialpad, 'Y'),
+    voicemail_greeting: cleanText(body.voicemail_greeting, 100),
+    voicemail_instructions: ynFlag(body.voicemail_instructions, 'Y'),
+    on_login_report: ynFlag(body.on_login_report, 'N'),
+    unavail_dialplan_fwd_exten: cleanText(body.unavail_dialplan_fwd_exten, 40),
+    unavail_dialplan_fwd_context: cleanText(body.unavail_dialplan_fwd_context, 100),
+    nva_call_url: cleanText(body.nva_call_url, 12000),
+    nva_search_method: codeText(body.nva_search_method, 40, 'NONE'),
+    nva_error_filename: cleanText(body.nva_error_filename, 255),
+    nva_new_list_id: cleanInt(body.nva_new_list_id, 995, 0, 999999999),
+    nva_new_phone_code: cleanText(body.nva_new_phone_code, 10) || '1',
+    nva_new_status: cleanId(body.nva_new_status, 6) || 'NVAINS',
+    webphone_dialpad: cleanExactChoice(body.webphone_dialpad, PHONE_WEBPHONE_DIALPAD_OPTIONS, 'Y', 20),
     webphone_auto_answer: ynFlag(body.webphone_auto_answer, 'N'),
     webphone_dialbox: ynFlag(body.webphone_dialbox, 'Y'),
     webphone_mute: ynFlag(body.webphone_mute, 'Y'),
-    webphone_volume: cleanInt(body.webphone_volume, 50, 0, 100),
+    webphone_volume: ynFlag(body.webphone_volume, 'Y'),
     webphone_debug: ynFlag(body.webphone_debug, 'N'),
-    webphone_settings: cleanText(body.webphone_settings, 255),
+    conf_qualify: ynFlag(body.conf_qualify, 'Y'),
+    webphone_layout: cleanText(body.webphone_layout, 255),
+    mohsuggest: cleanText(body.mohsuggest, 100),
+    webphone_settings: cleanText(body.webphone_settings, 40),
   };
   const pass = cleanText(body.pass, 20);
   if (mode === 'create' || pass) payload.pass = pass;
+  const loginPass = cleanText(body.login_pass, 100);
+  if (loginPass) payload.login_pass = loginPass;
   return payload;
 }
 
@@ -3260,6 +3625,141 @@ async function savePhone(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'phone_exists' : 'phone_write_failed' });
+  }
+}
+
+function serverPayload(body) {
+  return {
+    server_description: cleanText(body.server_description, 255),
+    server_ip: cleanIp(body.server_ip),
+    active: ynFlag(body.active, 'Y'),
+    active_asterisk_server: ynFlag(body.active_asterisk_server, 'Y'),
+    asterisk_version: cleanText(body.asterisk_version, 20),
+    max_vicidial_trunks: cleanInt(body.max_vicidial_trunks, 23, 0, 9999),
+    telnet_host: cleanText(body.telnet_host, 20) || 'localhost',
+    telnet_port: cleanInt(body.telnet_port, 5038, 1, 65535),
+    local_gmt: cleanExactChoice(body.local_gmt, GMT_OPTIONS, '-5.00', 6),
+    voicemail_dump_exten_no_inst: cleanText(body.voicemail_dump_exten_no_inst, 20) || '85026666666667',
+    ext_context: cleanText(body.ext_context, 20) || 'default',
+    sys_perf_log: ynFlag(body.sys_perf_log, 'N'),
+    vd_server_logs: ynFlag(body.vd_server_logs, 'Y'),
+    agi_output: cleanChoice(body.agi_output, ['NONE', 'STDERR', 'FILE', 'BOTH'], 'FILE'),
+    vicidial_balance_active: ynFlag(body.vicidial_balance_active, 'N'),
+    balance_trunks_offlimits: cleanInt(body.balance_trunks_offlimits, 0, 0, 99999),
+    recording_web_link: cleanChoice(body.recording_web_link, ['SERVER_IP', 'ALT_IP', 'EXTERNAL_IP'], 'SERVER_IP'),
+    alt_server_ip: cleanText(body.alt_server_ip, 100),
+    generate_vicidial_conf: ynFlag(body.generate_vicidial_conf, 'Y'),
+    rebuild_conf_files: ynFlag(body.rebuild_conf_files, 'Y'),
+    outbound_calls_per_second: cleanInt(body.outbound_calls_per_second, 5, 0, 999),
+    sounds_update: ynFlag(body.sounds_update, 'N'),
+    vicidial_recording_limit: cleanInt(body.vicidial_recording_limit, 60, 0, 999999),
+    carrier_logging_active: ynFlag(body.carrier_logging_active, 'Y'),
+    active_agent_login_server: ynFlag(body.active_agent_login_server, 'Y'),
+    external_server_ip: cleanText(body.external_server_ip, 100),
+    custom_dialplan_entry: cleanText(body.custom_dialplan_entry, 12000),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    auto_restart_asterisk: ynFlag(body.auto_restart_asterisk, 'N'),
+    asterisk_temp_no_restart: ynFlag(body.asterisk_temp_no_restart, 'N'),
+    gather_asterisk_output: ynFlag(body.gather_asterisk_output, 'N'),
+    web_socket_url: cleanText(body.web_socket_url, 255),
+    external_web_socket_url: cleanText(body.external_web_socket_url, 255),
+    conf_qualify: ynFlag(body.conf_qualify, 'Y'),
+    routing_prefix: cleanText(body.routing_prefix, 10) || '13',
+    conf_engine: cleanChoice(body.conf_engine, ['MEETME', 'CONFBRIDGE'], 'MEETME'),
+    conf_update_interval: cleanInt(body.conf_update_interval, 60, 1, 9999),
+    ara_url: cleanText(body.ara_url, 12000),
+  };
+}
+
+async function saveServer(req, res, mode) {
+  if (!requireModify(req, res, 'modifyServers')) return;
+  const id = cleanId(mode === 'create' ? req.body?.server_id : req.params.id, 10);
+  if (!id) return badRequest(res, 'invalid_server_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('servers', 'server_id', id))) {
+    return res.status(403).json({ ok: false, error: 'server_not_allowed' });
+  }
+  const payload = serverPayload(req.body || {});
+  if (!payload.server_ip) return badRequest(res, 'server_ip_required');
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'server_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO servers
+         SET server_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'SERVERS', 'ADD', id, 'GENX ADD SERVER', 'INSERT INTO servers', payload.server_description);
+    } else {
+      const result = await execute(
+        `UPDATE servers
+         SET ${assignments}
+         WHERE server_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'server_not_found' });
+      await adminLog(req, 'SERVERS', 'MODIFY', id, 'GENX MODIFY SERVER', 'UPDATE servers', payload.server_description);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'server_exists' : 'server_write_failed' });
+  }
+}
+
+function carrierPayload(body) {
+  return {
+    carrier_name: cleanText(body.carrier_name, 50) || 'New Carrier',
+    registration_string: cleanText(body.registration_string, 255),
+    template_id: cleanText(body.template_id, 15),
+    account_entry: cleanText(body.account_entry, 12000),
+    protocol: cleanExactChoice(body.protocol, ['SIP', 'PJSIP', 'PJSIP_WIZ', 'Zap', 'IAX2', 'EXTERNAL'], 'SIP', 20),
+    globals_string: cleanText(body.globals_string, 255),
+    dialplan_entry: cleanText(body.dialplan_entry, 12000),
+    server_ip: cleanIp(body.server_ip),
+    active: ynFlag(body.active, 'Y'),
+    carrier_description: cleanText(body.carrier_description, 255),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+  };
+}
+
+async function saveCarrier(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCarriers')) return;
+  const id = cleanId(mode === 'create' ? req.body?.carrier_id : req.params.id, 15);
+  if (!id) return badRequest(res, 'invalid_carrier_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_server_carriers', 'carrier_id', id))) {
+    return res.status(403).json({ ok: false, error: 'carrier_not_allowed' });
+  }
+  const payload = carrierPayload(req.body || {});
+  if (!payload.server_ip) return badRequest(res, 'server_ip_required');
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'carrier_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_server_carriers
+         SET carrier_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'CARRIERS', 'ADD', id, 'GENX ADD CARRIER', 'INSERT INTO vicidial_server_carriers', payload.carrier_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_server_carriers
+         SET ${assignments}
+         WHERE carrier_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'carrier_not_found' });
+      await adminLog(req, 'CARRIERS', 'MODIFY', id, 'GENX MODIFY CARRIER', 'UPDATE vicidial_server_carriers', payload.carrier_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'carrier_exists' : 'carrier_write_failed' });
   }
 }
 
@@ -3502,6 +4002,79 @@ async function saveCallMenu(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'call_menu_exists' : 'call_menu_write_failed' });
+  }
+}
+
+function callMenuOptionKey(raw) {
+  const [menuRaw, ...optionParts] = String(raw || '').split('__');
+  return {
+    menu_id: cleanId(menuRaw, 50),
+    option_value: cleanCallMenuOptionValue(optionParts.join('__')),
+  };
+}
+
+function cleanCallMenuOptionValue(value) {
+  return cleanText(value, 20).toUpperCase().replace(/[^-_*#0-9A-Z]/g, '');
+}
+
+function callMenuRouteValue(value, max = 255) {
+  return cleanText(value, max).replace(/[^-\/|_#*,.0-9a-zA-Z]/g, '');
+}
+
+function callMenuRouteContext(value) {
+  return cleanText(value, 1000).replace(/[^-,_ 0-9a-zA-Z]/g, '');
+}
+
+async function callMenuVisibleToUser(user, menuId) {
+  return scopedUserGroupAllowed(user, await recordUserGroup('vicidial_call_menu', 'menu_id', menuId));
+}
+
+function callMenuOptionPayload(body) {
+  return {
+    option_description: cleanText(body.option_description, 255),
+    option_route: cleanChoice(body.option_route, CALL_MENU_ROUTE_OPTIONS, 'CALLMENU'),
+    option_route_value: callMenuRouteValue(body.option_route_value, 255),
+    option_route_value_context: callMenuRouteContext(body.option_route_value_context),
+  };
+}
+
+async function saveCallMenuOption(req, res, mode) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const key = mode === 'create'
+    ? { menu_id: cleanId(req.body?.menu_id, 50), option_value: cleanCallMenuOptionValue(req.body?.option_value) }
+    : callMenuOptionKey(req.params.id);
+  if (!key.menu_id || !key.option_value) return badRequest(res, 'invalid_call_menu_option_key');
+  if (!(await callMenuVisibleToUser(req.genxUser, key.menu_id))) {
+    return res.status(403).json({ ok: false, error: 'call_menu_not_allowed' });
+  }
+  const payload = callMenuOptionPayload(req.body || {});
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_call_menu_options
+         SET menu_id = ?,
+             option_value = ?,
+             ${assignments}`,
+        [key.menu_id, key.option_value, ...values],
+      );
+      await adminLog(req, 'CALLMENUOPT', 'ADD', key.menu_id, 'GENX ADD CALL MENU OPTION', 'INSERT INTO vicidial_call_menu_options', `${key.option_value} -> ${payload.option_route}`);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_call_menu_options
+         SET ${assignments}
+         WHERE menu_id = ?
+           AND option_value = ?`,
+        [...values, key.menu_id, key.option_value],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'call_menu_option_not_found' });
+      await adminLog(req, 'CALLMENUOPT', 'MODIFY', key.menu_id, 'GENX MODIFY CALL MENU OPTION', 'UPDATE vicidial_call_menu_options', `${key.option_value} -> ${payload.option_route}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'call_menu_option_exists' : 'call_menu_option_write_failed' });
   }
 }
 
@@ -3914,6 +4487,10 @@ app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'crea
 app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
 app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
 app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
+app.post('/api/admin/servers', requireAccess, (req, res) => saveServer(req, res, 'create'));
+app.put('/api/admin/servers/:id', requireAccess, (req, res) => saveServer(req, res, 'update'));
+app.post('/api/admin/carriers', requireAccess, (req, res) => saveCarrier(req, res, 'create'));
+app.put('/api/admin/carriers/:id', requireAccess, (req, res) => saveCarrier(req, res, 'update'));
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
 app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(req, res, 'create'));
@@ -3922,6 +4499,8 @@ app.post('/api/admin/call-times', requireAccess, (req, res) => saveCallTime(req,
 app.put('/api/admin/call-times/:id', requireAccess, (req, res) => saveCallTime(req, res, 'update'));
 app.post('/api/admin/call-menus', requireAccess, (req, res) => saveCallMenu(req, res, 'create'));
 app.put('/api/admin/call-menus/:id', requireAccess, (req, res) => saveCallMenu(req, res, 'update'));
+app.post('/api/admin/call-menu-options', requireAccess, (req, res) => saveCallMenuOption(req, res, 'create'));
+app.put('/api/admin/call-menu-options/:id', requireAccess, (req, res) => saveCallMenuOption(req, res, 'update'));
 app.post('/api/admin/shifts', requireAccess, (req, res) => saveShift(req, res, 'create'));
 app.put('/api/admin/shifts/:id', requireAccess, (req, res) => saveShift(req, res, 'update'));
 app.post('/api/admin/pause-codes', requireAccess, (req, res) => savePauseCode(req, res, 'create'));

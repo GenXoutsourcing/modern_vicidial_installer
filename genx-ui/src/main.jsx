@@ -77,6 +77,29 @@ const TALLY_THRESHOLD_OPTIONS = ['DISABLED', 'LOGGED-IN_AGENTS', 'NON-PAUSED_AGE
 const TALLY_AGENT_OPTIONS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '25', '30', '35', '40', '50'];
 const CONCURRENT_TRANSFER_OPTIONS = ['AUTO', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '15', '20', '25', '30', '40', '50', '60', '80', '100', '1000', '10000'];
 const INBOUND_QUEUE_NO_DIAL_OPTIONS = ['DISABLED', 'ENABLED', 'ALL_SERVERS', 'ENABLED_WITH_CHAT', 'ALL_SERVERS_WITH_CHAT'];
+const INGROUP_DROP_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
+const INGROUP_AFTER_HOURS_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
+const INGROUP_NO_AGENT_ACTION_OPTIONS = ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'];
+const INGROUP_GET_CALL_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'EMAIL'];
+const INGROUP_QC_GET_RECORD_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'WEBFORM', 'QCSCRIPT', 'QCWEBFORM'];
+const INGROUP_RECORDING_OPTIONS = ['DISABLED', 'NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'];
+const INGROUP_STEREO_RECORDING_OPTIONS = ['DISABLED', 'BOTH_CHANNELS', 'CUSTOMER_ONLY', 'CUSTOMER_MUTE'];
+const INGROUP_PLAY_WELCOME_OPTIONS = ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'];
+const INGROUP_NO_AGENT_NO_QUEUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_READY'];
+const INGROUP_IN_QUEUE_NANQUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_PAUSED_EXCEPTIONS', 'NO_READY'];
+const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'CALLBACK'];
+const INGROUP_WAIT_HOLD_PRIORITY_OPTIONS = ['WAIT', 'HOLD', 'BOTH'];
+const INGROUP_MAX_CALLS_METHOD_OPTIONS = ['TOTAL', 'IN_QUEUE', 'DISABLED'];
+const INGROUP_MAX_CALLS_ACTION_OPTIONS = ['DROP', 'AFTERHOURS', 'NO_AGENT_NO_QUEUE', 'AREACODE_FILTER'];
+const INGROUP_AREACODE_FILTER_OPTIONS = ['DISABLED', 'ALLOW_ONLY', 'DROP_ONLY'];
+const INGROUP_POPULATE_STATE_OPTIONS = ['DISABLED', 'NEW_LEAD_ONLY', 'OVERWRITE_ALWAYS'];
+const INGROUP_ADD_LEAD_TIMEZONE_OPTIONS = ['SERVER', 'PHONE_CODE_AREACODE'];
+const INGROUP_ANSWER_SIGNAL_OPTIONS = ['START', 'ROUTE', 'NONE'];
+const PHONE_PROTOCOL_OPTIONS = ['SIP', 'PJSIP', 'Zap', 'IAX2', 'EXTERNAL'];
+const PHONE_WEBPHONE_OPTIONS = ['Y', 'N', 'Y_API_LAUNCH'];
+const PHONE_WEBPHONE_DIALPAD_OPTIONS = ['Y', 'N', 'TOGGLE', 'TOGGLE_OFF'];
+const CALL_MENU_ROUTE_OPTIONS = ['CALLMENU', 'INGROUP', 'DID', 'HANGUP', 'EXTENSION', 'PHONE', 'VOICEMAIL', 'VMAIL_NO_INST', 'AGI'];
+const CALL_MENU_OPTION_VALUE_OPTIONS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#', 'TIMECHECK', 'TIMEOUT', 'INVALID', 'I', 'T', 'HANGUP', 'H'];
 const CUSTOM_CID_OPTIONS = ['Y', 'N', 'AREACODE', 'USER_CUSTOM_1', 'USER_CUSTOM_2', 'USER_CUSTOM_3', 'USER_CUSTOM_4', 'USER_CUSTOM_5'];
 const AGENT_SEARCH_OPTIONS = ['', 'LB', 'LO', 'SO'];
 const TRANSFER_BUTTON_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM'];
@@ -337,7 +360,10 @@ function userCan(user, entity) {
   if (entity === 'inbound') return Boolean(user?.modifyIngroups);
   if (entity === 'dids') return Boolean(user?.modifyInboundDids);
   if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
+  if (entity === 'callMenuOptions') return Boolean(user?.modifyIngroups);
   if (entity === 'phones') return Boolean(user?.modifyPhones);
+  if (entity === 'servers') return Boolean(user?.modifyServers);
+  if (entity === 'carriers') return Boolean(user?.modifyCarriers);
   if (entity === 'scripts') return Boolean(user?.modifyScripts);
   if (entity === 'leadFilters') return Boolean(user?.modifyFilters);
   if (entity === 'callTimes') return Boolean(user?.modifyCallTimes);
@@ -1208,23 +1234,130 @@ function actionDefaults(entity, admin) {
       active: 'Y',
       phone_type: 'SIP',
       fullname: '',
+      company: '',
+      picture: '',
+      messages: '0',
+      old_messages: '0',
       protocol: 'SIP',
       local_gmt: '-5.00',
+      ASTmgrUSERNAME: 'cron',
+      login_user: '',
+      login_campaign: '',
+      park_on_extension: '8301',
+      conf_on_extension: '8302',
+      VICIDIAL_park_on_extension: '8301',
+      VICIDIAL_park_on_filename: 'park',
+      monitor_prefix: '8612',
+      recording_exten: '8309',
+      voicemail_exten: '8501',
+      voicemail_dump_exten: '85026666666666',
+      voicemail_dump_exten_no_inst: '85026666666667',
+      ext_context: 'default',
+      dtmf_send_extension: 'local/8500998@default',
+      call_out_number_group: 'Zap/g2/',
+      client_browser: '/usr/bin/mozilla',
+      install_directory: '/usr/local/perl_TK',
+      local_web_callerID_URL: '',
+      VICIDIAL_web_URL: '',
       outbound_cid: '',
+      outbound_alt_cid: '',
       email: '',
       template_id: '',
+      conf_override: '',
       phone_context: 'default',
       phone_ring_timeout: '60',
       conf_secret: '',
+      delete_vm_after_email: 'N',
       is_webphone: 'N',
+      use_external_server_ip: 'N',
+      codecs_list: '',
+      codecs_with_template: '0',
+      on_hook_agent: 'N',
+      voicemail_timezone: 'eastern',
+      voicemail_options: '',
       user_group: group,
+      voicemail_greeting: '',
+      voicemail_instructions: 'Y',
+      on_login_report: 'N',
+      unavail_dialplan_fwd_exten: '',
+      unavail_dialplan_fwd_context: '',
+      nva_call_url: '',
+      nva_search_method: 'NONE',
+      nva_error_filename: '',
+      nva_new_list_id: '995',
+      nva_new_phone_code: '1',
+      nva_new_status: 'NVAINS',
       webphone_dialpad: 'Y',
-      webphone_auto_answer: 'N',
+      webphone_auto_answer: 'Y',
       webphone_dialbox: 'Y',
       webphone_mute: 'Y',
-      webphone_volume: '50',
+      webphone_volume: 'Y',
       webphone_debug: 'N',
-      webphone_settings: '',
+      conf_qualify: 'Y',
+      webphone_layout: '',
+      mohsuggest: '',
+      webphone_settings: 'VICIPHONE_SETTINGS',
+    };
+  }
+
+  if (entity === 'servers') {
+    return {
+      server_id: '',
+      server_description: '',
+      server_ip: serverIp,
+      active: 'Y',
+      active_asterisk_server: 'Y',
+      asterisk_version: '',
+      max_vicidial_trunks: '23',
+      telnet_host: 'localhost',
+      telnet_port: '5038',
+      local_gmt: '-5.00',
+      ext_context: 'default',
+      sys_perf_log: 'N',
+      vd_server_logs: 'Y',
+      agi_output: 'FILE',
+      vicidial_balance_active: 'N',
+      balance_trunks_offlimits: '0',
+      recording_web_link: 'SERVER_IP',
+      alt_server_ip: '',
+      generate_vicidial_conf: 'Y',
+      rebuild_conf_files: 'Y',
+      outbound_calls_per_second: '5',
+      sounds_update: 'N',
+      vicidial_recording_limit: '60',
+      carrier_logging_active: 'Y',
+      active_agent_login_server: 'Y',
+      external_server_ip: '',
+      custom_dialplan_entry: '',
+      user_group: '---ALL---',
+      auto_restart_asterisk: 'N',
+      asterisk_temp_no_restart: 'N',
+      voicemail_dump_exten_no_inst: '85026666666667',
+      gather_asterisk_output: 'N',
+      web_socket_url: '',
+      external_web_socket_url: '',
+      conf_qualify: 'Y',
+      routing_prefix: '13',
+      conf_engine: 'MEETME',
+      conf_update_interval: '60',
+      ara_url: '',
+    };
+  }
+
+  if (entity === 'carriers') {
+    return {
+      carrier_id: '',
+      carrier_name: '',
+      protocol: 'SIP',
+      server_ip: serverIp,
+      active: 'Y',
+      carrier_description: '',
+      user_group: '---ALL---',
+      template_id: '',
+      registration_string: '',
+      account_entry: '',
+      globals_string: '',
+      dialplan_entry: '',
     };
   }
 
@@ -1282,6 +1415,17 @@ function actionDefaults(entity, admin) {
       saturday_afterhours_filename_override: '',
       user_group: group,
       ct_holidays: '',
+    };
+  }
+
+  if (entity === 'callMenuOptions') {
+    return {
+      menu_id: admin?.lookups?.callMenus?.[0]?.menu_id || '',
+      option_value: '1',
+      option_description: '',
+      option_route: 'CALLMENU',
+      option_route_value: admin?.lookups?.callMenus?.[0]?.menu_id || '',
+      option_route_value_context: '',
     };
   }
 
@@ -1347,14 +1491,146 @@ function actionDefaults(entity, admin) {
     group_name: '',
     group_color: 'WHITE',
     active: 'N',
+    user_group: '---ALL---',
+    call_time_id: callTime,
     next_agent_call: 'longest_wait_time',
+    agent_search_method: '',
+    fronter_display: 'Y',
+    default_group_alias: '',
+    dial_ingroup_cid: '',
     queue_priority: '0',
+    group_handling: 'PHONE',
+    web_form_address: '',
+    web_form_address_two: '',
+    web_form_address_three: '',
+    ingroup_script: '',
+    ingroup_script_two: '',
+    get_call_launch: 'NONE',
+    start_call_url: '',
+    dispo_call_url: '',
+    na_call_url: '',
+    add_lead_url: '',
+    enter_ingroup_url: '',
     drop_call_seconds: '360',
     drop_action: 'MESSAGE',
-    call_time_id: callTime,
+    drop_exten: '',
+    drop_inbound_group: '---NONE---',
+    drop_callmenu: '---NONE---',
+    drop_lead_reset: 'N',
+    after_hours_action: 'MESSAGE',
+    after_hours_message_filename: '',
+    after_hours_exten: '',
+    after_hours_voicemail: '',
+    afterhours_xfer_group: '---NONE---',
+    after_hours_callmenu: '---NONE---',
+    after_hours_lead_reset: 'N',
     play_welcome_message: 'ALWAYS',
+    welcome_message_filename: '',
+    moh_context: 'default',
+    onhold_prompt_filename: '',
+    onhold_prompt_no_block: 'N',
+    onhold_prompt_seconds: '10',
+    prompt_interval: '60',
+    play_place_in_line: 'N',
+    play_estimate_hold_time: 'N',
+    hold_time_option: 'NONE',
+    hold_time_second_option: 'NONE',
+    hold_time_third_option: 'NONE',
+    hold_time_option_seconds: '120',
+    hold_time_option_minimum: '0',
+    hold_time_option_exten: '',
+    hold_time_option_voicemail: '',
+    hold_time_option_xfer_group: '---NONE---',
+    hold_time_option_callmenu: '---NONE---',
+    hold_time_option_callback_filename: '',
+    hold_time_option_callback_list_id: '',
+    hold_time_option_press_filename: '',
+    hold_time_option_no_block: 'N',
+    hold_time_option_prompt_seconds: '10',
+    hold_recall_xfer_group: '---NONE---',
+    hold_time_lead_reset: 'N',
+    wait_hold_option_priority: 'WAIT',
+    wait_time_option: 'NONE',
+    wait_time_second_option: 'NONE',
+    wait_time_third_option: 'NONE',
+    wait_time_option_seconds: '120',
+    wait_time_option_exten: '',
+    wait_time_option_voicemail: '',
+    wait_time_option_xfer_group: '---NONE---',
+    wait_time_option_callmenu: '---NONE---',
+    wait_time_option_callback_filename: '',
+    wait_time_option_callback_list_id: '',
+    wait_time_option_press_filename: '',
+    wait_time_option_no_block: 'N',
+    wait_time_option_prompt_seconds: '10',
+    wait_time_lead_reset: 'N',
+    no_agent_no_queue: 'N',
     no_agent_action: 'MESSAGE',
-    group_handling: 'PHONE',
+    no_agent_action_value: '',
+    no_agent_delay: '0',
+    in_queue_nanque: 'N',
+    in_queue_nanque_exceptions: '',
+    nanq_lead_reset: 'N',
+    default_xfer_group: '---NONE---',
+    action_xfer_cid: 'CUSTOMER',
+    extension_appended_cidname: 'N',
+    xferconf_a_dtmf: '',
+    xferconf_a_number: '',
+    xferconf_b_dtmf: '',
+    xferconf_b_number: '',
+    xferconf_c_number: '',
+    xferconf_d_number: '',
+    xferconf_e_number: '',
+    xfer_talk_minimum: 'DISABLED',
+    xfer_talk_minimum_sec: '5',
+    ingroup_recording_override: 'DISABLED',
+    ingroup_rec_filename: '',
+    routing_initiated_recordings: 'N',
+    stereo_recording: 'DISABLED',
+    stereo_rec_filename: '',
+    stereo_parallel_recording: 'N',
+    parallel_rec_co_filename: '',
+    parallel_rec_cm_filename: '',
+    parallel_rec_fr_filename: '',
+    recording_dtmf_muting: 'DISABLED',
+    stereo_recording_agent: 'DISABLED',
+    qc_enabled: 'N',
+    qc_statuses: '',
+    qc_shift_id: '',
+    qc_get_record_launch: 'NONE',
+    qc_show_recording: 'N',
+    qc_web_form_address: '',
+    qc_script: '',
+    qc_scorecard_id: '',
+    qc_statuses_id: '',
+    max_calls_method: 'DISABLED',
+    max_calls_count: '0',
+    max_calls_action: 'DROP',
+    areacode_filter: 'DISABLED',
+    areacode_filter_seconds: '0',
+    areacode_filter_action: 'MESSAGE',
+    areacode_filter_action_value: '',
+    inbound_survey: 'DISABLED',
+    inbound_survey_filename: '',
+    inbound_survey_accept_digit: '1',
+    inbound_survey_question_filename: '',
+    inbound_survey_callmenu: '---NONE---',
+    populate_lead_ingroup: 'DISABLED',
+    populate_lead_province: 'DISABLED',
+    populate_state_areacode: 'DISABLED',
+    populate_lead_source: '',
+    populate_lead_vendor: '',
+    populate_lead_comments: '',
+    populate_lead_owner: '',
+    add_lead_timezone: 'SERVER',
+    answer_signal: 'START',
+    browser_alert_sound: '',
+    browser_alert_volume: '50',
+    custom_one: '',
+    custom_two: '',
+    custom_three: '',
+    custom_four: '',
+    custom_five: '',
   };
 }
 
@@ -1367,12 +1643,15 @@ function actionFields(entity, mode, admin, form = {}) {
   const leadFilterOptions = [{ value: 'NONE', label: 'NONE' }, ...lookupOptions(admin?.lookups?.leadFilters, 'lead_filter_id', 'lead_filter_name')];
   const inboundOptions = [{ value: '---NONE---', label: '---NONE---' }, ...lookupOptions(admin?.lookups?.inboundGroups, 'group_id', 'group_name')];
   const inboundStrictOptions = lookupOptions(admin?.lookups?.inboundGroups, 'group_id', 'group_name');
+  const didOptions = lookupOptions(admin?.dids, 'did_pattern', 'did_description');
   const serverOptions = lookupOptions(admin?.lookups?.servers, 'server_ip', 'server_description');
   const listOptions = [{ value: '998', label: '998' }, ...lookupOptions(admin?.lookups?.lists, 'list_id', 'list_name')];
   const userOptions = lookupOptions(admin?.lookups?.users, 'user', 'full_name');
   const phoneOptions = uniqueOptions(lookupOptions(admin?.lookups?.phones, 'extension', 'label'));
-  const callMenuOptions = [{ value: '', label: 'NONE' }, ...lookupOptions(admin?.lookups?.callMenus, 'menu_id', 'menu_name')];
+  const callMenuLookupOptions = lookupOptions(admin?.lookups?.callMenus, 'menu_id', 'menu_name');
+  const callMenuOptions = [{ value: '', label: 'NONE' }, ...callMenuLookupOptions];
   const callMenuNoneOptions = withCurrentOption([{ value: '---NONE---', label: '---NONE---' }, ...lookupOptions(admin?.lookups?.callMenus, 'menu_id', 'menu_name')], form?.amd_callmenu || form?.safe_harbor_menu_id);
+  const callMenuRouteOptions = (currentValue) => withCurrentOption([{ value: '---NONE---', label: '---NONE---' }, { value: '', label: 'NONE' }, ...callMenuLookupOptions], currentValue);
   const cidGroupOptions = withCurrentOption([{ value: '---DISABLED---', label: '---DISABLED---' }, ...lookupOptions(admin?.lookups?.cidGroups, 'cid_group_id', 'cid_group_notes')], form?.cid_group_id || form?.cid_group_id_two);
   const ipListOptions = [{ value: '', label: '--- DISABLED ---' }, ...lookupOptions(admin?.lookups?.ipLists, 'ip_list_id', 'ip_list_name')];
   const filterPhoneGroupOptions = lookupOptions(admin?.lookups?.filterPhoneGroups, 'filter_phone_group_id', 'filter_phone_group_name');
@@ -1392,6 +1671,7 @@ function actionFields(entity, mode, admin, form = {}) {
   const didRouteOptions = ['EXTEN', 'VOICEMAIL', 'AGENT', 'PHONE', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
   const didCallHandleOptions = ['CID', 'CIDLOOKUP', 'CIDLOOKUPRL', 'CIDLOOKUPRC', 'CIDLOOKUPALT', 'CIDLOOKUPRLALT', 'CIDLOOKUPRCALT', 'ANI', 'ANILOOKUP', 'ANILOOKUPRL', 'ANILOOKUPRC', 'ANILOOKUPALT', 'ANILOOKUPRLALT', 'ANILOOKUPRCALT', 'DID'];
   const legacyCampaignHref = () => `/vicidial/admin.php?ADD=31&campaign_id=${encodeURIComponent(form?.campaign_id || '')}`;
+  const legacyInboundHref = () => `/vicidial/admin.php?ADD=3111&group_id=${encodeURIComponent(form?.group_id || '')}`;
   const legacyCallTimeHref = () => `/vicidial/admin.php?ADD=311111111&call_time_id=${encodeURIComponent(form?.call_time_id || '')}`;
   const legacyCallMenuHref = () => `/vicidial/admin.php?ADD=1511&menu_id=${encodeURIComponent(form?.menu_id || '')}`;
   const currentStatuses = campaignDialStatuses(form);
@@ -2108,36 +2388,172 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'phones') {
     return [
+      { section: 'Phone Identity' },
       { key: 'extension', label: 'Extension', disabled: mode === 'edit' },
       { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions, disabled: mode === 'edit' },
       { key: 'fullname', label: 'Full Name' },
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'status', label: 'Phone Status', type: 'select', options: enumOptions(ensureOption(['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING'], form?.status)) },
-      { key: 'protocol', label: 'Protocol', type: 'select', options: enumOptions(['SIP', 'Zap', 'IAX2', 'EXTERNAL']) },
-      { key: 'phone_type', label: 'Phone Type', type: 'select', options: enumOptions(['SIP', 'Zap', 'IAX2', 'EXTERNAL']) },
+      { key: 'protocol', label: 'Protocol', type: 'select', options: enumOptions(ensureOption(PHONE_PROTOCOL_OPTIONS, form?.protocol)) },
+      { key: 'phone_type', label: 'Phone Type' },
       { key: 'login', label: 'Login' },
       { key: 'pass', label: mode === 'edit' ? 'New Phone Password' : 'Phone Password', type: 'password' },
+      { key: 'ASTmgrUSERNAME', label: 'Asterisk Manager User' },
+      { key: 'login_user', label: 'Login User' },
+      { key: 'login_pass', label: mode === 'edit' ? 'New Login Password' : 'Login Password', type: 'password' },
+      { key: 'login_campaign', label: 'Login Campaign', type: campaignOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...campaignOptions], form?.login_campaign) },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { section: 'Network and Client' },
       { key: 'dialplan_number', label: 'Dialplan Number' },
       { key: 'voicemail_id', label: 'Voicemail ID' },
       { key: 'phone_ip', label: 'Phone IP' },
       { key: 'computer_ip', label: 'Computer IP' },
       { key: 'local_gmt', label: 'Local GMT', type: 'select', options: enumOptions(ensureOption(GMT_OPTIONS, form?.local_gmt)) },
+      { key: 'company', label: 'Company' },
+      { key: 'picture', label: 'Picture' },
+      { key: 'messages', label: 'Messages', type: 'number' },
+      { key: 'old_messages', label: 'Old Messages', type: 'number' },
       { key: 'outbound_cid', label: 'Outbound CID' },
+      { key: 'outbound_alt_cid', label: 'Outbound Alt CID' },
       { key: 'email', label: 'Email' },
       { key: 'template_id', label: 'Template ID' },
       { key: 'phone_context', label: 'Phone Context', type: phoneContextOptions.length ? 'select' : 'text', options: phoneContextOptions },
       { key: 'phone_ring_timeout', label: 'Ring Timeout', type: 'number' },
       { key: 'conf_secret', label: 'Conf Secret' },
-      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'conf_override', label: 'Conf Override', type: 'textarea', wide: true },
+      { key: 'client_browser', label: 'Client Browser' },
+      { key: 'install_directory', label: 'Install Directory' },
+      { key: 'local_web_callerID_URL', label: 'Local CallerID URL', type: 'textarea', wide: true },
+      { key: 'VICIDIAL_web_URL', label: 'VICIDIAL Web URL', type: 'textarea', wide: true },
+      { section: 'Dialplan Extensions' },
+      { key: 'park_on_extension', label: 'Park Extension' },
+      { key: 'conf_on_extension', label: 'Conference Extension' },
+      { key: 'VICIDIAL_park_on_extension', label: 'VICIDIAL Park Extension' },
+      { key: 'VICIDIAL_park_on_filename', label: 'VICIDIAL Park Filename' },
+      { key: 'monitor_prefix', label: 'Monitor Prefix' },
+      { key: 'recording_exten', label: 'Recording Extension' },
+      { key: 'voicemail_exten', label: 'Voicemail Extension' },
+      { key: 'voicemail_dump_exten', label: 'Voicemail Dump Extension' },
+      { key: 'voicemail_dump_exten_no_inst', label: 'Voicemail Dump No Instructions' },
+      { key: 'ext_context', label: 'Extension Context', type: phoneContextOptions.length ? 'select' : 'text', options: withCurrentOption(phoneContextOptions, form?.ext_context) },
+      { key: 'dtmf_send_extension', label: 'DTMF Send Extension' },
+      { key: 'call_out_number_group', label: 'Call Out Number Group' },
+      { section: 'Phone Feature Flags' },
+      { key: 'AGI_call_logging_enabled', label: 'AGI Call Logging', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'user_switching_enabled', label: 'User Switching', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'conferencing_enabled', label: 'Conferencing', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'admin_hangup_enabled', label: 'Admin Hangup', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'admin_hijack_enabled', label: 'Admin Hijack', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'admin_monitor_enabled', label: 'Admin Monitor', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'call_parking_enabled', label: 'Call Parking', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'updater_check_enabled', label: 'Updater Check', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'AFLogging_enabled', label: 'AF Logging', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'QUEUE_ACTION_enabled', label: 'Queue Action', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'CallerID_popup_enabled', label: 'CallerID Popup', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'voicemail_button_enabled', label: 'Voicemail Button', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'enable_fast_refresh', label: 'Fast Refresh', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'fast_refresh_rate', label: 'Fast Refresh Rate', type: 'number' },
+      { key: 'enable_persistant_mysql', label: 'Persistent MySQL', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'auto_dial_next_number', label: 'Auto Dial Next Number', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'VDstop_rec_after_each_call', label: 'Stop Recording After Call', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'enable_sipsak_messages', label: 'SIPSAK Messages', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'use_external_server_ip', label: 'Use External Server IP', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'codecs_list', label: 'Codecs List' },
+      { key: 'codecs_with_template', label: 'Codecs With Template', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
+      { key: 'on_hook_agent', label: 'On-Hook Agent', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'conf_qualify', label: 'Conference Qualify', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'mohsuggest', label: 'MOH Suggest' },
+      { section: 'Voicemail and No-Answer' },
+      { key: 'delete_vm_after_email', label: 'Delete VM After Email', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'voicemail_timezone', label: 'Voicemail Timezone' },
+      { key: 'voicemail_options', label: 'Voicemail Options' },
+      { key: 'voicemail_greeting', label: 'Voicemail Greeting' },
+      { key: 'voicemail_instructions', label: 'Voicemail Instructions', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'on_login_report', label: 'On-Login Report', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'unavail_dialplan_fwd_exten', label: 'Unavailable Forward Extension' },
+      { key: 'unavail_dialplan_fwd_context', label: 'Unavailable Forward Context' },
+      { key: 'nva_call_url', label: 'NVA Call URL', type: 'textarea', wide: true },
+      { key: 'nva_search_method', label: 'NVA Search Method', type: 'select', options: enumOptions(ensureOption(['NONE', 'LB', 'LO', 'SO'], form?.nva_search_method)) },
+      { key: 'nva_error_filename', label: 'NVA Error Filename', chooser: '/vicidial/admin.php?ADD=170000000000', chooserLabel: 'Audio chooser' },
+      { key: 'nva_new_list_id', label: 'NVA New List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.nva_new_list_id) },
+      { key: 'nva_new_phone_code', label: 'NVA Phone Code', type: phoneCodeOptions.length ? 'select' : 'text', options: phoneCodeOptions },
+      { key: 'nva_new_status', label: 'NVA New Status', type: 'select', options: statusSelectOptions(admin, form?.login_campaign || campaign, form?.nva_new_status) },
       { section: 'Webphone' },
-      { key: 'is_webphone', label: 'Webphone', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'is_webphone', label: 'Webphone', type: 'select', options: enumOptions(ensureOption(PHONE_WEBPHONE_OPTIONS, form?.is_webphone)) },
       { key: 'webphone_auto_answer', label: 'Auto Answer', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'webphone_dialpad', label: 'Dialpad', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_dialpad', label: 'Dialpad', type: 'select', options: enumOptions(ensureOption(PHONE_WEBPHONE_DIALPAD_OPTIONS, form?.webphone_dialpad)) },
       { key: 'webphone_dialbox', label: 'Dialbox', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'webphone_mute', label: 'Mute Control', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'webphone_volume', label: 'Volume', type: 'number' },
+      { key: 'webphone_volume', label: 'Volume Control', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'webphone_debug', label: 'Debug', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'webphone_settings', label: 'Webphone Settings', type: 'textarea', wide: true },
+      { key: 'webphone_layout', label: 'Webphone Layout' },
+      { key: 'webphone_settings', label: 'Webphone Settings Container' },
+    ];
+  }
+
+  if (entity === 'servers') {
+    return [
+      { section: 'Server Identity' },
+      { key: 'server_id', label: 'Server ID', disabled: mode === 'edit' },
+      { key: 'server_description', label: 'Description' },
+      { key: 'server_ip', label: 'Server IP' },
+      { key: 'active', label: 'Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'active_asterisk_server', label: 'Asterisk Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'asterisk_version', label: 'Asterisk Version' },
+      { key: 'max_vicidial_trunks', label: 'Max VICIdial Trunks', type: 'number' },
+      { key: 'local_gmt', label: 'Local GMT', type: 'select', options: enumOptions(ensureOption(GMT_OPTIONS, form?.local_gmt)) },
+      { section: 'Asterisk and Dialplan' },
+      { key: 'telnet_host', label: 'Telnet Host' },
+      { key: 'telnet_port', label: 'Telnet Port', type: 'number' },
+      { key: 'ext_context', label: 'Extension Context', type: phoneContextOptions.length ? 'select' : 'text', options: withCurrentOption(phoneContextOptions, form?.ext_context) },
+      { key: 'agi_output', label: 'AGI Output', type: 'select', options: enumOptions(['NONE', 'STDERR', 'FILE', 'BOTH']) },
+      { key: 'generate_vicidial_conf', label: 'Generate VICIdial Conf', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'rebuild_conf_files', label: 'Rebuild Conf Files', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'custom_dialplan_entry', label: 'Custom Dialplan Entry', type: 'textarea', wide: true },
+      { key: 'routing_prefix', label: 'Routing Prefix' },
+      { key: 'conf_engine', label: 'Conference Engine', type: 'select', options: enumOptions(['MEETME', 'CONFBRIDGE']) },
+      { key: 'conf_update_interval', label: 'Conference Update Interval', type: 'number' },
+      { key: 'conf_qualify', label: 'Conference Qualify', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'ara_url', label: 'ARA URL', type: 'textarea', wide: true },
+      { section: 'Operations' },
+      { key: 'sys_perf_log', label: 'System Performance Log', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'vd_server_logs', label: 'VD Server Logs', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'vicidial_balance_active', label: 'VICIdial Balance Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'balance_trunks_offlimits', label: 'Balance Trunks Off Limits', type: 'number' },
+      { key: 'outbound_calls_per_second', label: 'Outbound Calls Per Second', type: 'number' },
+      { key: 'sounds_update', label: 'Sounds Update', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'vicidial_recording_limit', label: 'Recording Limit Minutes', type: 'number' },
+      { key: 'carrier_logging_active', label: 'Carrier Logging', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'active_agent_login_server', label: 'Agent Login Server', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'auto_restart_asterisk', label: 'Auto Restart Asterisk', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'asterisk_temp_no_restart', label: 'Temp No Restart', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'gather_asterisk_output', label: 'Gather Asterisk Output', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { section: 'Network and Recording' },
+      { key: 'recording_web_link', label: 'Recording Web Link', type: 'select', options: enumOptions(['SERVER_IP', 'ALT_IP', 'EXTERNAL_IP']) },
+      { key: 'alt_server_ip', label: 'Alt Server IP' },
+      { key: 'external_server_ip', label: 'External Server IP' },
+      { key: 'voicemail_dump_exten_no_inst', label: 'VM Dump No Instructions' },
+      { key: 'web_socket_url', label: 'WebSocket URL', type: 'textarea', wide: true },
+      { key: 'external_web_socket_url', label: 'External WebSocket URL', type: 'textarea', wide: true },
+    ];
+  }
+
+  if (entity === 'carriers') {
+    return [
+      { key: 'carrier_id', label: 'Carrier ID', disabled: mode === 'edit' },
+      { key: 'carrier_name', label: 'Carrier Name' },
+      { key: 'protocol', label: 'Protocol', type: 'select', options: enumOptions(ensureOption(['SIP', 'PJSIP', 'PJSIP_WIZ', 'Zap', 'IAX2', 'EXTERNAL'], form?.protocol)) },
+      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: withCurrentOption(serverOptions, form?.server_ip) },
+      { key: 'active', label: 'Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'carrier_description', label: 'Description', wide: true },
+      { key: 'template_id', label: 'Template ID' },
+      { section: 'Carrier Config' },
+      { key: 'registration_string', label: 'Registration String', type: 'textarea', wide: true },
+      { key: 'account_entry', label: 'Account Entry', type: 'textarea', wide: true },
+      { key: 'globals_string', label: 'Globals String', type: 'textarea', wide: true },
+      { key: 'dialplan_entry', label: 'Dialplan Entry', type: 'textarea', wide: true },
     ];
   }
 
@@ -2201,6 +2617,49 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'callMenuOptions') {
+    const route = String(form?.option_route || 'CALLMENU');
+    const routeTargets = {
+      CALLMENU: withCurrentOption(callMenuLookupOptions, form?.option_route_value),
+      INGROUP: withCurrentOption([...inboundStrictOptions, { value: 'DYNAMIC_INGROUP_VAR', label: 'DYNAMIC_INGROUP_VAR' }], form?.option_route_value),
+      DID: withCurrentOption(didOptions, form?.option_route_value),
+      PHONE: withCurrentOption(phoneOptions, form?.option_route_value),
+    }[route] || [];
+    const routeValueField = {
+      key: 'option_route_value',
+      label: route === 'CALLMENU'
+        ? 'Target Call Menu'
+        : route === 'INGROUP'
+          ? 'Target In-Group'
+          : route === 'DID'
+            ? 'Target DID'
+            : route === 'PHONE'
+              ? 'Target Phone'
+              : route === 'EXTENSION'
+                ? 'Target Extension'
+                : route === 'VOICEMAIL' || route === 'VMAIL_NO_INST'
+                  ? 'Voicemail Box'
+                  : route === 'HANGUP'
+                    ? 'Hangup Audio File'
+                    : route === 'AGI'
+                      ? 'AGI Route'
+                      : 'Route Value',
+      type: routeTargets.length ? 'select' : 'text',
+      options: routeTargets,
+      chooser: route === 'VOICEMAIL' || route === 'VMAIL_NO_INST' ? '/vicidial/admin.php?ADD=170000000000' : route === 'HANGUP' ? legacyCallMenuHref : null,
+      chooserLabel: route === 'HANGUP' ? 'Audio chooser' : 'Voicemail chooser',
+    };
+
+    return [
+      { key: 'menu_id', label: 'Call Menu', type: callMenuLookupOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuLookupOptions, form?.menu_id), disabled: mode === 'edit' || form?._menuLocked },
+      { key: 'option_value', label: 'Option', type: 'select', options: enumOptions(ensureOption(CALL_MENU_OPTION_VALUE_OPTIONS, form?.option_value)), disabled: mode === 'edit' },
+      { key: 'option_description', label: 'Description' },
+      { key: 'option_route', label: 'Route', type: 'select', options: enumOptions(ensureOption(CALL_MENU_ROUTE_OPTIONS, form?.option_route)) },
+      routeValueField,
+      { key: 'option_route_value_context', label: route === 'EXTENSION' ? 'Extension Context' : route === 'INGROUP' ? 'In-Group Route Context' : 'Route Context', type: route === 'INGROUP' ? 'textarea' : 'text', wide: route === 'INGROUP' },
+    ];
+  }
+
   if (entity === 'callMenus') {
     return [
       { key: 'menu_id', label: 'Menu ID', disabled: mode === 'edit' },
@@ -2241,18 +2700,225 @@ function actionFields(entity, mode, admin, form = {}) {
   }
 
   return [
+    { section: 'Basic In-Group' },
     { key: 'group_id', label: 'Group ID', disabled: mode === 'edit' },
     { key: 'group_name', label: 'Group Name' },
     { key: 'group_color', label: 'Color', type: 'select', options: enumOptions(ensureOption(ADMIN_COLOR_OPTIONS, form?.group_color)) },
     { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-    { key: 'next_agent_call', label: 'Routing', type: 'select', options: enumOptions(ensureOption(NEXT_AGENT_CALL_OPTIONS, form?.next_agent_call)) },
-    { key: 'queue_priority', label: 'Priority', type: 'select', options: labeledNumberOptions(99, -99, (value) => `${value} - ${value < 0 ? 'Lower' : value > 0 ? 'Higher' : 'Even'}`, form?.queue_priority) },
-    { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
-    { key: 'drop_action', label: 'Drop Action', type: 'select', options: ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'].map((value) => ({ value, label: value })) },
+    { key: 'group_handling', label: 'Handling', type: 'select', options: enumOptions(['PHONE', 'EMAIL', 'CHAT']) },
+    { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
     { key: 'call_time_id', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
-    { key: 'play_welcome_message', label: 'Welcome', type: 'select', options: ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'].map((value) => ({ value, label: value })) },
-    { key: 'no_agent_action', label: 'No Agent', type: 'select', options: ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'].map((value) => ({ value, label: value })) },
-    { key: 'group_handling', label: 'Handling', type: 'select', options: ['PHONE', 'EMAIL', 'CHAT'].map((value) => ({ value, label: value })) },
+    { key: 'voicemail_ext', label: 'Voicemail', chooser: legacyInboundHref, chooserLabel: 'Voicemail chooser' },
+    { key: 'queue_priority', label: 'Priority', type: 'select', options: labeledNumberOptions(99, -99, (value) => `${value} - ${value < 0 ? 'Lower' : value > 0 ? 'Higher' : 'Even'}`, form?.queue_priority) },
+    { key: 'next_agent_call', label: 'Next Agent Call', type: 'select', options: enumOptions(ensureOption(NEXT_AGENT_CALL_OPTIONS, form?.next_agent_call)) },
+    { key: 'agent_search_method', label: 'Agent Search Method', type: 'select', options: enumOptions(ensureOption(AGENT_SEARCH_OPTIONS, form?.agent_search_method)) },
+    { key: 'fronter_display', label: 'Fronter Display', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'default_group_alias', label: 'Default Group Alias' },
+    { key: 'dial_ingroup_cid', label: 'Dial In-Group CID' },
+    { section: 'Scripts and Web Forms' },
+    { key: 'ingroup_script', label: 'Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+    { key: 'ingroup_script_two', label: 'Second Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+    { key: 'get_call_launch', label: 'Get Call Launch', type: 'select', options: enumOptions(ensureOption(INGROUP_GET_CALL_LAUNCH_OPTIONS, form?.get_call_launch)) },
+    { key: 'ignore_list_script_override', label: 'Ignore List Script Override', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'web_form_address', label: 'Web Form Address', type: 'textarea', wide: true },
+    { key: 'web_form_address_two', label: 'Web Form Address 2', type: 'textarea', wide: true },
+    { key: 'web_form_address_three', label: 'Web Form Address 3', type: 'textarea', wide: true },
+    { key: 'start_call_url', label: 'Start Call URL', type: 'textarea', wide: true },
+    { key: 'dispo_call_url', label: 'Dispo Call URL', type: 'textarea', wide: true },
+    { key: 'na_call_url', label: 'No-Agent URL', type: 'textarea', wide: true },
+    { key: 'add_lead_url', label: 'Add Lead URL', type: 'textarea', wide: true },
+    { key: 'enter_ingroup_url', label: 'Enter In-Group URL', type: 'textarea', wide: true },
+    { key: 'waiting_call_url_on', label: 'Waiting Call URL On', type: 'textarea', wide: true },
+    { key: 'waiting_call_url_off', label: 'Waiting Call URL Off', type: 'textarea', wide: true },
+    { key: 'waiting_call_count', label: 'Waiting Call Count', type: 'number' },
+    { section: 'Drop, After Hours, and No-Agent Routing' },
+    { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
+    { key: 'drop_call_seconds_override', label: 'Drop Seconds Override', type: 'number' },
+    { key: 'drop_action', label: 'Drop Action', type: 'select', options: enumOptions(ensureOption(INGROUP_DROP_ACTION_OPTIONS, form?.drop_action)) },
+    { key: 'drop_exten', label: 'Drop Extension / Filename', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'drop_inbound_group', label: 'Drop In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.drop_inbound_group) },
+    { key: 'drop_callmenu', label: 'Drop Call Menu', type: callMenuRouteOptions(form?.drop_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.drop_callmenu) },
+    { key: 'drop_lead_reset', label: 'Drop Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'after_hours_action', label: 'After Hours Action', type: 'select', options: enumOptions(ensureOption(INGROUP_AFTER_HOURS_ACTION_OPTIONS, form?.after_hours_action)) },
+    { key: 'after_hours_message_filename', label: 'After Hours Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'after_hours_exten', label: 'After Hours Extension' },
+    { key: 'after_hours_voicemail', label: 'After Hours Voicemail' },
+    { key: 'afterhours_xfer_group', label: 'After Hours In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.afterhours_xfer_group) },
+    { key: 'after_hours_callmenu', label: 'After Hours Call Menu', type: callMenuRouteOptions(form?.after_hours_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.after_hours_callmenu) },
+    { key: 'after_hours_lead_reset', label: 'After Hours Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'no_agent_no_queue', label: 'No Agent No Queue', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_NO_QUEUE_OPTIONS, form?.no_agent_no_queue)) },
+    { key: 'no_agent_action', label: 'No Agent Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.no_agent_action)) },
+    { key: 'no_agent_action_value', label: 'No Agent Action Value', chooser: legacyInboundHref, chooserLabel: 'Route chooser' },
+    { key: 'no_agent_delay', label: 'No Agent Delay', type: 'number' },
+    { key: 'in_queue_nanque', label: 'In Queue NANQUE', type: 'select', options: enumOptions(ensureOption(INGROUP_IN_QUEUE_NANQUE_OPTIONS, form?.in_queue_nanque)) },
+    { key: 'in_queue_nanque_exceptions', label: 'NANQUE Exceptions' },
+    { key: 'nanq_lead_reset', label: 'No-Agent Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { section: 'Prompts, Hold, and Wait Options' },
+    { key: 'welcome_message_filename', label: 'Welcome Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'play_welcome_message', label: 'Play Welcome Message', type: 'select', options: enumOptions(ensureOption(INGROUP_PLAY_WELCOME_OPTIONS, form?.play_welcome_message)) },
+    { key: 'moh_context', label: 'Music On Hold Context' },
+    { key: 'park_file_name', label: 'Park Music On Hold', chooser: legacyInboundHref, chooserLabel: 'MOH chooser' },
+    { key: 'onhold_prompt_filename', label: 'On-Hold Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'onhold_prompt_no_block', label: 'On-Hold Prompt No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'onhold_prompt_seconds', label: 'On-Hold Prompt Seconds', type: 'number' },
+    { key: 'prompt_interval', label: 'Prompt Interval', type: 'number' },
+    { key: 'play_place_in_line', label: 'Play Place In Line', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'play_estimate_hold_time', label: 'Play Estimated Hold Time', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'calculate_estimated_hold_seconds', label: 'Estimated Hold Seconds', type: 'number' },
+    { key: 'place_in_line_caller_number_filename', label: 'Place-In-Line Caller Number Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'place_in_line_you_next_filename', label: 'Place-In-Line You Are Next Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'hold_time_option', label: 'Hold Time Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_option)) },
+    { key: 'hold_time_second_option', label: 'Hold Time Second Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_second_option)) },
+    { key: 'hold_time_third_option', label: 'Hold Time Third Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_third_option)) },
+    { key: 'hold_time_option_seconds', label: 'Hold Time Seconds', type: 'number' },
+    { key: 'hold_time_option_minimum', label: 'Hold Time Minimum', type: 'number' },
+    { key: 'hold_time_option_exten', label: 'Hold Time Extension' },
+    { key: 'hold_time_option_voicemail', label: 'Hold Time Voicemail' },
+    { key: 'hold_time_option_xfer_group', label: 'Hold Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.hold_time_option_xfer_group) },
+    { key: 'hold_time_option_callmenu', label: 'Hold Time Call Menu', type: callMenuRouteOptions(form?.hold_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.hold_time_option_callmenu) },
+    { key: 'hold_time_option_callback_filename', label: 'Hold Time Callback Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'hold_time_option_callback_list_id', label: 'Hold Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.hold_time_option_callback_list_id) },
+    { key: 'hold_time_option_press_filename', label: 'Hold Time Press Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'hold_time_option_no_block', label: 'Hold Time No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'hold_time_option_prompt_seconds', label: 'Hold Time Prompt Seconds', type: 'number' },
+    { key: 'hold_recall_xfer_group', label: 'Hold Recall In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.hold_recall_xfer_group) },
+    { key: 'hold_time_lead_reset', label: 'Hold Time Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'wait_hold_option_priority', label: 'Wait/Hold Priority', type: 'select', options: enumOptions(ensureOption(INGROUP_WAIT_HOLD_PRIORITY_OPTIONS, form?.wait_hold_option_priority)) },
+    { key: 'wait_time_option', label: 'Wait Time Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.wait_time_option)) },
+    { key: 'wait_time_second_option', label: 'Wait Time Second Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.wait_time_second_option)) },
+    { key: 'wait_time_third_option', label: 'Wait Time Third Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.wait_time_third_option)) },
+    { key: 'wait_time_option_seconds', label: 'Wait Time Seconds', type: 'number' },
+    { key: 'wait_time_option_exten', label: 'Wait Time Extension' },
+    { key: 'wait_time_option_voicemail', label: 'Wait Time Voicemail' },
+    { key: 'wait_time_option_xfer_group', label: 'Wait Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.wait_time_option_xfer_group) },
+    { key: 'wait_time_option_callmenu', label: 'Wait Time Call Menu', type: callMenuRouteOptions(form?.wait_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.wait_time_option_callmenu) },
+    { key: 'wait_time_option_callback_filename', label: 'Wait Time Callback Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'wait_time_option_callback_list_id', label: 'Wait Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.wait_time_option_callback_list_id) },
+    { key: 'wait_time_option_press_filename', label: 'Wait Time Press Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'wait_time_option_no_block', label: 'Wait Time No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'wait_time_option_prompt_seconds', label: 'Wait Time Prompt Seconds', type: 'number' },
+    { key: 'wait_time_lead_reset', label: 'Wait Time Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'eht_minimum_prompt_filename', label: 'EHT Minimum Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'eht_minimum_prompt_no_block', label: 'EHT Minimum No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'eht_minimum_prompt_seconds', label: 'EHT Minimum Prompt Seconds', type: 'number' },
+    { section: 'Transfers and Recording' },
+    { key: 'default_xfer_group', label: 'Default Transfer Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.default_xfer_group) },
+    { key: 'action_xfer_cid', label: 'Transfer CallerID' },
+    { key: 'extension_appended_cidname', label: 'Append Extension To CID Name', type: 'select', options: enumOptions(ensureOption(['N', 'Y', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN'], form?.extension_appended_cidname)) },
+    { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
+    { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
+    { key: 'xferconf_b_dtmf', label: 'Transfer-Conf DTMF 2' },
+    { key: 'xferconf_b_number', label: 'Transfer-Conf Number 2' },
+    { key: 'xferconf_c_number', label: 'Transfer-Conf Number 3' },
+    { key: 'xferconf_d_number', label: 'Transfer-Conf Number 4' },
+    { key: 'xferconf_e_number', label: 'Transfer-Conf Number 5' },
+    { key: 'xfer_talk_minimum', label: 'Transfer Talk Minimum', type: 'select', options: enumOptions(['DISABLED', 'ENABLED']) },
+    { key: 'xfer_talk_minimum_sec', label: 'Transfer Talk Minimum Seconds', type: 'number' },
+    { key: 'ingroup_recording_override', label: 'Recording Override', type: 'select', options: enumOptions(ensureOption(INGROUP_RECORDING_OPTIONS, form?.ingroup_recording_override)) },
+    { key: 'ingroup_rec_filename', label: 'Recording Filename', chooser: legacyInboundHref, chooserLabel: 'Recording chooser' },
+    { key: 'routing_initiated_recordings', label: 'Routing Initiated Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'stereo_recording', label: 'Stereo Recording', type: 'select', options: enumOptions(ensureOption(INGROUP_STEREO_RECORDING_OPTIONS, form?.stereo_recording)) },
+    { key: 'stereo_rec_filename', label: 'Stereo Recording Filename' },
+    { key: 'stereo_parallel_recording', label: 'Parallel Stereo Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'parallel_rec_co_filename', label: 'Parallel Customer-Only Filename' },
+    { key: 'parallel_rec_cm_filename', label: 'Parallel Customer-Mute Filename' },
+    { key: 'parallel_rec_fr_filename', label: 'Parallel Full Recording Filename' },
+    { key: 'recording_dtmf_muting', label: 'Recording DTMF Muting', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'ENABLED'], form?.recording_dtmf_muting)) },
+    { key: 'stereo_recording_agent', label: 'Agent Stereo Recording', type: 'select', options: enumOptions(ensureOption(INGROUP_RECORDING_OPTIONS, form?.stereo_recording_agent)) },
+    { section: 'Quality Control' },
+    { key: 'qc_enabled', label: 'QC Enabled', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'qc_statuses', label: 'QC Statuses' },
+    { key: 'qc_shift_id', label: 'QC Shift', type: shiftScopeOptions.length ? 'select' : 'text', options: withCurrentOption(shiftScopeOptions, form?.qc_shift_id) },
+    { key: 'qc_get_record_launch', label: 'QC Record Launch', type: 'select', options: enumOptions(ensureOption(INGROUP_QC_GET_RECORD_LAUNCH_OPTIONS, form?.qc_get_record_launch)) },
+    { key: 'qc_show_recording', label: 'QC Show Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'qc_web_form_address', label: 'QC Web Form', type: 'textarea', wide: true },
+    { key: 'qc_script', label: 'QC Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+    { key: 'qc_scorecard_id', label: 'QC Scorecard ID' },
+    { key: 'qc_statuses_id', label: 'QC Statuses ID' },
+    { section: 'Limits, Filters, and Timers' },
+    { key: 'max_calls_method', label: 'Max Calls Method', type: 'select', options: enumOptions(ensureOption(INGROUP_MAX_CALLS_METHOD_OPTIONS, form?.max_calls_method)) },
+    { key: 'max_calls_count', label: 'Max Calls Count', type: 'number' },
+    { key: 'max_calls_action', label: 'Max Calls Action', type: 'select', options: enumOptions(ensureOption(INGROUP_MAX_CALLS_ACTION_OPTIONS, form?.max_calls_action)) },
+    { key: 'areacode_filter', label: 'Area Code Filter', type: 'select', options: enumOptions(ensureOption(INGROUP_AREACODE_FILTER_OPTIONS, form?.areacode_filter)) },
+    { key: 'areacode_filter_seconds', label: 'Area Code Filter Seconds', type: 'number' },
+    { key: 'areacode_filter_action', label: 'Area Code Filter Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.areacode_filter_action)) },
+    { key: 'areacode_filter_action_value', label: 'Area Code Filter Value' },
+    { key: 'timer_action', label: 'Timer Action', type: 'select', options: enumOptions(ensureOption(TIMER_ACTION_OPTIONS, form?.timer_action)) },
+    { key: 'timer_action_message', label: 'Timer Action Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
+    { key: 'timer_action_destination', label: 'Timer Destination' },
+    { key: 'no_delay_call_route', label: 'No Delay Call Route', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'on_hook_ring_time', label: 'On-Hook Ring Time', type: 'number' },
+    { key: 'on_hook_cid', label: 'On-Hook CID' },
+    { key: 'on_hook_cid_number', label: 'On-Hook CID Number' },
+    { key: 'uniqueid_status_display', label: 'UniqueID Status Display', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'ENABLED', 'ENABLED_PREFIX', 'ENABLED_PRESERVE'], form?.uniqueid_status_display)) },
+    { key: 'uniqueid_status_prefix', label: 'UniqueID Status Prefix' },
+    { key: 'status_group_id', label: 'Status Group ID' },
+    { key: 'answer_signal', label: 'Answer Signal', type: 'select', options: enumOptions(ensureOption(INGROUP_ANSWER_SIGNAL_OPTIONS, form?.answer_signal)) },
+    { section: 'Survey, Callbacks, and Closing Time' },
+    { key: 'inbound_survey', label: 'Inbound Survey', type: 'select', options: enumOptions(['DISABLED', 'ENABLED']) },
+    { key: 'inbound_survey_filename', label: 'Survey Intro Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'inbound_survey_accept_digit', label: 'Survey Accept Digit' },
+    { key: 'inbound_survey_question_filename', label: 'Survey Question Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'inbound_survey_callmenu', label: 'Survey Call Menu', type: callMenuRouteOptions(form?.inbound_survey_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.inbound_survey_callmenu) },
+    { key: 'icbq_expiration_hours', label: 'ICBQ Expiration Hours', type: 'number' },
+    { key: 'icbq_call_time_id', label: 'ICBQ Call Time', type: callTimeOptions.length ? 'select' : 'text', options: withCurrentOption(callTimeOptions, form?.icbq_call_time_id) },
+    { key: 'icbq_dial_filter', label: 'ICBQ Dial Filter', type: leadFilterOptions.length ? 'select' : 'text', options: withCurrentOption(leadFilterOptions, form?.icbq_dial_filter) },
+    { key: 'closing_time_action', label: 'Closing Time Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.closing_time_action)) },
+    { key: 'closing_time_now_trigger', label: 'Closing Time Trigger Now', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'closing_time_filename', label: 'Closing Time Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'closing_time_end_filename', label: 'Closing Time End Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'closing_time_lead_reset', label: 'Closing Time Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'closing_time_option_exten', label: 'Closing Time Extension' },
+    { key: 'closing_time_option_callmenu', label: 'Closing Time Call Menu', type: callMenuRouteOptions(form?.closing_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.closing_time_option_callmenu) },
+    { key: 'closing_time_option_voicemail', label: 'Closing Time Voicemail' },
+    { key: 'closing_time_option_xfer_group', label: 'Closing Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.closing_time_option_xfer_group) },
+    { key: 'closing_time_option_callback_list_id', label: 'Closing Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.closing_time_option_callback_list_id) },
+    { key: 'cid_cb_confirm_number', label: 'CID Callback Confirm Number', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'cid_cb_invalid_filter_phone_group', label: 'CID Callback Invalid Filter Group' },
+    { key: 'cid_cb_valid_length', label: 'CID Callback Valid Length', type: 'number' },
+    { key: 'cid_cb_valid_filename', label: 'CID Callback Valid Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_confirmed_filename', label: 'CID Callback Confirmed Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_enter_filename', label: 'CID Callback Enter Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_you_entered_filename', label: 'CID Callback You Entered Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_press_to_confirm_filename', label: 'CID Callback Press Confirm Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_invalid_filename', label: 'CID Callback Invalid Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_reenter_filename', label: 'CID Callback Re-enter Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'cid_cb_error_filename', label: 'CID Callback Error Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { section: 'Lead Population and Chat' },
+    { key: 'populate_lead_ingroup', label: 'Populate Lead In-Group', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
+    { key: 'populate_lead_province', label: 'Populate Lead Province' },
+    { key: 'populate_state_areacode', label: 'Populate State From Area Code', type: 'select', options: enumOptions(ensureOption(INGROUP_POPULATE_STATE_OPTIONS, form?.populate_state_areacode)) },
+    { key: 'populate_lead_source', label: 'Populate Lead Source' },
+    { key: 'populate_lead_vendor', label: 'Populate Lead Vendor' },
+    { key: 'populate_lead_comments', label: 'Populate Lead Comments', type: 'textarea', wide: true },
+    { key: 'populate_lead_owner', label: 'Populate Lead Owner' },
+    { key: 'add_lead_timezone', label: 'Add Lead Timezone', type: 'select', options: enumOptions(INGROUP_ADD_LEAD_TIMEZONE_OPTIONS) },
+    { key: 'customer_chat_screen_colors', label: 'Chat Screen Colors' },
+    { key: 'customer_chat_survey_link', label: 'Chat Survey Link', type: 'textarea', wide: true },
+    { key: 'customer_chat_survey_text', label: 'Chat Survey Text', type: 'textarea', wide: true },
+    { section: 'Alerts and Custom Fields' },
+    { key: 'agent_alert_exten', label: 'Agent Alert Extension' },
+    { key: 'agent_alert_delay', label: 'Agent Alert Delay', type: 'number' },
+    { key: 'browser_alert_sound', label: 'Browser Alert Sound' },
+    { key: 'browser_alert_volume', label: 'Browser Alert Volume', type: 'number' },
+    { key: 'second_alert_trigger', label: 'Second Alert Trigger' },
+    { key: 'second_alert_trigger_seconds', label: 'Second Alert Trigger Seconds', type: 'number' },
+    { key: 'second_alert_filename', label: 'Second Alert Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'second_alert_delay', label: 'Second Alert Delay', type: 'number' },
+    { key: 'second_alert_container', label: 'Second Alert Container' },
+    { key: 'second_alert_only', label: 'Second Alert Only', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'third_alert_trigger', label: 'Third Alert Trigger' },
+    { key: 'third_alert_trigger_seconds', label: 'Third Alert Trigger Seconds', type: 'number' },
+    { key: 'third_alert_filename', label: 'Third Alert Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    { key: 'third_alert_delay', label: 'Third Alert Delay', type: 'number' },
+    { key: 'third_alert_container', label: 'Third Alert Container' },
+    { key: 'third_alert_only', label: 'Third Alert Only', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    { key: 'custom_one', label: 'Custom One' },
+    { key: 'custom_two', label: 'Custom Two' },
+    { key: 'custom_three', label: 'Custom Three' },
+    { key: 'custom_four', label: 'Custom Four' },
+    { key: 'custom_five', label: 'Custom Five' },
   ];
 }
 
@@ -2270,7 +2936,10 @@ function entityLabel(entity) {
     inbound: 'Inbound Group',
     dids: 'DID',
     callMenus: 'Call Menu',
+    callMenuOptions: 'Call Menu Option',
     phones: 'Phone',
+    servers: 'Server',
+    carriers: 'Carrier',
     scripts: 'Script',
     leadFilters: 'Lead Filter',
     callTimes: 'Call Time',
@@ -2294,7 +2963,10 @@ function entityId(entity, row) {
     inbound: row.group_id,
     dids: row.did_pattern,
     callMenus: row.menu_id,
+    callMenuOptions: `${row.menu_id}__${row.option_value}`,
     phones: `${row.extension}__${row.server_ip}`,
+    servers: row.server_id,
+    carriers: row.carrier_id,
     scripts: row.script_id,
     leadFilters: row.lead_filter_id,
     callTimes: row.call_time_id,
@@ -2314,6 +2986,7 @@ function entityPath(entity) {
     leadFilters: 'lead-filters',
     callTimes: 'call-times',
     callMenus: 'call-menus',
+    callMenuOptions: 'call-menu-options',
     campaignStatuses: 'campaign-statuses',
   }[entity] || entity;
 }
@@ -3633,7 +4306,9 @@ function CallTimesView({ admin, user, onAction }) {
 
 function CallMenusView({ admin, user, onAction }) {
   const menus = admin?.callMenus || [];
+  const menuOptions = admin?.callMenuOptions || [];
   const canManage = userCan(user, 'callMenus');
+  const canManageOptions = userCan(user, 'callMenuOptions');
 
   return (
     <>
@@ -3662,13 +4337,45 @@ function CallMenusView({ admin, user, onAction }) {
               { key: 'menu_timeout', label: 'Timeout', render: (row) => `${row.menu_timeout || 0}s` },
               { key: 'dtmf_log', label: 'DTMF', render: (row) => <StatusPill ok={row.dtmf_log === '1'}>{row.dtmf_log === '1' ? 'On' : 'Off'}</StatusPill> },
               { key: 'answer_signal', label: 'Answer', render: (row) => row.answer_signal || 'Y' },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('callMenus', 'edit', row)} /> }] : []),
+              ...(canManage ? [{
+                key: 'actions',
+                label: 'Action',
+                render: (row) => (
+                  <RowActions>
+                    <ManageButton onClick={() => onAction('callMenus', 'edit', row)} />
+                    {canManageOptions && <ManageButton icon={Plus} onClick={() => onAction('callMenuOptions', 'create', { menu_id: row.menu_id, _menuLocked: true })}>Option</ManageButton>}
+                  </RowActions>
+                ),
+              }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="DTMF" title="Call Menu Options" icon={SlidersHorizontal} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No call menu options returned"
+            rows={menuOptions.map((row) => ({ ...row, id: `${row.menu_id}-${row.option_value}` }))}
+            columns={[
+              {
+                key: 'option',
+                label: 'Option',
+                render: (row) => (
+                  <>
+                    <strong>{row.menu_id} / {row.option_value}</strong>
+                    <span>{row.option_description || row.menu_name || 'Menu route'}</span>
+                  </>
+                ),
+              },
+              { key: 'option_route', label: 'Route', render: (row) => row.option_route || 'None' },
+              { key: 'option_route_value', label: 'Target', render: (row) => row.option_route_value || 'None' },
+              { key: 'option_route_value_context', label: 'Context', render: (row) => row.option_route_value_context ? 'Configured' : 'None' },
+              ...(canManageOptions ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('callMenuOptions', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
         <Panel eyebrow="Routing" title="Call Menu Mix" icon={PhoneCall}>
           <div className="quick-stack">
             <MetricCard icon={Compass} label="Call Menus" value={formatNumber(menus.length)} detail="Configured menus" accent="#00d9ff" />
+            <MetricCard icon={SlidersHorizontal} label="Menu Options" value={formatNumber(menuOptions.length)} detail="DTMF routes" accent="#b9f2ff" />
             <MetricCard icon={Clock3} label="Time Checked" value={formatNumber(menus.filter((row) => row.menu_time_check === '1').length)} detail="Menus with call-time logic" accent="#73fbd3" />
           </div>
         </Panel>
@@ -3863,6 +4570,7 @@ function reportGroupsForUser(user) {
 function ReportsView({ dashboard, admin, user }) {
   const [query, setQuery] = useState('');
   const metrics = dashboard?.metrics || {};
+  const rangeLabel = dashboard?.range?.label || 'Today';
   const reportGroups = reportGroupsForUser(user);
   const visibleReportCount = reportGroups.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -3873,6 +4581,43 @@ function ReportsView({ dashboard, admin, user }) {
         <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(metrics.callsToday)} detail={`${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`} accent="#73fbd3" />
         <MetricCard icon={Users} label="Users" value={formatNumber(admin?.counts?.users)} detail={`${formatNumber(admin?.counts?.activeUsers)} active`} accent="#a8c7ff" />
         <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
+      </section>
+
+      <section className="admin-grid">
+        <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
+        <CampaignPerformance rows={dashboard?.campaignPerformance || []} />
+        <BreakdownPanel
+          eyebrow="Outcomes"
+          title="Call Status Mix"
+          icon={Gauge}
+          items={dashboard?.statusBreakdown || []}
+          valueKey="calls"
+          labelKey="status"
+          emptyLabel="No call statuses in this range"
+        />
+        <BreakdownPanel
+          eyebrow="Inventory"
+          title="Lead Status Mix"
+          icon={Database}
+          items={dashboard?.leadStatusBreakdown || []}
+          valueKey="leads"
+          labelKey="status"
+          emptyLabel="No lead statuses returned"
+        />
+        <Panel eyebrow="Agents" title="Live Agent Activity" icon={Headphones} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No live agents returned"
+            rows={(dashboard?.agents || []).map((row) => ({ ...row, id: `${row.user}-${row.campaign_id}-${row.server_ip}` }))}
+            columns={[
+              { key: 'user', label: 'Agent', render: (row) => <strong>{row.user}</strong> },
+              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id || 'None' },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status !== 'PAUSED'}>{row.status || row.pause_code || 'Ready'}</StatusPill> },
+              { key: 'calls_today', label: 'Calls', render: (row) => formatNumber(row.calls_today) },
+              { key: 'last_call_time', label: 'Last Call', render: (row) => durationLabel(row.last_call_time) },
+            ]}
+          />
+        </Panel>
+        <CampaignTable campaigns={dashboard?.campaigns || []} />
       </section>
 
       <section className="report-hero">
@@ -3898,7 +4643,7 @@ function MapView() {
       <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
         <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
         <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
-        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="17" detail="Campaigns, campaign tools, users, groups, lists, inbound, DIDs, call menus, phones, scripts, filters, call times, shifts, statuses" accent="#a8c7ff" />
+        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="21" detail="Campaigns, campaign tools, users, groups, lists, inbound, DIDs, call menus, phones, scripts, filters, call times, shifts, statuses, servers, carriers" accent="#a8c7ff" />
         <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
       </section>
 
@@ -3954,49 +4699,80 @@ function RecordingsView({ admin }) {
   );
 }
 
-function SystemView({ admin }) {
+function SystemView({ admin, user, onAction }) {
   const servers = admin?.servers || [];
   const carriers = admin?.carriers || [];
+  const canManageServers = userCan(user, 'servers');
+  const canManageCarriers = userCan(user, 'carriers');
 
   return (
-    <section className="admin-grid">
-      <Panel eyebrow="Platform" title="VICIdial Servers" icon={Server} className="admin-wide-panel">
-        <DataTable
-          emptyLabel="No servers returned"
-          rows={servers.map((row) => ({ ...row, id: row.server_id }))}
-          columns={[
-            {
-              key: 'server_id',
-              label: 'Server',
-              render: (row) => (
-                <>
-                  <strong>{row.server_id}</strong>
-                  <span>{row.server_description || row.server_ip}</span>
-                </>
-              ),
-            },
-            { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
-            { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
-            { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
-            { key: 'cpu_idle_percent', label: 'CPU Idle', render: (row) => row.cpu_idle_percent ? `${row.cpu_idle_percent}%` : 'Unknown' },
-            { key: 'conf_engine', label: 'Conf', render: (row) => row.conf_engine || 'Default' },
-            { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-          ]}
-        />
-      </Panel>
-      <Panel eyebrow="Telephony" title="Carriers" icon={PhoneCall}>
-        <DataTable
-          emptyLabel="No carriers returned"
-          rows={carriers.map((row) => ({ ...row, id: row.carrier_id }))}
-          columns={[
-            { key: 'carrier_id', label: 'Carrier', render: (row) => <strong>{row.carrier_id}</strong> },
-            { key: 'protocol', label: 'Protocol', render: (row) => row.protocol || 'SIP' },
-            { key: 'server_ip', label: 'Server', render: (row) => row.server_ip || 'Default' },
-            { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-          ]}
-        />
-      </Panel>
-    </section>
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar
+        entity="servers"
+        label="Server"
+        user={user}
+        onAction={onAction}
+        extraActions={canManageCarriers ? (
+          <button type="button" className="secondary-action compact-action" onClick={() => onAction('carriers', 'create')}>
+            <Plus size={17} aria-hidden="true" />
+            Add Carrier
+          </button>
+        ) : null}
+      >
+        <p className="action-copy">Manage VICIdial servers, conference settings, websocket endpoints, and carrier routing records.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Platform" title="VICIdial Servers" icon={Server} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No servers returned"
+            rows={servers.map((row) => ({ ...row, id: row.server_id }))}
+            columns={[
+              {
+                key: 'server_id',
+                label: 'Server',
+                render: (row) => (
+                  <>
+                    <strong>{row.server_id}</strong>
+                    <span>{row.server_description || row.server_ip}</span>
+                  </>
+                ),
+              },
+              { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
+              { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
+              { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
+              { key: 'cpu_idle_percent', label: 'CPU Idle', render: (row) => row.cpu_idle_percent ? `${row.cpu_idle_percent}%` : 'Unknown' },
+              { key: 'conf_engine', label: 'Conf', render: (row) => row.conf_engine || 'Default' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManageServers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('servers', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Telephony" title="Carriers" icon={PhoneCall} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No carriers returned"
+            rows={carriers.map((row) => ({ ...row, id: row.carrier_id }))}
+            columns={[
+              {
+                key: 'carrier_id',
+                label: 'Carrier',
+                render: (row) => (
+                  <>
+                    <strong>{row.carrier_id}</strong>
+                    <span>{row.carrier_name || row.carrier_description || 'Carrier'}</span>
+                  </>
+                ),
+              },
+              { key: 'protocol', label: 'Protocol', render: (row) => row.protocol || 'SIP' },
+              { key: 'server_ip', label: 'Server', render: (row) => row.server_ip || 'Default' },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManageCarriers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('carriers', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
   );
 }
 
@@ -4018,7 +4794,7 @@ function AdminPage({ activeView, dashboard, admin, user, onAction }) {
   if (activeView === 'statuses') return <StatusesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
-  if (activeView === 'system') return <SystemView admin={admin} />;
+  if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView />;
   return <CommandView dashboard={dashboard} />;
 }
