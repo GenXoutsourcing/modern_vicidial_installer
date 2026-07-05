@@ -52,14 +52,10 @@ function passwordMatches(input, stored) {
   if (!stored) return false;
   const password = String(input || '');
   const expected = String(stored || '');
-  const candidates = [
-    password,
-    digest(password, 'md5'),
-    digest(password, 'sha1'),
-    digest(password, 'sha256'),
-  ];
-
-  return candidates.some((candidate) => safeEqual(candidate, expected));
+  if (/^[a-f0-9]{32}$/i.test(expected)) return safeEqual(digest(password, 'md5'), expected);
+  if (/^[a-f0-9]{40}$/i.test(expected)) return safeEqual(digest(password, 'sha1'), expected);
+  if (/^[a-f0-9]{64}$/i.test(expected)) return safeEqual(digest(password, 'sha256'), expected);
+  return safeEqual(password, expected);
 }
 
 function publicUser(row) {
