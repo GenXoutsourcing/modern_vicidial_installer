@@ -153,6 +153,11 @@ async function rows(sql, params = [], fallback = []) {
   }
 }
 
+async function requiredRows(sql, params = []) {
+  const [result] = await pool.query(sql, params);
+  return result;
+}
+
 function resolveRange(value) {
   return ranges[value] || ranges.today;
 }
@@ -286,7 +291,7 @@ async function dashboardData(selectedRange = 'today') {
     scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0),
     systemStatus(),
     activitySeries(range),
-    rows(
+    requiredRows(
       `SELECT campaign_id,
               COUNT(*) AS calls,
               COUNT(DISTINCT user) AS users,
@@ -303,7 +308,7 @@ async function dashboardData(selectedRange = 'today') {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT status, COUNT(*) AS calls
        FROM (
          SELECT status FROM vicidial_log WHERE ${outboundWhere}
@@ -425,9 +430,10 @@ async function adminData() {
          GROUP BY campaign_id
        ) list_counts ON list_counts.campaign_id = c.campaign_id
        LEFT JOIN (
-         SELECT campaign_id, COUNT(*) AS lead_count
-         FROM vicidial_list
-         GROUP BY campaign_id
+         SELECT lists.campaign_id, COUNT(leads.lead_id) AS lead_count
+         FROM vicidial_lists lists
+         LEFT JOIN vicidial_list leads ON leads.list_id = lists.list_id
+         GROUP BY lists.campaign_id
        ) lead_counts ON lead_counts.campaign_id = c.campaign_id
        LEFT JOIN (
          SELECT campaign_id, COUNT(*) AS live_agents
@@ -439,7 +445,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT user,
               full_name,
               user_level,
@@ -458,7 +464,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT l.list_id,
               l.list_name,
               l.campaign_id,
@@ -486,7 +492,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT group_id,
               group_name,
               group_color,
@@ -505,7 +511,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT recording_id,
               start_time,
               length_in_sec,
@@ -521,7 +527,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT server_id,
               server_description,
               server_ip,
@@ -543,7 +549,7 @@ async function adminData() {
       [],
       [],
     ),
-    rows(
+    requiredRows(
       `SELECT carrier_id,
               carrier_name,
               protocol,
