@@ -76,6 +76,18 @@ This repo contains the main installer and the files it expects to find in the sa
 - `certbot.sh` - SSL certificate renewal helper used by cron
 - `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
 - `genx-vicidial-overlay/` - agent/admin/report overlay files and hosted VICIphone assets
+- `tools/genx-cluster-smoke.sh` - read-only cluster/app-server readiness check
+
+## Cluster/app-server smoke check
+
+After installing or clustering a server, run:
+
+```bash
+cd /usr/src/modern_vicidial_installer
+sudo ./tools/genx-cluster-smoke.sh
+```
+
+The check reports local service health, Asterisk process/CLI status, web response, and VICIdial database connectivity without printing the database password. On an app server, `VARDB_server` should point to the intended main VICIdial database host.
 
 ## GENX VICIDIAL overlay
 
