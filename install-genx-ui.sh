@@ -99,7 +99,11 @@ mkdir -p "$release"
 tar --exclude node_modules --exclude dist -C "$APP_SRC" -cf - . | tar -C "$release" -xf -
 
 cd "$release"
-npm install
+if [ -f package-lock.json ]; then
+  npm ci
+else
+  npm install
+fi
 GENX_UI_BASE_PATH="$BASE_PATH" npm run build
 npm prune --omit=dev
 
