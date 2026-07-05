@@ -68,6 +68,12 @@ function publicUser(row) {
     modifyCampaigns: row.modify_campaigns === '1',
     modifyLists: row.modify_lists === '1',
     modifyUsers: row.modify_users === '1',
+    modifyIngroups: row.modify_ingroups === '1',
+    modifyServers: row.modify_servers === '1',
+    modifyCarriers: row.modify_carriers === '1',
+    modifyStatuses: row.modify_statuses === '1',
+    modifyPhones: row.modify_phones === '1',
+    modifyCallTimes: row.modify_call_times === '1',
   };
 }
 
@@ -117,7 +123,13 @@ async function authenticateVicidialUser(username, password) {
             view_reports,
             modify_campaigns,
             modify_lists,
-            modify_users
+            modify_users,
+            modify_ingroups,
+            modify_servers,
+            modify_carriers,
+            modify_statuses,
+            modify_phones,
+            modify_call_times
      FROM vicidial_users
      WHERE user = ?
      LIMIT 1`,
@@ -156,6 +168,89 @@ async function rows(sql, params = [], fallback = []) {
 async function requiredRows(sql, params = []) {
   const [result] = await pool.query(sql, params);
   return result;
+}
+
+async function execute(sql, params = []) {
+  const [result] = await pool.execute(sql, params);
+  return result;
+}
+
+function canModify(user, permission) {
+  if (!user) return false;
+  if (Number(user.userLevel || 0) >= 9) return true;
+  return Boolean(user[permission]);
+}
+
+function requireModify(req, res, permission) {
+  if (canModify(req.genxUser, permission)) return true;
+  res.status(403).json({ ok: false, error: 'permission_denied' });
+  return false;
+}
+
+function cleanText(value, max = 255) {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+function cleanId(value, max = 20) {
+  const next = cleanText(value, max).replace(/[^-_0-9a-zA-Z]/g, '');
+  return next || '';
+}
+
+function cleanDigits(value, max = 14) {
+  const next = cleanText(value, max).replace(/[^0-9]/g, '');
+  return next || '';
+}
+
+function cleanChoice(value, allowed, fallback) {
+  const next = cleanText(value, 60).toUpperCase();
+  return allowed.includes(next) ? next : fallback;
+}
+
+function cleanInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function boolFlag(value, on = '1', off = '0') {
+  return ['1', 'Y', 'YES', 'TRUE', true, 1].includes(value) ? on : off;
+}
+
+function ynFlag(value, fallback = 'N') {
+  return cleanChoice(value, ['Y', 'N'], fallback);
+}
+
+async function adminLog(req, section, type, recordId, code, eventSql = '', notes = '') {
+  try {
+    await execute(
+      `INSERT INTO vicidial_admin_log
+       SET event_date = NOW(),
+           user = ?,
+           ip_address = ?,
+           event_section = ?,
+           event_type = ?,
+           record_id = ?,
+           event_code = ?,
+           event_sql = ?,
+           event_notes = ?`,
+      [
+        req.genxUser?.user || 'GENX',
+        cleanText(req.ip || '', 15),
+        section,
+        type,
+        cleanText(recordId, 100),
+        code,
+        cleanText(eventSql, 2000),
+        cleanText(notes, 255),
+      ],
+    );
+  } catch (error) {
+    // Some report-only DB users may not be allowed to write the audit table.
+  }
+}
+
+function badRequest(res, message) {
+  return res.status(400).json({ ok: false, error: message });
 }
 
 function resolveRange(value) {
@@ -403,6 +498,8 @@ async function adminData() {
     recordings,
     servers,
     carriers,
+    userGroups,
+    callTimes,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -563,6 +660,22 @@ async function adminData() {
       [],
       [],
     ),
+    rows(
+      `SELECT user_group, group_name
+       FROM vicidial_user_groups
+       ORDER BY user_group ASC
+       LIMIT 200`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT call_time_id, call_time_name
+       FROM vicidial_call_times
+       ORDER BY call_time_id ASC
+       LIMIT 200`,
+      [],
+      [],
+    ),
   ]);
 
   return {
@@ -606,7 +719,384 @@ async function adminData() {
     })),
     servers,
     carriers,
+    lookups: {
+      campaigns: campaigns.map((item) => ({
+        campaign_id: item.campaign_id,
+        campaign_name: item.campaign_name || item.campaign_id,
+      })),
+      userGroups,
+      callTimes,
+    },
   };
+}
+
+function campaignPayload(body) {
+  return {
+    campaign_name: cleanText(body.campaign_name, 40) || 'New Campaign',
+    campaign_description: cleanText(body.campaign_description, 255),
+    active: ynFlag(body.active, 'N'),
+    dial_method: cleanChoice(body.dial_method, ['MANUAL', 'RATIO', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED', 'ADAPT_AVERAGE', 'ADAPT_PERCENTMAX', 'INBOUND_MAN', 'SHARED_RATIO', 'SHARED_ADAPT_HARD_LIMIT', 'SHARED_ADAPT_TAPERED', 'SHARED_ADAPT_AVERAGE', 'SHARED_ADAPT_PERCENTMAX'], 'MANUAL'),
+    auto_dial_level: cleanText(body.auto_dial_level, 6).replace(/[^0-9.]/g, '') || '0',
+    hopper_level: cleanInt(body.hopper_level, 1, 0, 999999),
+    lead_order: cleanText(body.lead_order, 30).replace(/[^-_ 0-9a-zA-Z]/g, '') || 'DOWN',
+    local_call_time: cleanId(body.local_call_time, 10) || '9am-9pm',
+    campaign_recording: cleanChoice(body.campaign_recording, ['NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'], 'ONDEMAND'),
+    campaign_allow_inbound: ynFlag(body.campaign_allow_inbound, 'N'),
+  };
+}
+
+async function saveCampaign(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(mode === 'create' ? req.body?.campaign_id : req.params.id, 8);
+  if (!id) return badRequest(res, 'invalid_campaign_id');
+  const payload = campaignPayload(req.body || {});
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_campaigns
+         SET campaign_id = ?,
+             campaign_name = ?,
+             campaign_description = ?,
+             active = ?,
+             dial_method = ?,
+             auto_dial_level = ?,
+             hopper_level = ?,
+             lead_order = ?,
+             local_call_time = ?,
+             campaign_recording = ?,
+             campaign_allow_inbound = ?,
+             campaign_changedate = NOW()`,
+        [
+          id,
+          payload.campaign_name,
+          payload.campaign_description,
+          payload.active,
+          payload.dial_method,
+          payload.auto_dial_level,
+          payload.hopper_level,
+          payload.lead_order,
+          payload.local_call_time,
+          payload.campaign_recording,
+          payload.campaign_allow_inbound,
+        ],
+      );
+      await adminLog(req, 'CAMPAIGNS', 'ADD', id, 'GENX ADD CAMPAIGN', 'INSERT INTO vicidial_campaigns', payload.campaign_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_campaigns
+         SET campaign_name = ?,
+             campaign_description = ?,
+             active = ?,
+             dial_method = ?,
+             auto_dial_level = ?,
+             hopper_level = ?,
+             lead_order = ?,
+             local_call_time = ?,
+             campaign_recording = ?,
+             campaign_allow_inbound = ?,
+             campaign_changedate = NOW()
+         WHERE campaign_id = ?`,
+        [
+          payload.campaign_name,
+          payload.campaign_description,
+          payload.active,
+          payload.dial_method,
+          payload.auto_dial_level,
+          payload.hopper_level,
+          payload.lead_order,
+          payload.local_call_time,
+          payload.campaign_recording,
+          payload.campaign_allow_inbound,
+          id,
+        ],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+      await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX MODIFY CAMPAIGN', 'UPDATE vicidial_campaigns', payload.campaign_name);
+    }
+
+    return res.json({ ok: true, data: await adminData() });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'campaign_exists' : 'campaign_write_failed' });
+  }
+}
+
+function userPayload(body, currentUser) {
+  const requestedLevel = cleanInt(body.user_level, 1, 1, 9);
+  const userLevel = Number(currentUser?.userLevel || 0) >= 9
+    ? requestedLevel
+    : Math.min(requestedLevel, Math.max(1, Number(currentUser?.userLevel || 1) - 1));
+
+  return {
+    pass: cleanText(body.pass, 100),
+    full_name: cleanText(body.full_name, 50) || 'New User',
+    user_level: userLevel,
+    user_group: cleanId(body.user_group, 20) || 'ADMIN',
+    active: ynFlag(body.active, 'Y'),
+    email: cleanText(body.email, 100),
+    phone_login: cleanText(body.phone_login, 20),
+    view_reports: boolFlag(body.view_reports),
+    modify_campaigns: boolFlag(body.modify_campaigns),
+    modify_lists: boolFlag(body.modify_lists),
+    modify_users: boolFlag(body.modify_users),
+  };
+}
+
+async function saveUser(req, res, mode) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user');
+  const payload = userPayload(req.body || {}, req.genxUser);
+  if (mode === 'create' && !payload.pass) return badRequest(res, 'password_required');
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_users
+         SET user = ?,
+             pass = ?,
+             full_name = ?,
+             user_level = ?,
+             user_group = ?,
+             phone_login = ?,
+             phone_pass = '',
+             pass_hash = '',
+             active = ?,
+             email = ?,
+             view_reports = ?,
+             modify_campaigns = ?,
+             modify_lists = ?,
+             modify_users = ?`,
+        [
+          id,
+          payload.pass,
+          payload.full_name,
+          payload.user_level,
+          payload.user_group,
+          payload.phone_login,
+          payload.active,
+          payload.email,
+          payload.view_reports,
+          payload.modify_campaigns,
+          payload.modify_lists,
+          payload.modify_users,
+        ],
+      );
+      await adminLog(req, 'USERS', 'ADD', id, 'GENX ADD USER', 'INSERT INTO vicidial_users', payload.full_name);
+    } else {
+      const passwordSql = payload.pass ? 'pass = ?, pass_hash = ?,' : '';
+      const passwordValues = payload.pass ? [payload.pass, ''] : [];
+      const result = await execute(
+        `UPDATE vicidial_users
+         SET ${passwordSql}
+             full_name = ?,
+             user_level = ?,
+             user_group = ?,
+             phone_login = ?,
+             active = ?,
+             email = ?,
+             view_reports = ?,
+             modify_campaigns = ?,
+             modify_lists = ?,
+             modify_users = ?
+         WHERE user = ?`,
+        [
+          ...passwordValues,
+          payload.full_name,
+          payload.user_level,
+          payload.user_group,
+          payload.phone_login,
+          payload.active,
+          payload.email,
+          payload.view_reports,
+          payload.modify_campaigns,
+          payload.modify_lists,
+          payload.modify_users,
+          id,
+        ],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'user_not_found' });
+      await adminLog(req, 'USERS', 'MODIFY', id, 'GENX MODIFY USER', 'UPDATE vicidial_users', payload.full_name);
+    }
+
+    return res.json({ ok: true, data: await adminData() });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'user_exists' : 'user_write_failed' });
+  }
+}
+
+function listPayload(body) {
+  const expiration = /^\d{4}-\d{2}-\d{2}$/.test(cleanText(body.expiration_date, 10))
+    ? cleanText(body.expiration_date, 10)
+    : '2099-12-31';
+
+  return {
+    list_name: cleanText(body.list_name, 30) || 'New List',
+    campaign_id: cleanId(body.campaign_id, 8),
+    active: ynFlag(body.active, 'N'),
+    list_description: cleanText(body.list_description, 255),
+    local_call_time: cleanId(body.local_call_time, 10) || 'campaign',
+    expiration_date: expiration,
+  };
+}
+
+async function saveList(req, res, mode) {
+  if (!requireModify(req, res, 'modifyLists')) return;
+  const id = cleanDigits(mode === 'create' ? req.body?.list_id : req.params.id, 14);
+  if (!id) return badRequest(res, 'invalid_list_id');
+  const payload = listPayload(req.body || {});
+  if (!payload.campaign_id) return badRequest(res, 'campaign_required');
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_lists
+         SET list_id = ?,
+             list_name = ?,
+             campaign_id = ?,
+             active = ?,
+             list_description = ?,
+             local_call_time = ?,
+             expiration_date = ?,
+             list_changedate = NOW()`,
+        [
+          id,
+          payload.list_name,
+          payload.campaign_id,
+          payload.active,
+          payload.list_description,
+          payload.local_call_time,
+          payload.expiration_date,
+        ],
+      );
+      await adminLog(req, 'LISTS', 'ADD', id, 'GENX ADD LIST', 'INSERT INTO vicidial_lists', payload.list_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_lists
+         SET list_name = ?,
+             campaign_id = ?,
+             active = ?,
+             list_description = ?,
+             local_call_time = ?,
+             expiration_date = ?,
+             list_changedate = NOW()
+         WHERE list_id = ?`,
+        [
+          payload.list_name,
+          payload.campaign_id,
+          payload.active,
+          payload.list_description,
+          payload.local_call_time,
+          payload.expiration_date,
+          id,
+        ],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'list_not_found' });
+      await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX MODIFY LIST', 'UPDATE vicidial_lists', payload.list_name);
+    }
+
+    return res.json({ ok: true, data: await adminData() });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'list_exists' : 'list_write_failed' });
+  }
+}
+
+function inboundPayload(body) {
+  return {
+    group_name: cleanText(body.group_name, 30) || 'New In-Group',
+    group_color: cleanText(body.group_color, 20) || 'WHITE',
+    active: ynFlag(body.active, 'N'),
+    next_agent_call: cleanText(body.next_agent_call, 40).replace(/[^-_0-9a-zA-Z]/g, '') || 'longest_wait_time',
+    queue_priority: cleanInt(body.queue_priority, 0, 0, 99),
+    drop_call_seconds: cleanInt(body.drop_call_seconds, 360, 0, 9999),
+    drop_action: cleanChoice(body.drop_action, ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'], 'MESSAGE'),
+    call_time_id: cleanId(body.call_time_id, 20) || '24hours',
+    play_welcome_message: cleanChoice(body.play_welcome_message, ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'], 'ALWAYS'),
+    no_agent_action: cleanChoice(body.no_agent_action, ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'], 'MESSAGE'),
+    group_handling: cleanChoice(body.group_handling, ['PHONE', 'EMAIL', 'CHAT'], 'PHONE'),
+  };
+}
+
+async function saveInboundGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(mode === 'create' ? req.body?.group_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_group_id');
+  const payload = inboundPayload(req.body || {});
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_inbound_groups
+         SET group_id = ?,
+             group_name = ?,
+             group_color = ?,
+             active = ?,
+             next_agent_call = ?,
+             queue_priority = ?,
+             drop_call_seconds = ?,
+             drop_action = ?,
+             call_time_id = ?,
+             play_welcome_message = ?,
+             no_agent_action = ?,
+             group_handling = ?`,
+        [
+          id,
+          payload.group_name,
+          payload.group_color,
+          payload.active,
+          payload.next_agent_call,
+          payload.queue_priority,
+          payload.drop_call_seconds,
+          payload.drop_action,
+          payload.call_time_id,
+          payload.play_welcome_message,
+          payload.no_agent_action,
+          payload.group_handling,
+        ],
+      );
+      await adminLog(req, 'INGROUPS', 'ADD', id, 'GENX ADD INBOUND GROUP', 'INSERT INTO vicidial_inbound_groups', payload.group_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_inbound_groups
+         SET group_name = ?,
+             group_color = ?,
+             active = ?,
+             next_agent_call = ?,
+             queue_priority = ?,
+             drop_call_seconds = ?,
+             drop_action = ?,
+             call_time_id = ?,
+             play_welcome_message = ?,
+             no_agent_action = ?,
+             group_handling = ?
+         WHERE group_id = ?`,
+        [
+          payload.group_name,
+          payload.group_color,
+          payload.active,
+          payload.next_agent_call,
+          payload.queue_priority,
+          payload.drop_call_seconds,
+          payload.drop_action,
+          payload.call_time_id,
+          payload.play_welcome_message,
+          payload.no_agent_action,
+          payload.group_handling,
+          id,
+        ],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ingroup_not_found' });
+      await adminLog(req, 'INGROUPS', 'MODIFY', id, 'GENX MODIFY INBOUND GROUP', 'UPDATE vicidial_inbound_groups', payload.group_name);
+    }
+
+    return res.json({ ok: true, data: await adminData() });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'ingroup_exists' : 'ingroup_write_failed' });
+  }
 }
 
 app.get('/api/health', async (_req, res) => {
@@ -663,6 +1153,15 @@ app.get('/api/admin', requireAccess, async (_req, res) => {
     res.status(500).json({ ok: false, error: 'admin_unavailable' });
   }
 });
+
+app.post('/api/admin/campaigns', requireAccess, (req, res) => saveCampaign(req, res, 'create'));
+app.put('/api/admin/campaigns/:id', requireAccess, (req, res) => saveCampaign(req, res, 'update'));
+app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
+app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
+app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));
+app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
+app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
+app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 
 app.use(express.static(distDir, {
   etag: true,

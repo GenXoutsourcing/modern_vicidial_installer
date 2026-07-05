@@ -5,23 +5,32 @@ import {
   BarChart3,
   CalendarDays,
   Clock3,
+  Compass,
   Database,
+  ExternalLink,
+  FileText,
   Gauge,
   Headphones,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
+  Pencil,
   PhoneCall,
+  Plus,
   RefreshCcw,
   Radio,
+  Save,
   Search,
   Server,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Timer,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-react';
+import { LEGACY_ADMIN_GROUPS, REPORT_GROUPS } from './catalog';
 import './styles.css';
 
 const API_BASE = `${import.meta.env.BASE_URL}api`;
@@ -33,8 +42,10 @@ const NAV_ITEMS = [
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
+  { key: 'reports', label: 'Reports', eyebrow: 'Reporting', title: 'Reporting Center', icon: FileText },
   { key: 'recordings', label: 'Recordings', eyebrow: 'Reports', title: 'Recent Recordings', icon: Activity },
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
+  { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
 ];
 
 function formatNumber(value) {
@@ -175,6 +186,312 @@ function Login({ onLogin }) {
         </form>
       </section>
     </main>
+  );
+}
+
+function userCan(user, entity) {
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  if (entity === 'campaigns') return Boolean(user?.modifyCampaigns);
+  if (entity === 'users') return Boolean(user?.modifyUsers);
+  if (entity === 'lists') return Boolean(user?.modifyLists);
+  if (entity === 'inbound') return Boolean(user?.modifyIngroups);
+  return false;
+}
+
+function yesNoOptions(yes = 'Y', no = 'N', yesLabel = 'Active', noLabel = 'Off') {
+  return [
+    { value: yes, label: yesLabel },
+    { value: no, label: noLabel },
+  ];
+}
+
+function flagOptions() {
+  return [
+    { value: '1', label: 'Allowed' },
+    { value: '0', label: 'No' },
+  ];
+}
+
+function lookupOptions(items, valueKey, labelKey) {
+  return (items || []).map((item) => ({
+    value: String(item[valueKey] || ''),
+    label: `${item[valueKey]}${item[labelKey] && item[labelKey] !== item[valueKey] ? ` - ${item[labelKey]}` : ''}`,
+  })).filter((item) => item.value);
+}
+
+function actionDefaults(entity, admin) {
+  const campaign = admin?.lookups?.campaigns?.[0]?.campaign_id || '';
+  const group = admin?.lookups?.userGroups?.[0]?.user_group || 'ADMIN';
+  const callTime = admin?.lookups?.callTimes?.find((item) => item.call_time_id === '24hours')?.call_time_id
+    || admin?.lookups?.callTimes?.[0]?.call_time_id
+    || '24hours';
+
+  if (entity === 'campaigns') {
+    return {
+      campaign_id: '',
+      campaign_name: '',
+      campaign_description: '',
+      active: 'N',
+      dial_method: 'MANUAL',
+      auto_dial_level: '0',
+      hopper_level: '1',
+      lead_order: 'DOWN',
+      local_call_time: '9am-9pm',
+      campaign_recording: 'ONDEMAND',
+      campaign_allow_inbound: 'N',
+    };
+  }
+
+  if (entity === 'users') {
+    return {
+      user: '',
+      pass: '',
+      full_name: '',
+      user_level: '1',
+      user_group: group,
+      active: 'Y',
+      email: '',
+      phone_login: '',
+      view_reports: '0',
+      modify_campaigns: '0',
+      modify_lists: '0',
+      modify_users: '0',
+    };
+  }
+
+  if (entity === 'lists') {
+    return {
+      list_id: '',
+      list_name: '',
+      campaign_id: campaign,
+      active: 'N',
+      list_description: '',
+      local_call_time: 'campaign',
+      expiration_date: '2099-12-31',
+    };
+  }
+
+  return {
+    group_id: '',
+    group_name: '',
+    group_color: 'WHITE',
+    active: 'N',
+    next_agent_call: 'longest_wait_time',
+    queue_priority: '0',
+    drop_call_seconds: '360',
+    drop_action: 'MESSAGE',
+    call_time_id: callTime,
+    play_welcome_message: 'ALWAYS',
+    no_agent_action: 'MESSAGE',
+    group_handling: 'PHONE',
+  };
+}
+
+function actionFields(entity, mode, admin) {
+  const callTimeOptions = lookupOptions(admin?.lookups?.callTimes, 'call_time_id', 'call_time_name');
+  const campaignOptions = lookupOptions(admin?.lookups?.campaigns, 'campaign_id', 'campaign_name');
+  const userGroupOptions = lookupOptions(admin?.lookups?.userGroups, 'user_group', 'group_name');
+
+  if (entity === 'campaigns') {
+    return [
+      { key: 'campaign_id', label: 'Campaign ID', disabled: mode === 'edit' },
+      { key: 'campaign_name', label: 'Campaign Name' },
+      { key: 'campaign_description', label: 'Description', wide: true },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'dial_method', label: 'Dial Method', type: 'select', options: ['MANUAL', 'RATIO', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED', 'ADAPT_AVERAGE', 'ADAPT_PERCENTMAX', 'INBOUND_MAN'].map((value) => ({ value, label: value })) },
+      { key: 'auto_dial_level', label: 'Dial Level', type: 'number', step: '0.1' },
+      { key: 'hopper_level', label: 'Hopper Level', type: 'number' },
+      { key: 'lead_order', label: 'Lead Order' },
+      { key: 'local_call_time', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
+      { key: 'campaign_recording', label: 'Recording', type: 'select', options: ['NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'].map((value) => ({ value, label: value })) },
+      { key: 'campaign_allow_inbound', label: 'Allow Inbound', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    ];
+  }
+
+  if (entity === 'users') {
+    return [
+      { key: 'user', label: 'User ID', disabled: mode === 'edit' },
+      { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password', type: 'password' },
+      { key: 'full_name', label: 'Full Name' },
+      { key: 'user_level', label: 'Level', type: 'number' },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'email', label: 'Email' },
+      { key: 'phone_login', label: 'Phone Login' },
+      { key: 'view_reports', label: 'Reports', type: 'select', options: flagOptions() },
+      { key: 'modify_campaigns', label: 'Campaign Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_lists', label: 'List Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_users', label: 'User Admin', type: 'select', options: flagOptions() },
+    ];
+  }
+
+  if (entity === 'lists') {
+    return [
+      { key: 'list_id', label: 'List ID', disabled: mode === 'edit' },
+      { key: 'list_name', label: 'List Name' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'list_description', label: 'Description', wide: true },
+      { key: 'local_call_time', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: [{ value: 'campaign', label: 'campaign' }, ...callTimeOptions] },
+      { key: 'expiration_date', label: 'Expiration', type: 'date' },
+    ];
+  }
+
+  return [
+    { key: 'group_id', label: 'Group ID', disabled: mode === 'edit' },
+    { key: 'group_name', label: 'Group Name' },
+    { key: 'group_color', label: 'Color' },
+    { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+    { key: 'next_agent_call', label: 'Routing' },
+    { key: 'queue_priority', label: 'Priority', type: 'number' },
+    { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
+    { key: 'drop_action', label: 'Drop Action', type: 'select', options: ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'].map((value) => ({ value, label: value })) },
+    { key: 'call_time_id', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
+    { key: 'play_welcome_message', label: 'Welcome', type: 'select', options: ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'].map((value) => ({ value, label: value })) },
+    { key: 'no_agent_action', label: 'No Agent', type: 'select', options: ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'].map((value) => ({ value, label: value })) },
+    { key: 'group_handling', label: 'Handling', type: 'select', options: ['PHONE', 'EMAIL', 'CHAT'].map((value) => ({ value, label: value })) },
+  ];
+}
+
+function entityLabel(entity) {
+  return {
+    campaigns: 'Campaign',
+    users: 'User',
+    lists: 'List',
+    inbound: 'Inbound Group',
+  }[entity] || 'Record';
+}
+
+function entityId(entity, row) {
+  return {
+    campaigns: row.campaign_id,
+    users: row.user,
+    lists: row.list_id,
+    inbound: row.group_id,
+  }[entity];
+}
+
+function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
+  const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const mode = action.mode || 'create';
+  const fields = actionFields(action.entity, mode, admin);
+  const label = entityLabel(action.entity);
+
+  useEffect(() => {
+    setForm({ ...actionDefaults(action.entity, admin), ...(action.row || {}), pass: '' });
+    setError('');
+  }, [action, admin]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+
+    const id = entityId(action.entity, form);
+    const path = mode === 'edit'
+      ? `/admin/${action.entity}/${encodeURIComponent(id)}`
+      : `/admin/${action.entity}`;
+
+    try {
+      const payload = await apiFetch(path, token, {
+        method: mode === 'edit' ? 'PUT' : 'POST',
+        body: JSON.stringify(form),
+      });
+      onSaved(payload.data);
+      onClose();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user does not have permission for this change' : 'The change was not saved');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-label={`${mode === 'edit' ? 'Manage' : 'Add'} ${label}`}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">{mode === 'edit' ? 'Manage' : 'Create'}</p>
+            <h2>{mode === 'edit' ? `Manage ${label}` : `Add ${label}`}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <form className="entity-form" onSubmit={submit}>
+          <div className="field-grid">
+            {fields.map((field) => (
+              <label key={field.key} className={field.wide ? 'wide-field' : ''}>
+                <span>{field.label}</span>
+                {field.type === 'select' ? (
+                  <select
+                    value={form[field.key] ?? ''}
+                    disabled={field.disabled}
+                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                  >
+                    {(field.options || []).map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                ) : field.type === 'textarea' ? (
+                  <textarea
+                    value={form[field.key] ?? ''}
+                    disabled={field.disabled}
+                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                  />
+                ) : (
+                  <input
+                    type={field.type || 'text'}
+                    step={field.step}
+                    value={form[field.key] ?? ''}
+                    disabled={field.disabled}
+                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          <div className="modal-actions">
+            <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+            <button type="submit" className="primary-action" disabled={saving}>
+              <Save size={18} aria-hidden="true" />
+              {saving ? 'Saving' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function ManageButton({ onClick }) {
+  return (
+    <button type="button" className="row-action" onClick={onClick}>
+      <Pencil size={15} aria-hidden="true" />
+      Manage
+    </button>
+  );
+}
+
+function ActionBar({ entity, label, user, onAction, children }) {
+  return (
+    <div className="action-bar">
+      <div>{children}</div>
+      {userCan(user, entity) && (
+        <button type="button" className="primary-action compact-action" onClick={() => onAction(entity, 'create')}>
+          <Plus size={17} aria-hidden="true" />
+          Add {label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -507,13 +824,17 @@ function AdminSummary({ admin }) {
   );
 }
 
-function CampaignsView({ admin }) {
+function CampaignsView({ admin, user, onAction }) {
   const campaigns = admin?.campaigns || [];
   const totalLeads = campaigns.reduce((sum, row) => sum + Number(row.lead_count || 0), 0);
+  const canManage = userCan(user, 'campaigns');
 
   return (
     <>
       <AdminSummary admin={admin} />
+      <ActionBar entity="campaigns" label="Campaign" user={user} onAction={onAction}>
+        <p className="action-copy">Create campaigns or manage the dialing fields most admins touch every day.</p>
+      </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Campaign Admin" title="Campaign Matrix" icon={Radio} className="admin-wide-panel">
           <DataTable
@@ -537,6 +858,7 @@ function CampaignsView({ admin }) {
               { key: 'live_agents', label: 'Live', render: (row) => formatNumber(row.live_agents) },
               { key: 'recording', label: 'Recording', render: (row) => row.campaign_recording || 'Default' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('campaigns', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -563,12 +885,16 @@ function CampaignsView({ admin }) {
   );
 }
 
-function UsersView({ admin }) {
+function UsersView({ admin, user, onAction }) {
   const users = admin?.users || [];
+  const canManage = userCan(user, 'users');
 
   return (
     <>
       <AdminSummary admin={admin} />
+      <ActionBar entity="users" label="User" user={user} onAction={onAction}>
+        <p className="action-copy">Add operators and control the common VICIdial permission flags from GenX.</p>
+      </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="User Admin" title="Users and Permissions" icon={Users} className="admin-wide-panel">
           <DataTable
@@ -591,6 +917,7 @@ function UsersView({ admin }) {
               { key: 'view_reports', label: 'Reports', render: (row) => <StatusPill ok={row.view_reports === '1'}>{row.view_reports === '1' ? 'Allowed' : 'No'}</StatusPill> },
               { key: 'modify', label: 'Modify', render: (row) => [row.modify_campaigns, row.modify_lists, row.modify_users].includes('1') ? 'Admin' : 'Limited' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('users', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -605,13 +932,17 @@ function UsersView({ admin }) {
   );
 }
 
-function ListsView({ admin }) {
+function ListsView({ admin, user, onAction }) {
   const lists = admin?.lists || [];
   const totalLeads = lists.reduce((sum, row) => sum + Number(row.lead_count || 0), 0);
+  const canManage = userCan(user, 'lists');
 
   return (
     <>
       <AdminSummary admin={admin} />
+      <ActionBar entity="lists" label="List" user={user} onAction={onAction}>
+        <p className="action-copy">Create lead lists, assign campaigns, and control list status without opening classic admin.</p>
+      </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Lead Admin" title="Lists and Lead Inventory" icon={Database} className="admin-wide-panel">
           <DataTable
@@ -635,6 +966,7 @@ function ListsView({ admin }) {
               { key: 'cache_count_dialable_new', label: 'Dialable Cache', render: (row) => formatNumber(row.cache_count_dialable_new) },
               { key: 'list_lastcalldate', label: 'Last Call', render: (row) => formatDateTime(row.list_lastcalldate) },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('lists', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -661,12 +993,16 @@ function ListsView({ admin }) {
   );
 }
 
-function InboundView({ admin }) {
+function InboundView({ admin, user, onAction }) {
   const groups = admin?.inboundGroups || [];
+  const canManage = userCan(user, 'inbound');
 
   return (
     <>
       <AdminSummary admin={admin} />
+      <ActionBar entity="inbound" label="In-Group" user={user} onAction={onAction}>
+        <p className="action-copy">Build inbound groups and tune queue basics from the GenX control layer.</p>
+      </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Inbound Admin" title="Inbound Group Routing" icon={Headphones} className="admin-wide-panel">
           <DataTable
@@ -689,6 +1025,7 @@ function InboundView({ admin }) {
               { key: 'drop_action', label: 'Drop Action', render: (row) => row.drop_action || 'HANGUP' },
               { key: 'no_agent_action', label: 'No Agent', render: (row) => row.no_agent_action || 'Default' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('inbound', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -699,6 +1036,104 @@ function InboundView({ admin }) {
           </div>
         </Panel>
       </section>
+    </>
+  );
+}
+
+function CatalogPanels({ groups, query, emptyLabel }) {
+  const normalized = query.trim().toLowerCase();
+  const filtered = groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => (
+        !normalized
+        || item.label.toLowerCase().includes(normalized)
+        || item.href.toLowerCase().includes(normalized)
+        || group.title.toLowerCase().includes(normalized)
+      )),
+    }))
+    .filter((group) => group.items.length);
+
+  if (!filtered.length) return <div className="empty-state">{emptyLabel}</div>;
+
+  return (
+    <section className="catalog-grid">
+      {filtered.map((group) => (
+        <Panel key={group.title} eyebrow="VICIdial" title={group.title} icon={ExternalLink}>
+          <div className="link-list">
+            {group.items.map((item) => (
+              <a key={`${group.title}-${item.label}`} className="launch-link" href={item.href} target="_blank" rel="noreferrer">
+                <span>{item.label}</span>
+                <ExternalLink size={15} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </Panel>
+      ))}
+    </section>
+  );
+}
+
+function CatalogSearch({ value, onChange, placeholder }) {
+  return (
+    <div className="catalog-search">
+      <Search size={17} aria-hidden="true" />
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+    </div>
+  );
+}
+
+function ReportsView({ dashboard, admin }) {
+  const [query, setQuery] = useState('');
+  const metrics = dashboard?.metrics || {};
+  const visibleReportCount = REPORT_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
+
+  return (
+    <>
+      <section className="metric-grid admin-metric-grid" aria-label="Report metrics">
+        <MetricCard icon={FileText} label="Report Links" value={formatNumber(visibleReportCount)} detail="Reviewed VICIdial report entries" accent="#00d9ff" />
+        <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(metrics.callsToday)} detail={`${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`} accent="#73fbd3" />
+        <MetricCard icon={Users} label="Users" value={formatNumber(admin?.counts?.users)} detail={`${formatNumber(admin?.counts?.activeUsers)} active`} accent="#a8c7ff" />
+        <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
+      </section>
+
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Reports</p>
+          <h2>Reporting Center</h2>
+          <p className="action-copy">Native GenX dashboards live here first; reviewed VICIdial report tools stay reachable while we rebuild each report experience.</p>
+        </div>
+        <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
+      </section>
+
+      <CatalogPanels groups={REPORT_GROUPS} query={query} emptyLabel="No reports match that search" />
+    </>
+  );
+}
+
+function MapView() {
+  const [query, setQuery] = useState('');
+  const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
+
+  return (
+    <>
+      <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
+        <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
+        <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
+        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="4" detail="Campaigns, users, lists, inbound" accent="#a8c7ff" />
+        <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
+      </section>
+
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Coverage</p>
+          <h2>VICIdial Page Map</h2>
+          <p className="action-copy">This is the coverage checklist for converting the classic admin surface into native GenX pages.</p>
+        </div>
+        <CatalogSearch value={query} onChange={setQuery} placeholder="Search admin pages" />
+      </section>
+
+      <CatalogPanels groups={LEGACY_ADMIN_GROUPS} query={query} emptyLabel="No admin pages match that search" />
     </>
   );
 }
@@ -787,14 +1222,16 @@ function SystemView({ admin }) {
   );
 }
 
-function AdminPage({ activeView, dashboard, admin }) {
+function AdminPage({ activeView, dashboard, admin, user, onAction }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
-  if (activeView === 'campaigns') return <CampaignsView admin={admin} />;
-  if (activeView === 'users') return <UsersView admin={admin} />;
-  if (activeView === 'lists') return <ListsView admin={admin} />;
-  if (activeView === 'inbound') return <InboundView admin={admin} />;
+  if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} />;
+  if (activeView === 'map') return <MapView />;
   return <CommandView dashboard={dashboard} />;
 }
 
@@ -803,6 +1240,7 @@ function AdminShell({ token, user, onLogout }) {
   const [range, setRange] = useState('today');
   const [dashboardState, setDashboardState] = useState({ loading: true, error: '', data: null });
   const [adminState, setAdminState] = useState({ loading: true, error: '', data: null });
+  const [action, setAction] = useState(null);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -834,6 +1272,15 @@ function AdminShell({ token, user, onLogout }) {
     loadDashboard();
     loadAdmin();
   }, [loadAdmin, loadDashboard]);
+
+  const openAction = useCallback((entity, mode, row = null) => {
+    setAction({ entity, mode, row });
+  }, []);
+
+  const handleSaved = useCallback((nextAdminData) => {
+    setAdminState({ loading: false, error: '', data: nextAdminData });
+    loadDashboard();
+  }, [loadDashboard]);
 
   useEffect(() => {
     refreshAll();
@@ -910,11 +1357,28 @@ function AdminShell({ token, user, onLogout }) {
       {error && <div className="alert">{error}</div>}
       {isLoading && <div className="loading-band">Loading live VICIdial data</div>}
 
-      <AdminPage activeView={activeView} dashboard={dashboardState.data} admin={adminState.data} />
+      <AdminPage
+        activeView={activeView}
+        dashboard={dashboardState.data}
+        admin={adminState.data}
+        user={user}
+        onAction={openAction}
+      />
 
       <footer className="footer-line">
         <span><Search size={14} aria-hidden="true" /> GenX admin app connected to VICIdial data layer</span>
       </footer>
+
+      {action && (
+        <ActionModal
+          action={action}
+          admin={adminState.data}
+          token={token}
+          onClose={() => setAction(null)}
+          onSaved={handleSaved}
+          onLogout={onLogout}
+        />
+      )}
     </main>
   );
 }
