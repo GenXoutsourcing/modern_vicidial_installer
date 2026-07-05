@@ -36,13 +36,40 @@ import './styles.css';
 
 const API_BASE = `${import.meta.env.BASE_URL}api`;
 const TOKEN_KEY = 'genx-ui-access-token';
+const HOPPER_LEVELS = ['1', '5', '10', '20', '50', '100', '200', '500', '700', '1000', '2000', '3000', '4000', '5000'];
+const LEAD_ORDER_BASES = [
+  'DOWN',
+  'UP',
+  'DOWN PHONE',
+  'UP PHONE',
+  'DOWN LAST NAME',
+  'UP LAST NAME',
+  'DOWN COUNT',
+  'UP COUNT',
+  'RANDOM',
+  'DOWN LAST CALL TIME',
+  'UP LAST CALL TIME',
+  'DOWN RANK',
+  'UP RANK',
+  'DOWN OWNER',
+  'UP OWNER',
+  'DOWN TIMEZONE',
+  'UP TIMEZONE',
+];
+const LEAD_ORDER_OPTIONS = [
+  ...LEAD_ORDER_BASES,
+  ...['2nd NEW', '3rd NEW', '4th NEW', '5th NEW', '6th NEW'].flatMap((suffix) => LEAD_ORDER_BASES.map((prefix) => `${prefix} ${suffix}`)),
+];
 
 const NAV_ITEMS = [
   { key: 'command', label: 'Command', eyebrow: 'Live Operations', title: 'VICIdial command layer', icon: LayoutDashboard },
   { key: 'campaigns', label: 'Campaigns', eyebrow: 'Admin', title: 'Campaign Control', icon: Radio },
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
+  { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
+  { key: 'dids', label: 'DIDs', eyebrow: 'Inbound', title: 'DID Routing', icon: PhoneCall },
+  { key: 'phones', label: 'Phones', eyebrow: 'Platform', title: 'Phones and Webphones', icon: PhoneCall },
   { key: 'reports', label: 'Reports', eyebrow: 'Reporting', title: 'Reporting Center', icon: FileText },
   { key: 'recordings', label: 'Recordings', eyebrow: 'Reports', title: 'Recent Recordings', icon: Activity },
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
@@ -195,8 +222,11 @@ function userCan(user, entity) {
   if (entity === 'campaignCopy') return Boolean(user?.modifyCampaigns);
   if (entity === 'campaigns') return Boolean(user?.modifyCampaigns);
   if (entity === 'users') return Boolean(user?.modifyUsers);
+  if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);
   if (entity === 'inbound') return Boolean(user?.modifyIngroups);
+  if (entity === 'dids') return Boolean(user?.modifyInboundDids);
+  if (entity === 'phones') return Boolean(user?.modifyPhones);
   return false;
 }
 
@@ -225,9 +255,62 @@ function lookupOptions(items, valueKey, labelKey) {
   })).filter((item) => item.value);
 }
 
+function campaignDialStatuses(row) {
+  const statuses = Array.isArray(row?.dial_status_list)
+    ? row.dial_status_list
+    : String(row?.dial_statuses || '').replace(/\s+-$/, '').trim().split(/\s+/).filter(Boolean);
+  return [...new Set(statuses.filter(Boolean))];
+}
+
+function autoDialLevelOptions(admin, currentValue) {
+  const limit = Math.max(1, Number(admin?.lookups?.systemSettings?.autoDialLimit || 8));
+  const values = ['0'];
+  let level = 0;
+  while (level <= limit) {
+    if (level < 1) level += 1;
+    else if (level < 3) level += 0.1;
+    else if (level < 4) level += 0.25;
+    else if (level < 5) level += 0.5;
+    else if (level < 20) level += 1;
+    else if (level < 40) level += 2;
+    else if (level < 100) level += 5;
+    else if (level < 200) level += 10;
+    else if (level < 400) level += 50;
+    else if (level < 1000) level += 100;
+    else level += 1;
+    if (level <= limit) values.push(String(Number(level.toFixed(2))));
+  }
+  if (currentValue !== undefined && currentValue !== null && currentValue !== '' && !values.includes(String(currentValue))) {
+    values.unshift(String(currentValue));
+  }
+  return enumOptions([...new Set(values)]);
+}
+
+function statusOptionsForCampaign(admin, campaignId, currentStatuses = []) {
+  const selected = new Set(currentStatuses);
+  const options = [];
+  const seen = new Set();
+  const pushStatus = (item, source) => {
+    const value = String(item?.status || '');
+    if (!value || selected.has(value) || seen.has(value)) return;
+    seen.add(value);
+    options.push({
+      value,
+      label: `${value} - ${item.status_name || source}`,
+    });
+  };
+  (admin?.lookups?.statuses || []).forEach((item) => pushStatus(item, 'System'));
+  (admin?.lookups?.campaignStatuses || [])
+    .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
+    .forEach((item) => pushStatus(item, 'Campaign'));
+  return [{ value: '', label: '- NONE -' }, ...options];
+}
+
 function actionDefaults(entity, admin) {
   const campaign = admin?.lookups?.campaigns?.[0]?.campaign_id || '';
   const group = admin?.lookups?.userGroups?.[0]?.user_group || 'ADMIN';
+  const inboundGroup = admin?.lookups?.inboundGroups?.[0]?.group_id || '';
+  const serverIp = admin?.lookups?.servers?.[0]?.server_ip || '127.0.0.1';
   const callTime = admin?.lookups?.callTimes?.find((item) => item.call_time_id === '24hours')?.call_time_id
     || admin?.lookups?.callTimes?.[0]?.call_time_id
     || '24hours';
@@ -278,6 +361,8 @@ function actionDefaults(entity, admin) {
       auto_alt_dial_statuses: ' B N NA DC -',
       agent_pause_codes_active: 'N',
       dial_statuses: ' NEW -',
+      add_dial_status: '',
+      remove_dial_status: '',
       no_hopper_leads_logins: 'N',
       use_auto_hopper: 'Y',
       list_order_mix: 'DISABLED',
@@ -378,6 +463,7 @@ function actionDefaults(entity, admin) {
       modify_lists: '0',
       modify_users: '0',
       modify_ingroups: '0',
+      modify_inbound_dids: '0',
       modify_usergroups: '0',
       modify_scripts: '0',
       modify_filters: '0',
@@ -404,6 +490,99 @@ function actionDefaults(entity, admin) {
     };
   }
 
+  if (entity === 'userGroups') {
+    return {
+      user_group: '',
+      group_name: '',
+      allowed_campaigns: '-ALL-CAMPAIGNS-',
+      allowed_reports: 'ALL REPORTS',
+      admin_viewable_groups: '---ALL---',
+      admin_viewable_call_times: '---ALL---',
+      allowed_queue_groups: '---ALL---',
+      qc_allowed_campaigns: '-ALL-CAMPAIGNS-',
+      qc_allowed_inbound_groups: '---ALL---',
+      group_shifts: '---ALL---',
+      forced_timeclock_login: 'N',
+      shift_enforcement: 'OFF',
+      agent_status_viewable_groups: '---ALL---',
+      agent_status_view_time: 'N',
+      agent_call_log_view: 'N',
+      allowed_custom_reports: 'ALL REPORTS',
+      reports_header_override: '',
+      admin_home_url: '',
+      script_id: '',
+    };
+  }
+
+  if (entity === 'dids') {
+    return {
+      did_pattern: '',
+      did_description: '',
+      did_active: 'Y',
+      did_route: 'IN_GROUP',
+      extension: '',
+      exten_context: 'default',
+      voicemail_ext: '',
+      phone: '',
+      server_ip: serverIp,
+      user: '',
+      user_unavailable_action: 'VOICEMAIL',
+      user_route_settings_ingroup: inboundGroup,
+      group_id: inboundGroup,
+      call_handle_method: 'CID',
+      agent_search_method: 'LB',
+      list_id: '',
+      campaign_id: campaign,
+      phone_code: '1',
+      menu_id: '',
+      record_call: 'N',
+      filter_inbound_number: '',
+      filter_action: 'DISABLED',
+      filter_extension: '',
+      filter_group_id: inboundGroup,
+      filter_campaign_id: campaign,
+      filter_menu_id: '',
+      user_group: group,
+      did_carrier_description: '',
+      inbound_route_answer: 'N',
+      alter_cid_name: '',
+    };
+  }
+
+  if (entity === 'phones') {
+    return {
+      extension: '',
+      dialplan_number: '',
+      voicemail_id: '',
+      phone_ip: '',
+      computer_ip: '',
+      server_ip: serverIp,
+      login: '',
+      pass: '',
+      status: 'ACTIVE',
+      active: 'Y',
+      phone_type: 'SIP',
+      fullname: '',
+      protocol: 'SIP',
+      local_gmt: '-5.00',
+      outbound_cid: '',
+      email: '',
+      template_id: '',
+      phone_context: 'default',
+      phone_ring_timeout: '60',
+      conf_secret: '',
+      is_webphone: 'N',
+      user_group: group,
+      webphone_dialpad: 'Y',
+      webphone_auto_answer: 'N',
+      webphone_dialbox: 'Y',
+      webphone_mute: 'Y',
+      webphone_volume: '50',
+      webphone_debug: 'N',
+      webphone_settings: '',
+    };
+  }
+
   return {
     group_id: '',
     group_name: '',
@@ -420,14 +599,29 @@ function actionDefaults(entity, admin) {
   };
 }
 
-function actionFields(entity, mode, admin) {
+function actionFields(entity, mode, admin, form = {}) {
   const callTimeOptions = lookupOptions(admin?.lookups?.callTimes, 'call_time_id', 'call_time_name');
   const campaignOptions = lookupOptions(admin?.lookups?.campaigns, 'campaign_id', 'campaign_name');
   const userGroupOptions = lookupOptions(admin?.lookups?.userGroups, 'user_group', 'group_name');
   const scriptOptions = [{ value: '', label: 'NONE' }, ...lookupOptions(admin?.lookups?.scripts, 'script_id', 'script_name')];
   const leadFilterOptions = [{ value: 'NONE', label: 'NONE' }, ...lookupOptions(admin?.lookups?.leadFilters, 'lead_filter_id', 'lead_filter_name')];
   const inboundOptions = [{ value: '---NONE---', label: '---NONE---' }, ...lookupOptions(admin?.lookups?.inboundGroups, 'group_id', 'group_name')];
+  const inboundStrictOptions = lookupOptions(admin?.lookups?.inboundGroups, 'group_id', 'group_name');
+  const serverOptions = lookupOptions(admin?.lookups?.servers, 'server_ip', 'server_description');
   const listOptions = [{ value: '998', label: '998' }, ...lookupOptions(admin?.lookups?.lists, 'list_id', 'list_name')];
+  const currentStatuses = campaignDialStatuses(form);
+  const statusNameMap = new Map([
+    ...(admin?.lookups?.statuses || []),
+    ...(admin?.lookups?.campaignStatuses || []),
+  ].map((item) => [String(item.status || ''), item.status_name || item.status]));
+  const addDialStatusOptions = statusOptionsForCampaign(admin, form?.campaign_id, currentStatuses);
+  const removeDialStatusOptions = [
+    { value: '', label: '- NONE -' },
+    ...currentStatuses.map((status) => ({
+      value: status,
+      label: `${status} - ${statusNameMap.get(status) || 'Campaign dial status'}`,
+    })),
+  ];
 
   if (entity === 'campaignCopy') {
     return [
@@ -444,9 +638,9 @@ function actionFields(entity, mode, admin) {
       { key: 'campaign_description', label: 'Description', wide: true },
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'dial_method', label: 'Dial Method', type: 'select', options: enumOptions(['MANUAL', 'RATIO', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED', 'ADAPT_AVERAGE', 'ADAPT_PERCENTMAX', 'INBOUND_MAN', 'SHARED_RATIO', 'SHARED_ADAPT_HARD_LIMIT', 'SHARED_ADAPT_TAPERED', 'SHARED_ADAPT_AVERAGE', 'SHARED_ADAPT_PERCENTMAX']) },
-      { key: 'auto_dial_level', label: 'Dial Level', type: 'number', step: '0.1' },
-      { key: 'hopper_level', label: 'Hopper Level', type: 'number' },
-      { key: 'lead_order', label: 'Lead Order' },
+      { key: 'auto_dial_level', label: 'Auto Dial Level', type: 'select', options: autoDialLevelOptions(admin, form?.auto_dial_level) },
+      { key: 'hopper_level', label: 'Minimum Hopper Level', type: 'select', options: enumOptions(HOPPER_LEVELS.includes(String(form?.hopper_level || '')) ? HOPPER_LEVELS : [String(form?.hopper_level || '1'), ...HOPPER_LEVELS]) },
+      { key: 'lead_order', label: 'List Order', type: 'select', options: enumOptions(LEAD_ORDER_OPTIONS.includes(String(form?.lead_order || '')) ? LEAD_ORDER_OPTIONS : [String(form?.lead_order || 'DOWN'), ...LEAD_ORDER_OPTIONS]) },
       { key: 'local_call_time', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
       { key: 'campaign_recording', label: 'Recording', type: 'select', options: enumOptions(['NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE']) },
       { key: 'campaign_allow_inbound', label: 'Allow Inbound', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -458,12 +652,9 @@ function actionFields(entity, mode, admin) {
       { section: 'Basic Campaign' },
       ...basicFields.map((field) => ({ ...field, disabled: field.key === 'campaign_id' || field.disabled })),
       { section: 'Dialing and Hopper' },
-      { key: 'dial_status_a', label: 'Dial Status A' },
-      { key: 'dial_status_b', label: 'Dial Status B' },
-      { key: 'dial_status_c', label: 'Dial Status C' },
-      { key: 'dial_status_d', label: 'Dial Status D' },
-      { key: 'dial_status_e', label: 'Dial Status E' },
-      { key: 'dial_statuses', label: 'Dial Statuses', wide: true },
+      { key: '_dial_status_list', label: 'Current Dial Statuses', type: 'statusList', statuses: currentStatuses, wide: true },
+      { key: 'add_dial_status', label: 'Add A Dial Status to Call', type: 'select', options: addDialStatusOptions },
+      { key: 'remove_dial_status', label: 'Remove Dial Status', type: 'select', options: removeDialStatusOptions },
       { key: 'allow_closers', label: 'Allow Closers', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'next_agent_call', label: 'Next Agent Call' },
       { key: 'dial_timeout', label: 'Dial Timeout', type: 'number' },
@@ -584,6 +775,7 @@ function actionFields(entity, mode, admin) {
       { key: 'modify_lists', label: 'List Admin', type: 'select', options: flagOptions() },
       { key: 'modify_users', label: 'User Admin', type: 'select', options: flagOptions() },
       { key: 'modify_ingroups', label: 'Inbound Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_inbound_dids', label: 'DID Admin', type: 'select', options: flagOptions() },
       { key: 'modify_usergroups', label: 'User Group Admin', type: 'select', options: flagOptions() },
       { key: 'modify_scripts', label: 'Script Admin', type: 'select', options: flagOptions() },
       { key: 'modify_filters', label: 'Filter Admin', type: 'select', options: flagOptions() },
@@ -610,6 +802,103 @@ function actionFields(entity, mode, admin) {
     ];
   }
 
+  if (entity === 'userGroups') {
+    return [
+      { key: 'user_group', label: 'Group', disabled: mode === 'edit' },
+      { key: 'group_name', label: 'Group Name' },
+      { key: 'script_id', label: 'Default Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+      { section: 'Campaign and Report Scope' },
+      { key: 'allowed_campaigns', label: 'Allowed Campaigns', type: 'textarea', wide: true },
+      { key: 'allowed_reports', label: 'Allowed Reports', type: 'textarea', wide: true },
+      { key: 'admin_viewable_groups', label: 'Admin Viewable Groups', type: 'textarea', wide: true },
+      { key: 'allowed_queue_groups', label: 'Allowed Queue Groups', type: 'textarea', wide: true },
+      { key: 'admin_viewable_call_times', label: 'Admin Viewable Call Times', type: 'textarea', wide: true },
+      { section: 'Quality and Agent Scope' },
+      { key: 'qc_allowed_campaigns', label: 'QC Allowed Campaigns', type: 'textarea', wide: true },
+      { key: 'qc_allowed_inbound_groups', label: 'QC Allowed Inbound Groups', type: 'textarea', wide: true },
+      { key: 'group_shifts', label: 'Group Shifts', type: 'textarea', wide: true },
+      { key: 'agent_status_viewable_groups', label: 'Agent Status Viewable Groups', type: 'textarea', wide: true },
+      { section: 'Enforcement' },
+      { key: 'forced_timeclock_login', label: 'Forced Timeclock', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'shift_enforcement', label: 'Shift Enforcement', type: 'select', options: enumOptions(['OFF', 'START', 'ALL']) },
+      { key: 'agent_status_view_time', label: 'Status View Time', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'agent_call_log_view', label: 'Agent Call Log', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'allowed_custom_reports', label: 'Custom Reports', type: 'textarea', wide: true },
+      { key: 'reports_header_override', label: 'Reports Header Override' },
+      { key: 'admin_home_url', label: 'Admin Home URL', wide: true },
+    ];
+  }
+
+  if (entity === 'dids') {
+    return [
+      { key: 'did_pattern', label: 'DID Pattern', disabled: mode === 'edit' },
+      { key: 'did_description', label: 'Description' },
+      { key: 'did_active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'did_route', label: 'DID Route', type: 'select', options: enumOptions(['EXTEN', 'VOICEMAIL', 'PHONE', 'USER', 'IN_GROUP', 'CALLMENU']) },
+      { key: 'group_id', label: 'In-Group', type: inboundStrictOptions.length ? 'select' : 'text', options: inboundStrictOptions },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'extension', label: 'Extension' },
+      { key: 'exten_context', label: 'Context' },
+      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions },
+      { key: 'phone', label: 'Phone' },
+      { key: 'user', label: 'User' },
+      { key: 'voicemail_ext', label: 'Voicemail Ext' },
+      { key: 'record_call', label: 'Record Call', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'inbound_route_answer', label: 'Answer Route', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'call_handle_method', label: 'Call Handle Method', type: 'select', options: enumOptions(['CID', 'CIDLOOKUP', 'CIDLOOKUPRL', 'ANI', 'DID']) },
+      { key: 'agent_search_method', label: 'Agent Search', type: 'select', options: enumOptions(['LB', 'LO', 'SO', 'RANDOM', 'CLOSER', 'STICKY']) },
+      { section: 'Fallback and Filters' },
+      { key: 'user_unavailable_action', label: 'User Unavailable', type: 'select', options: enumOptions(['VOICEMAIL', 'IN_GROUP', 'EXTEN', 'PHONE', 'HANGUP']) },
+      { key: 'user_route_settings_ingroup', label: 'Unavailable In-Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions },
+      { key: 'list_id', label: 'List ID' },
+      { key: 'phone_code', label: 'Phone Code' },
+      { key: 'menu_id', label: 'Call Menu' },
+      { key: 'filter_inbound_number', label: 'Filter Inbound Number' },
+      { key: 'filter_action', label: 'Filter Action', type: 'select', options: enumOptions(['DISABLED', 'EXTEN', 'VOICEMAIL', 'PHONE', 'IN_GROUP', 'CALLMENU']) },
+      { key: 'filter_extension', label: 'Filter Extension' },
+      { key: 'filter_group_id', label: 'Filter In-Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
+      { key: 'filter_campaign_id', label: 'Filter Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions },
+      { key: 'filter_menu_id', label: 'Filter Menu' },
+      { key: 'did_carrier_description', label: 'Carrier Description' },
+      { key: 'alter_cid_name', label: 'Alter CID Name' },
+    ];
+  }
+
+  if (entity === 'phones') {
+    return [
+      { key: 'extension', label: 'Extension', disabled: mode === 'edit' },
+      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions, disabled: mode === 'edit' },
+      { key: 'fullname', label: 'Full Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'protocol', label: 'Protocol', type: 'select', options: enumOptions(['SIP', 'Zap', 'IAX2', 'EXTERNAL']) },
+      { key: 'phone_type', label: 'Phone Type', type: 'select', options: enumOptions(['SIP', 'Zap', 'IAX2', 'EXTERNAL']) },
+      { key: 'login', label: 'Login' },
+      { key: 'pass', label: mode === 'edit' ? 'New Phone Password' : 'Phone Password', type: 'password' },
+      { key: 'dialplan_number', label: 'Dialplan Number' },
+      { key: 'voicemail_id', label: 'Voicemail ID' },
+      { key: 'phone_ip', label: 'Phone IP' },
+      { key: 'computer_ip', label: 'Computer IP' },
+      { key: 'local_gmt', label: 'Local GMT' },
+      { key: 'outbound_cid', label: 'Outbound CID' },
+      { key: 'email', label: 'Email' },
+      { key: 'template_id', label: 'Template ID' },
+      { key: 'phone_context', label: 'Phone Context' },
+      { key: 'phone_ring_timeout', label: 'Ring Timeout', type: 'number' },
+      { key: 'conf_secret', label: 'Conf Secret' },
+      { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { section: 'Webphone' },
+      { key: 'is_webphone', label: 'Webphone', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_auto_answer', label: 'Auto Answer', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_dialpad', label: 'Dialpad', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_dialbox', label: 'Dialbox', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_mute', label: 'Mute Control', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_volume', label: 'Volume', type: 'number' },
+      { key: 'webphone_debug', label: 'Debug', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'webphone_settings', label: 'Webphone Settings', type: 'textarea', wide: true },
+    ];
+  }
+
   return [
     { key: 'group_id', label: 'Group ID', disabled: mode === 'edit' },
     { key: 'group_name', label: 'Group Name' },
@@ -631,8 +920,11 @@ function entityLabel(entity) {
     campaigns: 'Campaign',
     campaignCopy: 'Campaign Copy',
     users: 'User',
+    userGroups: 'User Group',
     lists: 'List',
     inbound: 'Inbound Group',
+    dids: 'DID',
+    phones: 'Phone',
   }[entity] || 'Record';
 }
 
@@ -641,9 +933,18 @@ function entityId(entity, row) {
     campaigns: row.campaign_id,
     campaignCopy: row.campaign_id,
     users: row.user,
+    userGroups: row.user_group,
     lists: row.list_id,
     inbound: row.group_id,
+    dids: row.did_pattern,
+    phones: `${row.extension}__${row.server_ip}`,
   }[entity];
+}
+
+function entityPath(entity) {
+  return {
+    userGroups: 'user-groups',
+  }[entity] || entity;
 }
 
 function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
@@ -651,7 +952,7 @@ function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const mode = action.mode || 'create';
-  const fields = actionFields(action.entity, mode, admin);
+  const fields = actionFields(action.entity, mode, admin, form);
   const label = entityLabel(action.entity);
   const isEdit = mode === 'edit' || mode === 'editDetail';
   const isDetail = mode === 'editDetail';
@@ -668,11 +969,12 @@ function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
     setError('');
 
     const id = entityId(action.entity, form);
+    const pathEntity = entityPath(action.entity);
     const path = isCopy
       ? '/admin/campaigns/copy'
       : isEdit
-        ? `/admin/${action.entity}/${encodeURIComponent(id)}`
-        : `/admin/${action.entity}`;
+        ? `/admin/${pathEntity}/${encodeURIComponent(id)}`
+        : `/admin/${pathEntity}`;
     const body = { ...form, _detailMode: isDetail };
 
     try {
@@ -714,7 +1016,14 @@ function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
               ) : (
                 <label key={field.key} className={field.wide ? 'wide-field' : ''}>
                   <span>{field.label}</span>
-                  {field.type === 'select' ? (
+                  {field.type === 'statusList' ? (
+                    <div className="status-chip-list">
+                      {(field.statuses || []).map((status) => (
+                        <span key={status}>{status}</span>
+                      ))}
+                      {!(field.statuses || []).length && <em>No dial statuses selected</em>}
+                    </div>
+                  ) : field.type === 'select' ? (
                     <select
                       value={form[field.key] ?? ''}
                       disabled={field.disabled}
@@ -1101,8 +1410,11 @@ function AdminSummary({ admin }) {
   const cards = [
     { icon: Radio, label: 'Campaigns', value: counts.activeCampaigns, detail: `${formatNumber(counts.campaigns)} total`, accent: '#00d9ff' },
     { icon: Users, label: 'Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total`, accent: '#73fbd3' },
+    { icon: ShieldCheck, label: 'Groups', value: counts.userGroups, detail: 'Permission scopes', accent: '#ff8bd1' },
     { icon: Database, label: 'Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total`, accent: '#a8c7ff' },
     { icon: Headphones, label: 'Inbound', value: counts.activeInboundGroups, detail: `${formatNumber(counts.inboundGroups)} total`, accent: '#ffd166' },
+    { icon: PhoneCall, label: 'DIDs', value: counts.activeDids, detail: `${formatNumber(counts.dids)} total`, accent: '#00ffa8' },
+    { icon: PhoneCall, label: 'Phones', value: counts.activePhones, detail: `${formatNumber(counts.phones)} total`, accent: '#b9f2ff' },
     { icon: Server, label: 'Servers', value: counts.activeServers, detail: `${formatNumber(counts.servers)} total`, accent: '#7bb7ff' },
     { icon: PhoneCall, label: 'Carriers', value: counts.activeCarriers, detail: `${formatNumber(counts.carriers)} total`, accent: '#2d7dff' },
   ];
@@ -1374,6 +1686,146 @@ function InboundView({ admin, user, onAction }) {
   );
 }
 
+function UserGroupsView({ admin, user, onAction }) {
+  const groups = admin?.userGroups || [];
+  const canManage = userCan(user, 'userGroups');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="userGroups" label="Group" user={user} onAction={onAction}>
+        <p className="action-copy">Control campaign access, report access, queue visibility, and manager scope from the GenX permission layer.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Access" title="User Groups and Scope" icon={ShieldCheck} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No user groups returned"
+            rows={groups.map((row) => ({ ...row, id: row.user_group }))}
+            columns={[
+              {
+                key: 'group',
+                label: 'Group',
+                render: (row) => (
+                  <>
+                    <strong>{row.user_group}</strong>
+                    <span>{row.group_name || 'Unnamed group'}</span>
+                  </>
+                ),
+              },
+              { key: 'allowed_campaigns', label: 'Campaigns', render: (row) => row.allowed_campaigns || 'None' },
+              { key: 'allowed_reports', label: 'Reports', render: (row) => row.allowed_reports || 'None' },
+              { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => row.admin_viewable_groups || 'None' },
+              { key: 'allowed_queue_groups', label: 'Queues', render: (row) => row.allowed_queue_groups || 'None' },
+              { key: 'shift_enforcement', label: 'Shift', render: (row) => row.shift_enforcement || 'OFF' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('userGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Scope" title="Access Snapshot" icon={ShieldCheck}>
+          <div className="quick-stack">
+            <MetricCard icon={Radio} label="All Campaign Groups" value={formatNumber(groups.filter((row) => String(row.allowed_campaigns || '').includes('ALL')).length)} detail="Groups with broad campaign scope" accent="#00d9ff" />
+            <MetricCard icon={FileText} label="All Report Groups" value={formatNumber(groups.filter((row) => String(row.allowed_reports || '').toUpperCase().includes('ALL')).length)} detail="Groups with broad report scope" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function DidsView({ admin, user, onAction }) {
+  const dids = admin?.dids || [];
+  const canManage = userCan(user, 'dids');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="dids" label="DID" user={user} onAction={onAction}>
+        <p className="action-copy">Route inbound numbers to groups, users, phones, menus, voicemail, and filtered fallback paths.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Inbound" title="DID Routing" icon={PhoneCall} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No DIDs returned"
+            rows={dids.map((row) => ({ ...row, id: row.did_pattern }))}
+            columns={[
+              {
+                key: 'did',
+                label: 'DID',
+                render: (row) => (
+                  <>
+                    <strong>{row.did_pattern}</strong>
+                    <span>{row.did_description || row.did_carrier_description || 'No description'}</span>
+                  </>
+                ),
+              },
+              { key: 'did_route', label: 'Route', render: (row) => row.did_route || 'EXTEN' },
+              { key: 'group_id', label: 'In-Group', render: (row) => row.group_id || 'None' },
+              { key: 'extension', label: 'Extension', render: (row) => row.extension || row.phone || 'None' },
+              { key: 'server_ip', label: 'Server', render: (row) => row.server_ip || 'Default' },
+              { key: 'record_call', label: 'Record', render: (row) => <StatusPill ok={row.record_call === 'Y'}>{row.record_call === 'Y' ? 'On' : 'Off'}</StatusPill> },
+              { key: 'did_active', label: 'Status', render: (row) => <StatusPill ok={row.did_active === 'Y'}>{row.did_active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('dids', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Routing" title="DID Mix" icon={Gauge}>
+          <div className="quick-stack">
+            <MetricCard icon={PhoneCall} label="Active DIDs" value={formatNumber(dids.filter((row) => row.did_active === 'Y').length)} detail={`${formatNumber(dids.length)} configured`} accent="#00d9ff" />
+            <MetricCard icon={Headphones} label="Group Routes" value={formatNumber(dids.filter((row) => row.did_route === 'IN_GROUP').length)} detail="Route into inbound groups" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function PhonesView({ admin, user, onAction }) {
+  const phones = admin?.phones || [];
+  const canManage = userCan(user, 'phones');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="phones" label="Phone" user={user} onAction={onAction}>
+        <p className="action-copy">Manage phone endpoints, SIP settings, webphone toggles, and user-group ownership.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Platform" title="Phones and Webphones" icon={PhoneCall} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No phones returned"
+            rows={phones.map((row) => ({ ...row, id: `${row.extension}-${row.server_ip}` }))}
+            columns={[
+              {
+                key: 'extension',
+                label: 'Extension',
+                render: (row) => (
+                  <>
+                    <strong>{row.extension}</strong>
+                    <span>{row.fullname || row.login || 'No owner label'}</span>
+                  </>
+                ),
+              },
+              { key: 'server_ip', label: 'Server', render: (row) => row.server_ip || 'Default' },
+              { key: 'protocol', label: 'Protocol', render: (row) => row.protocol || row.phone_type || 'SIP' },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || 'Default' },
+              { key: 'is_webphone', label: 'Webphone', render: (row) => <StatusPill ok={row.is_webphone === 'Y'}>{row.is_webphone === 'Y' ? 'Yes' : 'No'}</StatusPill> },
+              { key: 'peer_status', label: 'Peer', render: (row) => row.peer_status || row.status || 'Unknown' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('phones', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Endpoints" title="Phone Mix" icon={Activity}>
+          <div className="quick-stack">
+            <MetricCard icon={PhoneCall} label="Active Phones" value={formatNumber(phones.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(phones.length)} configured`} accent="#00d9ff" />
+            <MetricCard icon={Headphones} label="Webphones" value={formatNumber(phones.filter((row) => row.is_webphone === 'Y').length)} detail="Browser phone endpoints" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function CatalogPanels({ groups, query, emptyLabel }) {
   const normalized = query.trim().toLowerCase();
   const filtered = groups
@@ -1473,7 +1925,7 @@ function MapView() {
       <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
         <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
         <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
-        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="4" detail="Campaigns, users, lists, inbound" accent="#a8c7ff" />
+        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="7" detail="Campaigns, users, groups, lists, inbound, DIDs, phones" accent="#a8c7ff" />
         <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
       </section>
 
@@ -1579,8 +2031,11 @@ function AdminPage({ activeView, dashboard, admin, user, onAction }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'phones') return <PhonesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} />;

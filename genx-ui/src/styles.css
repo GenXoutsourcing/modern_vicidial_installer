@@ -679,6 +679,37 @@ h2 {
   resize: vertical;
 }
 
+.status-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(3, 9, 18, 0.72);
+}
+
+.status-chip-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid rgba(0, 217, 255, 0.32);
+  border-radius: 999px;
+  background: rgba(0, 217, 255, 0.1);
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.status-chip-list em {
+  align-self: center;
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 650;
+}
+
 .field-grid input:disabled,
 .field-grid select:disabled {
   color: var(--muted);

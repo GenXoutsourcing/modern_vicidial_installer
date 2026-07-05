@@ -34,6 +34,32 @@ const ranges = {
   '30d': { key: '30d', label: '30 Days', days: 30 },
 };
 
+const HOPPER_LEVELS = ['1', '5', '10', '20', '50', '100', '200', '500', '700', '1000', '2000', '3000', '4000', '5000'];
+const LEAD_ORDER_OPTIONS = [
+  'DOWN',
+  'UP',
+  'DOWN PHONE',
+  'UP PHONE',
+  'DOWN LAST NAME',
+  'UP LAST NAME',
+  'DOWN COUNT',
+  'UP COUNT',
+  'RANDOM',
+  'DOWN LAST CALL TIME',
+  'UP LAST CALL TIME',
+  'DOWN RANK',
+  'UP RANK',
+  'DOWN OWNER',
+  'UP OWNER',
+  'DOWN TIMEZONE',
+  'UP TIMEZONE',
+];
+for (const suffix of ['2nd NEW', '3rd NEW', '4th NEW', '5th NEW', '6th NEW']) {
+  for (const prefix of ['DOWN', 'UP', 'DOWN PHONE', 'UP PHONE', 'DOWN LAST NAME', 'UP LAST NAME', 'DOWN COUNT', 'UP COUNT', 'RANDOM', 'DOWN LAST CALL TIME', 'UP LAST CALL TIME', 'DOWN RANK', 'UP RANK', 'DOWN OWNER', 'UP OWNER', 'DOWN TIMEZONE', 'UP TIMEZONE']) {
+    LEAD_ORDER_OPTIONS.push(`${prefix} ${suffix}`);
+  }
+}
+
 app.disable('x-powered-by');
 app.use(express.json({ limit: '64kb' }));
 
@@ -89,6 +115,7 @@ function publicUser(row) {
     modifyLists: row.modify_lists === '1',
     modifyUsers: row.modify_users === '1',
     modifyIngroups: row.modify_ingroups === '1',
+    modifyInboundDids: row.modify_inbound_dids === '1',
     modifyUsergroups: row.modify_usergroups === '1',
     modifyScripts: row.modify_scripts === '1',
     modifyFilters: row.modify_filters === '1',
@@ -159,6 +186,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_lists,
             u.modify_users,
             u.modify_ingroups,
+            u.modify_inbound_dids,
             u.modify_usergroups,
             u.modify_scripts,
             u.modify_filters,
@@ -336,6 +364,10 @@ function cleanDigits(value, max = 14) {
   return next || '';
 }
 
+function cleanIp(value) {
+  return cleanText(value, 15).replace(/[^0-9.]/g, '');
+}
+
 function cleanChoice(value, allowed, fallback) {
   const next = cleanText(value, 60).toUpperCase();
   return allowed.includes(next) ? next : fallback;
@@ -359,6 +391,15 @@ function ynFlag(value, fallback = 'N') {
   return cleanChoice(value, ['Y', 'N'], fallback);
 }
 
+function codeText(value, max = 40, fallback = '') {
+  return cleanText(value, max).replace(/[^-_.:| 0-9a-zA-Z]/g, '') || fallback;
+}
+
+function cleanLeadOrder(value) {
+  const next = codeText(value, 30, 'DOWN');
+  return LEAD_ORDER_OPTIONS.find((option) => option.toUpperCase() === next.toUpperCase()) || 'DOWN';
+}
+
 function canUseCampaignDetail(user) {
   return Number(user?.userLevel || 0) >= 9 || Boolean(user?.campaignDetail);
 }
@@ -371,9 +412,34 @@ function scopeWhere(scope, column, params) {
   return `${column} IN (${values.map(() => '?').join(',')})`;
 }
 
+function scopeWhereAny(scope, columns, params) {
+  if (!scope || scope.all) return '1=1';
+  const values = Array.isArray(scope.values) ? scope.values.filter(Boolean) : [];
+  if (!values.length) return '1=0';
+  const checks = columns.map((column) => {
+    params.push(...values);
+    return `${column} IN (${values.map(() => '?').join(',')})`;
+  });
+  return `(${checks.join(' OR ')})`;
+}
+
 function scopeAllows(scope, value) {
   if (!scope || scope.all) return true;
   return scope.values?.includes(String(value)) || false;
+}
+
+function parseDialStatuses(value) {
+  return String(value || '')
+    .replace(/\s+-$/, '')
+    .trim()
+    .split(/\s+/)
+    .map((status) => status.trim())
+    .filter(Boolean);
+}
+
+function dialStatusesText(statuses) {
+  const unique = [...new Set(statuses.map((status) => cleanId(status, 6)).filter(Boolean))];
+  return unique.length ? ` ${unique.join(' ')} -` : ' -';
 }
 
 async function ensureCampaignVisibleToUserGroup(user, campaignId) {
@@ -663,8 +729,18 @@ async function adminData(user) {
   const userGroupWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', userGroupParams);
   const inboundParams = [];
   const inboundWhere = scopeWhere(user?.permissions?.allowedQueueGroups, 'group_id', inboundParams);
+  const didQueueParams = [];
+  const didQueueWhere = scopeWhere(user?.permissions?.allowedQueueGroups, 'group_id', didQueueParams);
+  const didUserGroupParams = [];
+  const didUserGroupWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', didUserGroupParams);
+  const didParams = [...didQueueParams, ...didUserGroupParams];
+  const didWhere = `(${didQueueWhere} OR ${didUserGroupWhere})`;
+  const phoneParams = [];
+  const phoneWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', phoneParams);
   const callTimeParams = [];
   const callTimeWhere = scopeWhere(user?.permissions?.adminViewableCallTimes, 'call_time_id', callTimeParams);
+  const campaignStatusParams = [];
+  const campaignStatusWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', campaignStatusParams);
   const [
     campaigns,
     users,
@@ -677,6 +753,11 @@ async function adminData(user) {
     callTimes,
     scripts,
     leadFilters,
+    statuses,
+    campaignStatuses,
+    systemSettingsRows,
+    dids,
+    phones,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -872,6 +953,7 @@ async function adminData(user) {
               modify_lists,
               modify_users,
               modify_ingroups,
+              modify_inbound_dids,
               modify_usergroups,
               modify_scripts,
               modify_filters,
@@ -993,7 +1075,25 @@ async function adminData(user) {
       [],
     ),
     rows(
-      `SELECT user_group, group_name
+      `SELECT user_group,
+              group_name,
+              allowed_campaigns,
+              qc_allowed_campaigns,
+              qc_allowed_inbound_groups,
+              group_shifts,
+              forced_timeclock_login,
+              shift_enforcement,
+              agent_status_viewable_groups,
+              agent_status_view_time,
+              agent_call_log_view,
+              allowed_reports,
+              admin_viewable_groups,
+              admin_viewable_call_times,
+              allowed_custom_reports,
+              allowed_queue_groups,
+              reports_header_override,
+              admin_home_url,
+              script_id
        FROM vicidial_user_groups
        WHERE ${userGroupWhere}
        ORDER BY user_group ASC
@@ -1026,7 +1126,117 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT status,
+              status_name,
+              selectable,
+              human_answered
+       FROM vicidial_statuses
+       WHERE status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
+       ORDER BY status ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT campaign_id,
+              status,
+              status_name,
+              selectable,
+              human_answered
+       FROM vicidial_campaign_statuses
+       WHERE ${campaignStatusWhere}
+         AND status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
+       ORDER BY campaign_id ASC, status ASC
+       LIMIT 1000`,
+      campaignStatusParams,
+      [],
+    ),
+    rows(
+      `SELECT auto_dial_limit
+       FROM system_settings
+       LIMIT 1`,
+      [],
+      [{ auto_dial_limit: 8 }],
+    ),
+    rows(
+      `SELECT did_id,
+              did_pattern,
+              did_description,
+              did_active,
+              did_route,
+              extension,
+              exten_context,
+              voicemail_ext,
+              phone,
+              server_ip,
+              user,
+              user_unavailable_action,
+              user_route_settings_ingroup,
+              group_id,
+              call_handle_method,
+              agent_search_method,
+              list_id,
+              campaign_id,
+              phone_code,
+              menu_id,
+              record_call,
+              filter_inbound_number,
+              filter_action,
+              filter_extension,
+              filter_group_id,
+              filter_campaign_id,
+              filter_menu_id,
+              user_group,
+              did_carrier_description,
+              inbound_route_answer,
+              alter_cid_name
+       FROM vicidial_inbound_dids
+       WHERE ${didWhere}
+       ORDER BY did_active DESC, did_pattern ASC
+       LIMIT 300`,
+      didParams,
+      [],
+    ),
+    rows(
+      `SELECT extension,
+              dialplan_number,
+              voicemail_id,
+              phone_ip,
+              computer_ip,
+              server_ip,
+              login,
+              status,
+              active,
+              phone_type,
+              fullname,
+              protocol,
+              local_gmt,
+              outbound_cid,
+              email,
+              template_id,
+              phone_context,
+              phone_ring_timeout,
+              conf_secret,
+              is_webphone,
+              user_group,
+              webphone_dialpad,
+              webphone_auto_answer,
+              webphone_dialbox,
+              webphone_mute,
+              webphone_volume,
+              webphone_debug,
+              webphone_settings,
+              peer_status
+       FROM phones
+       WHERE ${phoneWhere}
+       ORDER BY active DESC, extension ASC, server_ip ASC
+       LIMIT 300`,
+      phoneParams,
+      [],
+    ),
   ]);
+  const systemSettings = systemSettingsRows?.[0] || {};
 
   return {
     generatedAt: new Date().toISOString(),
@@ -1040,6 +1250,11 @@ async function adminData(user) {
       activeLists: lists.filter((item) => item.active === 'Y').length,
       inboundGroups: inboundGroups.length,
       activeInboundGroups: inboundGroups.filter((item) => item.active === 'Y').length,
+      userGroups: userGroups.length,
+      dids: dids.length,
+      activeDids: dids.filter((item) => item.did_active === 'Y').length,
+      phones: phones.length,
+      activePhones: phones.filter((item) => item.active === 'Y').length,
       servers: servers.length,
       activeServers: servers.filter((item) => item.active === 'Y').length,
       carriers: carriers.length,
@@ -1048,6 +1263,7 @@ async function adminData(user) {
     campaigns: campaigns.map((item) => ({
       ...item,
       hopper_level: Number(item.hopper_level || 0),
+      dial_status_list: parseDialStatuses(item.dial_statuses),
       list_count: Number(item.list_count || 0),
       active_list_count: Number(item.active_list_count || 0),
       lead_count: Number(item.lead_count || 0),
@@ -1069,6 +1285,9 @@ async function adminData(user) {
       called_leads: Number(item.called_leads || 0),
     })),
     inboundGroups,
+    userGroups,
+    dids,
+    phones,
     recordings: recordings.map((item) => ({
       ...item,
       length_in_sec: Number(item.length_in_sec || 0),
@@ -1080,13 +1299,31 @@ async function adminData(user) {
         campaign_id: item.campaign_id,
         campaign_name: item.campaign_name || item.campaign_id,
       })),
-      userGroups,
       callTimes,
       scripts,
       leadFilters,
+      statuses,
+      campaignStatuses,
+      systemSettings: {
+        autoDialLimit: Number(systemSettings.auto_dial_limit || 8),
+      },
       inboundGroups: inboundGroups.map((item) => ({
         group_id: item.group_id,
         group_name: item.group_name || item.group_id,
+      })),
+      userGroups: userGroups.map((item) => ({
+        user_group: item.user_group,
+        group_name: item.group_name || item.user_group,
+      })),
+      phones: phones.map((item) => ({
+        extension: item.extension,
+        server_ip: item.server_ip,
+        label: `${item.extension} @ ${item.server_ip}`,
+      })),
+      servers: servers.map((item) => ({
+        server_id: item.server_id,
+        server_ip: item.server_ip,
+        server_description: item.server_description || item.server_id,
       })),
       lists: lists.map((item) => ({
         list_id: item.list_id,
@@ -1106,7 +1343,7 @@ function campaignPayload(body, currentUser) {
     dial_method: cleanChoice(body.dial_method, ['MANUAL', 'RATIO', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED', 'ADAPT_AVERAGE', 'ADAPT_PERCENTMAX', 'INBOUND_MAN', 'SHARED_RATIO', 'SHARED_ADAPT_HARD_LIMIT', 'SHARED_ADAPT_TAPERED', 'SHARED_ADAPT_AVERAGE', 'SHARED_ADAPT_PERCENTMAX'], 'MANUAL'),
     auto_dial_level: decimalText(body.auto_dial_level, '0'),
     hopper_level: cleanInt(body.hopper_level, 1, 0, 999999),
-    lead_order: codeText(body.lead_order, 30, 'DOWN'),
+    lead_order: cleanLeadOrder(body.lead_order),
     local_call_time: cleanId(body.local_call_time, 10) || '9am-9pm',
     campaign_recording: cleanChoice(body.campaign_recording, ['NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'], 'ONDEMAND'),
     campaign_allow_inbound: ynFlag(body.campaign_allow_inbound, 'N'),
@@ -1116,11 +1353,6 @@ function campaignPayload(body, currentUser) {
 
   return {
     ...payload,
-    dial_status_a: cleanId(body.dial_status_a, 6) || 'NEW',
-    dial_status_b: cleanId(body.dial_status_b, 6),
-    dial_status_c: cleanId(body.dial_status_c, 6),
-    dial_status_d: cleanId(body.dial_status_d, 6),
-    dial_status_e: cleanId(body.dial_status_e, 6),
     allow_closers: ynFlag(body.allow_closers, 'N'),
     next_agent_call: codeText(body.next_agent_call, 40, 'longest_wait_time'),
     dial_timeout: cleanInt(body.dial_timeout, 60, 5, 255),
@@ -1149,7 +1381,6 @@ function campaignPayload(body, currentUser) {
     auto_alt_dial: cleanChoice(body.auto_alt_dial, ['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD'], 'NONE'),
     auto_alt_dial_statuses: cleanText(body.auto_alt_dial_statuses, 255),
     agent_pause_codes_active: cleanChoice(body.agent_pause_codes_active, ['Y', 'N', 'FORCE'], 'N'),
-    dial_statuses: cleanText(body.dial_statuses, 255) || ' NEW -',
     no_hopper_leads_logins: ynFlag(body.no_hopper_leads_logins, 'N'),
     use_auto_hopper: ynFlag(body.use_auto_hopper, 'Y'),
     list_order_mix: codeText(body.list_order_mix, 20, 'DISABLED'),
@@ -1224,6 +1455,85 @@ function campaignPayload(body, currentUser) {
   };
 }
 
+async function dialStatusExistsForCampaign(campaignId, status) {
+  const [match] = await rows(
+    `SELECT status
+     FROM (
+       SELECT status
+       FROM vicidial_statuses
+       WHERE status = ?
+         AND status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
+       UNION
+       SELECT status
+       FROM vicidial_campaign_statuses
+       WHERE campaign_id = ?
+         AND status = ?
+         AND status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
+     ) dial_statuses
+     LIMIT 1`,
+    [status, campaignId, status],
+    [],
+  );
+  return Boolean(match);
+}
+
+async function applyCampaignDialStatusChanges(req, campaignId) {
+  const addStatus = cleanId(req.body?.add_dial_status, 6);
+  const removeStatus = cleanId(req.body?.remove_dial_status, 6);
+  if (!addStatus && !removeStatus) return;
+
+  const [campaign] = await rows(
+    'SELECT dial_statuses FROM vicidial_campaigns WHERE campaign_id = ?',
+    [campaignId],
+    [],
+  );
+  if (!campaign) return;
+
+  let statuses = parseDialStatuses(campaign.dial_statuses);
+  let changed = false;
+  const notes = [];
+
+  if (removeStatus && statuses.includes(removeStatus)) {
+    statuses = statuses.filter((status) => status !== removeStatus);
+    changed = true;
+    notes.push(`Removed: ${removeStatus}`);
+  }
+
+  if (addStatus) {
+    const exists = await dialStatusExistsForCampaign(campaignId, addStatus);
+    if (!exists) {
+      const error = new Error('invalid_dial_status');
+      error.statusCode = 400;
+      error.publicError = 'invalid_dial_status';
+      throw error;
+    }
+    if (!statuses.includes(addStatus)) {
+      statuses = [addStatus, ...statuses];
+      changed = true;
+      notes.push(`Added: ${addStatus}`);
+    }
+  }
+
+  if (!changed) return;
+  const nextStatuses = dialStatusesText(statuses);
+  await execute(
+    `UPDATE vicidial_campaigns
+     SET dial_statuses = ?,
+         campaign_changedate = NOW()
+     WHERE campaign_id = ?`,
+    [nextStatuses, campaignId],
+  );
+  await adminLog(
+    req,
+    'CAMPAIGN_DIALSTATUS',
+    'MODIFY',
+    campaignId,
+    'GENX MODIFY CAMPAIGN DIAL STATUS',
+    'UPDATE vicidial_campaigns SET dial_statuses',
+    notes.join(' | '),
+  );
+}
+
 async function saveCampaign(req, res, mode) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
   const id = cleanId(mode === 'create' ? req.body?.campaign_id : req.params.id, 8);
@@ -1248,6 +1558,7 @@ async function saveCampaign(req, res, mode) {
       await execute('INSERT IGNORE INTO vicidial_campaign_stats (campaign_id) VALUES (?)', [id]);
       await execute('INSERT IGNORE INTO vicidial_campaign_stats_debug (campaign_id) VALUES (?)', [id]);
       await ensureCampaignVisibleToUserGroup(req.genxUser, id);
+      await applyCampaignDialStatusChanges(req, id);
       await adminLog(req, 'CAMPAIGNS', 'ADD', id, 'GENX ADD CAMPAIGN', 'INSERT INTO vicidial_campaigns', payload.campaign_name);
     } else {
       const result = await execute(
@@ -1258,6 +1569,7 @@ async function saveCampaign(req, res, mode) {
         [...values, id],
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+      await applyCampaignDialStatusChanges(req, id);
       await adminLog(
         req,
         'CAMPAIGNS',
@@ -1271,6 +1583,9 @@ async function saveCampaign(req, res, mode) {
 
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ ok: false, error: error.publicError || 'campaign_write_failed' });
+    }
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'campaign_exists' : 'campaign_write_failed' });
   }
@@ -1357,6 +1672,7 @@ function userPayload(body, currentUser) {
     modify_lists: boolFlag(body.modify_lists),
     modify_users: boolFlag(body.modify_users),
     modify_ingroups: boolFlag(body.modify_ingroups),
+    modify_inbound_dids: boolFlag(body.modify_inbound_dids),
     modify_usergroups: boolFlag(body.modify_usergroups),
     modify_scripts: boolFlag(body.modify_scripts),
     modify_filters: boolFlag(body.modify_filters),
@@ -1399,6 +1715,7 @@ async function saveUser(req, res, mode) {
              modify_lists = ?,
              modify_users = ?,
              modify_ingroups = ?,
+             modify_inbound_dids = ?,
              modify_usergroups = ?,
              modify_scripts = ?,
              modify_filters = ?,
@@ -1426,6 +1743,7 @@ async function saveUser(req, res, mode) {
           payload.modify_lists,
           payload.modify_users,
           payload.modify_ingroups,
+          payload.modify_inbound_dids,
           payload.modify_usergroups,
           payload.modify_scripts,
           payload.modify_filters,
@@ -1459,6 +1777,7 @@ async function saveUser(req, res, mode) {
              modify_lists = ?,
              modify_users = ?,
              modify_ingroups = ?,
+             modify_inbound_dids = ?,
              modify_usergroups = ?,
              modify_scripts = ?,
              modify_filters = ?,
@@ -1486,6 +1805,7 @@ async function saveUser(req, res, mode) {
           payload.modify_lists,
           payload.modify_users,
           payload.modify_ingroups,
+          payload.modify_inbound_dids,
           payload.modify_usergroups,
           payload.modify_scripts,
           payload.modify_filters,
@@ -1683,6 +2003,268 @@ async function saveInboundGroup(req, res, mode) {
   }
 }
 
+function dynamicAssignments(payload) {
+  const keys = Object.keys(payload);
+  return {
+    keys,
+    assignments: keys.map((key) => `${quoteId(key)} = ?`).join(', '),
+    values: keys.map((key) => payload[key]),
+  };
+}
+
+function userGroupPayload(body) {
+  return {
+    group_name: cleanText(body.group_name, 40) || 'New User Group',
+    allowed_campaigns: cleanText(body.allowed_campaigns, 1000) || '-ALL-CAMPAIGNS-',
+    qc_allowed_campaigns: cleanText(body.qc_allowed_campaigns, 1000) || '-ALL-CAMPAIGNS-',
+    qc_allowed_inbound_groups: cleanText(body.qc_allowed_inbound_groups, 1000) || '---ALL---',
+    group_shifts: cleanText(body.group_shifts, 1000) || '---ALL---',
+    forced_timeclock_login: ynFlag(body.forced_timeclock_login, 'N'),
+    shift_enforcement: cleanChoice(body.shift_enforcement, ['OFF', 'START', 'ALL'], 'OFF'),
+    agent_status_viewable_groups: cleanText(body.agent_status_viewable_groups, 1000) || '---ALL---',
+    agent_status_view_time: cleanChoice(body.agent_status_view_time, ['Y', 'N'], 'N'),
+    agent_call_log_view: cleanChoice(body.agent_call_log_view, ['Y', 'N'], 'N'),
+    allowed_reports: cleanText(body.allowed_reports, 2000) || 'ALL REPORTS',
+    admin_viewable_groups: cleanText(body.admin_viewable_groups, 1000) || '---ALL---',
+    admin_viewable_call_times: cleanText(body.admin_viewable_call_times, 1000) || '---ALL---',
+    allowed_custom_reports: cleanText(body.allowed_custom_reports, 1000) || 'ALL REPORTS',
+    allowed_queue_groups: cleanText(body.allowed_queue_groups, 1000) || '---ALL---',
+    reports_header_override: cleanText(body.reports_header_override, 255),
+    admin_home_url: cleanText(body.admin_home_url, 255),
+    script_id: cleanId(body.script_id, 20),
+  };
+}
+
+async function saveUserGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyUsergroups')) return;
+  const id = cleanId(mode === 'create' ? req.body?.user_group : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user_group');
+  if (mode !== 'create' && !scopeAllows(req.genxUser?.permissions?.adminViewableGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'user_group_not_allowed' });
+  }
+  if (mode === 'create' && Number(req.genxUser?.userLevel || 0) < 9 && !req.genxUser?.permissions?.adminViewableGroups?.all) {
+    return res.status(403).json({ ok: false, error: 'user_group_scope_required' });
+  }
+  const payload = userGroupPayload(req.body || {});
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_user_groups
+         SET user_group = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'USERGROUPS', 'ADD', id, 'GENX ADD USER GROUP', 'INSERT INTO vicidial_user_groups', payload.group_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_user_groups
+         SET ${assignments}
+         WHERE user_group = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'user_group_not_found' });
+      await adminLog(req, 'USERGROUPS', 'MODIFY', id, 'GENX MODIFY USER GROUP', 'UPDATE vicidial_user_groups', payload.group_name);
+    }
+
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'user_group_exists' : 'user_group_write_failed' });
+  }
+}
+
+function didPattern(value) {
+  return cleanText(value, 50).replace(/[^-*#+0-9a-zA-Z]/g, '');
+}
+
+function didPayload(body) {
+  return {
+    did_description: cleanText(body.did_description, 50) || 'New DID',
+    did_active: ynFlag(body.did_active, 'Y'),
+    did_route: codeText(body.did_route, 50, 'EXTEN'),
+    extension: cleanText(body.extension, 100),
+    exten_context: cleanText(body.exten_context, 50) || 'default',
+    voicemail_ext: cleanText(body.voicemail_ext, 10),
+    phone: cleanText(body.phone, 100),
+    server_ip: cleanIp(body.server_ip),
+    user: cleanId(body.user, 20),
+    user_unavailable_action: codeText(body.user_unavailable_action, 50, 'VOICEMAIL'),
+    user_route_settings_ingroup: cleanId(body.user_route_settings_ingroup, 20),
+    group_id: cleanId(body.group_id, 20),
+    call_handle_method: codeText(body.call_handle_method, 50, 'CID'),
+    agent_search_method: codeText(body.agent_search_method, 50, 'LB'),
+    list_id: cleanDigits(body.list_id, 14),
+    campaign_id: cleanId(body.campaign_id, 20),
+    phone_code: cleanDigits(body.phone_code, 10) || '1',
+    menu_id: cleanId(body.menu_id, 50),
+    record_call: ynFlag(body.record_call, 'N'),
+    filter_inbound_number: cleanText(body.filter_inbound_number, 20),
+    filter_action: codeText(body.filter_action, 50, 'DISABLED'),
+    filter_extension: cleanText(body.filter_extension, 100),
+    filter_group_id: cleanId(body.filter_group_id, 20),
+    filter_campaign_id: cleanId(body.filter_campaign_id, 20),
+    filter_menu_id: cleanId(body.filter_menu_id, 50),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    did_carrier_description: cleanText(body.did_carrier_description, 50),
+    inbound_route_answer: ynFlag(body.inbound_route_answer, 'N'),
+    alter_cid_name: cleanText(body.alter_cid_name, 40),
+  };
+}
+
+async function didVisibleToUser(user, pattern) {
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  const [did] = await rows(
+    'SELECT group_id, user_group FROM vicidial_inbound_dids WHERE did_pattern = ? LIMIT 1',
+    [pattern],
+    [],
+  );
+  if (!did) return false;
+  return scopeAllows(user?.permissions?.allowedQueueGroups, did.group_id) || scopeAllows(user?.permissions?.adminViewableGroups, did.user_group);
+}
+
+function didPayloadAllowed(user, payload) {
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  return scopeAllows(user?.permissions?.allowedQueueGroups, payload.group_id) || scopeAllows(user?.permissions?.adminViewableGroups, payload.user_group);
+}
+
+async function saveDid(req, res, mode) {
+  if (!requireModify(req, res, 'modifyInboundDids')) return;
+  const id = didPattern(mode === 'create' ? req.body?.did_pattern : req.params.id);
+  if (!id) return badRequest(res, 'invalid_did_pattern');
+  if (mode !== 'create' && !(await didVisibleToUser(req.genxUser, id))) {
+    return res.status(403).json({ ok: false, error: 'did_not_allowed' });
+  }
+  const payload = didPayload(req.body || {});
+  if (!didPayloadAllowed(req.genxUser, payload)) return res.status(403).json({ ok: false, error: 'did_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_inbound_dids
+         SET did_pattern = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'DIDS', 'ADD', id, 'GENX ADD DID', 'INSERT INTO vicidial_inbound_dids', payload.did_description);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_inbound_dids
+         SET ${assignments}
+         WHERE did_pattern = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'did_not_found' });
+      await adminLog(req, 'DIDS', 'MODIFY', id, 'GENX MODIFY DID', 'UPDATE vicidial_inbound_dids', payload.did_description);
+    }
+
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'did_exists' : 'did_write_failed' });
+  }
+}
+
+function phoneKey(raw) {
+  const [extensionRaw, ...serverParts] = String(raw || '').split('__');
+  return {
+    extension: codeText(extensionRaw, 100),
+    server_ip: cleanIp(serverParts.join('__')),
+  };
+}
+
+function phonePayload(body, mode) {
+  const payload = {
+    dialplan_number: cleanText(body.dialplan_number, 20),
+    voicemail_id: cleanText(body.voicemail_id, 10),
+    phone_ip: cleanIp(body.phone_ip),
+    computer_ip: cleanIp(body.computer_ip),
+    server_ip: cleanIp(body.server_ip),
+    login: cleanText(body.login, 20),
+    status: codeText(body.status, 20, 'ACTIVE'),
+    active: ynFlag(body.active, 'Y'),
+    phone_type: codeText(body.phone_type, 20, 'SIP'),
+    fullname: cleanText(body.fullname, 50),
+    protocol: codeText(body.protocol, 20, 'SIP'),
+    local_gmt: cleanText(body.local_gmt, 6) || '-5.00',
+    outbound_cid: cleanText(body.outbound_cid, 20),
+    email: cleanText(body.email, 100),
+    template_id: cleanText(body.template_id, 20),
+    phone_context: cleanText(body.phone_context, 20) || 'default',
+    phone_ring_timeout: cleanInt(body.phone_ring_timeout, 60, 0, 999),
+    conf_secret: cleanText(body.conf_secret, 20),
+    is_webphone: ynFlag(body.is_webphone, 'N'),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    webphone_dialpad: ynFlag(body.webphone_dialpad, 'Y'),
+    webphone_auto_answer: ynFlag(body.webphone_auto_answer, 'N'),
+    webphone_dialbox: ynFlag(body.webphone_dialbox, 'Y'),
+    webphone_mute: ynFlag(body.webphone_mute, 'Y'),
+    webphone_volume: cleanInt(body.webphone_volume, 50, 0, 100),
+    webphone_debug: ynFlag(body.webphone_debug, 'N'),
+    webphone_settings: cleanText(body.webphone_settings, 255),
+  };
+  const pass = cleanText(body.pass, 20);
+  if (mode === 'create' || pass) payload.pass = pass;
+  return payload;
+}
+
+async function phoneVisibleToUser(user, extension, serverIp) {
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  const [phone] = await rows(
+    'SELECT user_group FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1',
+    [extension, serverIp],
+    [],
+  );
+  if (!phone) return false;
+  return scopeAllows(user?.permissions?.adminViewableGroups, phone.user_group);
+}
+
+async function savePhone(req, res, mode) {
+  if (!requireModify(req, res, 'modifyPhones')) return;
+  const key = mode === 'create'
+    ? { extension: codeText(req.body?.extension, 100), server_ip: cleanIp(req.body?.server_ip) }
+    : phoneKey(req.params.id);
+  if (!key.extension || !key.server_ip) return badRequest(res, 'invalid_phone_key');
+  if (mode !== 'create' && !(await phoneVisibleToUser(req.genxUser, key.extension, key.server_ip))) {
+    return res.status(403).json({ ok: false, error: 'phone_not_allowed' });
+  }
+  const payload = phonePayload({ ...req.body, server_ip: req.body?.server_ip || key.server_ip }, mode);
+  if (!payload.server_ip) payload.server_ip = key.server_ip;
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, payload.user_group)) {
+    return res.status(403).json({ ok: false, error: 'phone_scope_required' });
+  }
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO phones
+         SET extension = ?,
+             ${assignments}`,
+        [key.extension, ...values],
+      );
+      await adminLog(req, 'PHONES', 'ADD', key.extension, 'GENX ADD PHONE', 'INSERT INTO phones', payload.fullname);
+    } else {
+      const result = await execute(
+        `UPDATE phones
+         SET ${assignments}
+         WHERE extension = ?
+           AND server_ip = ?`,
+        [...values, key.extension, key.server_ip],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'phone_not_found' });
+      await adminLog(req, 'PHONES', 'MODIFY', key.extension, 'GENX MODIFY PHONE', 'UPDATE phones', payload.fullname);
+    }
+
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'phone_exists' : 'phone_write_failed' });
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     const system = await systemStatus();
@@ -1747,6 +2329,12 @@ app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'cr
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
+app.post('/api/admin/user-groups', requireAccess, (req, res) => saveUserGroup(req, res, 'create'));
+app.put('/api/admin/user-groups/:id', requireAccess, (req, res) => saveUserGroup(req, res, 'update'));
+app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'create'));
+app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
+app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
+app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
 
 app.use(express.static(distDir, {
   etag: true,
