@@ -151,6 +151,7 @@ const WEEKDAY_OPTIONS = [
 const NAV_ITEMS = [
   { key: 'command', label: 'Command', eyebrow: 'Live Operations', title: 'VICIdial command layer', icon: LayoutDashboard },
   { key: 'campaigns', label: 'Campaigns', eyebrow: 'Admin', title: 'Campaign Control', icon: Radio },
+  { key: 'campaignTools', label: 'Campaign Tools', eyebrow: 'Admin', title: 'Campaign Tools', icon: SlidersHorizontal },
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
   { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
@@ -314,6 +315,10 @@ function userCan(user, entity) {
   if (Number(user?.userLevel || 0) >= 9) return true;
   if (entity === 'campaignCopy') return Boolean(user?.modifyCampaigns);
   if (entity === 'campaigns') return Boolean(user?.modifyCampaigns);
+  if (entity === 'pauseCodes') return Boolean(user?.modifyCampaigns);
+  if (entity === 'campaignHotkeys') return Boolean(user?.modifyCampaigns);
+  if (entity === 'leadRecycle') return Boolean(user?.modifyCampaigns);
+  if (entity === 'listMixes') return Boolean(user?.modifyCampaigns);
   if (entity === 'users') return Boolean(user?.modifyUsers);
   if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);
@@ -508,6 +513,25 @@ function statusOptionsForCampaign(admin, campaignId, currentStatuses = []) {
   return [{ value: '', label: '- NONE -' }, ...options];
 }
 
+function statusSelectOptions(admin, campaignId, currentValue) {
+  const seen = new Set();
+  const options = [{ value: '', label: '- NONE -' }];
+  const pushStatus = (item, source) => {
+    const value = String(item?.status || '');
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    options.push({
+      value,
+      label: `${value} - ${item.status_name || source}`,
+    });
+  };
+  (admin?.lookups?.statuses || []).forEach((item) => pushStatus(item, 'System'));
+  (admin?.lookups?.campaignStatuses || [])
+    .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
+    .forEach((item) => pushStatus(item, 'Campaign'));
+  return withCurrentOption(options, currentValue);
+}
+
 function actionDefaults(entity, admin) {
   const campaign = admin?.lookups?.campaigns?.[0]?.campaign_id || '';
   const group = admin?.lookups?.userGroups?.[0]?.user_group || 'ADMIN';
@@ -675,6 +699,49 @@ function actionDefaults(entity, admin) {
       campaign_id: '',
       campaign_name: '',
       source_campaign_id: campaign,
+    };
+  }
+
+  if (entity === 'pauseCodes') {
+    return {
+      campaign_id: campaign,
+      pause_code: '',
+      pause_code_name: '',
+      billable: 'NO',
+      time_limit: '65000',
+      require_mgr_approval: 'NO',
+    };
+  }
+
+  if (entity === 'campaignHotkeys') {
+    return {
+      campaign_id: campaign,
+      hotkey: '',
+      status: '',
+      status_name: '',
+      selectable: 'Y',
+    };
+  }
+
+  if (entity === 'leadRecycle') {
+    return {
+      recycle_id: '',
+      campaign_id: campaign,
+      status: '',
+      attempt_delay: '1800',
+      attempt_maximum: '2',
+      active: 'N',
+    };
+  }
+
+  if (entity === 'listMixes') {
+    return {
+      vcl_id: '',
+      vcl_name: '',
+      campaign_id: campaign,
+      list_mix_container: '',
+      mix_method: 'IN_ORDER',
+      status: 'INACTIVE',
     };
   }
 
@@ -1152,6 +1219,49 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'pauseCodes') {
+    return [
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'pause_code', label: 'Pause Code', disabled: mode === 'edit' },
+      { key: 'pause_code_name', label: 'Pause Code Name' },
+      { key: 'billable', label: 'Billable', type: 'select', options: enumOptions(['NO', 'YES', 'HALF']) },
+      { key: 'time_limit', label: 'Time Limit', type: 'number' },
+      { key: 'require_mgr_approval', label: 'Manager Approval', type: 'select', options: enumOptions(['NO', 'YES']) },
+    ];
+  }
+
+  if (entity === 'campaignHotkeys') {
+    return [
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'hotkey', label: 'Hotkey', type: 'select', options: enumOptions(ensureOption(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '#'], form?.hotkey)), disabled: mode === 'edit' },
+      { key: 'status', label: 'Status', type: 'select', options: statusSelectOptions(admin, form?.campaign_id, form?.status) },
+      { key: 'status_name', label: 'Status Name' },
+      { key: 'selectable', label: 'Selectable', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    ];
+  }
+
+  if (entity === 'leadRecycle') {
+    return [
+      ...(mode === 'edit' ? [{ key: 'recycle_id', label: 'Recycle ID', disabled: true }] : []),
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'status', label: 'Status', type: 'select', options: statusSelectOptions(admin, form?.campaign_id, form?.status) },
+      { key: 'attempt_delay', label: 'Attempt Delay', type: 'number' },
+      { key: 'attempt_maximum', label: 'Attempt Maximum', type: 'number' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions('Y', 'N', 'Active', 'Off') },
+    ];
+  }
+
+  if (entity === 'listMixes') {
+    return [
+      { key: 'vcl_id', label: 'List Mix ID', disabled: mode === 'edit' },
+      { key: 'vcl_name', label: 'List Mix Name' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'mix_method', label: 'Mix Method', type: 'select', options: enumOptions(['EVEN_MIX', 'IN_ORDER', 'RANDOM']) },
+      { key: 'status', label: 'Status', type: 'select', options: enumOptions(['ACTIVE', 'INACTIVE']) },
+      { key: 'list_mix_container', label: 'List Mix Container', type: 'textarea', wide: true },
+    ];
+  }
+
   if (entity === 'statuses' || entity === 'campaignStatuses') {
     return [
       ...(entity === 'campaignStatuses' ? [{ key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' }] : []),
@@ -1434,6 +1544,10 @@ function entityLabel(entity) {
   return {
     campaigns: 'Campaign',
     campaignCopy: 'Campaign Copy',
+    pauseCodes: 'Pause Code',
+    campaignHotkeys: 'Campaign Hotkey',
+    leadRecycle: 'Lead Recycle Rule',
+    listMixes: 'List Mix',
     users: 'User',
     userGroups: 'User Group',
     lists: 'List',
@@ -1454,6 +1568,10 @@ function entityId(entity, row) {
   return {
     campaigns: row.campaign_id,
     campaignCopy: row.campaign_id,
+    pauseCodes: row.pause_code,
+    campaignHotkeys: row.hotkey,
+    leadRecycle: row.recycle_id,
+    listMixes: row.vcl_id,
     users: row.user,
     userGroups: row.user_group,
     lists: row.list_id,
@@ -1473,6 +1591,10 @@ function entityId(entity, row) {
 function entityPath(entity) {
   return {
     userGroups: 'user-groups',
+    pauseCodes: 'pause-codes',
+    campaignHotkeys: 'campaign-hotkeys',
+    leadRecycle: 'lead-recycle',
+    listMixes: 'list-mixes',
     leadFilters: 'lead-filters',
     callTimes: 'call-times',
     callMenus: 'call-menus',
@@ -2087,6 +2209,126 @@ function CampaignsView({ admin, user, onAction }) {
               );
             })}
           </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function CampaignToolsView({ admin, user, onAction }) {
+  const pauseCodes = admin?.pauseCodes || [];
+  const hotkeys = admin?.campaignHotkeys || [];
+  const recycle = admin?.leadRecycle || [];
+  const listMixes = admin?.listMixes || [];
+  const canManage = userCan(user, 'pauseCodes');
+  const statusNameMap = new Map([
+    ...(admin?.lookups?.statuses || []),
+    ...(admin?.lookups?.campaignStatuses || []),
+  ].map((item) => [String(item.status || ''), item.status_name || item.status]));
+  const statusLabel = (status) => `${status}${statusNameMap.get(String(status || '')) ? ` - ${statusNameMap.get(String(status || ''))}` : ''}`;
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar
+        entity="pauseCodes"
+        label="Pause Code"
+        user={user}
+        onAction={onAction}
+        extraActions={canManage ? (
+          <>
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('campaignHotkeys', 'create')}>
+              <Plus size={17} aria-hidden="true" />
+              Add Hotkey
+            </button>
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('leadRecycle', 'create')}>
+              <Plus size={17} aria-hidden="true" />
+              Add Recycle
+            </button>
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('listMixes', 'create')}>
+              <Plus size={17} aria-hidden="true" />
+              Add List Mix
+            </button>
+          </>
+        ) : null}
+      >
+        <p className="action-copy">Manage campaign pause codes, disposition hotkeys, lead recycle rules, and list mix containers.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Campaign Tools" title="Pause Codes" icon={Timer} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No pause codes returned"
+            rows={pauseCodes.map((row) => ({ ...row, id: `${row.campaign_id}-${row.pause_code}` }))}
+            columns={[
+              {
+                key: 'pause_code',
+                label: 'Pause Code',
+                render: (row) => (
+                  <>
+                    <strong>{row.pause_code}</strong>
+                    <span>{row.pause_code_name || 'Unnamed pause code'}</span>
+                  </>
+                ),
+              },
+              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
+              { key: 'billable', label: 'Billable', render: (row) => row.billable || 'NO' },
+              { key: 'time_limit', label: 'Limit', render: (row) => formatNumber(row.time_limit) },
+              { key: 'require_mgr_approval', label: 'Approval', render: (row) => row.require_mgr_approval || 'NO' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('pauseCodes', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Dispositions" title="Campaign Hotkeys" icon={Gauge} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No campaign hotkeys returned"
+            rows={hotkeys.map((row) => ({ ...row, id: `${row.campaign_id}-${row.hotkey}` }))}
+            columns={[
+              { key: 'hotkey', label: 'Hotkey', render: (row) => <strong>{row.hotkey}</strong> },
+              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
+              { key: 'status', label: 'Status', render: (row) => statusLabel(row.status) },
+              { key: 'status_name', label: 'Name', render: (row) => row.status_name || 'None' },
+              { key: 'selectable', label: 'Selectable', render: (row) => <StatusPill ok={row.selectable === 'Y'}>{row.selectable === 'Y' ? 'Yes' : 'No'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('campaignHotkeys', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Lead Flow" title="Lead Recycle" icon={RefreshCcw} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No lead recycle rules returned"
+            rows={recycle.map((row) => ({ ...row, id: row.recycle_id }))}
+            columns={[
+              { key: 'recycle_id', label: 'ID', render: (row) => row.recycle_id },
+              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
+              { key: 'status', label: 'Status', render: (row) => statusLabel(row.status) },
+              { key: 'attempt_delay', label: 'Delay', render: (row) => `${formatNumber(row.attempt_delay)}s` },
+              { key: 'attempt_maximum', label: 'Max', render: (row) => row.attempt_maximum },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('leadRecycle', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Lists" title="List Mixes" icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No list mixes returned"
+            rows={listMixes.map((row) => ({ ...row, id: row.vcl_id }))}
+            columns={[
+              {
+                key: 'list_mix',
+                label: 'List Mix',
+                render: (row) => (
+                  <>
+                    <strong>{row.vcl_id}</strong>
+                    <span>{row.vcl_name || 'Unnamed list mix'}</span>
+                  </>
+                ),
+              },
+              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
+              { key: 'mix_method', label: 'Method', render: (row) => row.mix_method || 'IN_ORDER' },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'ACTIVE'}>{row.status || 'INACTIVE'}</StatusPill> },
+              { key: 'list_mix_container', label: 'Rules', render: (row) => String(row.list_mix_container || '').trim() ? 'Configured' : 'Empty' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('listMixes', 'edit', row)} /> }] : []),
+            ]}
+          />
         </Panel>
       </section>
     </>
@@ -2790,7 +3032,7 @@ function MapView() {
       <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
         <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
         <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
-        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="13" detail="Campaigns, users, groups, lists, inbound, DIDs, call menus, phones, scripts, filters, call times, shifts, statuses" accent="#a8c7ff" />
+        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="17" detail="Campaigns, campaign tools, users, groups, lists, inbound, DIDs, call menus, phones, scripts, filters, call times, shifts, statuses" accent="#a8c7ff" />
         <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
       </section>
 
@@ -2895,6 +3137,7 @@ function SystemView({ admin }) {
 function AdminPage({ activeView, dashboard, admin, user, onAction }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;

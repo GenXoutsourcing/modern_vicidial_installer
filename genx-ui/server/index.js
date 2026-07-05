@@ -801,6 +801,9 @@ async function adminData(user) {
     statuses,
     campaignStatuses,
     listMixes,
+    pauseCodes,
+    campaignHotkeys,
+    leadRecycle,
     systemSettingsRows,
     dids,
     phones,
@@ -1298,10 +1301,52 @@ async function adminData(user) {
               vcl_id,
               vcl_name,
               status,
-              mix_method
+              mix_method,
+              list_mix_container
        FROM vicidial_campaigns_list_mix
        WHERE ${campaignStatusWhere}
        ORDER BY campaign_id ASC, status ASC, vcl_id ASC
+       LIMIT 1000`,
+      campaignStatusParams,
+      [],
+    ),
+    rows(
+      `SELECT campaign_id,
+              pause_code,
+              pause_code_name,
+              billable,
+              time_limit,
+              require_mgr_approval
+       FROM vicidial_pause_codes
+       WHERE ${campaignStatusWhere}
+       ORDER BY campaign_id ASC, pause_code ASC
+       LIMIT 1000`,
+      campaignStatusParams,
+      [],
+    ),
+    rows(
+      `SELECT campaign_id,
+              hotkey,
+              status,
+              status_name,
+              selectable
+       FROM vicidial_campaign_hotkeys
+       WHERE ${campaignStatusWhere}
+       ORDER BY campaign_id ASC, hotkey ASC
+       LIMIT 1000`,
+      campaignStatusParams,
+      [],
+    ),
+    rows(
+      `SELECT recycle_id,
+              campaign_id,
+              status,
+              attempt_delay,
+              attempt_maximum,
+              active
+       FROM vicidial_lead_recycle
+       WHERE ${campaignStatusWhere}
+       ORDER BY campaign_id ASC, status ASC, recycle_id ASC
        LIMIT 1000`,
       campaignStatusParams,
       [],
@@ -1466,6 +1511,10 @@ async function adminData(user) {
       callTimes: callTimes.length,
       statuses: statuses.length,
       campaignStatuses: campaignStatuses.length,
+      pauseCodes: pauseCodes.length,
+      campaignHotkeys: campaignHotkeys.length,
+      leadRecycle: leadRecycle.length,
+      listMixes: listMixes.length,
       callMenus: callMenus.length,
       shifts: shifts.length,
       servers: servers.length,
@@ -1506,6 +1555,10 @@ async function adminData(user) {
     callTimes,
     statuses,
     campaignStatuses,
+    pauseCodes,
+    campaignHotkeys,
+    leadRecycle,
+    listMixes,
     callMenus,
     shifts,
     recordings: recordings.map((item) => ({
@@ -2825,6 +2878,193 @@ async function saveShift(req, res, mode) {
   }
 }
 
+function campaignToolAllowed(user, campaignId) {
+  return campaignId && scopeAllows(user?.permissions?.allowedCampaigns, campaignId);
+}
+
+function pauseCodePayload(body) {
+  return {
+    campaign_id: cleanId(body.campaign_id, 20),
+    pause_code_name: cleanText(body.pause_code_name, 30) || 'Pause Code',
+    billable: cleanExactChoice(body.billable, ['NO', 'YES', 'HALF'], 'NO', 4),
+    time_limit: cleanInt(body.time_limit, 65000, 0, 65000),
+    require_mgr_approval: cleanExactChoice(body.require_mgr_approval, ['NO', 'YES'], 'NO', 3),
+  };
+}
+
+async function savePauseCode(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(mode === 'create' ? req.body?.pause_code : req.params.id, 6);
+  if (!id) return badRequest(res, 'invalid_pause_code');
+  const payload = pauseCodePayload(req.body || {});
+  if (!campaignToolAllowed(req.genxUser, payload.campaign_id)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_pause_codes
+         SET pause_code = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'PAUSECODES', 'ADD', payload.campaign_id, 'GENX ADD PAUSE CODE', 'INSERT INTO vicidial_pause_codes', `${id} - ${payload.pause_code_name}`);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_pause_codes
+         SET ${assignments}
+         WHERE campaign_id = ?
+           AND pause_code = ?`,
+        [...values, payload.campaign_id, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'pause_code_not_found' });
+      await adminLog(req, 'PAUSECODES', 'MODIFY', payload.campaign_id, 'GENX MODIFY PAUSE CODE', 'UPDATE vicidial_pause_codes', `${id} - ${payload.pause_code_name}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'pause_code_exists' : 'pause_code_write_failed' });
+  }
+}
+
+function hotkeyPayload(body) {
+  return {
+    campaign_id: cleanId(body.campaign_id, 20),
+    status: cleanId(body.status, 6),
+    status_name: cleanText(body.status_name, 30) || 'Hotkey',
+    selectable: ynFlag(body.selectable, 'Y'),
+  };
+}
+
+function cleanHotkey(value) {
+  return cleanText(value, 1).replace(/[^0-9a-zA-Z*#]/g, '') || '';
+}
+
+async function saveCampaignHotkey(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanHotkey(mode === 'create' ? req.body?.hotkey : req.params.id);
+  if (!id) return badRequest(res, 'invalid_hotkey');
+  const payload = hotkeyPayload(req.body || {});
+  if (!payload.status) return badRequest(res, 'status_required');
+  if (!campaignToolAllowed(req.genxUser, payload.campaign_id)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_campaign_hotkeys
+         SET hotkey = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'CAMPAIGN_HOTKEYS', 'ADD', payload.campaign_id, 'GENX ADD CAMPAIGN HOTKEY', 'INSERT INTO vicidial_campaign_hotkeys', `${id} - ${payload.status}`);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_campaign_hotkeys
+         SET ${assignments}
+         WHERE campaign_id = ?
+           AND hotkey = ?`,
+        [...values, payload.campaign_id, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'hotkey_not_found' });
+      await adminLog(req, 'CAMPAIGN_HOTKEYS', 'MODIFY', payload.campaign_id, 'GENX MODIFY CAMPAIGN HOTKEY', 'UPDATE vicidial_campaign_hotkeys', `${id} - ${payload.status}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'hotkey_exists' : 'hotkey_write_failed' });
+  }
+}
+
+function leadRecyclePayload(body) {
+  return {
+    campaign_id: cleanId(body.campaign_id, 20),
+    status: cleanId(body.status, 6),
+    attempt_delay: cleanInt(body.attempt_delay, 1800, 0, 65000),
+    attempt_maximum: cleanInt(body.attempt_maximum, 2, 1, 255),
+    active: ynFlag(body.active, 'N'),
+  };
+}
+
+async function saveLeadRecycle(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = mode === 'create' ? 0 : cleanInt(req.params.id, 0, 1, 999999999);
+  const payload = leadRecyclePayload(req.body || {});
+  if (!payload.status) return badRequest(res, 'status_required');
+  if (!campaignToolAllowed(req.genxUser, payload.campaign_id)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_lead_recycle
+         SET ${assignments}`,
+        values,
+      );
+      await adminLog(req, 'LEADRECYCLE', 'ADD', payload.campaign_id, 'GENX ADD LEAD RECYCLE', 'INSERT INTO vicidial_lead_recycle', payload.status);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_lead_recycle
+         SET ${assignments}
+         WHERE recycle_id = ?
+           AND campaign_id = ?`,
+        [...values, id, payload.campaign_id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'lead_recycle_not_found' });
+      await adminLog(req, 'LEADRECYCLE', 'MODIFY', payload.campaign_id, 'GENX MODIFY LEAD RECYCLE', 'UPDATE vicidial_lead_recycle', payload.status);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'lead_recycle_exists' : 'lead_recycle_write_failed' });
+  }
+}
+
+function listMixPayload(body) {
+  return {
+    vcl_name: cleanText(body.vcl_name, 50) || 'List Mix',
+    campaign_id: cleanId(body.campaign_id, 20),
+    list_mix_container: cleanText(body.list_mix_container, 12000),
+    mix_method: cleanExactChoice(body.mix_method, ['EVEN_MIX', 'IN_ORDER', 'RANDOM'], 'IN_ORDER', 20),
+    status: cleanExactChoice(body.status, ['ACTIVE', 'INACTIVE'], 'INACTIVE', 10),
+  };
+}
+
+async function saveListMix(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(mode === 'create' ? req.body?.vcl_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_list_mix_id');
+  const payload = listMixPayload(req.body || {});
+  if (!campaignToolAllowed(req.genxUser, payload.campaign_id)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_campaigns_list_mix
+         SET vcl_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'LISTMIX', 'ADD', payload.campaign_id, 'GENX ADD LIST MIX', 'INSERT INTO vicidial_campaigns_list_mix', `${id} - ${payload.vcl_name}`);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_campaigns_list_mix
+         SET ${assignments}
+         WHERE vcl_id = ?
+           AND campaign_id = ?`,
+        [...values, id, payload.campaign_id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'list_mix_not_found' });
+      await adminLog(req, 'LISTMIX', 'MODIFY', payload.campaign_id, 'GENX MODIFY LIST MIX', 'UPDATE vicidial_campaigns_list_mix', `${id} - ${payload.vcl_name}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'list_mix_exists' : 'list_mix_write_failed' });
+  }
+}
+
 function statusPayload(body) {
   return {
     status_name: cleanText(body.status_name, 30) || 'New Status',
@@ -3004,6 +3244,14 @@ app.post('/api/admin/call-menus', requireAccess, (req, res) => saveCallMenu(req,
 app.put('/api/admin/call-menus/:id', requireAccess, (req, res) => saveCallMenu(req, res, 'update'));
 app.post('/api/admin/shifts', requireAccess, (req, res) => saveShift(req, res, 'create'));
 app.put('/api/admin/shifts/:id', requireAccess, (req, res) => saveShift(req, res, 'update'));
+app.post('/api/admin/pause-codes', requireAccess, (req, res) => savePauseCode(req, res, 'create'));
+app.put('/api/admin/pause-codes/:id', requireAccess, (req, res) => savePauseCode(req, res, 'update'));
+app.post('/api/admin/campaign-hotkeys', requireAccess, (req, res) => saveCampaignHotkey(req, res, 'create'));
+app.put('/api/admin/campaign-hotkeys/:id', requireAccess, (req, res) => saveCampaignHotkey(req, res, 'update'));
+app.post('/api/admin/lead-recycle', requireAccess, (req, res) => saveLeadRecycle(req, res, 'create'));
+app.put('/api/admin/lead-recycle/:id', requireAccess, (req, res) => saveLeadRecycle(req, res, 'update'));
+app.post('/api/admin/list-mixes', requireAccess, (req, res) => saveListMix(req, res, 'create'));
+app.put('/api/admin/list-mixes/:id', requireAccess, (req, res) => saveListMix(req, res, 'update'));
 app.post('/api/admin/statuses', requireAccess, (req, res) => saveStatus(req, res, 'create'));
 app.put('/api/admin/statuses/:id', requireAccess, (req, res) => saveStatus(req, res, 'update'));
 app.post('/api/admin/campaign-statuses', requireAccess, (req, res) => saveCampaignStatus(req, res, 'create'));
