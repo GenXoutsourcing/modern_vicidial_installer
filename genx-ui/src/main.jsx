@@ -1687,9 +1687,9 @@ function actionFields(entity, mode, admin, form = {}) {
     options: enabled ? options : undefined,
     ...extra,
   });
-  const audioField = (key, label, currentValue, extra = {}) => lookupField(key, label, audioOptionsFor(currentValue), currentValue, audioLookupOptions.length > 0, extra);
-  const voicemailField = (key, label, currentValue, extra = {}) => lookupField(key, label, voicemailOptionsFor(currentValue), currentValue, voicemailLookupOptions.length > 0, extra);
-  const mohField = (key, label, currentValue, extra = {}) => lookupField(key, label, mohOptionsFor(currentValue), currentValue, mohLookupOptions.length > 0, extra);
+  const audioField = (key, label, currentValue, extra = {}) => lookupField(key, label, audioOptionsFor(currentValue), currentValue, true, extra);
+  const voicemailField = (key, label, currentValue, extra = {}) => lookupField(key, label, voicemailOptionsFor(currentValue), currentValue, true, extra);
+  const mohField = (key, label, currentValue, extra = {}) => lookupField(key, label, mohOptionsFor(currentValue), currentValue, true, extra);
   const recordingField = (key, label, currentValue, extra = {}) => lookupField(key, label, recordingOptionsFor(currentValue), currentValue, true, extra);
   const routeOptionsFor = (route, currentValue) => {
     const normalized = String(route || '').toUpperCase();
