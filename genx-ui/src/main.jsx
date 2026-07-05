@@ -929,6 +929,124 @@ function actionDefaults(entity, admin) {
       access_recordings: '0',
       alter_admin_interface_options: '1',
       modify_settings_containers: '0',
+      phone_pass: '',
+      delete_users: '0',
+      delete_user_groups: '0',
+      delete_lists: '0',
+      delete_campaigns: '0',
+      delete_ingroups: '0',
+      delete_remote_agents: '0',
+      delete_scripts: '0',
+      delete_filters: '0',
+      delete_call_times: '0',
+      delete_inbound_dids: '0',
+      delete_from_dnc: '0',
+      load_leads: '0',
+      modify_leads: '0',
+      modify_remoteagents: '0',
+      modify_shifts: '0',
+      modify_labels: '0',
+      modify_voicemail: '0',
+      modify_audiostore: '0',
+      modify_moh: '0',
+      modify_tts: '0',
+      modify_contacts: '0',
+      modify_same_user_level: '1',
+      modify_custom_dialplans: '0',
+      modify_languages: '0',
+      modify_colors: '0',
+      modify_auto_reports: '0',
+      modify_ip_lists: '0',
+      modify_dial_prefix: '0',
+      ast_admin_access: '0',
+      ast_delete_phones: '0',
+      hotkeys_active: '0',
+      change_agent_campaign: '0',
+      agent_choose_ingroups: '1',
+      closer_campaigns: '',
+      scheduled_callbacks: '1',
+      agentonly_callbacks: '0',
+      agentcall_manual: '0',
+      vicidial_recording: '1',
+      vicidial_transfers: '1',
+      alter_agent_interface_options: '0',
+      closer_default_blended: '0',
+      vicidial_recording_override: 'DISABLED',
+      alter_custdata_override: 'NOT_ACTIVE',
+      alter_custphone_override: 'NOT_ACTIVE',
+      vdc_agent_api_access: '0',
+      alert_enabled: '0',
+      allow_alerts: '0',
+      agent_choose_territories: '1',
+      download_lists: '0',
+      agent_shift_enforcement_override: 'DISABLED',
+      manager_shift_enforcement_override: '0',
+      shift_override_flag: '0',
+      user_code: '',
+      territory: '',
+      voicemail_id: '',
+      agent_call_log_view_override: 'DISABLED',
+      callcard_admin: '0',
+      agent_choose_blended: '1',
+      realtime_block_user_info: '0',
+      custom_fields_modify: '0',
+      force_change_password: 'N',
+      agent_lead_search_override: 'NOT_ACTIVE',
+      preset_contact_search: 'NOT_ACTIVE',
+      admin_hide_lead_data: '0',
+      admin_hide_phone_data: '0',
+      agentcall_email: '0',
+      agentcall_chat: '0',
+      max_inbound_calls: '0',
+      wrapup_seconds_override: '-1',
+      selected_language: 'default English',
+      user_choose_language: '0',
+      ignore_group_on_search: '0',
+      api_list_restrict: '0',
+      api_allowed_functions: ' ALL_FUNCTIONS ',
+      lead_filter_id: 'NONE',
+      admin_cf_show_hidden: '0',
+      user_hide_realtime: '0',
+      user_nickname: '',
+      user_new_lead_limit: '-1',
+      api_only_user: '0',
+      ignore_ip_list: '0',
+      ready_max_logout: '-1',
+      export_gdpr_leads: '0',
+      pause_code_approval: '0',
+      max_hopper_calls: '0',
+      max_hopper_calls_hour: '0',
+      mute_recordings: 'DISABLED',
+      hide_call_log_info: 'DISABLED',
+      next_dial_my_callbacks: 'NOT_ACTIVE',
+      user_admin_redirect_url: '',
+      max_inbound_filter_enabled: '0',
+      max_inbound_filter_statuses: '',
+      max_inbound_filter_ingroups: '',
+      max_inbound_filter_min_sec: '-1',
+      status_group_id: '',
+      mobile_number: '',
+      two_factor_override: 'NOT_ACTIVE',
+      manual_dial_filter: 'DISABLED',
+      user_location: '',
+      download_invalid_files: '0',
+      user_group_two: '',
+      inbound_credits: '-1',
+      hci_enabled: '0',
+      manual_dial_lead_id: 'DISABLED',
+      qc_enabled: '0',
+      qc_user_level: '1',
+      qc_pass: '0',
+      qc_finish: '0',
+      qc_commit: '0',
+      add_timeclock_log: '0',
+      modify_timeclock_log: '0',
+      delete_timeclock_log: '0',
+      custom_one: '',
+      custom_two: '',
+      custom_three: '',
+      custom_four: '',
+      custom_five: '',
     };
   }
 
@@ -1338,8 +1456,8 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'inbound_queue_no_dial', label: 'Inbound Queue No Dial', type: 'select', options: enumOptions(ensureOption(INBOUND_QUEUE_NO_DIAL_OPTIONS, form?.inbound_queue_no_dial)) },
       { key: 'inbound_no_agents_no_dial_container', label: 'Inbound No-Agents No-Dial', type: 'select', options: enumOptions(ensureOption(['---DISABLED---'], form?.inbound_no_agents_no_dial_container)) },
       { key: 'inbound_no_agents_no_dial_threshold', label: 'Inbound No-Agents No-Dial Threshold', type: 'number' },
-      { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'multiSelectText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
-      { key: 'xfer_groups', label: 'Allowed Transfer Groups', type: 'multiSelectText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
+      { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
+      ...(form?.allow_closers === 'Y' ? [{ key: 'xfer_groups', label: 'Allowed Transfer Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true }] : []),
       { key: 'dial_timeout_lead_container', label: 'Dial Timeout Lead Container', type: 'select', options: enumOptions(ensureOption(['DISABLED'], form?.dial_timeout_lead_container)) },
       { key: 'cid_group_id', label: 'CID Group', type: 'select', options: cidGroupOptions },
       { key: 'cid_group_id_two', label: 'CID Group Failover', type: 'select', options: withCurrentOption(cidGroupOptions, form?.cid_group_id_two) },
@@ -1579,7 +1697,7 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'pauseCodes') {
     return [
-      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' || form?._campaignLocked },
       { key: 'pause_code', label: 'Pause Code', disabled: mode === 'edit' },
       { key: 'pause_code_name', label: 'Pause Code Name' },
       { key: 'billable', label: 'Billable', type: 'select', options: enumOptions(['NO', 'YES', 'HALF']) },
@@ -1590,7 +1708,7 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'campaignHotkeys') {
     return [
-      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' || form?._campaignLocked },
       { key: 'hotkey', label: 'Hotkey', type: 'select', options: enumOptions(ensureOption(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '*', '#'], form?.hotkey)), disabled: mode === 'edit' },
       { key: 'status', label: 'Status', type: 'select', options: statusSelectOptions(admin, form?.campaign_id, form?.status) },
       { key: 'status_name', label: 'Status Name' },
@@ -1601,7 +1719,7 @@ function actionFields(entity, mode, admin, form = {}) {
   if (entity === 'leadRecycle') {
     return [
       ...(mode === 'edit' ? [{ key: 'recycle_id', label: 'Recycle ID', disabled: true }] : []),
-      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' || form?._campaignLocked },
       { key: 'status', label: 'Status', type: 'select', options: statusSelectOptions(admin, form?.campaign_id, form?.status) },
       { key: 'attempt_delay', label: 'Attempt Delay', type: 'number' },
       { key: 'attempt_maximum', label: 'Attempt Maximum', type: 'number' },
@@ -1613,7 +1731,7 @@ function actionFields(entity, mode, admin, form = {}) {
     return [
       { key: 'vcl_id', label: 'List Mix ID', disabled: mode === 'edit' },
       { key: 'vcl_name', label: 'List Mix Name' },
-      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' || form?._campaignLocked },
       { key: 'mix_method', label: 'Mix Method', type: 'select', options: enumOptions(['EVEN_MIX', 'IN_ORDER', 'RANDOM']) },
       { key: 'status', label: 'Status', type: 'select', options: enumOptions(['ACTIVE', 'INACTIVE']) },
       { key: 'list_mix_container', label: 'List Mix Container', type: 'textarea', wide: true },
@@ -1622,7 +1740,7 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'statuses' || entity === 'campaignStatuses') {
     return [
-      ...(entity === 'campaignStatuses' ? [{ key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' }] : []),
+      ...(entity === 'campaignStatuses' ? [{ key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions, disabled: mode === 'edit' || form?._campaignLocked }] : []),
       { key: 'status', label: 'Status Code', disabled: mode === 'edit' },
       { key: 'status_name', label: 'Status Name' },
       { key: 'selectable', label: 'Selectable', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -1643,17 +1761,28 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'users') {
     return [
+      { section: 'Identity and Login' },
       { key: 'user', label: 'User ID', disabled: mode === 'edit' },
       { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password', type: 'password' },
       { key: 'full_name', label: 'Full Name' },
       { key: 'user_level', label: 'Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS, form?.user_level)) },
       { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
+      { key: 'user_group_two', label: 'User Group Two', type: userGroupOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...userGroupOptions], form?.user_group_two) },
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'email', label: 'Email' },
+      { key: 'mobile_number', label: 'Mobile Number' },
       { key: 'phone_login', label: 'Phone Login', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.phone_login) },
+      { key: 'phone_pass', label: 'Phone Password', type: 'password' },
+      { key: 'voicemail_id', label: 'Voicemail ID' },
+      { key: 'user_code', label: 'User Code' },
+      { key: 'user_nickname', label: 'Nickname' },
+      { key: 'territory', label: 'Territory' },
+      { key: 'user_location', label: 'User Location' },
+      { section: 'Admin Permissions' },
       { key: 'campaign_detail', label: 'Campaign Detail', type: 'select', options: flagOptions() },
       { key: 'view_reports', label: 'Reports', type: 'select', options: flagOptions() },
       { key: 'export_reports', label: 'Export Reports', type: 'select', options: flagOptions() },
+      { key: 'export_gdpr_leads', label: 'Export GDPR Leads', type: 'select', options: enumOptions(['0', '1', '2']) },
       { key: 'modify_campaigns', label: 'Campaign Admin', type: 'select', options: flagOptions() },
       { key: 'modify_lists', label: 'List Admin', type: 'select', options: flagOptions() },
       { key: 'modify_users', label: 'User Admin', type: 'select', options: flagOptions() },
@@ -1667,9 +1796,125 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'modify_servers', label: 'Server Admin', type: 'select', options: flagOptions() },
       { key: 'modify_carriers', label: 'Carrier Admin', type: 'select', options: flagOptions() },
       { key: 'modify_statuses', label: 'Status Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_remoteagents', label: 'Remote Agent Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_shifts', label: 'Shift Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_labels', label: 'Label Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_voicemail', label: 'Voicemail Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_audiostore', label: 'Audio Store Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_moh', label: 'MOH Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_tts', label: 'TTS Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_contacts', label: 'Contacts Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_custom_dialplans', label: 'Custom Dialplans', type: 'select', options: flagOptions() },
+      { key: 'modify_languages', label: 'Languages Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_colors', label: 'Colors Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_auto_reports', label: 'Auto Reports Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_ip_lists', label: 'IP Lists Admin', type: 'select', options: flagOptions() },
+      { key: 'modify_same_user_level', label: 'Modify Same Level', type: 'select', options: flagOptions() },
+      { key: 'modify_leads', label: 'Modify Leads', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
+      { key: 'modify_dial_prefix', label: 'Modify Dial Prefix', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
+      { key: 'load_leads', label: 'Load Leads', type: 'select', options: flagOptions() },
       { key: 'access_recordings', label: 'Recordings Access', type: 'select', options: flagOptions() },
       { key: 'alter_admin_interface_options', label: 'Admin UI Options', type: 'select', options: flagOptions() },
+      { key: 'ast_admin_access', label: 'Asterisk Admin Access', type: 'select', options: flagOptions() },
+      { key: 'ast_delete_phones', label: 'Asterisk Delete Phones', type: 'select', options: flagOptions() },
       { key: 'modify_settings_containers', label: 'Settings Containers', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
+      { section: 'Delete Permissions' },
+      { key: 'delete_users', label: 'Delete Users', type: 'select', options: flagOptions() },
+      { key: 'delete_user_groups', label: 'Delete User Groups', type: 'select', options: flagOptions() },
+      { key: 'delete_lists', label: 'Delete Lists', type: 'select', options: flagOptions() },
+      { key: 'delete_campaigns', label: 'Delete Campaigns', type: 'select', options: flagOptions() },
+      { key: 'delete_ingroups', label: 'Delete In-Groups', type: 'select', options: flagOptions() },
+      { key: 'delete_remote_agents', label: 'Delete Remote Agents', type: 'select', options: flagOptions() },
+      { key: 'delete_scripts', label: 'Delete Scripts', type: 'select', options: flagOptions() },
+      { key: 'delete_filters', label: 'Delete Filters', type: 'select', options: flagOptions() },
+      { key: 'delete_call_times', label: 'Delete Call Times', type: 'select', options: flagOptions() },
+      { key: 'delete_inbound_dids', label: 'Delete DIDs', type: 'select', options: flagOptions() },
+      { key: 'delete_from_dnc', label: 'Delete From DNC', type: 'select', options: flagOptions() },
+      { section: 'Agent Campaign Access' },
+      { key: 'hotkeys_active', label: 'Hotkeys Active', type: 'select', options: flagOptions() },
+      { key: 'change_agent_campaign', label: 'Change Agent Campaign', type: 'select', options: flagOptions() },
+      { key: 'agent_choose_ingroups', label: 'Agent Choose In-Groups', type: 'select', options: flagOptions() },
+      { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
+      { key: 'agent_choose_blended', label: 'Agent Choose Blended', type: 'select', options: flagOptions() },
+      { key: 'closer_default_blended', label: 'Closer Default Blended', type: 'select', options: flagOptions() },
+      { key: 'agent_choose_territories', label: 'Agent Choose Territories', type: 'select', options: flagOptions() },
+      { section: 'Agent Call Behavior' },
+      { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
+      { key: 'agentonly_callbacks', label: 'Agent-Only Callbacks', type: 'select', options: flagOptions() },
+      { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
+      { key: 'vicidial_recording', label: 'Agent Recording', type: 'select', options: flagOptions() },
+      { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
+      { key: 'alter_agent_interface_options', label: 'Agent UI Options', type: 'select', options: flagOptions() },
+      { key: 'custom_fields_modify', label: 'Custom Fields Modify', type: 'select', options: flagOptions() },
+      { key: 'force_change_password', label: 'Force Password Change', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'callcard_admin', label: 'CallCard Admin', type: 'select', options: flagOptions('1', '0') },
+      { key: 'realtime_block_user_info', label: 'Realtime Block User Info', type: 'select', options: flagOptions() },
+      { section: 'Recording and Data Overrides' },
+      { key: 'vicidial_recording_override', label: 'Recording Override', type: 'select', options: enumOptions(['DISABLED', 'NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE']) },
+      { key: 'alter_custdata_override', label: 'Alter Customer Data', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ALLOW_ALTER']) },
+      { key: 'alter_custphone_override', label: 'Alter Customer Phone', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ALLOW_ALTER']) },
+      { key: 'agent_call_log_view_override', label: 'Call Log View Override', type: 'select', options: enumOptions(['DISABLED', 'Y', 'N']) },
+      { key: 'hide_call_log_info', label: 'Hide Call Log Info', type: 'select', options: enumOptions(HIDE_CALL_LOG_OPTIONS.includes(form?.hide_call_log_info) ? HIDE_CALL_LOG_OPTIONS : [form?.hide_call_log_info || 'DISABLED', ...HIDE_CALL_LOG_OPTIONS]) },
+      { key: 'mute_recordings', label: 'Mute Recordings', type: 'select', options: enumOptions(['DISABLED', 'Y', 'N']) },
+      { key: 'admin_hide_lead_data', label: 'Admin Hide Lead Data', type: 'select', options: flagOptions() },
+      { key: 'admin_hide_phone_data', label: 'Admin Hide Phone Data', type: 'select', options: enumOptions(['0', '1', '2_DIGITS', '3_DIGITS', '4_DIGITS']) },
+      { section: 'Quality Control and Timeclock' },
+      { key: 'qc_enabled', label: 'QC Enabled', type: 'select', options: flagOptions() },
+      { key: 'qc_user_level', label: 'QC User Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS, form?.qc_user_level)) },
+      { key: 'qc_pass', label: 'QC Pass', type: 'select', options: flagOptions() },
+      { key: 'qc_finish', label: 'QC Finish', type: 'select', options: flagOptions() },
+      { key: 'qc_commit', label: 'QC Commit', type: 'select', options: flagOptions() },
+      { key: 'pause_code_approval', label: 'Pause Code Approval', type: 'select', options: flagOptions() },
+      { key: 'add_timeclock_log', label: 'Add Timeclock Log', type: 'select', options: flagOptions() },
+      { key: 'modify_timeclock_log', label: 'Modify Timeclock Log', type: 'select', options: flagOptions() },
+      { key: 'delete_timeclock_log', label: 'Delete Timeclock Log', type: 'select', options: flagOptions() },
+      { section: 'API, Search, and Filters' },
+      { key: 'vdc_agent_api_access', label: 'Agent API Access', type: 'select', options: flagOptions() },
+      { key: 'api_only_user', label: 'API Only User', type: 'select', options: flagOptions() },
+      { key: 'api_list_restrict', label: 'API List Restrict', type: 'select', options: flagOptions() },
+      { key: 'api_allowed_functions', label: 'API Allowed Functions', wide: true },
+      { key: 'lead_filter_id', label: 'Lead Filter', type: leadFilterOptions.length ? 'select' : 'text', options: leadFilterOptions },
+      { key: 'agent_lead_search_override', label: 'Lead Search Override', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ENABLED', 'LIVE_CALL_INBOUND', 'LIVE_CALL_INBOUND_AND_MANUAL', 'DISABLED']) },
+      { key: 'preset_contact_search', label: 'Preset Contact Search', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ENABLED', 'DISABLED']) },
+      { key: 'manual_dial_filter', label: 'Manual Dial Filter', type: 'select', options: manualFilterOptions },
+      { key: 'manual_dial_lead_id', label: 'Manual Dial Lead ID', type: 'select', options: enumOptions(['Y', 'N', 'ONLY', 'DISABLED']) },
+      { key: 'status_group_id', label: 'Status Group ID' },
+      { section: 'Limits and Callbacks' },
+      { key: 'max_inbound_calls', label: 'Max Inbound Calls', type: 'number' },
+      { key: 'wrapup_seconds_override', label: 'Wrapup Seconds Override', type: 'number' },
+      { key: 'max_hopper_calls', label: 'Max Hopper Calls', type: 'number' },
+      { key: 'max_hopper_calls_hour', label: 'Max Hopper Calls Hour', type: 'number' },
+      { key: 'ready_max_logout', label: 'Ready Max Logout', type: 'number' },
+      { key: 'user_new_lead_limit', label: 'New Lead Limit', type: 'number' },
+      { key: 'inbound_credits', label: 'Inbound Credits', type: 'number' },
+      { key: 'next_dial_my_callbacks', label: 'Next Dial My Callbacks', type: 'select', options: enumOptions(['NOT_ACTIVE', 'DISABLED', 'ENABLED']) },
+      { key: 'max_inbound_filter_enabled', label: 'Max Inbound Filter', type: 'select', options: flagOptions() },
+      { key: 'max_inbound_filter_statuses', label: 'Max Inbound Statuses', wide: true },
+      { key: 'max_inbound_filter_ingroups', label: 'Max Inbound In-Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
+      { key: 'max_inbound_filter_min_sec', label: 'Max Inbound Min Seconds', type: 'number' },
+      { section: 'Interface, Alerts, and Security' },
+      { key: 'alert_enabled', label: 'Alerts Enabled', type: 'select', options: flagOptions() },
+      { key: 'allow_alerts', label: 'Allow Alerts', type: 'select', options: flagOptions() },
+      { key: 'download_lists', label: 'Download Lists', type: 'select', options: flagOptions() },
+      { key: 'download_invalid_files', label: 'Download Invalid Files', type: 'select', options: flagOptions() },
+      { key: 'agent_shift_enforcement_override', label: 'Agent Shift Override', type: 'select', options: enumOptions(['DISABLED', 'OFF', 'START', 'ALL']) },
+      { key: 'manager_shift_enforcement_override', label: 'Manager Shift Override', type: 'select', options: flagOptions() },
+      { key: 'shift_override_flag', label: 'Shift Override Flag', type: 'select', options: flagOptions() },
+      { key: 'selected_language', label: 'Selected Language' },
+      { key: 'user_choose_language', label: 'User Choose Language', type: 'select', options: flagOptions() },
+      { key: 'ignore_group_on_search', label: 'Ignore Group On Search', type: 'select', options: flagOptions() },
+      { key: 'admin_cf_show_hidden', label: 'Admin Custom Fields Hidden', type: 'select', options: flagOptions() },
+      { key: 'user_hide_realtime', label: 'Hide Realtime User', type: 'select', options: flagOptions() },
+      { key: 'ignore_ip_list', label: 'Ignore IP List', type: 'select', options: flagOptions() },
+      { key: 'two_factor_override', label: '2FA Override', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ENABLED', 'DISABLED']) },
+      { key: 'hci_enabled', label: 'HCI Enabled', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
+      { key: 'user_admin_redirect_url', label: 'Admin Redirect URL', type: 'textarea', wide: true },
+      { section: 'Custom Fields' },
+      { key: 'custom_one', label: 'Custom 1' },
+      { key: 'custom_two', label: 'Custom 2' },
+      { key: 'custom_three', label: 'Custom 3' },
+      { key: 'custom_four', label: 'Custom 4' },
+      { key: 'custom_five', label: 'Custom 5' },
     ];
   }
 
@@ -2006,7 +2251,142 @@ function entityPath(entity) {
   }[entity] || entity;
 }
 
-function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
+function CheckboxTextGroup({ field, value, onChange }) {
+  const options = field.options || [];
+  const selectedValues = field.values ? field.values(value, field.allValue) : scopeValues(value, field.allValue);
+  const selectedSet = new Set(selectedValues.map(String));
+  const optionValues = options.map((option) => String(option.value));
+
+  function updateValue(optionValue, checked) {
+    const nextValues = optionValues.filter((valueText) => (valueText === optionValue ? checked : selectedSet.has(valueText)));
+    onChange(field.serialize ? field.serialize(nextValues) : scopeText(nextValues, field.allValue));
+  }
+
+  return (
+    <div className="check-grid" role="group" aria-label={field.label}>
+      {options.map((option) => {
+        const optionValue = String(option.value);
+        const checked = selectedSet.has(optionValue);
+        return (
+          <button
+            key={optionValue}
+            type="button"
+            className={`check-option ${checked ? 'selected' : ''}`}
+            disabled={field.disabled}
+            onClick={() => updateValue(optionValue, !checked)}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={field.disabled}
+              readOnly
+              tabIndex={-1}
+            />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+      {!options.length && <em className="check-grid-empty">No groups available</em>}
+    </div>
+  );
+}
+
+function CampaignScopedTools({ admin, campaignId, user, onAction }) {
+  const campaign = String(campaignId || '');
+  const rowsForCampaign = (rows) => (rows || []).filter((row) => String(row.campaign_id || '') === campaign);
+  const statusNameMap = new Map([
+    ...(admin?.lookups?.statuses || []),
+    ...(admin?.lookups?.campaignStatuses || []),
+  ].map((item) => [String(item.status || ''), item.status_name || item.status]));
+  const statusLabel = (status) => `${status}${statusNameMap.get(String(status || '')) ? ` - ${statusNameMap.get(String(status || ''))}` : ''}`;
+  const openTool = (entity, mode, row = {}) => onAction?.(entity, mode, { campaign_id: campaign, _campaignLocked: true, ...row });
+  const tools = [
+    {
+      entity: 'campaignStatuses',
+      title: 'Statuses',
+      rows: rowsForCampaign(admin?.campaignStatuses),
+      key: (row) => row.status,
+      label: (row) => `${row.status} - ${row.status_name || 'Campaign status'}`,
+    },
+    {
+      entity: 'campaignHotkeys',
+      title: 'Hotkeys',
+      rows: rowsForCampaign(admin?.campaignHotkeys),
+      key: (row) => row.hotkey,
+      label: (row) => `${row.hotkey} -> ${statusLabel(row.status)}`,
+    },
+    {
+      entity: 'leadRecycle',
+      title: 'Lead Recycle',
+      rows: rowsForCampaign(admin?.leadRecycle),
+      key: (row) => row.recycle_id,
+      label: (row) => `${statusLabel(row.status)} / ${row.attempt_maximum || 0} tries`,
+    },
+    {
+      entity: 'pauseCodes',
+      title: 'Pause Codes',
+      rows: rowsForCampaign(admin?.pauseCodes),
+      key: (row) => row.pause_code,
+      label: (row) => `${row.pause_code} - ${row.pause_code_name || 'Pause code'}`,
+    },
+    {
+      entity: 'listMixes',
+      title: 'List Mixes',
+      rows: rowsForCampaign(admin?.listMixes),
+      key: (row) => row.vcl_id,
+      label: (row) => `${row.vcl_id} - ${row.vcl_name || row.status || 'List mix'}`,
+    },
+  ];
+
+  if (!campaign) return null;
+
+  return (
+    <div className="campaign-tool-panel">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Campaign Tools</p>
+          <h3>{campaign}</h3>
+        </div>
+        <SlidersHorizontal size={20} aria-hidden="true" />
+      </div>
+      <div className="campaign-tool-grid">
+        {tools.map((tool) => {
+          const canManage = userCan(user, tool.entity);
+          return (
+            <section className="campaign-tool-card" key={tool.entity}>
+              <div className="campaign-tool-card-head">
+                <span>{tool.title}</span>
+                <strong>{formatNumber(tool.rows.length)}</strong>
+              </div>
+              <div className="campaign-tool-list">
+                {tool.rows.slice(0, 8).map((row) => (
+                  <button
+                    type="button"
+                    className="tool-picker-item"
+                    key={`${tool.entity}-${tool.key(row)}`}
+                    onClick={() => canManage && openTool(tool.entity, 'edit', row)}
+                    disabled={!canManage}
+                  >
+                    {tool.label(row)}
+                  </button>
+                ))}
+                {!tool.rows.length && <em>None configured</em>}
+              </div>
+              {canManage && (
+                <button type="button" className="row-action tool-add-action" onClick={() => openTool(tool.entity, 'create')}>
+                  <Plus size={15} aria-hidden="true" />
+                  Add
+                </button>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -2067,6 +2447,15 @@ function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
           </button>
         </div>
 
+        {isDetail && action.entity === 'campaigns' && (
+          <CampaignScopedTools
+            admin={admin}
+            campaignId={form.campaign_id}
+            user={user}
+            onAction={onSwitchAction}
+          />
+        )}
+
         <form className="entity-form" onSubmit={submit}>
           <div className="field-grid">
             {fields.map((field) => (
@@ -2097,6 +2486,12 @@ function ActionModal({ action, admin, token, onClose, onSaved, onLogout }) {
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
+                  ) : field.type === 'checkboxGroupText' ? (
+                    <CheckboxTextGroup
+                      field={field}
+                      value={form[field.key]}
+                      onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
+                    />
                   ) : field.type === 'select' ? (
                     <select
                       value={form[field.key] ?? ''}
@@ -3700,9 +4095,11 @@ function AdminShell({ token, user, onLogout }) {
           action={action}
           admin={adminState.data}
           token={token}
+          user={user}
           onClose={() => setAction(null)}
           onSaved={handleSaved}
           onLogout={onLogout}
+          onSwitchAction={openAction}
         />
       )}
     </main>

@@ -489,6 +489,27 @@ function dialStatusesText(statuses) {
   return unique.length ? ` ${unique.join(' ')} -` : ' -';
 }
 
+function groupListValues(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(/\s+/);
+  return [...new Set(values.map((item) => cleanId(item, 20)).filter((item) => item && item !== '-'))];
+}
+
+function groupListText(value) {
+  const cleanValues = groupListValues(value);
+  return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
+}
+
+function scopedGroupListText(value, scope) {
+  return groupListText(groupListValues(value).filter((item) => scopeAllows(scope, item)));
+}
+
+function mergeScopedGroupList(submittedValue, existingValue, scope) {
+  if (!scope || scope.all) return groupListText(submittedValue);
+  const submittedAllowed = groupListValues(submittedValue).filter((item) => scopeAllows(scope, item));
+  const existingRestricted = groupListValues(existingValue).filter((item) => !scopeAllows(scope, item));
+  return groupListText([...existingRestricted, ...submittedAllowed]);
+}
+
 async function ensureCampaignVisibleToUserGroup(user, campaignId) {
   const scope = user?.permissions?.allowedCampaigns;
   if (!user?.userGroup || !scope || scope.all || scopeAllows(scope, campaignId)) return;
@@ -1203,7 +1224,124 @@ async function adminData(user) {
               access_recordings,
               alter_admin_interface_options,
               modify_settings_containers,
-              vdc_agent_api_access
+              vdc_agent_api_access,
+              phone_pass,
+              delete_users,
+              delete_user_groups,
+              delete_lists,
+              delete_campaigns,
+              delete_ingroups,
+              delete_remote_agents,
+              delete_scripts,
+              delete_filters,
+              delete_call_times,
+              delete_inbound_dids,
+              delete_from_dnc,
+              load_leads,
+              modify_leads,
+              modify_remoteagents,
+              modify_shifts,
+              modify_labels,
+              modify_voicemail,
+              modify_audiostore,
+              modify_moh,
+              modify_tts,
+              modify_contacts,
+              modify_same_user_level,
+              modify_custom_dialplans,
+              modify_languages,
+              modify_colors,
+              modify_auto_reports,
+              modify_ip_lists,
+              modify_dial_prefix,
+              ast_admin_access,
+              ast_delete_phones,
+              hotkeys_active,
+              change_agent_campaign,
+              agent_choose_ingroups,
+              closer_campaigns,
+              scheduled_callbacks,
+              agentonly_callbacks,
+              agentcall_manual,
+              vicidial_recording,
+              vicidial_transfers,
+              alter_agent_interface_options,
+              closer_default_blended,
+              vicidial_recording_override,
+              alter_custdata_override,
+              alter_custphone_override,
+              alert_enabled,
+              allow_alerts,
+              agent_choose_territories,
+              download_lists,
+              agent_shift_enforcement_override,
+              manager_shift_enforcement_override,
+              shift_override_flag,
+              user_code,
+              territory,
+              voicemail_id,
+              agent_call_log_view_override,
+              callcard_admin,
+              agent_choose_blended,
+              realtime_block_user_info,
+              custom_fields_modify,
+              force_change_password,
+              agent_lead_search_override,
+              preset_contact_search,
+              admin_hide_lead_data,
+              admin_hide_phone_data,
+              agentcall_email,
+              agentcall_chat,
+              max_inbound_calls,
+              wrapup_seconds_override,
+              selected_language,
+              user_choose_language,
+              ignore_group_on_search,
+              api_list_restrict,
+              api_allowed_functions,
+              lead_filter_id,
+              admin_cf_show_hidden,
+              user_hide_realtime,
+              user_nickname,
+              user_new_lead_limit,
+              api_only_user,
+              ignore_ip_list,
+              ready_max_logout,
+              export_gdpr_leads,
+              pause_code_approval,
+              max_hopper_calls,
+              max_hopper_calls_hour,
+              mute_recordings,
+              hide_call_log_info,
+              next_dial_my_callbacks,
+              user_admin_redirect_url,
+              max_inbound_filter_enabled,
+              max_inbound_filter_statuses,
+              max_inbound_filter_ingroups,
+              max_inbound_filter_min_sec,
+              status_group_id,
+              mobile_number,
+              two_factor_override,
+              manual_dial_filter,
+              user_location,
+              download_invalid_files,
+              user_group_two,
+              inbound_credits,
+              hci_enabled,
+              manual_dial_lead_id,
+              qc_enabled,
+              qc_user_level,
+              qc_pass,
+              qc_finish,
+              qc_commit,
+              add_timeclock_log,
+              modify_timeclock_log,
+              delete_timeclock_log,
+              custom_one,
+              custom_two,
+              custom_three,
+              custom_four,
+              custom_five
        FROM vicidial_users
        WHERE ${userGroupWhere}
        ORDER BY active DESC, user_level DESC, user ASC
@@ -1853,11 +1991,6 @@ function campaignPayload(body, currentUser) {
     const next = codeText(value, max, fallback);
     return allowed.includes(next) ? next : fallback;
   };
-  const groupListText = (value) => {
-    const values = Array.isArray(value) ? value : String(value || '').split(/\s+/);
-    const cleanValues = [...new Set(values.map((item) => cleanId(item, 20)).filter((item) => item && item !== '-'))];
-    return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
-  };
   const payload = {
     campaign_name: cleanText(body.campaign_name, 40) || 'New Campaign',
     campaign_description: cleanText(body.campaign_description, 255),
@@ -1922,10 +2055,10 @@ function campaignPayload(body, currentUser) {
     auto_trim_hopper: ynFlag(body.auto_trim_hopper, 'Y'),
     hopper_vlc_dup_check: ynFlag(body.hopper_vlc_dup_check, 'N'),
     list_order_mix: codeText(body.list_order_mix, 20, 'DISABLED'),
-    closer_campaigns: groupListText(body.closer_campaigns),
+    closer_campaigns: scopedGroupListText(body.closer_campaigns, currentUser?.permissions?.allowedQueueGroups),
     manual_dial_list_id: cleanDigits(body.manual_dial_list_id, 14) || '998',
     default_xfer_group: codeText(body.default_xfer_group, 20, '---NONE---'),
-    xfer_groups: groupListText(body.xfer_groups),
+    xfer_groups: scopedGroupListText(body.xfer_groups, currentUser?.permissions?.allowedQueueGroups),
     queue_priority: cleanInt(body.queue_priority, 50, -99, 99),
     drop_inbound_group: codeText(body.drop_inbound_group, 20, '---NONE---'),
     inbound_queue_no_dial: cleanChoice(body.inbound_queue_no_dial, INBOUND_QUEUE_NO_DIAL_OPTIONS, 'DISABLED'),
@@ -2282,6 +2415,18 @@ async function saveCampaign(req, res, mode) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
   const payload = campaignPayload(req.body || {}, req.genxUser);
+  if (mode !== 'create' && req.body?._detailMode && !req.genxUser?.permissions?.allowedQueueGroups?.all) {
+    const [existingCampaign] = await rows(
+      'SELECT closer_campaigns, xfer_groups FROM vicidial_campaigns WHERE campaign_id = ?',
+      [id],
+      [],
+    );
+    if (existingCampaign) {
+      const queueScope = req.genxUser?.permissions?.allowedQueueGroups;
+      payload.closer_campaigns = mergeScopedGroupList(req.body?.closer_campaigns, existingCampaign.closer_campaigns, queueScope);
+      payload.xfer_groups = mergeScopedGroupList(req.body?.xfer_groups, existingCampaign.xfer_groups, queueScope);
+    }
+  }
   const keys = Object.keys(payload);
   const assignments = keys.map((key) => `${quoteId(key)} = ?`).join(', ');
   const values = keys.map((key) => payload[key]);
@@ -2426,6 +2571,123 @@ function userPayload(body, currentUser) {
     access_recordings: boolFlag(body.access_recordings),
     alter_admin_interface_options: boolFlag(body.alter_admin_interface_options),
     modify_settings_containers: cleanInt(body.modify_settings_containers, 0, 0, 6),
+    phone_pass: cleanText(body.phone_pass, 100),
+    delete_users: boolFlag(body.delete_users),
+    delete_user_groups: boolFlag(body.delete_user_groups),
+    delete_lists: boolFlag(body.delete_lists),
+    delete_campaigns: boolFlag(body.delete_campaigns),
+    delete_ingroups: boolFlag(body.delete_ingroups),
+    delete_remote_agents: boolFlag(body.delete_remote_agents),
+    delete_scripts: boolFlag(body.delete_scripts),
+    delete_filters: boolFlag(body.delete_filters),
+    delete_call_times: boolFlag(body.delete_call_times),
+    delete_inbound_dids: boolFlag(body.delete_inbound_dids),
+    delete_from_dnc: boolFlag(body.delete_from_dnc),
+    load_leads: boolFlag(body.load_leads),
+    modify_leads: cleanInt(body.modify_leads, 0, 0, 6),
+    modify_remoteagents: boolFlag(body.modify_remoteagents),
+    modify_shifts: boolFlag(body.modify_shifts),
+    modify_labels: boolFlag(body.modify_labels),
+    modify_voicemail: boolFlag(body.modify_voicemail),
+    modify_audiostore: boolFlag(body.modify_audiostore),
+    modify_moh: boolFlag(body.modify_moh),
+    modify_tts: boolFlag(body.modify_tts),
+    modify_contacts: boolFlag(body.modify_contacts),
+    modify_same_user_level: boolFlag(body.modify_same_user_level, '1', '0'),
+    modify_custom_dialplans: boolFlag(body.modify_custom_dialplans),
+    modify_languages: boolFlag(body.modify_languages),
+    modify_colors: boolFlag(body.modify_colors),
+    modify_auto_reports: boolFlag(body.modify_auto_reports),
+    modify_ip_lists: boolFlag(body.modify_ip_lists),
+    modify_dial_prefix: cleanInt(body.modify_dial_prefix, 0, 0, 6),
+    ast_admin_access: boolFlag(body.ast_admin_access),
+    ast_delete_phones: boolFlag(body.ast_delete_phones),
+    hotkeys_active: boolFlag(body.hotkeys_active),
+    change_agent_campaign: boolFlag(body.change_agent_campaign),
+    agent_choose_ingroups: boolFlag(body.agent_choose_ingroups),
+    closer_campaigns: scopedGroupListText(body.closer_campaigns, currentUser?.permissions?.allowedQueueGroups),
+    scheduled_callbacks: boolFlag(body.scheduled_callbacks),
+    agentonly_callbacks: boolFlag(body.agentonly_callbacks),
+    agentcall_manual: cleanInt(body.agentcall_manual, 0, 0, 5),
+    vicidial_recording: boolFlag(body.vicidial_recording),
+    vicidial_transfers: boolFlag(body.vicidial_transfers),
+    alter_agent_interface_options: boolFlag(body.alter_agent_interface_options),
+    closer_default_blended: boolFlag(body.closer_default_blended),
+    vicidial_recording_override: cleanExactChoice(body.vicidial_recording_override, ['DISABLED', 'NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE'], 'DISABLED'),
+    alter_custdata_override: cleanExactChoice(body.alter_custdata_override, ['NOT_ACTIVE', 'ALLOW_ALTER'], 'NOT_ACTIVE'),
+    alter_custphone_override: cleanExactChoice(body.alter_custphone_override, ['NOT_ACTIVE', 'ALLOW_ALTER'], 'NOT_ACTIVE'),
+    alert_enabled: boolFlag(body.alert_enabled),
+    allow_alerts: boolFlag(body.allow_alerts),
+    agent_choose_territories: boolFlag(body.agent_choose_territories),
+    download_lists: boolFlag(body.download_lists),
+    agent_shift_enforcement_override: cleanExactChoice(body.agent_shift_enforcement_override, ['DISABLED', 'OFF', 'START', 'ALL'], 'DISABLED'),
+    manager_shift_enforcement_override: boolFlag(body.manager_shift_enforcement_override),
+    shift_override_flag: boolFlag(body.shift_override_flag),
+    user_code: cleanText(body.user_code, 100),
+    territory: cleanText(body.territory, 100),
+    voicemail_id: cleanId(body.voicemail_id, 10),
+    agent_call_log_view_override: cleanExactChoice(body.agent_call_log_view_override, ['DISABLED', 'Y', 'N'], 'DISABLED'),
+    callcard_admin: boolFlag(body.callcard_admin),
+    agent_choose_blended: boolFlag(body.agent_choose_blended),
+    realtime_block_user_info: boolFlag(body.realtime_block_user_info),
+    custom_fields_modify: boolFlag(body.custom_fields_modify),
+    force_change_password: ynFlag(body.force_change_password, 'N'),
+    agent_lead_search_override: cleanExactChoice(body.agent_lead_search_override, ['NOT_ACTIVE', 'ENABLED', 'LIVE_CALL_INBOUND', 'LIVE_CALL_INBOUND_AND_MANUAL', 'DISABLED'], 'NOT_ACTIVE'),
+    preset_contact_search: cleanExactChoice(body.preset_contact_search, ['NOT_ACTIVE', 'ENABLED', 'DISABLED'], 'NOT_ACTIVE'),
+    admin_hide_lead_data: boolFlag(body.admin_hide_lead_data),
+    admin_hide_phone_data: cleanExactChoice(body.admin_hide_phone_data, ['0', '1', '2_DIGITS', '3_DIGITS', '4_DIGITS'], '0'),
+    agentcall_email: boolFlag(body.agentcall_email),
+    agentcall_chat: boolFlag(body.agentcall_chat),
+    max_inbound_calls: cleanInt(body.max_inbound_calls, 0, 0, 65000),
+    wrapup_seconds_override: cleanInt(body.wrapup_seconds_override, -1, -1, 65000),
+    selected_language: cleanText(body.selected_language, 100) || 'default English',
+    user_choose_language: boolFlag(body.user_choose_language),
+    ignore_group_on_search: boolFlag(body.ignore_group_on_search),
+    api_list_restrict: boolFlag(body.api_list_restrict),
+    api_allowed_functions: cleanText(body.api_allowed_functions, 1000) || ' ALL_FUNCTIONS ',
+    lead_filter_id: cleanId(body.lead_filter_id, 20) || 'NONE',
+    admin_cf_show_hidden: boolFlag(body.admin_cf_show_hidden),
+    user_hide_realtime: boolFlag(body.user_hide_realtime),
+    user_nickname: cleanText(body.user_nickname, 50),
+    user_new_lead_limit: cleanInt(body.user_new_lead_limit, -1, -1, 65000),
+    api_only_user: boolFlag(body.api_only_user),
+    ignore_ip_list: boolFlag(body.ignore_ip_list),
+    ready_max_logout: cleanInt(body.ready_max_logout, -1, -1, 9999999),
+    export_gdpr_leads: cleanExactChoice(body.export_gdpr_leads, ['0', '1', '2'], '0'),
+    pause_code_approval: boolFlag(body.pause_code_approval),
+    max_hopper_calls: cleanInt(body.max_hopper_calls, 0, 0, 65000),
+    max_hopper_calls_hour: cleanInt(body.max_hopper_calls_hour, 0, 0, 65000),
+    mute_recordings: cleanExactChoice(body.mute_recordings, ['DISABLED', 'Y', 'N'], 'DISABLED'),
+    hide_call_log_info: cleanExactChoice(body.hide_call_log_info, HIDE_CALL_LOG_OPTIONS, 'DISABLED'),
+    next_dial_my_callbacks: cleanExactChoice(body.next_dial_my_callbacks, ['NOT_ACTIVE', 'DISABLED', 'ENABLED'], 'NOT_ACTIVE'),
+    user_admin_redirect_url: cleanText(body.user_admin_redirect_url, 12000),
+    max_inbound_filter_enabled: boolFlag(body.max_inbound_filter_enabled),
+    max_inbound_filter_statuses: cleanText(body.max_inbound_filter_statuses, 12000),
+    max_inbound_filter_ingroups: scopedGroupListText(body.max_inbound_filter_ingroups, currentUser?.permissions?.allowedQueueGroups),
+    max_inbound_filter_min_sec: cleanInt(body.max_inbound_filter_min_sec, -1, -1, 65000),
+    status_group_id: cleanId(body.status_group_id, 20),
+    mobile_number: cleanText(body.mobile_number, 20),
+    two_factor_override: cleanExactChoice(body.two_factor_override, ['NOT_ACTIVE', 'ENABLED', 'DISABLED'], 'NOT_ACTIVE'),
+    manual_dial_filter: codeText(body.manual_dial_filter, 50, 'DISABLED'),
+    user_location: cleanText(body.user_location, 100),
+    download_invalid_files: boolFlag(body.download_invalid_files),
+    user_group_two: cleanId(body.user_group_two, 20),
+    inbound_credits: cleanInt(body.inbound_credits, -1, -1, 9999999),
+    hci_enabled: cleanInt(body.hci_enabled, 0, 0, 6),
+    manual_dial_lead_id: cleanExactChoice(body.manual_dial_lead_id, ['Y', 'N', 'ONLY', 'DISABLED'], 'DISABLED'),
+    qc_enabled: boolFlag(body.qc_enabled),
+    qc_user_level: cleanInt(body.qc_user_level, 1, 1, 9),
+    qc_pass: boolFlag(body.qc_pass),
+    qc_finish: boolFlag(body.qc_finish),
+    qc_commit: boolFlag(body.qc_commit),
+    add_timeclock_log: boolFlag(body.add_timeclock_log),
+    modify_timeclock_log: boolFlag(body.modify_timeclock_log),
+    delete_timeclock_log: boolFlag(body.delete_timeclock_log),
+    custom_one: cleanText(body.custom_one, 100),
+    custom_two: cleanText(body.custom_two, 100),
+    custom_three: cleanText(body.custom_three, 100),
+    custom_four: cleanText(body.custom_four, 100),
+    custom_five: cleanText(body.custom_five, 100),
   };
 }
 
@@ -2435,132 +2697,37 @@ async function saveUser(req, res, mode) {
   if (!id) return badRequest(res, 'invalid_user');
   const payload = userPayload(req.body || {}, req.genxUser);
   if (mode === 'create' && !payload.pass) return badRequest(res, 'password_required');
+  if (mode !== 'create' && !payload.pass) delete payload.pass;
+  if (payload.pass) payload.pass_hash = '';
+  if (mode !== 'create' && !req.genxUser?.permissions?.allowedQueueGroups?.all) {
+    const [existingUser] = await rows(
+      'SELECT closer_campaigns, max_inbound_filter_ingroups FROM vicidial_users WHERE user = ?',
+      [id],
+      [],
+    );
+    if (existingUser) {
+      const queueScope = req.genxUser?.permissions?.allowedQueueGroups;
+      payload.closer_campaigns = mergeScopedGroupList(req.body?.closer_campaigns, existingUser.closer_campaigns, queueScope);
+      payload.max_inbound_filter_ingroups = mergeScopedGroupList(req.body?.max_inbound_filter_ingroups, existingUser.max_inbound_filter_ingroups, queueScope);
+    }
+  }
+  const { assignments, values } = dynamicAssignments(payload);
 
   try {
     if (mode === 'create') {
       await execute(
         `INSERT INTO vicidial_users
          SET user = ?,
-             pass = ?,
-             full_name = ?,
-             user_level = ?,
-             user_group = ?,
-             phone_login = ?,
-             phone_pass = '',
-             pass_hash = '',
-             active = ?,
-             email = ?,
-             campaign_detail = ?,
-             view_reports = ?,
-             export_reports = ?,
-             modify_campaigns = ?,
-             modify_lists = ?,
-             modify_users = ?,
-             modify_ingroups = ?,
-             modify_inbound_dids = ?,
-             modify_usergroups = ?,
-             modify_scripts = ?,
-             modify_filters = ?,
-             modify_call_times = ?,
-             modify_phones = ?,
-             modify_servers = ?,
-             modify_carriers = ?,
-             modify_statuses = ?,
-             access_recordings = ?,
-             alter_admin_interface_options = ?,
-             modify_settings_containers = ?`,
-        [
-          id,
-          payload.pass,
-          payload.full_name,
-          payload.user_level,
-          payload.user_group,
-          payload.phone_login,
-          payload.active,
-          payload.email,
-          payload.campaign_detail,
-          payload.view_reports,
-          payload.export_reports,
-          payload.modify_campaigns,
-          payload.modify_lists,
-          payload.modify_users,
-          payload.modify_ingroups,
-          payload.modify_inbound_dids,
-          payload.modify_usergroups,
-          payload.modify_scripts,
-          payload.modify_filters,
-          payload.modify_call_times,
-          payload.modify_phones,
-          payload.modify_servers,
-          payload.modify_carriers,
-          payload.modify_statuses,
-          payload.access_recordings,
-          payload.alter_admin_interface_options,
-          payload.modify_settings_containers,
-        ],
+             ${assignments}`,
+        [id, ...values],
       );
       await adminLog(req, 'USERS', 'ADD', id, 'GENX ADD USER', 'INSERT INTO vicidial_users', payload.full_name);
     } else {
-      const passwordSql = payload.pass ? 'pass = ?, pass_hash = ?,' : '';
-      const passwordValues = payload.pass ? [payload.pass, ''] : [];
       const result = await execute(
         `UPDATE vicidial_users
-         SET ${passwordSql}
-             full_name = ?,
-             user_level = ?,
-             user_group = ?,
-             phone_login = ?,
-             active = ?,
-             email = ?,
-             campaign_detail = ?,
-             view_reports = ?,
-             export_reports = ?,
-             modify_campaigns = ?,
-             modify_lists = ?,
-             modify_users = ?,
-             modify_ingroups = ?,
-             modify_inbound_dids = ?,
-             modify_usergroups = ?,
-             modify_scripts = ?,
-             modify_filters = ?,
-             modify_call_times = ?,
-             modify_phones = ?,
-             modify_servers = ?,
-             modify_carriers = ?,
-             modify_statuses = ?,
-             access_recordings = ?,
-             alter_admin_interface_options = ?,
-             modify_settings_containers = ?
+         SET ${assignments}
          WHERE user = ?`,
-        [
-          ...passwordValues,
-          payload.full_name,
-          payload.user_level,
-          payload.user_group,
-          payload.phone_login,
-          payload.active,
-          payload.email,
-          payload.campaign_detail,
-          payload.view_reports,
-          payload.export_reports,
-          payload.modify_campaigns,
-          payload.modify_lists,
-          payload.modify_users,
-          payload.modify_ingroups,
-          payload.modify_inbound_dids,
-          payload.modify_usergroups,
-          payload.modify_scripts,
-          payload.modify_filters,
-          payload.modify_call_times,
-          payload.modify_phones,
-          payload.modify_servers,
-          payload.modify_carriers,
-          payload.modify_statuses,
-          payload.access_recordings,
-          payload.alter_admin_interface_options,
-          payload.modify_settings_containers,
-          id,
-        ],
+        [...values, id],
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'user_not_found' });
       await adminLog(req, 'USERS', 'MODIFY', id, 'GENX MODIFY USER', 'UPDATE vicidial_users', payload.full_name);
