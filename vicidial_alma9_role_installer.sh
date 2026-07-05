@@ -410,9 +410,10 @@ PY
 generate_password_25() {
     local password=""
     while [ "${#password}" -lt 25 ]; do
-        password=$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-25)
+        password="$(od -An -N32 -tx1 /dev/urandom)"
+        password="${password//[[:space:]]/}"
     done
-    printf '%s' "$password"
+    printf '%s' "${password:0:25}"
 }
 
 secure_vicidial_default_passwords() {
