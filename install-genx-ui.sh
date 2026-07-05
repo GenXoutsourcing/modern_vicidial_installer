@@ -101,6 +101,7 @@ tar --exclude node_modules --exclude dist -C "$APP_SRC" -cf - . | tar -C "$relea
 cd "$release"
 npm install
 GENX_UI_BASE_PATH="$BASE_PATH" npm run build
+npm prune --omit=dev
 
 ln -sfn "$release" "$APP_ROOT/current"
 chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
