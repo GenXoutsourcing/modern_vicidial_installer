@@ -197,7 +197,7 @@ function ActivityChart({ data, rangeLabel }) {
         </div>
         <BarChart3 size={22} aria-hidden="true" />
       </div>
-      <div className="bar-chart" aria-label="Calls by hour">
+      <div className="bar-chart" style={{ '--bar-count': Math.max(data.length, 1) }} aria-label="Calls by range">
         {data.map((item, index) => {
           const label = item.label ?? String(item.hour ?? index);
           const showLabel = data.length <= 12 || hourLabels.has(label) || index === data.length - 1;

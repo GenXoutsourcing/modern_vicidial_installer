@@ -419,7 +419,7 @@ h2 {
 
 .bar-chart {
   display: grid;
-  grid-template-columns: repeat(24, minmax(10px, 1fr));
+  grid-template-columns: repeat(var(--bar-count), minmax(8px, 1fr));
   align-items: end;
   gap: 7px;
   min-height: 240px;
