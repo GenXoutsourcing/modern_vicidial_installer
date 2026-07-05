@@ -76,6 +76,18 @@ const DEAD_STOP_RECORDING_OPTIONS = ['DISABLED', 'ALL_CALLS', 'OUTBOUND_ONLY', '
 const ADMIN_COLOR_OPTIONS = ['WHITE', 'BLACK', 'BLUE', 'RED', 'YELLOW', 'GREEN', 'PURPLE', 'ORANGE'];
 const SCRIPT_COLOR_OPTIONS = ['white', 'black', 'blue', 'red', 'yellow', 'green', 'purple', 'orange'];
 const GMT_OPTIONS = ['-12.00', '-11.00', '-10.00', '-9.00', '-8.00', '-7.00', '-6.00', '-5.00', '-4.00', '-3.00', '-2.00', '-1.00', '0.00', '1.00', '2.00', '3.00', '4.00', '5.00', '6.00', '7.00', '8.00', '9.00', '10.00', '11.00', '12.00'];
+const ENABLED_DISABLED_OPTIONS = ['ENABLED', 'DISABLED'];
+const TRANSFER_PRESET_OPTIONS = ['N', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5'];
+const QUICK_TRANSFER_OPTIONS = ['N', 'IN_GROUP', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'LOCKED_IN_GROUP', 'LOCKED_PRESET_1', 'LOCKED_PRESET_2', 'LOCKED_PRESET_3', 'LOCKED_PRESET_4', 'LOCKED_PRESET_5'];
+const TRANSFER_NO_DISPO_OPTIONS = ['DISABLED', 'EXTERNAL_ONLY', 'LOCAL_ONLY', 'LEAVE3WAY_ONLY', 'LOCAL_AND_EXTERNAL', 'LOCAL_AND_LEAVE3WAY', 'LEAVE3WAY_AND_EXTERNAL', 'LOCAL_AND_EXTERNAL_AND_LEAVE3WAY'];
+const CUSTOM_3WAY_OPTIONS = ['DISABLED', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'FIELD_address3', 'FIELD_province', 'FIELD_security_phrase', 'FIELD_vendor_lead_code', 'FIELD_email', 'FIELD_owner', 'PARK_PRESET_1', 'PARK_PRESET_2', 'PARK_PRESET_3', 'PARK_PRESET_4', 'PARK_PRESET_5', 'PARK_FIELD_address3', 'PARK_FIELD_province', 'PARK_FIELD_security_phrase', 'PARK_FIELD_vendor_lead_code', 'PARK_FIELD_email', 'PARK_FIELD_owner', 'VIEW_PRESET', 'VIEW_CONTACTS'];
+const AGENT_LEAD_SEARCH_METHOD_OPTIONS = ['SYSTEM', 'CAMPAIGNLISTS', 'CAMPLISTS_ALL', 'LIST', 'USER_CAMPAIGNLISTS', 'USER_CAMPLISTS_ALL', 'USER_LIST', 'GROUP_SYSTEM', 'GROUP_CAMPAIGNLISTS', 'GROUP_CAMPLISTS_ALL', 'GROUP_LIST', 'TERRITORY_SYSTEM', 'TERRITORY_CAMPAIGNLISTS', 'TERRITORY_CAMPLISTS_ALL', 'TERRITORY_LIST'];
+const AGENT_OWNER_ONLY_OPTIONS = ['NONE', 'USER', 'TERRITORY', 'USER_GROUP', 'USER_BLANK', 'TERRITORY_BLANK', 'USER_GROUP_BLANK'];
+const STATUS_DISPLAY_FIELD_OPTIONS = ['NAME', 'CALLID', 'LEADID', 'LISTID', 'CALLID_LEADID', 'CALLID_LISTID', 'CALLID_LEADID_LISTID', 'NAME_CALLID', 'NAME_CALLID_LEADID', 'NAME_CALLID_LISTID', 'NAME_CALLID_LEADID_LISTID', '---NONE---'];
+const AGENT_SCREEN_TIME_OPTIONS = ['DISABLED', 'ENABLED_BASIC', 'ENABLED_FULL', 'ENABLED_BILL_BREAK_LUNCH_COACH', 'ENABLED_BASIC_RANGE', 'ENABLED_FULL_RANGE', 'ENABLED_EXTENDED_RANGE', 'ENABLED_BILL_BREAK_LUNCH_COACH_RANGE'];
+const MANUAL_DIAL_FILTER_OPTIONS = ['NONE', 'DNC_ONLY', 'CAMPDNC_ONLY', 'INTERNALDNC_ONLY', 'DNC_AND_CAMPDNC', 'CAMPLISTS_ONLY', 'CAMPLISTS_ALL', 'SYSTEM', 'DNC_AND_CAMPLISTS', 'CAMPDNC_ONLY_AND_CAMPLISTS', 'INTERNALDNC_ONLY_AND_CAMPLISTS', 'DNC_AND_CAMPDNC_AND_CAMPLISTS', 'DNC_AND_CAMPLISTS_ALL', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL', 'DNC_AND_SYSTEM', 'CAMPDNC_ONLY_AND_SYSTEM', 'INTERNALDNC_ONLY_AND_SYSTEM', 'DNC_AND_CAMPDNC_AND_SYSTEM', 'NONE_WITH_ALT', 'DNC_ONLY_WITH_ALT', 'CAMPDNC_ONLY_WITH_ALT', 'INTERNALDNC_ONLY_WITH_ALT', 'DNC_AND_CAMPDNC_WITH_ALT', 'CAMPLISTS_ONLY_WITH_ALT', 'CAMPLISTS_ALL_WITH_ALT', 'SYSTEM_WITH_ALT', 'DNC_AND_CAMPLISTS_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_SYSTEM_WITH_ALT', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT', 'NONE_WITH_ALT_ADDR3', 'DNC_ONLY_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3', 'CAMPLISTS_ONLY_WITH_ALT_ADDR3', 'CAMPLISTS_ALL_WITH_ALT_ADDR3', 'SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CALLBACK', 'DNC_AND_CALLBACK', 'CAMPDNC_ONLY_AND_CALLBACK', 'INTERNALDNC_ONLY_AND_CALLBACK', 'DNC_AND_CAMPDNC_AND_CALLBACK', 'NONE_WITH_ALT_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_AND_CALLBACK', 'NONE_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3_AND_CALLBACK'];
+const MANUAL_SEARCH_FILTER_OPTIONS = ['NONE', 'CAMPLISTS_ONLY', 'CAMPLISTS_ALL', 'NONE_WITH_ALT', 'CAMPLISTS_ONLY_WITH_ALT', 'CAMPLISTS_ALL_WITH_ALT', 'NONE_WITH_ALT_ADDR3', 'CAMPLISTS_ONLY_WITH_ALT_ADDR3', 'CAMPLISTS_ALL_WITH_ALT_ADDR3'];
+const QUEUE_FIELD_OPTIONS = ['DISABLED', 'lead_id', 'entry_date', 'status', 'user', 'vendor_lead_code', 'source_id', 'list_id', 'gmt_offset_now', 'called_since_last_reset', 'phone_code', 'phone_number', 'title', 'first_name', 'middle_initial', 'last_name', 'address1', 'address2', 'address3', 'city', 'state', 'province', 'postal_code', 'country_code', 'gender', 'date_of_birth', 'alt_phone', 'email', 'security_phrase', 'comments', 'called_count', 'last_local_call_time', 'rank', 'owner', 'entry_list_id'];
 const LEAD_FIELD_OPTIONS = ['DISABLED', 'vendor_lead_code', 'source_id', 'list_id', 'phone_code', 'phone_number', 'title', 'first_name', 'middle_initial', 'last_name', 'address1', 'address2', 'address3', 'city', 'state', 'province', 'postal_code', 'country_code', 'gender', 'alt_phone', 'email', 'security_phrase', 'comments', 'rank', 'owner', 'entry_list_id'];
 const AUTO_HOPPER_MULTI_OPTIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9', '1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '2.0', '2.2', '2.4', '2.6', '2.8', '3.0', '3.5', '4.0'];
 
@@ -810,6 +822,7 @@ async function adminData(user) {
     callMenus,
     shifts,
     phoneCodes,
+    cidGroups,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -858,6 +871,7 @@ async function adminData(user) {
               c.available_only_tally_threshold_agents,
               c.dial_level_threshold,
               c.dial_level_threshold_agents,
+              c.incall_tally_threshold_seconds,
               c.adaptive_dropped_percentage,
               c.adaptive_maximum_level,
               c.adaptive_intensity,
@@ -875,8 +889,10 @@ async function adminData(user) {
               c.hopper_vlc_dup_check,
               c.list_order_mix,
               c.campaign_allow_inbound,
+              c.closer_campaigns,
               c.manual_dial_list_id,
               c.default_xfer_group,
+              c.xfer_groups,
               c.queue_priority,
               c.drop_inbound_group,
               c.inbound_queue_no_dial,
@@ -929,6 +945,7 @@ async function adminData(user) {
               c.callback_active_limit_override,
               c.show_previous_callback,
               c.clear_script,
+              c.campaign_stats_refresh,
               c.manual_dial_search_filter,
               c.status_display_ingroup,
               c.manual_dial_timeout,
@@ -959,6 +976,144 @@ async function adminData(user) {
               c.daily_phone_number_call_limit,
               c.call_log_days,
               c.hangup_again_link,
+              c.adaptive_latest_server_time,
+              c.adaptive_percentmax_percentage,
+              c.drop_rate_group,
+              c.call_count_limit,
+              c.call_count_target,
+              c.call_count_limit_restrict,
+              c.drop_lockout_time,
+              c.auto_alt_threshold,
+              c.alt_number_dialing,
+              c.timer_alt_seconds,
+              c.inbound_no_agents_no_dial_container,
+              c.inbound_no_agents_no_dial_threshold,
+              c.dial_timeout_lead_container,
+              c.cid_group_id,
+              c.cid_group_id_two,
+              c.safe_harbor_menu_id,
+              c.agent_hangup_ig_override,
+              c.campaign_vdad_exten,
+              c.user_group_script,
+              c.script_tab_frame_size,
+              c.script_tab_height,
+              c.clear_form,
+              c.am_message_exten,
+              c.vmm_daily_limit,
+              c.waitforsilence_options,
+              c.manual_vm_status_updates,
+              c.am_message_wildcards,
+              c.amd_send_to_vmx,
+              c.amd_agent_route_options,
+              c.amd_status_map,
+              c.cpd_amd_action,
+              c.cpd_unknown_action,
+              c.amd_inbound_group,
+              c.amd_callmenu,
+              c.leave_vm_message_group_id,
+              c.leave_vm_no_dispo,
+              c.xferconf_a_dtmf,
+              c.xferconf_a_number,
+              c.xferconf_b_dtmf,
+              c.xferconf_b_number,
+              c.xferconf_c_number,
+              c.xferconf_d_number,
+              c.xferconf_e_number,
+              c.hide_xfer_number_to_dial,
+              c.prepopulate_transfer_preset,
+              c.quick_transfer_button,
+              c.transfer_no_dispo,
+              c.custom_3way_button_transfer,
+              c.three_way_volume_buttons,
+              c.customer_3way_hangup_logging,
+              c.customer_3way_hangup_seconds,
+              c.customer_3way_hangup_action,
+              c.three_way_record_stop,
+              c.three_way_record_stop_exception,
+              c.leave_3way_start_recording,
+              c.leave_3way_start_recording_exception,
+              c.leave_3way_stop_recording,
+              c.hangup_xfer_record_start,
+              c.scheduled_callbacks_timezones_container,
+              c.callback_useronly_move_minutes,
+              c.disable_dispo_screen,
+              c.disable_dispo_status,
+              c.script_top_dispo,
+              c.wrapup_after_hotkey,
+              c.dead_trigger_action,
+              c.dead_trigger_seconds,
+              c.dead_trigger_repeat,
+              c.dead_trigger_filename,
+              c.dead_trigger_url,
+              c.dead_max,
+              c.dead_max_dispo,
+              c.dead_to_dispo,
+              c.dispo_max,
+              c.dispo_max_dispo,
+              c.pause_max,
+              c.pause_max_dispo,
+              c.pause_max_exceptions,
+              c.pause_max_url,
+              c.in_man_dial_next_ready_seconds,
+              c.in_man_dial_next_ready_seconds_override,
+              c.customer_gone_seconds,
+              c.agent_lead_search_method,
+              c.agent_search_ingroup_list,
+              c.agent_dial_owner_only,
+              c.agent_display_dialable_leads,
+              c.screen_labels,
+              c.allow_required_fields,
+              c.status_display_fields,
+              c.state_descriptions,
+              c.agent_screen_time_display,
+              c.calls_inqueue_count_one,
+              c.calls_inqueue_count_two,
+              c.view_calls_in_queue,
+              c.view_calls_in_queue_launch,
+              c.calls_waiting_vl_one,
+              c.calls_waiting_vl_two,
+              c.grab_calls_in_queue,
+              c.call_requeue_button,
+              c.auto_pause_precall,
+              c.auto_resume_precall,
+              c.auto_pause_precall_code,
+              c.realtime_agent_time_stats,
+              c.disable_alter_custdata,
+              c.disable_alter_custphone,
+              c.no_hopper_dialing,
+              c.manual_dial_override,
+              c.manual_dial_override_field,
+              c.manual_dial_search_checkbox,
+              c.manual_dial_lead_id,
+              c.api_manual_dial,
+              c.manual_dial_cid,
+              c.manual_minimum_attempt_seconds,
+              c.manual_minimum_answer_seconds,
+              c.post_phone_time_diff_alert,
+              c.in_group_dial,
+              c.in_group_dial_select,
+              c.force_per_call_notes,
+              c.comments_all_tabs,
+              c.comments_dispo_screen,
+              c.comments_callback_screen,
+              c.qc_comment_history,
+              c.max_inbound_calls_outcome,
+              c.agent_allow_group_alias,
+              c.crm_popup_login,
+              c.crm_login_address,
+              c.extension_appended_cidname,
+              c.blind_monitor_warning,
+              c.blind_monitor_message,
+              c.blind_monitor_filename,
+              c.agent_xfer_validation,
+              c.ig_xfer_list_sort,
+              c.use_other_campaign_dnc,
+              c.agent_display_fields,
+              c.custom_one,
+              c.custom_two,
+              c.custom_three,
+              c.custom_four,
+              c.custom_five,
               c.campaign_changedate,
               COALESCE(list_counts.list_count, 0) AS list_count,
               COALESCE(list_counts.active_list_count, 0) AS active_list_count,
@@ -1485,6 +1640,15 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT cid_group_id,
+              cid_group_notes
+       FROM vicidial_cid_groups
+       ORDER BY cid_group_id ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -1581,6 +1745,7 @@ async function adminData(user) {
       callMenus,
       shifts,
       phoneCodes,
+      cidGroups,
       systemSettings: {
         autoDialLimit: Number(systemSettings.auto_dial_limit || 8),
       },
@@ -1624,6 +1789,11 @@ function campaignPayload(body, currentUser) {
     const next = codeText(value, max, fallback);
     return allowed.includes(next) ? next : fallback;
   };
+  const groupListText = (value) => {
+    const values = Array.isArray(value) ? value : String(value || '').split(/\s+/);
+    const cleanValues = [...new Set(values.map((item) => cleanId(item, 20)).filter((item) => item && item !== '-'))];
+    return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
+  };
   const payload = {
     campaign_name: cleanText(body.campaign_name, 40) || 'New Campaign',
     campaign_description: cleanText(body.campaign_description, 255),
@@ -1639,7 +1809,7 @@ function campaignPayload(body, currentUser) {
 
   if (!body?._detailMode || !canUseCampaignDetail(currentUser)) return payload;
 
-  return {
+  const detailPayload = {
     ...payload,
     allow_closers: ynFlag(body.allow_closers, 'N'),
     next_agent_call: exactChoice(body.next_agent_call, NEXT_AGENT_CALL_OPTIONS, 'longest_wait_time'),
@@ -1672,6 +1842,7 @@ function campaignPayload(body, currentUser) {
     available_only_tally_threshold_agents: cleanInt(body.available_only_tally_threshold_agents, 0, 0, 50),
     dial_level_threshold: cleanChoice(body.dial_level_threshold, TALLY_THRESHOLD_OPTIONS, 'DISABLED'),
     dial_level_threshold_agents: cleanInt(body.dial_level_threshold_agents, 0, 0, 50),
+    incall_tally_threshold_seconds: cleanInt(body.incall_tally_threshold_seconds, 0, 0, 9999),
     adaptive_dropped_percentage: decimalText(body.adaptive_dropped_percentage, '3', 4),
     adaptive_maximum_level: decimalText(body.adaptive_maximum_level, '3.0'),
     adaptive_intensity: cleanInt(body.adaptive_intensity, 0, -40, 40),
@@ -1687,8 +1858,10 @@ function campaignPayload(body, currentUser) {
     auto_trim_hopper: ynFlag(body.auto_trim_hopper, 'Y'),
     hopper_vlc_dup_check: ynFlag(body.hopper_vlc_dup_check, 'N'),
     list_order_mix: codeText(body.list_order_mix, 20, 'DISABLED'),
+    closer_campaigns: groupListText(body.closer_campaigns),
     manual_dial_list_id: cleanDigits(body.manual_dial_list_id, 14) || '998',
     default_xfer_group: codeText(body.default_xfer_group, 20, '---NONE---'),
+    xfer_groups: groupListText(body.xfer_groups),
     queue_priority: cleanInt(body.queue_priority, 50, -99, 99),
     drop_inbound_group: codeText(body.drop_inbound_group, 20, '---NONE---'),
     inbound_queue_no_dial: cleanChoice(body.inbound_queue_no_dial, INBOUND_QUEUE_NO_DIAL_OPTIONS, 'DISABLED'),
@@ -1758,6 +1931,7 @@ function campaignPayload(body, currentUser) {
     mute_recordings: ynFlag(body.mute_recordings, 'N'),
     amd_type: cleanChoice(body.amd_type, ['AMD', 'CPD', 'KHOMP', 'ViciAMD'], 'AMD'),
     transfer_button_launch: cleanChoice(body.transfer_button_launch, TRANSFER_BUTTON_LAUNCH_OPTIONS, 'NONE'),
+    enable_xfer_presets: cleanChoice(body.enable_xfer_presets, ['DISABLED', 'ENABLED', 'STAGING', 'CONTACTS'], 'DISABLED'),
     shared_dial_rank: cleanInt(body.shared_dial_rank, 99, 0, 99),
     call_limit_24hour_method: cleanChoice(body.call_limit_24hour_method, ['DISABLED', 'PHONE_NUMBER', 'LEAD'], 'DISABLED'),
     call_limit_24hour_scope: cleanChoice(body.call_limit_24hour_scope, ['SYSTEM_WIDE', 'CAMPAIGN_LISTS'], 'SYSTEM_WIDE'),
@@ -1770,7 +1944,151 @@ function campaignPayload(body, currentUser) {
     daily_phone_number_call_limit: cleanInt(body.daily_phone_number_call_limit, 0, 0, 255),
     call_log_days: cleanInt(body.call_log_days, 0, 0, 99999),
     hangup_again_link: cleanChoice(body.hangup_again_link, ['ENABLED', 'DISABLED'], 'ENABLED'),
+    adaptive_latest_server_time: cleanDigits(body.adaptive_latest_server_time, 4) || '2100',
+    adaptive_percentmax_percentage: cleanInt(body.adaptive_percentmax_percentage, 50, 5, 95),
+    drop_rate_group: exactChoice(body.drop_rate_group, ['DISABLED', '101', '102', '103', '104', '105', '106', '107', '108', '109', '110'], 'DISABLED', 20),
+    call_count_limit: cleanInt(body.call_count_limit, 0, 0, 65000),
+    call_count_target: cleanInt(body.call_count_target, 3, 0, 65000),
+    call_count_limit_restrict: cleanChoice(body.call_count_limit_restrict, ['DISABLED', 'RESTRICT_ALL'], 'DISABLED'),
+    drop_lockout_time: cleanText(body.drop_lockout_time, 6).replace(/[^0-9]/g, '') || '0',
+    auto_alt_threshold: cleanInt(body.auto_alt_threshold, 0, 0, 255),
+    alt_number_dialing: cleanChoice(body.alt_number_dialing, ['N', 'Y', 'SELECTED', 'SELECTED_TIMER_ALT', 'SELECTED_TIMER_ADDR3', 'UNSELECTED', 'UNSELECTED_TIMER_ALT', 'UNSELECTED_TIMER_ADDR3'], 'N'),
+    timer_alt_seconds: cleanInt(body.timer_alt_seconds, 0, 0, 65000),
+    inbound_no_agents_no_dial_container: codeText(body.inbound_no_agents_no_dial_container, 40, '---DISABLED---'),
+    inbound_no_agents_no_dial_threshold: cleanInt(body.inbound_no_agents_no_dial_threshold, 0, 0, 65000),
+    dial_timeout_lead_container: codeText(body.dial_timeout_lead_container, 40, 'DISABLED'),
+    cid_group_id: codeText(body.cid_group_id, 20, '---DISABLED---'),
+    cid_group_id_two: codeText(body.cid_group_id_two, 20, '---DISABLED---'),
+    safe_harbor_menu_id: cleanId(body.safe_harbor_menu_id, 50),
+    agent_hangup_ig_override: ynFlag(body.agent_hangup_ig_override, 'N'),
+    campaign_vdad_exten: codeText(body.campaign_vdad_exten, 20, '8368'),
+    user_group_script: cleanChoice(body.user_group_script, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    script_tab_frame_size: cleanChoice(body.script_tab_frame_size, ['DEFAULT', 'LEFT_EDGE'], 'DEFAULT'),
+    script_tab_height: cleanInt(body.script_tab_height, 0, 0, 65000),
+    clear_form: cleanChoice(body.clear_form, ['DISABLED', 'ENABLED', 'ACKNOWLEDGE'], 'ACKNOWLEDGE'),
+    am_message_exten: codeText(body.am_message_exten, 100, 'vm-goodbye'),
+    vmm_daily_limit: cleanInt(body.vmm_daily_limit, 0, 0, 255),
+    waitforsilence_options: codeText(body.waitforsilence_options, 25),
+    manual_vm_status_updates: cleanChoice(body.manual_vm_status_updates, ENABLED_DISABLED_OPTIONS, 'ENABLED'),
+    am_message_wildcards: ynFlag(body.am_message_wildcards, 'N'),
+    amd_send_to_vmx: ynFlag(body.amd_send_to_vmx, 'N'),
+    amd_agent_route_options: cleanChoice(body.amd_agent_route_options, ['ENABLED', 'DISABLED', 'PENDING'], 'DISABLED'),
+    amd_status_map: codeText(body.amd_status_map, 40, 'DISABLED'),
+    cpd_amd_action: cleanChoice(body.cpd_amd_action, ['DISABLED', 'DISPO', 'MESSAGE', 'CALLMENU', 'INGROUP'], 'DISABLED'),
+    cpd_unknown_action: cleanChoice(body.cpd_unknown_action, ['DISABLED', 'DISPO', 'MESSAGE', 'CALLMENU', 'INGROUP'], 'DISABLED'),
+    amd_inbound_group: codeText(body.amd_inbound_group, 20),
+    amd_callmenu: codeText(body.amd_callmenu, 50),
+    leave_vm_message_group_id: codeText(body.leave_vm_message_group_id, 40, '---NONE---'),
+    leave_vm_no_dispo: cleanChoice(body.leave_vm_no_dispo, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    xferconf_a_dtmf: cleanText(body.xferconf_a_dtmf, 50),
+    xferconf_a_number: cleanText(body.xferconf_a_number, 50),
+    xferconf_b_dtmf: cleanText(body.xferconf_b_dtmf, 50),
+    xferconf_b_number: cleanText(body.xferconf_b_number, 50),
+    xferconf_c_number: cleanText(body.xferconf_c_number, 50),
+    xferconf_d_number: cleanText(body.xferconf_d_number, 50),
+    xferconf_e_number: cleanText(body.xferconf_e_number, 50),
+    hide_xfer_number_to_dial: cleanChoice(body.hide_xfer_number_to_dial, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    prepopulate_transfer_preset: cleanChoice(body.prepopulate_transfer_preset, TRANSFER_PRESET_OPTIONS, 'N'),
+    quick_transfer_button: cleanChoice(body.quick_transfer_button, QUICK_TRANSFER_OPTIONS, 'N'),
+    transfer_no_dispo: cleanChoice(body.transfer_no_dispo, TRANSFER_NO_DISPO_OPTIONS, 'DISABLED'),
+    custom_3way_button_transfer: cleanChoice(body.custom_3way_button_transfer, CUSTOM_3WAY_OPTIONS, 'DISABLED'),
+    three_way_volume_buttons: cleanChoice(body.three_way_volume_buttons, ENABLED_DISABLED_OPTIONS, 'ENABLED'),
+    customer_3way_hangup_logging: cleanChoice(body.customer_3way_hangup_logging, ENABLED_DISABLED_OPTIONS, 'ENABLED'),
+    customer_3way_hangup_seconds: cleanInt(body.customer_3way_hangup_seconds, 5, 0, 65000),
+    customer_3way_hangup_action: cleanChoice(body.customer_3way_hangup_action, ['NONE', 'DISPO'], 'NONE'),
+    three_way_record_stop: ynFlag(body.three_way_record_stop, 'N'),
+    three_way_record_stop_exception: codeText(body.three_way_record_stop_exception, 40, 'DISABLED'),
+    leave_3way_start_recording: cleanChoice(body.leave_3way_start_recording, ['DISABLED', 'ALL_CALLS', 'ALL_BUT_EXCEPTIONS', 'ONLY_EXCEPTIONS'], 'DISABLED'),
+    leave_3way_start_recording_exception: codeText(body.leave_3way_start_recording_exception, 40, 'DISABLED'),
+    leave_3way_stop_recording: cleanChoice(body.leave_3way_stop_recording, ['DISABLED', 'ALL_CALLS'], 'DISABLED'),
+    hangup_xfer_record_start: ynFlag(body.hangup_xfer_record_start, 'N'),
+    scheduled_callbacks_timezones_container: codeText(body.scheduled_callbacks_timezones_container, 40, 'DISABLED'),
+    callback_useronly_move_minutes: cleanInt(body.callback_useronly_move_minutes, 0, 0, 99999),
+    disable_dispo_screen: cleanChoice(body.disable_dispo_screen, ['DISPO_ENABLED', 'DISPO_DISABLED', 'DISPO_SELECT_DISABLED'], 'DISPO_ENABLED'),
+    disable_dispo_status: cleanId(body.disable_dispo_status, 6),
+    script_top_dispo: ynFlag(body.script_top_dispo, 'N'),
+    wrapup_after_hotkey: cleanChoice(body.wrapup_after_hotkey, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    dead_trigger_action: cleanChoice(body.dead_trigger_action, ['DISABLED', 'AUDIO', 'URL', 'AUDIO_AND_URL'], 'DISABLED'),
+    dead_trigger_seconds: cleanInt(body.dead_trigger_seconds, 0, 0, 65000),
+    dead_trigger_repeat: cleanChoice(body.dead_trigger_repeat, ['NO', 'REPEAT_ALL', 'REPEAT_AUDIO', 'REPEAT_URL'], 'NO'),
+    dead_trigger_filename: cleanText(body.dead_trigger_filename, 2000),
+    dead_trigger_url: cleanText(body.dead_trigger_url, 2000),
+    dead_max: cleanInt(body.dead_max, 0, 0, 65000),
+    dead_max_dispo: cleanId(body.dead_max_dispo, 6) || 'DCMX',
+    dead_to_dispo: cleanChoice(body.dead_to_dispo, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    dispo_max: cleanInt(body.dispo_max, 0, 0, 65000),
+    dispo_max_dispo: cleanId(body.dispo_max_dispo, 6) || 'DISMX',
+    pause_max: cleanInt(body.pause_max, 0, 0, 65000),
+    pause_max_dispo: cleanId(body.pause_max_dispo, 6) || 'PAUSMX',
+    pause_max_exceptions: codeText(body.pause_max_exceptions, 40),
+    pause_max_url: cleanText(body.pause_max_url, 2000),
+    in_man_dial_next_ready_seconds: cleanInt(body.in_man_dial_next_ready_seconds, 0, 0, 65000),
+    in_man_dial_next_ready_seconds_override: codeText(body.in_man_dial_next_ready_seconds_override, 40, 'DISABLED'),
+    customer_gone_seconds: cleanInt(body.customer_gone_seconds, 30, 0, 65000),
+    agent_lead_search_method: cleanChoice(body.agent_lead_search_method, AGENT_LEAD_SEARCH_METHOD_OPTIONS, 'CAMPLISTS_ALL'),
+    agent_search_ingroup_list: cleanChoice(body.agent_search_ingroup_list, ['DISABLED', 'ENABLED', 'ENABLED_OVERRIDE'], 'DISABLED'),
+    agent_dial_owner_only: cleanChoice(body.agent_dial_owner_only, AGENT_OWNER_ONLY_OPTIONS, 'NONE'),
+    agent_display_dialable_leads: ynFlag(body.agent_display_dialable_leads, 'N'),
+    screen_labels: codeText(body.screen_labels, 20, '--SYSTEM-SETTINGS--'),
+    allow_required_fields: ynFlag(body.allow_required_fields, 'N'),
+    status_display_fields: cleanChoice(body.status_display_fields, STATUS_DISPLAY_FIELD_OPTIONS, 'CALLID'),
+    state_descriptions: codeText(body.state_descriptions, 40, '---DISABLED---'),
+    agent_screen_time_display: cleanChoice(body.agent_screen_time_display, AGENT_SCREEN_TIME_OPTIONS, 'DISABLED', 40),
+    calls_inqueue_count_one: codeText(body.calls_inqueue_count_one, 40, 'DISABLED'),
+    calls_inqueue_count_two: codeText(body.calls_inqueue_count_two, 40, 'DISABLED'),
+    view_calls_in_queue: cleanChoice(body.view_calls_in_queue, ['NONE', 'ALL', '1', '2', '3', '4', '5'], 'NONE'),
+    view_calls_in_queue_launch: cleanChoice(body.view_calls_in_queue_launch, ['AUTO', 'MANUAL'], 'MANUAL'),
+    calls_waiting_vl_one: cleanChoice(body.calls_waiting_vl_one, QUEUE_FIELD_OPTIONS, 'DISABLED'),
+    calls_waiting_vl_two: cleanChoice(body.calls_waiting_vl_two, QUEUE_FIELD_OPTIONS, 'DISABLED'),
+    grab_calls_in_queue: ynFlag(body.grab_calls_in_queue, 'N'),
+    call_requeue_button: ynFlag(body.call_requeue_button, 'N'),
+    auto_pause_precall: ynFlag(body.auto_pause_precall, 'N'),
+    auto_resume_precall: ynFlag(body.auto_resume_precall, 'N'),
+    auto_pause_precall_code: cleanId(body.auto_pause_precall_code, 6) || 'PRECAL',
+    campaign_stats_refresh: ynFlag(body.campaign_stats_refresh, 'N'),
+    realtime_agent_time_stats: cleanChoice(body.realtime_agent_time_stats, ['DISABLED', 'WAIT_CUST_ACW', 'WAIT_CUST_ACW_PAUSE', 'CALLS_WAIT_CUST_ACW_PAUSE'], 'CALLS_WAIT_CUST_ACW_PAUSE'),
+    disable_alter_custdata: ynFlag(body.disable_alter_custdata, 'N'),
+    disable_alter_custphone: cleanChoice(body.disable_alter_custphone, ['Y', 'N', 'HIDE'], 'Y'),
+    no_hopper_dialing: ynFlag(body.no_hopper_dialing, 'N'),
+    manual_dial_override: cleanChoice(body.manual_dial_override, ['NONE', 'ALLOW_ALL', 'DISABLE_ALL'], 'NONE'),
+    manual_dial_override_field: cleanChoice(body.manual_dial_override_field, ENABLED_DISABLED_OPTIONS, 'ENABLED'),
+    manual_dial_search_checkbox: cleanChoice(body.manual_dial_search_checkbox, ['SELECTED', 'SELECTED_RESET', 'UNSELECTED', 'UNSELECTED_RESET', 'SELECTED_LOCK', 'UNSELECTED_LOCK'], 'SELECTED'),
+    manual_dial_lead_id: cleanChoice(body.manual_dial_lead_id, ['Y', 'N', 'ONLY'], 'N'),
+    api_manual_dial: cleanChoice(body.api_manual_dial, ['STANDARD', 'QUEUE', 'QUEUE_AND_AUTOCALL'], 'STANDARD'),
+    manual_dial_cid: cleanChoice(body.manual_dial_cid, ['CAMPAIGN', 'AGENT_PHONE', 'AGENT_PHONE_OVERRIDE'], 'CAMPAIGN'),
+    manual_minimum_attempt_seconds: cleanInt(body.manual_minimum_attempt_seconds, 0, 0, 65000),
+    manual_minimum_answer_seconds: cleanInt(body.manual_minimum_answer_seconds, 0, 0, 65000),
+    post_phone_time_diff_alert: cleanChoice(body.post_phone_time_diff_alert, ['ENABLED', 'OUTSIDE_CALLTIME_ONLY', 'OUTSIDE_CALLTIME_PHONE', 'OUTSIDE_CALLTIME_POSTAL', 'OUTSIDE_CALLTIME_BOTH', 'DISABLED'], 'DISABLED'),
+    in_group_dial: cleanChoice(body.in_group_dial, ['DISABLED', 'MANUAL_DIAL', 'NO_DIAL', 'BOTH'], 'DISABLED'),
+    in_group_dial_select: cleanChoice(body.in_group_dial_select, ['AGENT_SELECTED', 'CAMPAIGN_SELECTED', 'ALL_USER_GROUP'], 'CAMPAIGN_SELECTED'),
+    force_per_call_notes: cleanChoice(body.force_per_call_notes, ['DISABLED', 'ENABLED', '5_CHARACTERS', '15_CHARACTERS', '30_CHARACTERS', '100_CHARACTERS'], 'DISABLED'),
+    comments_all_tabs: cleanChoice(body.comments_all_tabs, ENABLED_DISABLED_OPTIONS, 'DISABLED'),
+    comments_dispo_screen: cleanChoice(body.comments_dispo_screen, ['DISABLED', 'ENABLED', 'REPLACE_CALL_NOTES'], 'DISABLED'),
+    comments_callback_screen: cleanChoice(body.comments_callback_screen, ['DISABLED', 'ENABLED', 'REPLACE_CB_NOTES'], 'DISABLED'),
+    qc_comment_history: cleanChoice(body.qc_comment_history, ['CLICK', 'AUTO_OPEN', 'CLICK_ALLOW_MINIMIZE', 'AUTO_OPEN_ALLOW_MINIMIZE'], 'CLICK'),
+    max_inbound_calls_outcome: cleanChoice(body.max_inbound_calls_outcome, ['DEFAULT', 'ALLOW_AGENTDIRECT', 'ALLOW_MI_PAUSE', 'ALLOW_AGENTDIRECT_AND_MI_PAUSE'], 'DEFAULT'),
+    agent_allow_group_alias: ynFlag(body.agent_allow_group_alias, 'N'),
+    crm_popup_login: ynFlag(body.crm_popup_login, 'N'),
+    crm_login_address: cleanText(body.crm_login_address, 2000),
+    extension_appended_cidname: cleanChoice(body.extension_appended_cidname, ['Y', 'N', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN'], 'N'),
+    blind_monitor_warning: cleanChoice(body.blind_monitor_warning, ['DISABLED', 'ALERT', 'NOTICE', 'AUDIO', 'ALERT_NOTICE', 'ALERT_AUDIO', 'NOTICE_AUDIO', 'ALL'], 'DISABLED'),
+    blind_monitor_message: cleanText(body.blind_monitor_message, 255),
+    blind_monitor_filename: codeText(body.blind_monitor_filename, 100),
+    agent_xfer_validation: ynFlag(body.agent_xfer_validation, 'N'),
+    ig_xfer_list_sort: cleanChoice(body.ig_xfer_list_sort, ['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN'], 'GROUP_ID_UP'),
+    use_other_campaign_dnc: cleanId(body.use_other_campaign_dnc, 8),
+    agent_display_fields: codeText(body.agent_display_fields, 100),
+    custom_one: cleanText(body.custom_one, 12000),
+    custom_two: cleanText(body.custom_two, 12000),
+    custom_three: cleanText(body.custom_three, 12000),
+    custom_four: cleanText(body.custom_four, 12000),
+    custom_five: cleanText(body.custom_five, 12000),
   };
+  if (/ADAPT/.test(detailPayload.dial_method) && cleanInt(body.dial_level_override, 0, 0, 1) < 1) {
+    if (Number(detailPayload.auto_dial_level || 0) < 1) detailPayload.auto_dial_level = '1.0';
+    else delete detailPayload.auto_dial_level;
+  }
+  return detailPayload;
 }
 
 async function dialStatusExistsForCampaign(campaignId, status) {
@@ -1852,6 +2170,46 @@ async function applyCampaignDialStatusChanges(req, campaignId) {
   );
 }
 
+async function applyCampaignRuntimeActions(req, campaignId) {
+  const hopperTrigger = cleanChoice(req.body?.hopper_drop_run_trigger, ['N', 'Y', 'A'], 'N');
+  if (hopperTrigger !== 'N') {
+    await execute(
+      `UPDATE vicidial_campaigns
+       SET hopper_drop_run_trigger = ?,
+           campaign_changedate = NOW()
+       WHERE campaign_id = ?`,
+      [hopperTrigger, campaignId],
+    );
+    await adminLog(
+      req,
+      'CAMPAIGNS',
+      'MODIFY',
+      campaignId,
+      hopperTrigger === 'A' ? 'GENX HOPPER ALL-DROPS-RUN TRIGGER' : 'GENX HOPPER DROP-RUN TRIGGER',
+      'UPDATE vicidial_campaigns SET hopper_drop_run_trigger',
+      hopperTrigger === 'A' ? 'Hopper all-drops-run triggered' : 'Hopper drop-run triggered',
+    );
+  }
+
+  if (ynFlag(req.body?.reset_hopper, 'N') === 'Y') {
+    await execute(
+      `DELETE FROM vicidial_hopper
+       WHERE campaign_id = ?
+         AND status IN ('READY', 'QUEUE', 'DONE', 'RHOLD', 'RQUEUE')`,
+      [campaignId],
+    );
+    await adminLog(
+      req,
+      'CAMPAIGNS',
+      'RESET',
+      campaignId,
+      'GENX RESET CAMPAIGN LEAD HOPPER',
+      'DELETE FROM vicidial_hopper WHERE campaign_id',
+      'Wait 1 minute before dialing next number',
+    );
+  }
+}
+
 async function saveCampaign(req, res, mode) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
   const id = cleanId(mode === 'create' ? req.body?.campaign_id : req.params.id, 8);
@@ -1877,6 +2235,7 @@ async function saveCampaign(req, res, mode) {
       await execute('INSERT IGNORE INTO vicidial_campaign_stats_debug (campaign_id) VALUES (?)', [id]);
       await ensureCampaignVisibleToUserGroup(req.genxUser, id);
       await applyCampaignDialStatusChanges(req, id);
+      await applyCampaignRuntimeActions(req, id);
       await adminLog(req, 'CAMPAIGNS', 'ADD', id, 'GENX ADD CAMPAIGN', 'INSERT INTO vicidial_campaigns', payload.campaign_name);
     } else {
       const result = await execute(
@@ -1888,6 +2247,7 @@ async function saveCampaign(req, res, mode) {
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
       await applyCampaignDialStatusChanges(req, id);
+      await applyCampaignRuntimeActions(req, id);
       await adminLog(
         req,
         'CAMPAIGNS',
