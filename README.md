@@ -62,6 +62,17 @@ chmod +x install-genx-overlay.sh
 
 The overlay installer does **not** change stock VICIDIAL PHP files. It installs separate overlay files under `/var/www/html/agc/ui`, `/var/www/html/vicidial/ui`, and `/var/www/html/agc/viciphone`, then enables them with `.user.ini` `auto_prepend_file` entries.
 
+## Optional: install the standalone GenX UI
+
+After VICIDIAL is installed and the app server can reach the intended VICIDial database, install the separate Node/React GenX UI with:
+
+```bash
+cd /usr/src/modern_vicidial_installer
+sudo ./install-genx-ui.sh
+```
+
+The app runs locally on the server and is exposed through Apache at `/genx/`. It keeps its own service, build output, and access code outside VICIDIAL core files.
+
 ## Included files
 
 This repo contains the main installer and the files it expects to find in the same directory:
@@ -75,6 +86,8 @@ This repo contains the main installer and the files it expects to find in the sa
 - `viciportal-ssl.conf` - Dynamic Portal SSL vhost template used by the WebRTC helper
 - `certbot.sh` - SSL certificate renewal helper used by cron
 - `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
+- `install-genx-ui.sh` - optional standalone GenX Node/React UI installer
+- `genx-ui/` - standalone GenX UI application source
 - `genx-vicidial-overlay/` - agent/admin/report overlay files and hosted VICIphone assets
 - `tools/genx-cluster-smoke.sh` - read-only cluster/app-server readiness check
 
