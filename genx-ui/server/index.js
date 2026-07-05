@@ -1357,6 +1357,39 @@ async function adminData(user) {
               l.list_description,
               l.list_changedate,
               l.list_lastcalldate,
+              l.reset_time,
+              l.agent_script_override,
+              l.campaign_cid_override,
+              l.am_message_exten_override,
+              l.drop_inbound_group_override,
+              l.xferconf_a_number,
+              l.xferconf_b_number,
+              l.xferconf_c_number,
+              l.xferconf_d_number,
+              l.xferconf_e_number,
+              l.web_form_address,
+              l.web_form_address_two,
+              l.web_form_address_three,
+              l.time_zone_setting,
+              l.inventory_report,
+              l.expiration_date,
+              l.na_call_url,
+              l.local_call_time,
+              l.status_group_id,
+              l.user_new_lead_limit,
+              l.inbound_list_script_override,
+              l.default_xfer_group,
+              l.daily_reset_limit,
+              l.auto_active_list_rank,
+              l.inbound_drop_voicemail,
+              l.inbound_after_hours_voicemail,
+              l.qc_scorecard_id,
+              l.qc_statuses_id,
+              l.qc_web_form_address,
+              l.auto_alt_threshold,
+              l.cid_group_id,
+              l.dial_prefix,
+              l.weekday_resets_container,
               l.cache_count,
               l.cache_count_new,
               l.cache_count_dialable_new,
@@ -2752,6 +2785,37 @@ function listPayload(body) {
     list_description: cleanText(body.list_description, 255),
     local_call_time: cleanId(body.local_call_time, 10) || 'campaign',
     expiration_date: expiration,
+    reset_time: cleanText(body.reset_time, 100),
+    agent_script_override: cleanId(body.agent_script_override, 20),
+    inbound_list_script_override: cleanId(body.inbound_list_script_override, 20),
+    campaign_cid_override: cleanDigits(body.campaign_cid_override, 20),
+    am_message_exten_override: codeText(body.am_message_exten_override, 100),
+    drop_inbound_group_override: codeText(body.drop_inbound_group_override, 20, '---NONE---'),
+    default_xfer_group: codeText(body.default_xfer_group, 20, '---NONE---'),
+    xferconf_a_number: cleanText(body.xferconf_a_number, 50),
+    xferconf_b_number: cleanText(body.xferconf_b_number, 50),
+    xferconf_c_number: cleanText(body.xferconf_c_number, 50),
+    xferconf_d_number: cleanText(body.xferconf_d_number, 50),
+    xferconf_e_number: cleanText(body.xferconf_e_number, 50),
+    web_form_address: cleanText(body.web_form_address, 12000),
+    web_form_address_two: cleanText(body.web_form_address_two, 12000),
+    web_form_address_three: cleanText(body.web_form_address_three, 12000),
+    time_zone_setting: cleanExactChoice(body.time_zone_setting, ['COUNTRY_AND_AREA_CODE', 'POSTAL_CODE', 'NANPA_PREFIX', 'OWNER_TIME_ZONE_CODE'], 'COUNTRY_AND_AREA_CODE'),
+    inventory_report: ynFlag(body.inventory_report, 'Y'),
+    na_call_url: cleanText(body.na_call_url, 12000),
+    status_group_id: cleanId(body.status_group_id, 20),
+    user_new_lead_limit: cleanInt(body.user_new_lead_limit, -1, -1, 65000),
+    daily_reset_limit: cleanInt(body.daily_reset_limit, -1, -1, 65000),
+    auto_active_list_rank: cleanInt(body.auto_active_list_rank, 0, -65000, 65000),
+    inbound_drop_voicemail: cleanId(body.inbound_drop_voicemail, 20),
+    inbound_after_hours_voicemail: cleanId(body.inbound_after_hours_voicemail, 20),
+    qc_scorecard_id: cleanId(body.qc_scorecard_id, 20),
+    qc_statuses_id: cleanId(body.qc_statuses_id, 20),
+    qc_web_form_address: cleanText(body.qc_web_form_address, 255),
+    auto_alt_threshold: cleanInt(body.auto_alt_threshold, -1, -1, 255),
+    cid_group_id: codeText(body.cid_group_id, 20, '---DISABLED---'),
+    dial_prefix: codeText(body.dial_prefix, 20),
+    weekday_resets_container: codeText(body.weekday_resets_container, 40, 'DISABLED'),
   };
 }
 
@@ -2761,50 +2825,28 @@ async function saveList(req, res, mode) {
   if (!id) return badRequest(res, 'invalid_list_id');
   const payload = listPayload(req.body || {});
   if (!payload.campaign_id) return badRequest(res, 'campaign_required');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, payload.campaign_id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const { assignments, values } = dynamicAssignments(payload);
 
   try {
     if (mode === 'create') {
       await execute(
         `INSERT INTO vicidial_lists
          SET list_id = ?,
-             list_name = ?,
-             campaign_id = ?,
-             active = ?,
-             list_description = ?,
-             local_call_time = ?,
-             expiration_date = ?,
+             ${assignments},
              list_changedate = NOW()`,
-        [
-          id,
-          payload.list_name,
-          payload.campaign_id,
-          payload.active,
-          payload.list_description,
-          payload.local_call_time,
-          payload.expiration_date,
-        ],
+        [id, ...values],
       );
       await adminLog(req, 'LISTS', 'ADD', id, 'GENX ADD LIST', 'INSERT INTO vicidial_lists', payload.list_name);
     } else {
       const result = await execute(
         `UPDATE vicidial_lists
-         SET list_name = ?,
-             campaign_id = ?,
-             active = ?,
-             list_description = ?,
-             local_call_time = ?,
-             expiration_date = ?,
+         SET ${assignments},
              list_changedate = NOW()
          WHERE list_id = ?`,
-        [
-          payload.list_name,
-          payload.campaign_id,
-          payload.active,
-          payload.list_description,
-          payload.local_call_time,
-          payload.expiration_date,
-          id,
-        ],
+        [...values, id],
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'list_not_found' });
       await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX MODIFY LIST', 'UPDATE vicidial_lists', payload.list_name);
