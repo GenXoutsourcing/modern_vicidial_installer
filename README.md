@@ -76,6 +76,7 @@ This repo contains the main installer and the files it expects to find in the sa
 - `certbot.sh` - SSL certificate renewal helper used by cron
 - `install-genx-overlay.sh` - optional GENX modern UI overlay installer wrapper
 - `genx-vicidial-overlay/` - agent/admin/report overlay files and hosted VICIphone assets
+- `genx-app-server-preflight.sh` - read-only GenX app server / VICIdial web-node preflight report helper
 
 ## GENX VICIDIAL overlay
 
@@ -88,6 +89,8 @@ Planning docs for the new standalone GenX UI and reporting platform are in `docs
 - `docs/genx-sandbox-architecture.md` - two-server sandbox layout, FQDNs, roles, access packet, and safety rules
 - `docs/genx-application-roadmap.md` - React/Node application direction, feature phases, reporting goals, and integration rules
 - `docs/genx-installer-requirements.md` - repeatable AlmaLinux 9 installer requirements for app-only and hybrid Dynamic Portal deployments
+- `docs/vicidial-sandbox-current-state.md` - redacted current-state inventory for `vicidial-sandbox.genxcontactcenter.com`
+- `docs/genx-app-server-cluster-checklist.md` - app-server access, firewall, DB, API, portal-node, and GenX runtime checklist
 
 ## SSL and firewall notes
 
