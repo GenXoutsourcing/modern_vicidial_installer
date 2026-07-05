@@ -385,7 +385,7 @@ h2 {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(420px, 1.35fr) minmax(360px, 1fr) minmax(320px, 0.85fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
@@ -393,10 +393,6 @@ h2 {
 .panel {
   min-width: 0;
   padding: 16px;
-}
-
-.chart-panel {
-  grid-column: span 2;
 }
 
 .table-panel {
@@ -418,9 +414,9 @@ h2 {
 
 .bar-chart {
   display: grid;
-  grid-template-columns: repeat(var(--bar-count), minmax(8px, 1fr));
+  grid-template-columns: repeat(var(--bar-count), minmax(6px, 1fr));
   align-items: end;
-  gap: 7px;
+  gap: 5px;
   min-height: 240px;
 }
 
