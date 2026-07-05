@@ -858,20 +858,42 @@ h2 {
   font-weight: 650;
 }
 
-.field-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: max-content;
-  max-width: 100%;
-  color: var(--blue);
-  font-size: 0.75rem;
-  font-weight: 820;
-  text-decoration: none;
+.lead-loader-form .field-grid textarea {
+  min-height: 220px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
-.field-link:hover {
+.csv-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.csv-preview-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(138, 167, 187, 0.15);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.58);
+}
+
+.csv-preview-row:first-child {
+  border-color: rgba(0, 217, 255, 0.3);
+  background: rgba(0, 217, 255, 0.08);
+}
+
+.csv-preview-row span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-chip-list {
@@ -1339,6 +1361,10 @@ td span {
 
   .campaign-tool-grid,
   .check-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .csv-preview-row {
     grid-template-columns: 1fr;
   }
 

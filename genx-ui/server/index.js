@@ -73,7 +73,7 @@ const INGROUP_STEREO_RECORDING_OPTIONS = ['DISABLED', 'BOTH_CHANNELS', 'CUSTOMER
 const INGROUP_PLAY_WELCOME_OPTIONS = ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'];
 const INGROUP_NO_AGENT_NO_QUEUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_READY'];
 const INGROUP_IN_QUEUE_NANQUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_PAUSED_EXCEPTIONS', 'NO_READY'];
-const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'CALLBACK'];
+const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST', 'IN_GROUP', 'CALLMENU', 'CALLERID_CALLBACK', 'DROP_ACTION', 'PRESS_STAY', 'PRESS_VMAIL', 'PRESS_VMAIL_NO_INST', 'PRESS_EXTEN', 'PRESS_CALLMENU', 'PRESS_CID_CALLBACK', 'PRESS_INGROUP', 'PRESS_CALLBACK_QUEUE'];
 const INGROUP_WAIT_HOLD_PRIORITY_OPTIONS = ['WAIT', 'HOLD', 'BOTH'];
 const INGROUP_MAX_CALLS_METHOD_OPTIONS = ['TOTAL', 'IN_QUEUE', 'DISABLED'];
 const INGROUP_MAX_CALLS_ACTION_OPTIONS = ['DROP', 'AFTERHOURS', 'NO_AGENT_NO_QUEUE', 'AREACODE_FILTER'];
@@ -114,7 +114,7 @@ const LEAD_FIELD_OPTIONS = ['DISABLED', 'vendor_lead_code', 'source_id', 'list_i
 const AUTO_HOPPER_MULTI_OPTIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9', '1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '2.0', '2.2', '2.4', '2.6', '2.8', '3.0', '3.5', '4.0'];
 
 app.disable('x-powered-by');
-app.use(express.json({ limit: '64kb' }));
+app.use(express.json({ limit: '10mb' }));
 
 function safeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ''));
@@ -188,6 +188,7 @@ function publicUser(row) {
     modifyStatuses: row.modify_statuses === '1',
     modifyPhones: row.modify_phones === '1',
     modifyCallTimes: row.modify_call_times === '1',
+    loadLeads: row.load_leads === '1',
     modifySettingsContainers: ['1', '2', '3', '4', '5', '6'].includes(String(row.modify_settings_containers || '')),
     accessRecordings: row.access_recordings === '1',
     exportReports: row.export_reports === '1',
@@ -259,6 +260,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_statuses,
             u.modify_phones,
             u.modify_call_times,
+            u.load_leads,
             u.export_reports,
             u.access_recordings,
             u.modify_settings_containers,
@@ -876,6 +878,9 @@ async function adminData(user) {
     cidGroups,
     ipLists,
     filterPhoneGroups,
+    audioStore,
+    voicemailBoxes,
+    musicOnHold,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2018,6 +2023,39 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT filename,
+              description,
+              active,
+              user_group
+       FROM vicidial_audio_store
+       ORDER BY active DESC, filename ASC
+       LIMIT 1000`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT voicemail_id,
+              fullname,
+              email,
+              user_group
+       FROM vicidial_voicemail
+       ORDER BY voicemail_id ASC
+       LIMIT 1000`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT moh_id,
+              moh_name,
+              active,
+              user_group
+       FROM vicidial_music_on_hold
+       ORDER BY active DESC, moh_id ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2119,6 +2157,9 @@ async function adminData(user) {
       cidGroups,
       ipLists,
       filterPhoneGroups,
+      audioStore,
+      voicemailBoxes,
+      musicOnHold,
       systemSettings: {
         autoDialLimit: Number(systemSettings.auto_dial_limit || 8),
       },
@@ -2994,6 +3035,315 @@ async function saveList(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'list_exists' : 'list_write_failed' });
+  }
+}
+
+const LEAD_IMPORT_FIELDS = [
+  'vendor_lead_code',
+  'source_id',
+  'phone_number',
+  'phone_code',
+  'title',
+  'first_name',
+  'middle_initial',
+  'last_name',
+  'address1',
+  'address2',
+  'address3',
+  'city',
+  'state',
+  'province',
+  'postal_code',
+  'country_code',
+  'gender',
+  'date_of_birth',
+  'alt_phone',
+  'email',
+  'security_phrase',
+  'comments',
+  'rank',
+  'owner',
+  'status',
+];
+
+const LEAD_IMPORT_ALIASES = new Map([
+  ['phone', 'phone_number'],
+  ['phone number', 'phone_number'],
+  ['phonenumber', 'phone_number'],
+  ['number', 'phone_number'],
+  ['mobile', 'phone_number'],
+  ['cell', 'phone_number'],
+  ['phone code', 'phone_code'],
+  ['phonecode', 'phone_code'],
+  ['vendor id', 'vendor_lead_code'],
+  ['vendor lead code', 'vendor_lead_code'],
+  ['vendorleadcode', 'vendor_lead_code'],
+  ['source', 'source_id'],
+  ['source id', 'source_id'],
+  ['sourceid', 'source_id'],
+  ['first', 'first_name'],
+  ['firstname', 'first_name'],
+  ['first name', 'first_name'],
+  ['mi', 'middle_initial'],
+  ['middle', 'middle_initial'],
+  ['middle initial', 'middle_initial'],
+  ['last', 'last_name'],
+  ['lastname', 'last_name'],
+  ['last name', 'last_name'],
+  ['address', 'address1'],
+  ['address 1', 'address1'],
+  ['address1', 'address1'],
+  ['address 2', 'address2'],
+  ['address2', 'address2'],
+  ['address 3', 'address3'],
+  ['address3', 'address3'],
+  ['zip', 'postal_code'],
+  ['zipcode', 'postal_code'],
+  ['zip code', 'postal_code'],
+  ['postal', 'postal_code'],
+  ['postal code', 'postal_code'],
+  ['country', 'country_code'],
+  ['country code', 'country_code'],
+  ['dob', 'date_of_birth'],
+  ['date of birth', 'date_of_birth'],
+  ['alt phone', 'alt_phone'],
+  ['altphone', 'alt_phone'],
+  ['security phrase', 'security_phrase'],
+]);
+
+function parseCsvRows(text) {
+  const rows = [];
+  let field = '';
+  let row = [];
+  let quoted = false;
+
+  for (let index = 0; index < String(text || '').length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = true;
+    } else if (char === ',') {
+      row.push(field);
+      field = '';
+    } else if (char === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (char !== '\r') {
+      field += char;
+    }
+  }
+
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows.filter((items) => items.some((item) => String(item || '').trim()));
+}
+
+function normalizeLeadHeader(header) {
+  const raw = String(header || '').trim();
+  const compact = raw.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  const direct = compact.replace(/\s+/g, '_');
+  if (LEAD_IMPORT_FIELDS.includes(direct)) return direct;
+  return LEAD_IMPORT_ALIASES.get(compact) || LEAD_IMPORT_ALIASES.get(compact.replace(/\s+/g, '')) || '';
+}
+
+function leadImportValue(field, value, defaults) {
+  if (field === 'phone_number' || field === 'alt_phone') return cleanDigits(value, 18);
+  if (field === 'phone_code') return cleanDigits(value, 10) || defaults.phone_code;
+  if (field === 'status') return cleanId(value, 6) || defaults.status;
+  if (field === 'rank') return cleanInt(value, 0, -999999, 999999);
+  if (field === 'owner') return cleanId(value, 20);
+  if (field === 'gender') return cleanText(value, 1).toUpperCase();
+  if (field === 'date_of_birth') return cleanText(value, 10) || '0000-00-00';
+  if (field === 'email') return cleanText(value, 70);
+  return cleanText(value, field === 'comments' ? 255 : 80);
+}
+
+async function duplicateLeadExists(phoneNumber, listId, campaignId, mode) {
+  if (!phoneNumber || mode === 'NONE') return false;
+  if (mode === 'LIST') {
+    const [match] = await rows(
+      'SELECT lead_id FROM vicidial_list WHERE phone_number = ? AND list_id = ? LIMIT 1',
+      [phoneNumber, listId],
+      [],
+    );
+    return Boolean(match);
+  }
+  if (mode === 'CAMPAIGN') {
+    const [match] = await rows(
+      `SELECT leads.lead_id
+       FROM vicidial_list leads
+       JOIN vicidial_lists lists ON lists.list_id = leads.list_id
+       WHERE leads.phone_number = ?
+         AND lists.campaign_id = ?
+       LIMIT 1`,
+      [phoneNumber, campaignId],
+      [],
+    );
+    return Boolean(match);
+  }
+  const [match] = await rows(
+    'SELECT lead_id FROM vicidial_list WHERE phone_number = ? LIMIT 1',
+    [phoneNumber],
+    [],
+  );
+  return Boolean(match);
+}
+
+async function loadLeads(req, res) {
+  if (!requireModify(req, res, 'loadLeads')) return;
+  const listId = cleanDigits(req.body?.list_id, 14);
+  const csvText = String(req.body?.csv || '').trim();
+  const duplicateMode = cleanChoice(req.body?.duplicate_mode, ['NONE', 'LIST', 'CAMPAIGN', 'SYSTEM'], 'LIST');
+  const defaults = {
+    phone_code: cleanDigits(req.body?.phone_code, 10) || '1',
+    status: cleanId(req.body?.status, 6) || 'NEW',
+  };
+
+  if (!listId) return badRequest(res, 'list_required');
+  if (!csvText) return badRequest(res, 'csv_required');
+
+  const [list] = await rows(
+    'SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1',
+    [listId],
+    [],
+  );
+  if (!list) return res.status(404).json({ ok: false, error: 'list_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, list.campaign_id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+
+  const parsed = parseCsvRows(csvText);
+  if (parsed.length < 2) return badRequest(res, 'csv_header_and_rows_required');
+
+  const headers = parsed[0].map(normalizeLeadHeader);
+  if (!headers.includes('phone_number')) return badRequest(res, 'phone_number_header_required');
+
+  const rowsToImport = parsed.slice(1, 10001);
+  const skipped = [];
+  let inserted = 0;
+
+  try {
+    for (let index = 0; index < rowsToImport.length; index += 1) {
+      const sourceRow = rowsToImport[index];
+      const lead = Object.fromEntries(LEAD_IMPORT_FIELDS.map((field) => [field, '']));
+      lead.phone_code = defaults.phone_code;
+      lead.status = defaults.status;
+      lead.date_of_birth = '0000-00-00';
+
+      headers.forEach((field, fieldIndex) => {
+        if (!field) return;
+        lead[field] = leadImportValue(field, sourceRow[fieldIndex], defaults);
+      });
+
+      if (!lead.phone_number) {
+        skipped.push({ row: index + 2, reason: 'missing_phone_number' });
+        continue;
+      }
+
+      if (await duplicateLeadExists(lead.phone_number, listId, list.campaign_id, duplicateMode)) {
+        skipped.push({ row: index + 2, reason: 'duplicate_phone_number', phone_number: lead.phone_number });
+        continue;
+      }
+
+      await execute(
+        `INSERT INTO vicidial_list
+         SET entry_date = NOW(),
+             modify_date = NOW(),
+             status = ?,
+             user = '',
+             vendor_lead_code = ?,
+             source_id = ?,
+             list_id = ?,
+             gmt_offset_now = 0,
+             called_since_last_reset = 'N',
+             phone_code = ?,
+             phone_number = ?,
+             title = ?,
+             first_name = ?,
+             middle_initial = ?,
+             last_name = ?,
+             address1 = ?,
+             address2 = ?,
+             address3 = ?,
+             city = ?,
+             state = ?,
+             province = ?,
+             postal_code = ?,
+             country_code = ?,
+             gender = ?,
+             date_of_birth = ?,
+             alt_phone = ?,
+             email = ?,
+             security_phrase = ?,
+             comments = ?,
+             rank = ?,
+             owner = ?`,
+        [
+          lead.status,
+          lead.vendor_lead_code,
+          lead.source_id,
+          listId,
+          lead.phone_code,
+          lead.phone_number,
+          lead.title,
+          lead.first_name,
+          lead.middle_initial,
+          lead.last_name,
+          lead.address1,
+          lead.address2,
+          lead.address3,
+          lead.city,
+          lead.state,
+          lead.province,
+          lead.postal_code,
+          lead.country_code,
+          lead.gender,
+          lead.date_of_birth,
+          lead.alt_phone,
+          lead.email,
+          lead.security_phrase,
+          lead.comments,
+          lead.rank,
+          lead.owner,
+        ],
+      );
+      inserted += 1;
+    }
+
+    await execute('UPDATE vicidial_lists SET list_changedate = NOW() WHERE list_id = ?', [listId]);
+    await adminLog(req, 'LEADS', 'LOAD', listId, 'GENX LOAD LEADS', 'INSERT INTO vicidial_list', `${inserted} loaded, ${skipped.length} skipped`);
+
+    return res.json({
+      ok: true,
+      summary: {
+        list_id: listId,
+        campaign_id: list.campaign_id,
+        inserted,
+        skipped: skipped.length,
+        skipped_rows: skipped.slice(0, 100),
+      },
+      data: await adminData(req.genxUser),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'lead_load_failed' });
   }
 }
 
@@ -4479,6 +4829,7 @@ app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'cr
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
+app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.post('/api/admin/user-groups', requireAccess, (req, res) => saveUserGroup(req, res, 'create'));

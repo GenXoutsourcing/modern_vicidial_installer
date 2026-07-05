@@ -87,7 +87,7 @@ const INGROUP_STEREO_RECORDING_OPTIONS = ['DISABLED', 'BOTH_CHANNELS', 'CUSTOMER
 const INGROUP_PLAY_WELCOME_OPTIONS = ['ALWAYS', 'NEVER', 'IF_WAIT_ONLY', 'YES_UNLESS_NODELAY'];
 const INGROUP_NO_AGENT_NO_QUEUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_READY'];
 const INGROUP_IN_QUEUE_NANQUE_OPTIONS = ['N', 'Y', 'NO_PAUSED', 'NO_PAUSED_EXCEPTIONS', 'NO_READY'];
-const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'CALLBACK'];
+const INGROUP_HOLD_WAIT_ROUTE_OPTIONS = ['NONE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST', 'IN_GROUP', 'CALLMENU', 'CALLERID_CALLBACK', 'DROP_ACTION', 'PRESS_STAY', 'PRESS_VMAIL', 'PRESS_VMAIL_NO_INST', 'PRESS_EXTEN', 'PRESS_CALLMENU', 'PRESS_CID_CALLBACK', 'PRESS_INGROUP', 'PRESS_CALLBACK_QUEUE'];
 const INGROUP_WAIT_HOLD_PRIORITY_OPTIONS = ['WAIT', 'HOLD', 'BOTH'];
 const INGROUP_MAX_CALLS_METHOD_OPTIONS = ['TOTAL', 'IN_QUEUE', 'DISABLED'];
 const INGROUP_MAX_CALLS_ACTION_OPTIONS = ['DROP', 'AFTERHOURS', 'NO_AGENT_NO_QUEUE', 'AREACODE_FILTER'];
@@ -173,6 +173,7 @@ const LEAD_FIELD_OPTIONS = [
   'owner',
   'entry_list_id',
 ];
+const RECORDING_FILENAME_OPTIONS = ['FULLDATE_CUSTPHONE', 'FULLDATE_CUSTPHONE_CAMPAIGN', 'FULLDATE_CUSTPHONE_USER', 'FULLDATE_CUSTPHONE_LEADID', 'DATE_TIME_PHONE', 'DATE_TIME_PHONE_USER', 'CUSTPHONE', 'LEADID', 'CAMPAIGN_LEADID', 'CALLID'];
 const WEEKDAY_OPTIONS = [
   { value: '0', label: 'Sunday' },
   { value: '1', label: 'Monday' },
@@ -190,6 +191,7 @@ const NAV_ITEMS = [
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
   { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
+  { key: 'leadLoader', label: 'Lead Loader', eyebrow: 'Admin', title: 'Lead Loader', icon: FileText },
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
   { key: 'dids', label: 'DIDs', eyebrow: 'Inbound', title: 'DID Routing', icon: PhoneCall },
   { key: 'callMenus', label: 'Call Menus', eyebrow: 'Inbound', title: 'Call Menu Routing', icon: Compass },
@@ -357,6 +359,7 @@ function userCan(user, entity) {
   if (entity === 'users') return Boolean(user?.modifyUsers);
   if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);
+  if (entity === 'leadLoader') return Boolean(user?.loadLeads);
   if (entity === 'inbound') return Boolean(user?.modifyIngroups);
   if (entity === 'dids') return Boolean(user?.modifyInboundDids);
   if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
@@ -1655,6 +1658,9 @@ function actionFields(entity, mode, admin, form = {}) {
   const cidGroupOptions = withCurrentOption([{ value: '---DISABLED---', label: '---DISABLED---' }, ...lookupOptions(admin?.lookups?.cidGroups, 'cid_group_id', 'cid_group_notes')], form?.cid_group_id || form?.cid_group_id_two);
   const ipListOptions = [{ value: '', label: '--- DISABLED ---' }, ...lookupOptions(admin?.lookups?.ipLists, 'ip_list_id', 'ip_list_name')];
   const filterPhoneGroupOptions = lookupOptions(admin?.lookups?.filterPhoneGroups, 'filter_phone_group_id', 'filter_phone_group_name');
+  const audioLookupOptions = uniqueOptions(lookupOptions(admin?.lookups?.audioStore, 'filename', 'description'));
+  const voicemailLookupOptions = uniqueOptions(lookupOptions(admin?.lookups?.voicemailBoxes, 'voicemail_id', 'fullname'));
+  const mohLookupOptions = uniqueOptions(lookupOptions(admin?.lookups?.musicOnHold, 'moh_id', 'moh_name'));
   const shiftScopeOptions = [{ value: '---ALL---', label: '---ALL---' }, ...lookupOptions(admin?.lookups?.shifts, 'shift_id', 'shift_name')];
   const phoneCodeOptions = withCurrentOption(lookupOptions(admin?.lookups?.phoneCodes, 'country_code', 'country'), form?.phone_code);
   const phoneContextOptions = withCurrentOption(lookupOptions(admin?.lookups?.phoneContexts, 'phone_context', 'phone_context'), form?.phone_context || form?.exten_context);
@@ -1670,10 +1676,43 @@ function actionFields(entity, mode, admin, form = {}) {
   const callbackTimezoneOptions = enumOptions(ensureOption(['DISABLED', 'TIMEZONES_AUSTRALIA', 'TIMEZONES_CANADA', 'TIMEZONES_USA'], form?.scheduled_callbacks_timezones_container));
   const didRouteOptions = ['EXTEN', 'VOICEMAIL', 'AGENT', 'PHONE', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
   const didCallHandleOptions = ['CID', 'CIDLOOKUP', 'CIDLOOKUPRL', 'CIDLOOKUPRC', 'CIDLOOKUPALT', 'CIDLOOKUPRLALT', 'CIDLOOKUPRCALT', 'ANI', 'ANILOOKUP', 'ANILOOKUPRL', 'ANILOOKUPRC', 'ANILOOKUPALT', 'ANILOOKUPRLALT', 'ANILOOKUPRCALT', 'DID'];
-  const legacyCampaignHref = () => `/vicidial/admin.php?ADD=31&campaign_id=${encodeURIComponent(form?.campaign_id || '')}`;
-  const legacyInboundHref = () => `/vicidial/admin.php?ADD=3111&group_id=${encodeURIComponent(form?.group_id || '')}`;
-  const legacyCallTimeHref = () => `/vicidial/admin.php?ADD=311111111&call_time_id=${encodeURIComponent(form?.call_time_id || '')}`;
-  const legacyCallMenuHref = () => `/vicidial/admin.php?ADD=1511&menu_id=${encodeURIComponent(form?.menu_id || '')}`;
+  const audioOptionsFor = (currentValue) => withCurrentOption([{ value: '', label: 'NONE' }, ...audioLookupOptions], currentValue);
+  const voicemailOptionsFor = (currentValue) => withCurrentOption([{ value: '', label: 'NONE' }, ...voicemailLookupOptions], currentValue);
+  const mohOptionsFor = (currentValue) => withCurrentOption([{ value: '', label: 'NONE' }, ...mohLookupOptions], currentValue);
+  const recordingOptionsFor = (currentValue) => withCurrentOption(enumOptions(RECORDING_FILENAME_OPTIONS), currentValue);
+  const lookupField = (key, label, options, currentValue, enabled, extra = {}) => ({
+    key,
+    label,
+    type: enabled ? 'select' : 'text',
+    options: enabled ? options : undefined,
+    ...extra,
+  });
+  const audioField = (key, label, currentValue, extra = {}) => lookupField(key, label, audioOptionsFor(currentValue), currentValue, audioLookupOptions.length > 0, extra);
+  const voicemailField = (key, label, currentValue, extra = {}) => lookupField(key, label, voicemailOptionsFor(currentValue), currentValue, voicemailLookupOptions.length > 0, extra);
+  const mohField = (key, label, currentValue, extra = {}) => lookupField(key, label, mohOptionsFor(currentValue), currentValue, mohLookupOptions.length > 0, extra);
+  const recordingField = (key, label, currentValue, extra = {}) => lookupField(key, label, recordingOptionsFor(currentValue), currentValue, true, extra);
+  const routeOptionsFor = (route, currentValue) => {
+    const normalized = String(route || '').toUpperCase();
+    if (normalized === 'CALLMENU' || normalized === 'PRESS_CALLMENU') return callMenuRouteOptions(currentValue);
+    if (normalized === 'INGROUP' || normalized === 'IN_GROUP' || normalized === 'PRESS_INGROUP') return withCurrentOption(inboundOptions, currentValue);
+    if (normalized === 'DID') return withCurrentOption(didOptions, currentValue);
+    if (normalized === 'PHONE') return withCurrentOption(phoneOptions, currentValue);
+    if (normalized === 'VOICEMAIL' || normalized === 'VMAIL_NO_INST' || normalized === 'PRESS_VMAIL' || normalized === 'PRESS_VMAIL_NO_INST') return voicemailOptionsFor(currentValue);
+    if (normalized === 'MESSAGE' || normalized === 'HANGUP' || normalized === 'AUDIO') return audioOptionsFor(currentValue);
+    return [];
+  };
+  const routeTargetField = (route, key, label, currentValue, extra = {}) => {
+    const options = routeOptionsFor(route, currentValue);
+    const normalized = String(route || '').toUpperCase();
+    const selectEnabled = options.length > 0 && !['EXTENSION', 'PRESS_EXTEN', 'AGI', 'WEBFORM'].includes(normalized);
+    return {
+      key,
+      label,
+      type: selectEnabled ? 'select' : 'text',
+      options: selectEnabled ? options : undefined,
+      ...extra,
+    };
+  };
   const currentStatuses = campaignDialStatuses(form);
   const statusNameMap = new Map([
     ...(admin?.lookups?.statuses || []),
@@ -1773,18 +1812,18 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'cid_group_id', label: 'CID Group', type: 'select', options: cidGroupOptions },
       { key: 'cid_group_id_two', label: 'CID Group Failover', type: 'select', options: withCurrentOption(cidGroupOptions, form?.cid_group_id_two) },
       { key: 'safe_harbor_exten', label: 'Safe Harbor Exten' },
-      { key: 'safe_harbor_audio', label: 'Safe Harbor Audio', chooser: legacyCampaignHref, chooserLabel: 'Audio chooser' },
+      audioField('safe_harbor_audio', 'Safe Harbor Audio', form?.safe_harbor_audio),
       { key: 'safe_harbor_audio_field', label: 'Safe Harbor Audio Field', type: 'select', options: enumOptions(ensureOption(LEAD_FIELD_OPTIONS, form?.safe_harbor_audio_field)) },
       { key: 'safe_harbor_menu_id', label: 'Safe Harbor Call Menu', type: callMenuOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuOptions, form?.safe_harbor_menu_id) },
-      { key: 'voicemail_ext', label: 'Voicemail', chooser: legacyCampaignHref, chooserLabel: 'Voicemail chooser' },
-      { key: 'park_file_name', label: 'Park Music-on-Hold', chooser: legacyCampaignHref, chooserLabel: 'MOH chooser' },
+      voicemailField('voicemail_ext', 'Voicemail', form?.voicemail_ext),
+      mohField('park_file_name', 'Park Music-on-Hold', form?.park_file_name),
       { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
       { key: 'use_custom_cid', label: 'Custom CallerID', type: 'select', options: enumOptions(ensureOption(CUSTOM_CID_OPTIONS, form?.use_custom_cid)) },
       { key: 'agent_search_method', label: 'Agent Search Override', type: 'select', options: [{ value: '', label: 'DISABLED' }, ...enumOptions(AGENT_SEARCH_OPTIONS.filter(Boolean))] },
       { key: 'agent_hangup_route', label: 'Agent Hangup Route', type: 'select', options: enumOptions(ensureOption(AGENT_HANGUP_ROUTE_OPTIONS, form?.agent_hangup_route)) },
-      { key: 'agent_hangup_value', label: 'Agent Hangup Value', chooser: legacyCampaignHref, chooserLabel: 'Route chooser' },
+      routeTargetField(form?.agent_hangup_route, 'agent_hangup_value', 'Agent Hangup Value', form?.agent_hangup_value),
       { key: 'agent_hangup_ig_override', label: 'Agent Hangup In-Group Override', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'ivr_park_call', label: 'Park Call IVR', type: 'select', options: enumOptions(ensureOption(PARK_CALL_IVR_OPTIONS, form?.ivr_park_call)) },
       { key: 'ivr_park_call_agi', label: 'Park IVR AGI' },
@@ -1793,7 +1832,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { section: 'Recording, Scripts, and Forms' },
       { key: 'campaign_rec_exten', label: 'Recording Extension' },
       { key: 'campaign_vdad_exten', label: 'Routing Extension' },
-      { key: 'campaign_rec_filename', label: 'Recording Filename', chooser: legacyCampaignHref, chooserLabel: 'Legacy recording tools' },
+      recordingField('campaign_rec_filename', 'Recording Filename', form?.campaign_rec_filename),
       { key: 'allcalls_delay', label: 'All Calls Delay', type: 'number' },
       { key: 'routing_initiated_recordings', label: 'Routing Initiated Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'campaign_script', label: 'Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
@@ -1803,7 +1842,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'script_tab_height', label: 'Script Tab Height Override', type: 'number' },
       { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
       { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
-      { key: 'am_message_exten', label: 'Answering Machine Message', chooser: legacyCampaignHref, chooserLabel: 'Audio chooser' },
+      audioField('am_message_exten', 'Answering Machine Message', form?.am_message_exten),
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
       { key: 'waitforsilence_options', label: 'WaitForSilence Options' },
       { key: 'manual_vm_status_updates', label: 'Manual VM Status Updates', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
@@ -1890,7 +1929,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'dead_trigger_action', label: 'Dead Call Trigger Action', type: 'select', options: enumOptions(['DISABLED', 'AUDIO', 'URL', 'AUDIO_AND_URL']) },
       { key: 'dead_trigger_seconds', label: 'Dead Call Trigger Seconds', type: 'number' },
       { key: 'dead_trigger_repeat', label: 'Dead Call Trigger Repeat', type: 'select', options: enumOptions(['NO', 'REPEAT_ALL', 'REPEAT_AUDIO', 'REPEAT_URL']) },
-      { key: 'dead_trigger_filename', label: 'Dead Call Trigger Audio', chooser: legacyCampaignHref, chooserLabel: 'Audio chooser' },
+      audioField('dead_trigger_filename', 'Dead Call Trigger Audio', form?.dead_trigger_filename),
       { key: 'dead_trigger_url', label: 'Dead Call Trigger URL' },
       { key: 'dead_max', label: 'Dead Call Max Seconds', type: 'number' },
       { key: 'dead_max_dispo', label: 'Dead Call Max Status' },
@@ -1995,7 +2034,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'extension_appended_cidname', label: 'Extension Append CID', type: 'select', options: enumOptions(['Y', 'N', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN']) },
       { key: 'blind_monitor_warning', label: 'Blind Monitor Warning', type: 'select', options: enumOptions(['DISABLED', 'ALERT', 'NOTICE', 'AUDIO', 'ALERT_NOTICE', 'ALERT_AUDIO', 'NOTICE_AUDIO', 'ALL']) },
       { key: 'blind_monitor_message', label: 'Blind Monitor Notice' },
-      { key: 'blind_monitor_filename', label: 'Blind Monitor Filename', chooser: legacyCampaignHref, chooserLabel: 'Audio chooser' },
+      audioField('blind_monitor_filename', 'Blind Monitor Filename', form?.blind_monitor_filename),
       { key: 'agent_xfer_validation', label: 'Transfer In-Group Validation', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
       { key: 'custom_one', label: 'Custom 1', type: 'textarea', wide: true },
@@ -2336,7 +2375,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions },
       { key: 'phone', label: 'Phone', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.phone) },
       { key: 'user', label: 'User', type: userOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...userOptions], form?.user) },
-      { key: 'voicemail_ext', label: 'Voicemail Ext', chooser: '/vicidial/admin.php?ADD=170000000000', chooserLabel: 'Voicemail chooser' },
+      voicemailField('voicemail_ext', 'Voicemail Ext', form?.voicemail_ext),
       { key: 'record_call', label: 'Record Call', type: 'select', options: enumOptions(['Y', 'N', 'Y_QUEUESTOP']) },
       { key: 'inbound_route_answer', label: 'Answer Route', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'call_handle_method', label: 'Call Handle Method', type: 'select', options: enumOptions(ensureOption(didCallHandleOptions, form?.call_handle_method)) },
@@ -2366,9 +2405,9 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'filter_url_did_redirect', label: 'Filter URL DID Redirect', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'filter_dnc_campaign', label: 'Filter DNC Campaign', type: campaignOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...campaignOptions], form?.filter_dnc_campaign) },
       { key: 'filter_action', label: 'Filter Action', type: 'select', options: enumOptions(didRouteOptions) },
-      { key: 'filter_extension', label: 'Filter Extension', chooser: '/vicidial/admin.php?ADD=170000000000', chooserLabel: 'Voicemail chooser' },
+      routeTargetField(form?.filter_action, 'filter_extension', 'Filter Extension', form?.filter_extension),
       { key: 'filter_exten_context', label: 'Filter Extension Context', type: phoneContextOptions.length ? 'select' : 'text', options: phoneContextOptions },
-      { key: 'filter_voicemail_ext', label: 'Filter Voicemail Box', chooser: '/vicidial/admin.php?ADD=170000000000', chooserLabel: 'Voicemail chooser' },
+      voicemailField('filter_voicemail_ext', 'Filter Voicemail Box', form?.filter_voicemail_ext),
       { key: 'filter_phone', label: 'Filter Phone Extension', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.filter_phone) },
       { key: 'filter_server_ip', label: 'Filter Server IP', type: serverOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: '---NONE---' }, ...serverOptions], form?.filter_server_ip) },
       { key: 'filter_user', label: 'Filter User Agent', type: userOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...userOptions], form?.filter_user) },
@@ -2474,10 +2513,10 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'unavail_dialplan_fwd_context', label: 'Unavailable Forward Context' },
       { key: 'nva_call_url', label: 'NVA Call URL', type: 'textarea', wide: true },
       { key: 'nva_search_method', label: 'NVA Search Method', type: 'select', options: enumOptions(ensureOption(['NONE', 'LB', 'LO', 'SO'], form?.nva_search_method)) },
-      { key: 'nva_error_filename', label: 'NVA Error Filename', chooser: '/vicidial/admin.php?ADD=170000000000', chooserLabel: 'Audio chooser' },
+      audioField('nva_error_filename', 'NVA Error Filename', form?.nva_error_filename),
       { key: 'nva_new_list_id', label: 'NVA New List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.nva_new_list_id) },
       { key: 'nva_new_phone_code', label: 'NVA Phone Code', type: phoneCodeOptions.length ? 'select' : 'text', options: phoneCodeOptions },
-      { key: 'nva_new_status', label: 'NVA New Status', type: 'select', options: statusSelectOptions(admin, form?.login_campaign || campaign, form?.nva_new_status) },
+      { key: 'nva_new_status', label: 'NVA New Status', type: 'select', options: statusSelectOptions(admin, form?.login_campaign || admin?.lookups?.campaigns?.[0]?.campaign_id || '', form?.nva_new_status) },
       { section: 'Webphone' },
       { key: 'is_webphone', label: 'Webphone', type: 'select', options: enumOptions(ensureOption(PHONE_WEBPHONE_OPTIONS, form?.is_webphone)) },
       { key: 'webphone_auto_answer', label: 'Auto Answer', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -2588,29 +2627,29 @@ function actionFields(entity, mode, admin, form = {}) {
       { section: 'Default Hours' },
       { key: 'ct_default_start', label: 'Default Start', type: 'number' },
       { key: 'ct_default_stop', label: 'Default Stop', type: 'number' },
-      { key: 'default_afterhours_filename_override', label: 'Default Afterhours Audio', wide: true, chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('default_afterhours_filename_override', 'Default Afterhours Audio', form?.default_afterhours_filename_override, { wide: true }),
       { section: 'Daily Hours' },
       { key: 'ct_sunday_start', label: 'Sunday Start', type: 'number' },
       { key: 'ct_sunday_stop', label: 'Sunday Stop', type: 'number' },
-      { key: 'sunday_afterhours_filename_override', label: 'Sunday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('sunday_afterhours_filename_override', 'Sunday Audio', form?.sunday_afterhours_filename_override),
       { key: 'ct_monday_start', label: 'Monday Start', type: 'number' },
       { key: 'ct_monday_stop', label: 'Monday Stop', type: 'number' },
-      { key: 'monday_afterhours_filename_override', label: 'Monday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('monday_afterhours_filename_override', 'Monday Audio', form?.monday_afterhours_filename_override),
       { key: 'ct_tuesday_start', label: 'Tuesday Start', type: 'number' },
       { key: 'ct_tuesday_stop', label: 'Tuesday Stop', type: 'number' },
-      { key: 'tuesday_afterhours_filename_override', label: 'Tuesday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('tuesday_afterhours_filename_override', 'Tuesday Audio', form?.tuesday_afterhours_filename_override),
       { key: 'ct_wednesday_start', label: 'Wednesday Start', type: 'number' },
       { key: 'ct_wednesday_stop', label: 'Wednesday Stop', type: 'number' },
-      { key: 'wednesday_afterhours_filename_override', label: 'Wednesday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('wednesday_afterhours_filename_override', 'Wednesday Audio', form?.wednesday_afterhours_filename_override),
       { key: 'ct_thursday_start', label: 'Thursday Start', type: 'number' },
       { key: 'ct_thursday_stop', label: 'Thursday Stop', type: 'number' },
-      { key: 'thursday_afterhours_filename_override', label: 'Thursday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('thursday_afterhours_filename_override', 'Thursday Audio', form?.thursday_afterhours_filename_override),
       { key: 'ct_friday_start', label: 'Friday Start', type: 'number' },
       { key: 'ct_friday_stop', label: 'Friday Stop', type: 'number' },
-      { key: 'friday_afterhours_filename_override', label: 'Friday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('friday_afterhours_filename_override', 'Friday Audio', form?.friday_afterhours_filename_override),
       { key: 'ct_saturday_start', label: 'Saturday Start', type: 'number' },
       { key: 'ct_saturday_stop', label: 'Saturday Stop', type: 'number' },
-      { key: 'saturday_afterhours_filename_override', label: 'Saturday Audio', chooser: legacyCallTimeHref, chooserLabel: 'Audio chooser' },
+      audioField('saturday_afterhours_filename_override', 'Saturday Audio', form?.saturday_afterhours_filename_override),
       { section: 'States and Holidays' },
       { key: 'ct_state_call_times', label: 'State Call Times', type: 'textarea', wide: true },
       { key: 'ct_holidays', label: 'Holidays', type: 'textarea', wide: true },
@@ -2619,12 +2658,7 @@ function actionFields(entity, mode, admin, form = {}) {
 
   if (entity === 'callMenuOptions') {
     const route = String(form?.option_route || 'CALLMENU');
-    const routeTargets = {
-      CALLMENU: withCurrentOption(callMenuLookupOptions, form?.option_route_value),
-      INGROUP: withCurrentOption([...inboundStrictOptions, { value: 'DYNAMIC_INGROUP_VAR', label: 'DYNAMIC_INGROUP_VAR' }], form?.option_route_value),
-      DID: withCurrentOption(didOptions, form?.option_route_value),
-      PHONE: withCurrentOption(phoneOptions, form?.option_route_value),
-    }[route] || [];
+    const routeTargets = routeOptionsFor(route, form?.option_route_value);
     const routeValueField = {
       key: 'option_route_value',
       label: route === 'CALLMENU'
@@ -2644,10 +2678,8 @@ function actionFields(entity, mode, admin, form = {}) {
                     : route === 'AGI'
                       ? 'AGI Route'
                       : 'Route Value',
-      type: routeTargets.length ? 'select' : 'text',
+      type: routeTargets.length && !['EXTENSION', 'AGI'].includes(route) ? 'select' : 'text',
       options: routeTargets,
-      chooser: route === 'VOICEMAIL' || route === 'VMAIL_NO_INST' ? '/vicidial/admin.php?ADD=170000000000' : route === 'HANGUP' ? legacyCallMenuHref : null,
-      chooserLabel: route === 'HANGUP' ? 'Audio chooser' : 'Voicemail chooser',
     };
 
     return [
@@ -2666,10 +2698,10 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'menu_name', label: 'Menu Name' },
       { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
       { section: 'Prompts and Timing' },
-      { key: 'menu_prompt', label: 'Menu Prompt', chooser: legacyCallMenuHref, chooserLabel: 'Audio chooser' },
+      audioField('menu_prompt', 'Menu Prompt', form?.menu_prompt),
       { key: 'menu_timeout', label: 'Timeout Seconds', type: 'number' },
-      { key: 'menu_timeout_prompt', label: 'Timeout Prompt', chooser: legacyCallMenuHref, chooserLabel: 'Audio chooser' },
-      { key: 'menu_invalid_prompt', label: 'Invalid Prompt', chooser: legacyCallMenuHref, chooserLabel: 'Audio chooser' },
+      audioField('menu_timeout_prompt', 'Timeout Prompt', form?.menu_timeout_prompt),
+      audioField('menu_invalid_prompt', 'Invalid Prompt', form?.menu_invalid_prompt),
       { key: 'menu_repeat', label: 'Repeat Count', type: 'number' },
       { key: 'menu_time_check', label: 'Time Check', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
       { key: 'call_time_id', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: withCurrentOption(callTimeOptions, form?.call_time_id) },
@@ -2708,7 +2740,7 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'group_handling', label: 'Handling', type: 'select', options: enumOptions(['PHONE', 'EMAIL', 'CHAT']) },
     { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
     { key: 'call_time_id', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
-    { key: 'voicemail_ext', label: 'Voicemail', chooser: legacyInboundHref, chooserLabel: 'Voicemail chooser' },
+    voicemailField('voicemail_ext', 'Voicemail', form?.voicemail_ext),
     { key: 'queue_priority', label: 'Priority', type: 'select', options: labeledNumberOptions(99, -99, (value) => `${value} - ${value < 0 ? 'Lower' : value > 0 ? 'Higher' : 'Even'}`, form?.queue_priority) },
     { key: 'next_agent_call', label: 'Next Agent Call', type: 'select', options: enumOptions(ensureOption(NEXT_AGENT_CALL_OPTIONS, form?.next_agent_call)) },
     { key: 'agent_search_method', label: 'Agent Search Method', type: 'select', options: enumOptions(ensureOption(AGENT_SEARCH_OPTIONS, form?.agent_search_method)) },
@@ -2735,50 +2767,50 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
     { key: 'drop_call_seconds_override', label: 'Drop Seconds Override', type: 'number' },
     { key: 'drop_action', label: 'Drop Action', type: 'select', options: enumOptions(ensureOption(INGROUP_DROP_ACTION_OPTIONS, form?.drop_action)) },
-    { key: 'drop_exten', label: 'Drop Extension / Filename', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    routeTargetField(form?.drop_action, 'drop_exten', 'Drop Extension / Filename', form?.drop_exten),
     { key: 'drop_inbound_group', label: 'Drop In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.drop_inbound_group) },
     { key: 'drop_callmenu', label: 'Drop Call Menu', type: callMenuRouteOptions(form?.drop_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.drop_callmenu) },
     { key: 'drop_lead_reset', label: 'Drop Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'after_hours_action', label: 'After Hours Action', type: 'select', options: enumOptions(ensureOption(INGROUP_AFTER_HOURS_ACTION_OPTIONS, form?.after_hours_action)) },
-    { key: 'after_hours_message_filename', label: 'After Hours Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('after_hours_message_filename', 'After Hours Message', form?.after_hours_message_filename),
     { key: 'after_hours_exten', label: 'After Hours Extension' },
-    { key: 'after_hours_voicemail', label: 'After Hours Voicemail' },
+    voicemailField('after_hours_voicemail', 'After Hours Voicemail', form?.after_hours_voicemail),
     { key: 'afterhours_xfer_group', label: 'After Hours In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.afterhours_xfer_group) },
     { key: 'after_hours_callmenu', label: 'After Hours Call Menu', type: callMenuRouteOptions(form?.after_hours_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.after_hours_callmenu) },
     { key: 'after_hours_lead_reset', label: 'After Hours Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'no_agent_no_queue', label: 'No Agent No Queue', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_NO_QUEUE_OPTIONS, form?.no_agent_no_queue)) },
     { key: 'no_agent_action', label: 'No Agent Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.no_agent_action)) },
-    { key: 'no_agent_action_value', label: 'No Agent Action Value', chooser: legacyInboundHref, chooserLabel: 'Route chooser' },
+    routeTargetField(form?.no_agent_action, 'no_agent_action_value', 'No Agent Action Value', form?.no_agent_action_value),
     { key: 'no_agent_delay', label: 'No Agent Delay', type: 'number' },
     { key: 'in_queue_nanque', label: 'In Queue NANQUE', type: 'select', options: enumOptions(ensureOption(INGROUP_IN_QUEUE_NANQUE_OPTIONS, form?.in_queue_nanque)) },
     { key: 'in_queue_nanque_exceptions', label: 'NANQUE Exceptions' },
     { key: 'nanq_lead_reset', label: 'No-Agent Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { section: 'Prompts, Hold, and Wait Options' },
-    { key: 'welcome_message_filename', label: 'Welcome Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('welcome_message_filename', 'Welcome Message', form?.welcome_message_filename),
     { key: 'play_welcome_message', label: 'Play Welcome Message', type: 'select', options: enumOptions(ensureOption(INGROUP_PLAY_WELCOME_OPTIONS, form?.play_welcome_message)) },
     { key: 'moh_context', label: 'Music On Hold Context' },
-    { key: 'park_file_name', label: 'Park Music On Hold', chooser: legacyInboundHref, chooserLabel: 'MOH chooser' },
-    { key: 'onhold_prompt_filename', label: 'On-Hold Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    mohField('park_file_name', 'Park Music On Hold', form?.park_file_name),
+    audioField('onhold_prompt_filename', 'On-Hold Prompt', form?.onhold_prompt_filename),
     { key: 'onhold_prompt_no_block', label: 'On-Hold Prompt No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'onhold_prompt_seconds', label: 'On-Hold Prompt Seconds', type: 'number' },
     { key: 'prompt_interval', label: 'Prompt Interval', type: 'number' },
     { key: 'play_place_in_line', label: 'Play Place In Line', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'play_estimate_hold_time', label: 'Play Estimated Hold Time', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'calculate_estimated_hold_seconds', label: 'Estimated Hold Seconds', type: 'number' },
-    { key: 'place_in_line_caller_number_filename', label: 'Place-In-Line Caller Number Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'place_in_line_you_next_filename', label: 'Place-In-Line You Are Next Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('place_in_line_caller_number_filename', 'Place-In-Line Caller Number Prompt', form?.place_in_line_caller_number_filename),
+    audioField('place_in_line_you_next_filename', 'Place-In-Line You Are Next Prompt', form?.place_in_line_you_next_filename),
     { key: 'hold_time_option', label: 'Hold Time Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_option)) },
     { key: 'hold_time_second_option', label: 'Hold Time Second Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_second_option)) },
     { key: 'hold_time_third_option', label: 'Hold Time Third Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.hold_time_third_option)) },
     { key: 'hold_time_option_seconds', label: 'Hold Time Seconds', type: 'number' },
     { key: 'hold_time_option_minimum', label: 'Hold Time Minimum', type: 'number' },
     { key: 'hold_time_option_exten', label: 'Hold Time Extension' },
-    { key: 'hold_time_option_voicemail', label: 'Hold Time Voicemail' },
+    voicemailField('hold_time_option_voicemail', 'Hold Time Voicemail', form?.hold_time_option_voicemail),
     { key: 'hold_time_option_xfer_group', label: 'Hold Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.hold_time_option_xfer_group) },
     { key: 'hold_time_option_callmenu', label: 'Hold Time Call Menu', type: callMenuRouteOptions(form?.hold_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.hold_time_option_callmenu) },
-    { key: 'hold_time_option_callback_filename', label: 'Hold Time Callback Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('hold_time_option_callback_filename', 'Hold Time Callback Prompt', form?.hold_time_option_callback_filename),
     { key: 'hold_time_option_callback_list_id', label: 'Hold Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.hold_time_option_callback_list_id) },
-    { key: 'hold_time_option_press_filename', label: 'Hold Time Press Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('hold_time_option_press_filename', 'Hold Time Press Prompt', form?.hold_time_option_press_filename),
     { key: 'hold_time_option_no_block', label: 'Hold Time No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'hold_time_option_prompt_seconds', label: 'Hold Time Prompt Seconds', type: 'number' },
     { key: 'hold_recall_xfer_group', label: 'Hold Recall In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.hold_recall_xfer_group) },
@@ -2789,16 +2821,16 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'wait_time_third_option', label: 'Wait Time Third Option', type: 'select', options: enumOptions(ensureOption(INGROUP_HOLD_WAIT_ROUTE_OPTIONS, form?.wait_time_third_option)) },
     { key: 'wait_time_option_seconds', label: 'Wait Time Seconds', type: 'number' },
     { key: 'wait_time_option_exten', label: 'Wait Time Extension' },
-    { key: 'wait_time_option_voicemail', label: 'Wait Time Voicemail' },
+    voicemailField('wait_time_option_voicemail', 'Wait Time Voicemail', form?.wait_time_option_voicemail),
     { key: 'wait_time_option_xfer_group', label: 'Wait Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.wait_time_option_xfer_group) },
     { key: 'wait_time_option_callmenu', label: 'Wait Time Call Menu', type: callMenuRouteOptions(form?.wait_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.wait_time_option_callmenu) },
-    { key: 'wait_time_option_callback_filename', label: 'Wait Time Callback Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('wait_time_option_callback_filename', 'Wait Time Callback Prompt', form?.wait_time_option_callback_filename),
     { key: 'wait_time_option_callback_list_id', label: 'Wait Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.wait_time_option_callback_list_id) },
-    { key: 'wait_time_option_press_filename', label: 'Wait Time Press Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('wait_time_option_press_filename', 'Wait Time Press Prompt', form?.wait_time_option_press_filename),
     { key: 'wait_time_option_no_block', label: 'Wait Time No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'wait_time_option_prompt_seconds', label: 'Wait Time Prompt Seconds', type: 'number' },
     { key: 'wait_time_lead_reset', label: 'Wait Time Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-    { key: 'eht_minimum_prompt_filename', label: 'EHT Minimum Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('eht_minimum_prompt_filename', 'EHT Minimum Prompt', form?.eht_minimum_prompt_filename),
     { key: 'eht_minimum_prompt_no_block', label: 'EHT Minimum No Block', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'eht_minimum_prompt_seconds', label: 'EHT Minimum Prompt Seconds', type: 'number' },
     { section: 'Transfers and Recording' },
@@ -2815,7 +2847,7 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'xfer_talk_minimum', label: 'Transfer Talk Minimum', type: 'select', options: enumOptions(['DISABLED', 'ENABLED']) },
     { key: 'xfer_talk_minimum_sec', label: 'Transfer Talk Minimum Seconds', type: 'number' },
     { key: 'ingroup_recording_override', label: 'Recording Override', type: 'select', options: enumOptions(ensureOption(INGROUP_RECORDING_OPTIONS, form?.ingroup_recording_override)) },
-    { key: 'ingroup_rec_filename', label: 'Recording Filename', chooser: legacyInboundHref, chooserLabel: 'Recording chooser' },
+    recordingField('ingroup_rec_filename', 'Recording Filename', form?.ingroup_rec_filename),
     { key: 'routing_initiated_recordings', label: 'Routing Initiated Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'stereo_recording', label: 'Stereo Recording', type: 'select', options: enumOptions(ensureOption(INGROUP_STEREO_RECORDING_OPTIONS, form?.stereo_recording)) },
     { key: 'stereo_rec_filename', label: 'Stereo Recording Filename' },
@@ -2842,11 +2874,11 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'areacode_filter', label: 'Area Code Filter', type: 'select', options: enumOptions(ensureOption(INGROUP_AREACODE_FILTER_OPTIONS, form?.areacode_filter)) },
     { key: 'areacode_filter_seconds', label: 'Area Code Filter Seconds', type: 'number' },
     { key: 'areacode_filter_action', label: 'Area Code Filter Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.areacode_filter_action)) },
-    { key: 'areacode_filter_action_value', label: 'Area Code Filter Value' },
+    routeTargetField(form?.areacode_filter_action, 'areacode_filter_action_value', 'Area Code Filter Value', form?.areacode_filter_action_value),
     { key: 'timer_action', label: 'Timer Action', type: 'select', options: enumOptions(ensureOption(TIMER_ACTION_OPTIONS, form?.timer_action)) },
-    { key: 'timer_action_message', label: 'Timer Action Message', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('timer_action_message', 'Timer Action Message', form?.timer_action_message),
     { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
-    { key: 'timer_action_destination', label: 'Timer Destination' },
+    routeTargetField(form?.timer_action, 'timer_action_destination', 'Timer Destination', form?.timer_action_destination),
     { key: 'no_delay_call_route', label: 'No Delay Call Route', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'on_hook_ring_time', label: 'On-Hook Ring Time', type: 'number' },
     { key: 'on_hook_cid', label: 'On-Hook CID' },
@@ -2857,34 +2889,34 @@ function actionFields(entity, mode, admin, form = {}) {
     { key: 'answer_signal', label: 'Answer Signal', type: 'select', options: enumOptions(ensureOption(INGROUP_ANSWER_SIGNAL_OPTIONS, form?.answer_signal)) },
     { section: 'Survey, Callbacks, and Closing Time' },
     { key: 'inbound_survey', label: 'Inbound Survey', type: 'select', options: enumOptions(['DISABLED', 'ENABLED']) },
-    { key: 'inbound_survey_filename', label: 'Survey Intro Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('inbound_survey_filename', 'Survey Intro Prompt', form?.inbound_survey_filename),
     { key: 'inbound_survey_accept_digit', label: 'Survey Accept Digit' },
-    { key: 'inbound_survey_question_filename', label: 'Survey Question Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('inbound_survey_question_filename', 'Survey Question Prompt', form?.inbound_survey_question_filename),
     { key: 'inbound_survey_callmenu', label: 'Survey Call Menu', type: callMenuRouteOptions(form?.inbound_survey_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.inbound_survey_callmenu) },
     { key: 'icbq_expiration_hours', label: 'ICBQ Expiration Hours', type: 'number' },
     { key: 'icbq_call_time_id', label: 'ICBQ Call Time', type: callTimeOptions.length ? 'select' : 'text', options: withCurrentOption(callTimeOptions, form?.icbq_call_time_id) },
     { key: 'icbq_dial_filter', label: 'ICBQ Dial Filter', type: leadFilterOptions.length ? 'select' : 'text', options: withCurrentOption(leadFilterOptions, form?.icbq_dial_filter) },
     { key: 'closing_time_action', label: 'Closing Time Action', type: 'select', options: enumOptions(ensureOption(INGROUP_NO_AGENT_ACTION_OPTIONS, form?.closing_time_action)) },
     { key: 'closing_time_now_trigger', label: 'Closing Time Trigger Now', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-    { key: 'closing_time_filename', label: 'Closing Time Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'closing_time_end_filename', label: 'Closing Time End Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('closing_time_filename', 'Closing Time Prompt', form?.closing_time_filename),
+    audioField('closing_time_end_filename', 'Closing Time End Prompt', form?.closing_time_end_filename),
     { key: 'closing_time_lead_reset', label: 'Closing Time Lead Reset', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'closing_time_option_exten', label: 'Closing Time Extension' },
     { key: 'closing_time_option_callmenu', label: 'Closing Time Call Menu', type: callMenuRouteOptions(form?.closing_time_option_callmenu).length ? 'select' : 'text', options: callMenuRouteOptions(form?.closing_time_option_callmenu) },
-    { key: 'closing_time_option_voicemail', label: 'Closing Time Voicemail' },
+    voicemailField('closing_time_option_voicemail', 'Closing Time Voicemail', form?.closing_time_option_voicemail),
     { key: 'closing_time_option_xfer_group', label: 'Closing Time In-Group', type: inboundOptions.length ? 'select' : 'text', options: withCurrentOption(inboundOptions, form?.closing_time_option_xfer_group) },
     { key: 'closing_time_option_callback_list_id', label: 'Closing Time Callback List', type: listOptions.length ? 'select' : 'text', options: withCurrentOption(listOptions, form?.closing_time_option_callback_list_id) },
     { key: 'cid_cb_confirm_number', label: 'CID Callback Confirm Number', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-    { key: 'cid_cb_invalid_filter_phone_group', label: 'CID Callback Invalid Filter Group' },
+    { key: 'cid_cb_invalid_filter_phone_group', label: 'CID Callback Invalid Filter Group', type: filterPhoneGroupOptions.length ? 'select' : 'text', options: withCurrentOption(filterPhoneGroupOptions, form?.cid_cb_invalid_filter_phone_group) },
     { key: 'cid_cb_valid_length', label: 'CID Callback Valid Length', type: 'number' },
-    { key: 'cid_cb_valid_filename', label: 'CID Callback Valid Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_confirmed_filename', label: 'CID Callback Confirmed Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_enter_filename', label: 'CID Callback Enter Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_you_entered_filename', label: 'CID Callback You Entered Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_press_to_confirm_filename', label: 'CID Callback Press Confirm Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_invalid_filename', label: 'CID Callback Invalid Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_reenter_filename', label: 'CID Callback Re-enter Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
-    { key: 'cid_cb_error_filename', label: 'CID Callback Error Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('cid_cb_valid_filename', 'CID Callback Valid Prompt', form?.cid_cb_valid_filename),
+    audioField('cid_cb_confirmed_filename', 'CID Callback Confirmed Prompt', form?.cid_cb_confirmed_filename),
+    audioField('cid_cb_enter_filename', 'CID Callback Enter Prompt', form?.cid_cb_enter_filename),
+    audioField('cid_cb_you_entered_filename', 'CID Callback You Entered Prompt', form?.cid_cb_you_entered_filename),
+    audioField('cid_cb_press_to_confirm_filename', 'CID Callback Press Confirm Prompt', form?.cid_cb_press_to_confirm_filename),
+    audioField('cid_cb_invalid_filename', 'CID Callback Invalid Prompt', form?.cid_cb_invalid_filename),
+    audioField('cid_cb_reenter_filename', 'CID Callback Re-enter Prompt', form?.cid_cb_reenter_filename),
+    audioField('cid_cb_error_filename', 'CID Callback Error Prompt', form?.cid_cb_error_filename),
     { section: 'Lead Population and Chat' },
     { key: 'populate_lead_ingroup', label: 'Populate Lead In-Group', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
     { key: 'populate_lead_province', label: 'Populate Lead Province' },
@@ -2900,17 +2932,17 @@ function actionFields(entity, mode, admin, form = {}) {
     { section: 'Alerts and Custom Fields' },
     { key: 'agent_alert_exten', label: 'Agent Alert Extension' },
     { key: 'agent_alert_delay', label: 'Agent Alert Delay', type: 'number' },
-    { key: 'browser_alert_sound', label: 'Browser Alert Sound' },
+    audioField('browser_alert_sound', 'Browser Alert Sound', form?.browser_alert_sound),
     { key: 'browser_alert_volume', label: 'Browser Alert Volume', type: 'number' },
     { key: 'second_alert_trigger', label: 'Second Alert Trigger' },
     { key: 'second_alert_trigger_seconds', label: 'Second Alert Trigger Seconds', type: 'number' },
-    { key: 'second_alert_filename', label: 'Second Alert Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('second_alert_filename', 'Second Alert Prompt', form?.second_alert_filename),
     { key: 'second_alert_delay', label: 'Second Alert Delay', type: 'number' },
     { key: 'second_alert_container', label: 'Second Alert Container' },
     { key: 'second_alert_only', label: 'Second Alert Only', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     { key: 'third_alert_trigger', label: 'Third Alert Trigger' },
     { key: 'third_alert_trigger_seconds', label: 'Third Alert Trigger Seconds', type: 'number' },
-    { key: 'third_alert_filename', label: 'Third Alert Prompt', chooser: legacyInboundHref, chooserLabel: 'Audio chooser' },
+    audioField('third_alert_filename', 'Third Alert Prompt', form?.third_alert_filename),
     { key: 'third_alert_delay', label: 'Third Alert Delay', type: 'number' },
     { key: 'third_alert_container', label: 'Third Alert Container' },
     { key: 'third_alert_only', label: 'Third Alert Only', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -3256,17 +3288,6 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
                       disabled={field.disabled}
                       onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
                     />
-                  )}
-                  {field.chooser && (
-                    <a
-                      className="field-link"
-                      href={typeof field.chooser === 'function' ? field.chooser(form) : field.chooser}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <ExternalLink size={13} aria-hidden="true" />
-                      {field.chooserLabel || 'Open chooser'}
-                    </a>
                   )}
                 </label>
               )
@@ -3711,22 +3732,21 @@ function CampaignsView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Campaign Tools" title="Classic Subsections" icon={SlidersHorizontal}>
+        <Panel eyebrow="Campaign Tools" title="Campaign Subsections" icon={SlidersHorizontal}>
           <div className="tool-grid">
             {[
-              ['Statuses', 'status_count', 'ADD=32'],
-              ['HotKeys', 'hotkey_count', 'ADD=33'],
-              ['Lead Recycle', 'recycle_count', 'ADD=35'],
-              ['Auto Alt Dial', 'auto_alt_dial', 'ADD=36'],
-              ['List Mix', 'mix_count', 'ADD=39'],
-              ['Pause Codes', 'pause_count', 'ADD=37'],
-              ['Presets', 'enable_xfer_presets', 'ADD=301'],
-              ['AC-CID', 'use_custom_cid', 'ADD=302'],
-            ].map(([label, key, legacyAdd]) => (
+              ['Statuses', 'status_count'],
+              ['HotKeys', 'hotkey_count'],
+              ['Lead Recycle', 'recycle_count'],
+              ['Auto Alt Dial', 'auto_alt_dial'],
+              ['List Mix', 'mix_count'],
+              ['Pause Codes', 'pause_count'],
+              ['Presets', 'enable_xfer_presets'],
+              ['AC-CID', 'use_custom_cid'],
+            ].map(([label, key]) => (
               <div className="tool-tile" key={label}>
                 <span>{label}</span>
                 <strong>{formatNumber(typeof campaigns[0]?.[key] === 'number' ? campaigns.reduce((sum, row) => sum + Number(row[key] || 0), 0) : campaigns.filter((row) => row[key] && row[key] !== 'N' && row[key] !== 'NONE' && row[key] !== 'DISABLED').length)}</strong>
-                <a href={`/vicidial/admin.php?${legacyAdd}`} target="_blank" rel="noreferrer">Open legacy</a>
               </div>
             ))}
           </div>
@@ -3977,6 +3997,162 @@ function ListsView({ admin, user, onAction }) {
             })}
           </div>
         </Panel>
+      </section>
+    </>
+  );
+}
+
+function LeadLoaderView({ admin, user, token, onLoaded }) {
+  const lists = admin?.lists || [];
+  const canLoad = userCan(user, 'leadLoader');
+  const [listId, setListId] = useState('');
+  const [phoneCode, setPhoneCode] = useState('1');
+  const [status, setStatus] = useState('NEW');
+  const [duplicateMode, setDuplicateMode] = useState('LIST');
+  const [csv, setCsv] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    if (!listId && lists.length) setListId(String(lists[0].list_id || ''));
+  }, [listId, lists]);
+
+  const selectedList = lists.find((item) => String(item.list_id) === String(listId));
+  const previewRows = csv
+    .split(/\r?\n/)
+    .map((line) => line.split(',').map((item) => item.trim()))
+    .filter((row) => row.some(Boolean))
+    .slice(0, 6);
+
+  async function loadFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setCsv(await file.text());
+    setSummary(null);
+    setError('');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!canLoad) {
+      setError('Your VICIdial user is not allowed to load leads');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setSummary(null);
+    try {
+      const payload = await apiFetch('/admin/lead-loader', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          list_id: listId,
+          phone_code: phoneCode,
+          status,
+          duplicate_mode: duplicateMode,
+          csv,
+        }),
+      });
+      setSummary(payload.summary || null);
+      if (payload.data) onLoaded(payload.data);
+    } catch (loadError) {
+      const messages = {
+        list_required: 'Choose a list before loading leads',
+        csv_required: 'Add a CSV file or paste CSV rows first',
+        csv_header_and_rows_required: 'CSV needs a header row and at least one lead row',
+        phone_number_header_required: 'CSV needs a phone_number column',
+        campaign_not_allowed: 'Your VICIdial user cannot load leads into that campaign',
+        permission_denied: 'Your VICIdial user is not allowed to load leads',
+      };
+      setError(messages[loadError.message] || 'Lead load failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <section className="metric-grid admin-metric-grid" aria-label="Lead loader metrics">
+        <MetricCard icon={Database} label="Lists" value={formatNumber(lists.length)} detail="Available lead lists" accent="#00d9ff" />
+        <MetricCard icon={Radio} label="Campaign" value={selectedList?.campaign_id || 'None'} detail={selectedList?.list_name || selectedList?.list_id || 'No list selected'} accent="#73fbd3" />
+        <MetricCard icon={ShieldCheck} label="Load Access" value={canLoad ? 'Allowed' : 'No'} detail="VICIdial permission" accent="#ffd166" />
+      </section>
+
+      <section className="admin-grid">
+        <Panel eyebrow="Lead Admin" title="Lead Loader" icon={FileText} className="admin-wide-panel">
+          <form className="entity-form lead-loader-form" onSubmit={submit}>
+            <div className="field-grid">
+              <label>
+                <span>List</span>
+                <select value={listId} onChange={(event) => setListId(event.target.value)}>
+                  {lists.map((list) => (
+                    <option key={list.list_id} value={list.list_id}>{list.list_id} - {list.list_name || list.campaign_id}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Duplicate Check</span>
+                <select value={duplicateMode} onChange={(event) => setDuplicateMode(event.target.value)}>
+                  <option value="LIST">List</option>
+                  <option value="CAMPAIGN">Campaign</option>
+                  <option value="SYSTEM">System</option>
+                  <option value="NONE">None</option>
+                </select>
+              </label>
+              <label>
+                <span>Phone Code</span>
+                <input value={phoneCode} onChange={(event) => setPhoneCode(event.target.value)} />
+              </label>
+              <label>
+                <span>Status</span>
+                <input value={status} onChange={(event) => setStatus(event.target.value.toUpperCase())} />
+              </label>
+              <label className="wide-field">
+                <span>CSV File</span>
+                <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
+              </label>
+              <label className="wide-field">
+                <span>CSV Rows</span>
+                <textarea value={csv} onChange={(event) => { setCsv(event.target.value); setSummary(null); }} />
+              </label>
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            <div className="modal-actions">
+              <button type="submit" className="primary-action" disabled={loading || !canLoad}>
+                <Save size={18} aria-hidden="true" />
+                {loading ? 'Loading' : 'Load Leads'}
+              </button>
+            </div>
+          </form>
+        </Panel>
+
+        <Panel eyebrow="Preview" title="CSV Preview" icon={BarChart3}>
+          <div className="csv-preview">
+            {previewRows.length ? previewRows.map((row, index) => (
+              <div className="csv-preview-row" key={`${index}-${row.join('-')}`}>
+                {row.slice(0, 8).map((cell, cellIndex) => <span key={`${cellIndex}-${cell}`}>{cell || '-'}</span>)}
+              </div>
+            )) : <div className="empty-state">No CSV rows loaded</div>}
+          </div>
+        </Panel>
+
+        {summary && (
+          <Panel eyebrow="Result" title="Load Summary" icon={Database} className="admin-wide-panel">
+            <div className="quick-stack">
+              <MetricCard icon={Database} label="Inserted" value={formatNumber(summary.inserted)} detail={`List ${summary.list_id}`} accent="#73fbd3" />
+              <MetricCard icon={Gauge} label="Skipped" value={formatNumber(summary.skipped)} detail="Duplicate or invalid rows" accent="#ffd166" />
+            </div>
+            <DataTable
+              emptyLabel="No skipped rows"
+              rows={(summary.skipped_rows || []).map((row) => ({ ...row, id: `${row.row}-${row.reason}-${row.phone_number || ''}` }))}
+              columns={[
+                { key: 'row', label: 'Row', render: (row) => row.row },
+                { key: 'reason', label: 'Reason', render: (row) => row.reason },
+                { key: 'phone_number', label: 'Phone', render: (row) => row.phone_number || 'None' },
+              ]}
+            />
+          </Panel>
+        )}
       </section>
     </>
   );
@@ -4776,13 +4952,14 @@ function SystemView({ admin, user, onAction }) {
   );
 }
 
-function AdminPage({ activeView, dashboard, admin, user, onAction }) {
+function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSaved }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'callMenus') return <CallMenusView admin={admin} user={user} onAction={onAction} />;
@@ -4926,7 +5103,9 @@ function AdminShell({ token, user, onLogout }) {
         dashboard={dashboardState.data}
         admin={adminState.data}
         user={user}
+        token={token}
         onAction={openAction}
+        onSaved={handleSaved}
       />
 
       <footer className="footer-line">
