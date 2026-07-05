@@ -608,6 +608,10 @@ h2 {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48), 0 0 44px var(--shadow);
 }
 
+.detail-modal {
+  width: min(1280px, 100%);
+}
+
 .modal-head {
   display: flex;
   align-items: center;
@@ -627,6 +631,23 @@ h2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.detail-modal .field-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.form-section {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 217, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(0, 217, 255, 0.08);
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 860;
+  text-transform: uppercase;
 }
 
 .field-grid label {
@@ -679,6 +700,49 @@ h2 {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.action-buttons,
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tool-tile {
+  display: grid;
+  gap: 6px;
+  min-height: 108px;
+  padding: 12px;
+  border: 1px solid rgba(0, 217, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.58);
+}
+
+.tool-tile span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
+.tool-tile strong {
+  color: var(--text);
+  font-size: 1.25rem;
+}
+
+.tool-tile a {
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 820;
+  text-decoration: none;
 }
 
 .panel {
@@ -961,6 +1025,11 @@ td span {
     grid-template-columns: 1fr;
   }
 
+  .detail-modal .field-grid,
+  .tool-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .catalog-grid {
     grid-template-columns: 1fr;
   }
@@ -1025,6 +1094,11 @@ td span {
   }
 
   .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-modal .field-grid,
+  .tool-grid {
     grid-template-columns: 1fr;
   }
 
