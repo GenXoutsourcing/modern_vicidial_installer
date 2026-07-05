@@ -59,6 +59,25 @@ for (const suffix of ['2nd NEW', '3rd NEW', '4th NEW', '5th NEW', '6th NEW']) {
     LEAD_ORDER_OPTIONS.push(`${prefix} ${suffix}`);
   }
 }
+const NEXT_AGENT_CALL_OPTIONS = ['random', 'oldest_call_start', 'oldest_call_finish', 'overall_user_level', 'campaign_rank', 'campaign_grade_random', 'fewest_calls', 'longest_wait_time', 'overall_user_level_wait_time', 'campaign_rank_wait_time', 'fewest_calls_wait_time'];
+const TALLY_THRESHOLD_OPTIONS = ['DISABLED', 'LOGGED-IN_AGENTS', 'NON-PAUSED_AGENTS', 'WAITING_AGENTS'];
+const CONCURRENT_TRANSFER_OPTIONS = ['AUTO', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '15', '20', '25', '30', '40', '50', '60', '80', '100', '1000', '10000'];
+const INBOUND_QUEUE_NO_DIAL_OPTIONS = ['DISABLED', 'ENABLED', 'ALL_SERVERS', 'ENABLED_WITH_CHAT', 'ALL_SERVERS_WITH_CHAT'];
+const CUSTOM_CID_OPTIONS = ['Y', 'N', 'AREACODE', 'USER_CUSTOM_1', 'USER_CUSTOM_2', 'USER_CUSTOM_3', 'USER_CUSTOM_4', 'USER_CUSTOM_5'];
+const AGENT_SEARCH_OPTIONS = ['', 'LB', 'LO', 'SO'];
+const TRANSFER_BUTTON_LAUNCH_OPTIONS = ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM'];
+const SCHEDULED_CALLBACK_ALERT_OPTIONS = ['NONE', 'BLINK', 'RED', 'BLINK_RED', 'BLINK_DEFER', 'RED_DEFER', 'BLINK_RED_DEFER'];
+const SCHEDULED_CALLBACK_AUTO_RESCHEDULE_OPTIONS = ['NONE', 'ALL', 'DISPO_DEAD', 'DISPO_NA', 'DISPO_BUSY', 'DISPO_DROP', 'DISPO_INCALL', 'DISPO_NEW'];
+const TIMER_ACTION_OPTIONS = ['NONE', 'D1_DIAL', 'D2_DIAL', 'D3_DIAL', 'D4_DIAL', 'D5_DIAL', 'D1_DIAL_QUIET', 'D2_DIAL_QUIET', 'D3_DIAL_QUIET', 'D4_DIAL_QUIET', 'D5_DIAL_QUIET', 'MESSAGE_ONLY', 'WEBFORM', 'HANGUP', 'CALLMENU', 'EXTENSION', 'IN_GROUP'];
+const AGENT_HANGUP_ROUTE_OPTIONS = ['HANGUP', 'MESSAGE', 'EXTENSION', 'IN_GROUP', 'CALLMENU'];
+const PARK_CALL_IVR_OPTIONS = ['DISABLED', 'ENABLED', 'ENABLED_PARK_ONLY', 'ENABLED_BUTTON_HIDDEN'];
+const HIDE_CALL_LOG_OPTIONS = ['Y', 'N', 'SHOW_1', 'SHOW_2', 'SHOW_3', 'SHOW_4', 'SHOW_5', 'SHOW_6', 'SHOW_7', 'SHOW_8', 'SHOW_9', 'SHOW_10'];
+const DEAD_STOP_RECORDING_OPTIONS = ['DISABLED', 'ALL_CALLS', 'OUTBOUND_ONLY', 'INBOUND_ONLY', 'AUTODIAL_ONLY', 'MANUAL_ONLY'];
+const ADMIN_COLOR_OPTIONS = ['WHITE', 'BLACK', 'BLUE', 'RED', 'YELLOW', 'GREEN', 'PURPLE', 'ORANGE'];
+const SCRIPT_COLOR_OPTIONS = ['white', 'black', 'blue', 'red', 'yellow', 'green', 'purple', 'orange'];
+const GMT_OPTIONS = ['-12.00', '-11.00', '-10.00', '-9.00', '-8.00', '-7.00', '-6.00', '-5.00', '-4.00', '-3.00', '-2.00', '-1.00', '0.00', '1.00', '2.00', '3.00', '4.00', '5.00', '6.00', '7.00', '8.00', '9.00', '10.00', '11.00', '12.00'];
+const LEAD_FIELD_OPTIONS = ['DISABLED', 'vendor_lead_code', 'source_id', 'list_id', 'phone_code', 'phone_number', 'title', 'first_name', 'middle_initial', 'last_name', 'address1', 'address2', 'address3', 'city', 'state', 'province', 'postal_code', 'country_code', 'gender', 'alt_phone', 'email', 'security_phrase', 'comments', 'rank', 'owner', 'entry_list_id'];
+const AUTO_HOPPER_MULTI_OPTIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9', '1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '2.0', '2.2', '2.4', '2.6', '2.8', '3.0', '3.5', '4.0'];
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '64kb' }));
@@ -95,9 +114,20 @@ function accessScope(value, allMarkers = []) {
   return { raw, all, values };
 }
 
+function reportAccessScope(value) {
+  const raw = String(value || '').trim();
+  const upper = raw.toUpperCase();
+  const all = upper.includes('ALL REPORTS') || upper.includes('ALL_REPORTS') || upper.includes('---ALL---');
+  const values = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item && item.toUpperCase() !== 'NONE' && item.toUpperCase() !== 'ALL REPORTS');
+  return { raw, all, values };
+}
+
 function publicUser(row) {
   const allowedCampaigns = accessScope(row.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---']);
-  const allowedReports = accessScope(row.allowed_reports, ['ALL REPORTS', 'ALL_REPORTS', '---ALL---']);
+  const allowedReports = reportAccessScope(row.allowed_reports);
   const adminViewableGroups = accessScope(row.admin_viewable_groups, ['---ALL---', '-ALL-GROUPS-', 'ALL-GROUPS']);
   const adminViewableCallTimes = accessScope(row.admin_viewable_call_times, ['---ALL---', '-ALL-CALLTIMES-', 'ALL-CALLTIMES']);
   const allowedQueueGroups = row.allowed_queue_groups
@@ -393,6 +423,11 @@ function ynFlag(value, fallback = 'N') {
 
 function codeText(value, max = 40, fallback = '') {
   return cleanText(value, max).replace(/[^-_.:| 0-9a-zA-Z]/g, '') || fallback;
+}
+
+function cleanExactChoice(value, allowed, fallback, max = 60) {
+  const next = codeText(value, max, fallback);
+  return allowed.includes(next) ? next : fallback;
 }
 
 function cleanLeadOrder(value) {
@@ -743,6 +778,12 @@ async function adminData(user) {
   const scriptWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', scriptParams);
   const filterParams = [];
   const filterWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', filterParams);
+  const callMenuParams = [];
+  const callMenuScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', callMenuParams);
+  const callMenuWhere = `(${callMenuScopeWhere} OR user_group = '---ALL---')`;
+  const shiftParams = [];
+  const shiftScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', shiftParams);
+  const shiftWhere = `(${shiftScopeWhere} OR user_group = '---ALL---')`;
   const campaignStatusParams = [];
   const campaignStatusWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', campaignStatusParams);
   const [
@@ -759,9 +800,13 @@ async function adminData(user) {
     leadFilters,
     statuses,
     campaignStatuses,
+    listMixes,
     systemSettingsRows,
     dids,
     phones,
+    callMenus,
+    shifts,
+    phoneCodes,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -785,6 +830,9 @@ async function adminData(user) {
               c.campaign_cid,
               c.campaign_recording,
               c.campaign_rec_filename,
+              c.campaign_rec_exten,
+              c.allcalls_delay,
+              c.routing_initiated_recordings,
               c.campaign_script,
               c.campaign_script_two,
               c.get_call_launch,
@@ -793,16 +841,25 @@ async function adminData(user) {
               c.drop_call_seconds,
               c.drop_action,
               c.safe_harbor_exten,
+              c.safe_harbor_audio,
+              c.safe_harbor_audio_field,
+              c.voicemail_ext,
+              c.park_file_name,
               c.display_dialable_count,
               c.wrapup_seconds,
               c.wrapup_message,
               c.use_internal_dnc,
               c.omit_phone_code,
               c.available_only_ratio_tally,
+              c.available_only_tally_threshold,
+              c.available_only_tally_threshold_agents,
+              c.dial_level_threshold,
+              c.dial_level_threshold_agents,
               c.adaptive_dropped_percentage,
               c.adaptive_maximum_level,
               c.adaptive_intensity,
               c.adaptive_dl_diff_target,
+              c.dl_diff_target_method,
               c.concurrent_transfers,
               c.auto_alt_dial,
               c.auto_alt_dial_statuses,
@@ -810,14 +867,23 @@ async function adminData(user) {
               c.dial_statuses,
               c.no_hopper_leads_logins,
               c.use_auto_hopper,
+              c.auto_hopper_multi,
+              c.auto_trim_hopper,
+              c.hopper_vlc_dup_check,
               c.list_order_mix,
               c.campaign_allow_inbound,
               c.manual_dial_list_id,
               c.default_xfer_group,
               c.queue_priority,
               c.drop_inbound_group,
+              c.inbound_queue_no_dial,
               c.enable_xfer_presets,
               c.use_custom_cid,
+              c.agent_search_method,
+              c.agent_hangup_route,
+              c.agent_hangup_value,
+              c.ivr_park_call,
+              c.ivr_park_call_agi,
               c.display_queue_count,
               c.manual_dial_filter,
               c.agent_clipboard_copy,
@@ -831,6 +897,10 @@ async function adminData(user) {
               c.start_call_url,
               c.dispo_call_url,
               c.na_call_url,
+              c.timer_action,
+              c.timer_action_message,
+              c.timer_action_seconds,
+              c.timer_action_destination,
               c.manual_dial_prefix,
               c.manual_preview_dial,
               c.manual_dial_call_time_check,
@@ -865,6 +935,10 @@ async function adminData(user) {
               c.ready_max_logout,
               c.callback_display_days,
               c.scheduled_callbacks_alert,
+              c.scheduled_callbacks_email_alert,
+              c.scheduled_callbacks_count,
+              c.scheduled_callbacks_force_dial,
+              c.scheduled_callbacks_auto_reschedule,
               c.next_dial_my_callbacks,
               c.callback_dnc,
               c.mute_recordings,
@@ -1175,7 +1249,18 @@ async function adminData(user) {
       `SELECT status,
               status_name,
               selectable,
-              human_answered
+              human_answered,
+              category,
+              sale,
+              dnc,
+              customer_contact,
+              not_interested,
+              unworkable,
+              scheduled_callback,
+              completed,
+              min_sec,
+              max_sec,
+              answering_machine
        FROM vicidial_statuses
        WHERE status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
        ORDER BY status ASC
@@ -1188,11 +1273,35 @@ async function adminData(user) {
               status,
               status_name,
               selectable,
-              human_answered
+              human_answered,
+              category,
+              sale,
+              dnc,
+              customer_contact,
+              not_interested,
+              unworkable,
+              scheduled_callback,
+              completed,
+              min_sec,
+              max_sec,
+              answering_machine
        FROM vicidial_campaign_statuses
        WHERE ${campaignStatusWhere}
          AND status NOT IN ('INCALL', 'QUEUE', 'CBHOLD')
        ORDER BY campaign_id ASC, status ASC
+       LIMIT 1000`,
+      campaignStatusParams,
+      [],
+    ),
+    rows(
+      `SELECT campaign_id,
+              vcl_id,
+              vcl_name,
+              status,
+              mix_method
+       FROM vicidial_campaigns_list_mix
+       WHERE ${campaignStatusWhere}
+       ORDER BY campaign_id ASC, status ASC, vcl_id ASC
        LIMIT 1000`,
       campaignStatusParams,
       [],
@@ -1280,6 +1389,57 @@ async function adminData(user) {
       phoneParams,
       [],
     ),
+    rows(
+      `SELECT menu_id,
+              menu_name,
+              menu_prompt,
+              menu_timeout,
+              menu_timeout_prompt,
+              menu_invalid_prompt,
+              menu_repeat,
+              menu_time_check,
+              call_time_id,
+              track_in_vdac,
+              custom_dialplan_entry,
+              tracking_group,
+              dtmf_log,
+              dtmf_field,
+              qualify_sql,
+              alt_dtmf_log,
+              answer_signal,
+              user_group
+       FROM vicidial_call_menu
+       WHERE ${callMenuWhere}
+       ORDER BY menu_id ASC
+       LIMIT 500`,
+      callMenuParams,
+      [],
+    ),
+    rows(
+      `SELECT shift_id,
+              shift_name,
+              shift_start_time,
+              shift_length,
+              shift_weekdays,
+              user_group
+       FROM vicidial_shifts
+       WHERE ${shiftWhere}
+       ORDER BY shift_id ASC
+       LIMIT 300`,
+      shiftParams,
+      [],
+    ),
+    rows(
+      `SELECT country_code,
+              MAX(country) AS country
+       FROM vicidial_phone_codes
+       WHERE country_code IS NOT NULL
+       GROUP BY country_code
+       ORDER BY country_code ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -1304,6 +1464,10 @@ async function adminData(user) {
       activeScripts: scripts.filter((item) => item.active === 'Y').length,
       leadFilters: leadFilters.length,
       callTimes: callTimes.length,
+      statuses: statuses.length,
+      campaignStatuses: campaignStatuses.length,
+      callMenus: callMenus.length,
+      shifts: shifts.length,
       servers: servers.length,
       activeServers: servers.filter((item) => item.active === 'Y').length,
       carriers: carriers.length,
@@ -1340,6 +1504,10 @@ async function adminData(user) {
     scripts,
     leadFilters,
     callTimes,
+    statuses,
+    campaignStatuses,
+    callMenus,
+    shifts,
     recordings: recordings.map((item) => ({
       ...item,
       length_in_sec: Number(item.length_in_sec || 0),
@@ -1356,6 +1524,10 @@ async function adminData(user) {
       leadFilters,
       statuses,
       campaignStatuses,
+      listMixes,
+      callMenus,
+      shifts,
+      phoneCodes,
       systemSettings: {
         autoDialLimit: Number(systemSettings.auto_dial_limit || 8),
       },
@@ -1372,6 +1544,13 @@ async function adminData(user) {
         server_ip: item.server_ip,
         label: `${item.extension} @ ${item.server_ip}`,
       })),
+      users: users.map((item) => ({
+        user: item.user,
+        full_name: item.full_name || item.user,
+      })),
+      phoneContexts: [...new Set(phones.map((item) => item.phone_context).filter(Boolean))]
+        .sort()
+        .map((phone_context) => ({ phone_context })),
       servers: servers.map((item) => ({
         server_id: item.server_id,
         server_ip: item.server_ip,
@@ -1388,6 +1567,10 @@ async function adminData(user) {
 function campaignPayload(body, currentUser) {
   const codeText = (value, max = 40, fallback = '') => cleanText(value, max).replace(/[^-_.:| 0-9a-zA-Z]/g, '') || fallback;
   const decimalText = (value, fallback = '0', max = 6) => cleanText(value, max).replace(/[^0-9.]/g, '') || fallback;
+  const exactChoice = (value, allowed, fallback, max = 60) => {
+    const next = codeText(value, max, fallback);
+    return allowed.includes(next) ? next : fallback;
+  };
   const payload = {
     campaign_name: cleanText(body.campaign_name, 40) || 'New Campaign',
     campaign_description: cleanText(body.campaign_description, 255),
@@ -1406,11 +1589,14 @@ function campaignPayload(body, currentUser) {
   return {
     ...payload,
     allow_closers: ynFlag(body.allow_closers, 'N'),
-    next_agent_call: codeText(body.next_agent_call, 40, 'longest_wait_time'),
+    next_agent_call: exactChoice(body.next_agent_call, NEXT_AGENT_CALL_OPTIONS, 'longest_wait_time'),
     dial_timeout: cleanInt(body.dial_timeout, 60, 5, 255),
     dial_prefix: codeText(body.dial_prefix, 20, '9'),
     campaign_cid: cleanDigits(body.campaign_cid, 20) || '0000000000',
     campaign_rec_filename: codeText(body.campaign_rec_filename, 50, 'FULLDATE_CUSTPHONE'),
+    campaign_rec_exten: codeText(body.campaign_rec_exten, 10, '8309'),
+    allcalls_delay: cleanInt(body.allcalls_delay, 0, 0, 255),
+    routing_initiated_recordings: ynFlag(body.routing_initiated_recordings, 'N'),
     campaign_script: cleanId(body.campaign_script, 20),
     campaign_script_two: cleanId(body.campaign_script_two, 20),
     get_call_launch: cleanChoice(body.get_call_launch, ['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM'], 'NONE'),
@@ -1419,31 +1605,50 @@ function campaignPayload(body, currentUser) {
     drop_call_seconds: cleanInt(body.drop_call_seconds, 5, 0, 255),
     drop_action: cleanChoice(body.drop_action, ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'AUDIO', 'CALLMENU', 'VMAIL_NO_INST'], 'AUDIO'),
     safe_harbor_exten: codeText(body.safe_harbor_exten, 20, '8307'),
+    safe_harbor_audio: codeText(body.safe_harbor_audio, 100, 'buzz'),
+    safe_harbor_audio_field: exactChoice(body.safe_harbor_audio_field, LEAD_FIELD_OPTIONS, 'DISABLED', 40),
+    voicemail_ext: codeText(body.voicemail_ext, 10),
+    park_file_name: codeText(body.park_file_name, 100),
     display_dialable_count: ynFlag(body.display_dialable_count, 'Y'),
     wrapup_seconds: cleanInt(body.wrapup_seconds, 0, 0, 999),
     wrapup_message: cleanText(body.wrapup_message, 255),
     use_internal_dnc: cleanChoice(body.use_internal_dnc, ['Y', 'N', 'AREACODE'], 'Y'),
     omit_phone_code: ynFlag(body.omit_phone_code, 'N'),
     available_only_ratio_tally: ynFlag(body.available_only_ratio_tally, 'N'),
+    available_only_tally_threshold: cleanChoice(body.available_only_tally_threshold, TALLY_THRESHOLD_OPTIONS, 'DISABLED'),
+    available_only_tally_threshold_agents: cleanInt(body.available_only_tally_threshold_agents, 0, 0, 50),
+    dial_level_threshold: cleanChoice(body.dial_level_threshold, TALLY_THRESHOLD_OPTIONS, 'DISABLED'),
+    dial_level_threshold_agents: cleanInt(body.dial_level_threshold_agents, 0, 0, 50),
     adaptive_dropped_percentage: decimalText(body.adaptive_dropped_percentage, '3', 4),
     adaptive_maximum_level: decimalText(body.adaptive_maximum_level, '3.0'),
-    adaptive_intensity: decimalText(body.adaptive_intensity, '0'),
-    adaptive_dl_diff_target: cleanInt(body.adaptive_dl_diff_target, 0, -999, 999),
-    concurrent_transfers: codeText(body.concurrent_transfers, 10, 'AUTO'),
+    adaptive_intensity: cleanInt(body.adaptive_intensity, 0, -40, 40),
+    adaptive_dl_diff_target: cleanInt(body.adaptive_dl_diff_target, 0, -40, 40),
+    dl_diff_target_method: cleanChoice(body.dl_diff_target_method, ['ADAPT_CALC_ONLY', 'CALLS_PLACED'], 'ADAPT_CALC_ONLY'),
+    concurrent_transfers: exactChoice(body.concurrent_transfers, CONCURRENT_TRANSFER_OPTIONS, 'AUTO', 10),
     auto_alt_dial: cleanChoice(body.auto_alt_dial, ['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD'], 'NONE'),
     auto_alt_dial_statuses: cleanText(body.auto_alt_dial_statuses, 255),
     agent_pause_codes_active: cleanChoice(body.agent_pause_codes_active, ['Y', 'N', 'FORCE'], 'N'),
     no_hopper_leads_logins: ynFlag(body.no_hopper_leads_logins, 'N'),
     use_auto_hopper: ynFlag(body.use_auto_hopper, 'Y'),
+    auto_hopper_multi: exactChoice(body.auto_hopper_multi, AUTO_HOPPER_MULTI_OPTIONS, '1.0', 4),
+    auto_trim_hopper: ynFlag(body.auto_trim_hopper, 'Y'),
+    hopper_vlc_dup_check: ynFlag(body.hopper_vlc_dup_check, 'N'),
     list_order_mix: codeText(body.list_order_mix, 20, 'DISABLED'),
     manual_dial_list_id: cleanDigits(body.manual_dial_list_id, 14) || '998',
     default_xfer_group: codeText(body.default_xfer_group, 20, '---NONE---'),
-    queue_priority: cleanInt(body.queue_priority, 50, 0, 99),
+    queue_priority: cleanInt(body.queue_priority, 50, -99, 99),
     drop_inbound_group: codeText(body.drop_inbound_group, 20, '---NONE---'),
+    inbound_queue_no_dial: cleanChoice(body.inbound_queue_no_dial, INBOUND_QUEUE_NO_DIAL_OPTIONS, 'DISABLED'),
     display_queue_count: ynFlag(body.display_queue_count, 'Y'),
     manual_dial_filter: codeText(body.manual_dial_filter, 50, 'NONE'),
     agent_clipboard_copy: codeText(body.agent_clipboard_copy, 50, 'NONE'),
     use_campaign_dnc: cleanChoice(body.use_campaign_dnc, ['Y', 'N', 'AREACODE'], 'N'),
+    use_custom_cid: cleanChoice(body.use_custom_cid, CUSTOM_CID_OPTIONS, 'N'),
+    agent_search_method: exactChoice(body.agent_search_method, AGENT_SEARCH_OPTIONS, '', 4),
+    agent_hangup_route: cleanChoice(body.agent_hangup_route, AGENT_HANGUP_ROUTE_OPTIONS, 'HANGUP'),
+    agent_hangup_value: codeText(body.agent_hangup_value, 255),
+    ivr_park_call: cleanChoice(body.ivr_park_call, PARK_CALL_IVR_OPTIONS, 'DISABLED'),
+    ivr_park_call_agi: codeText(body.ivr_park_call_agi, 255),
     three_way_call_cid: cleanChoice(body.three_way_call_cid, ['CAMPAIGN', 'CUSTOMER', 'AGENT_PHONE', 'AGENT_CHOOSE', 'CUSTOM_CID'], 'CAMPAIGN'),
     three_way_dial_prefix: codeText(body.three_way_dial_prefix, 20),
     web_form_target: codeText(body.web_form_target, 100, 'vdcwebform'),
@@ -1453,6 +1658,10 @@ function campaignPayload(body, currentUser) {
     start_call_url: cleanText(body.start_call_url, 2000),
     dispo_call_url: cleanText(body.dispo_call_url, 2000),
     na_call_url: cleanText(body.na_call_url, 2000),
+    timer_action: cleanChoice(body.timer_action, TIMER_ACTION_OPTIONS, 'NONE'),
+    timer_action_message: cleanText(body.timer_action_message, 255),
+    timer_action_seconds: cleanInt(body.timer_action_seconds, 0, 0, 99999),
+    timer_action_destination: codeText(body.timer_action_destination, 255),
     manual_dial_prefix: codeText(body.manual_dial_prefix, 20),
     manual_preview_dial: cleanChoice(body.manual_preview_dial, ['DISABLED', 'PREVIEW_AND_SKIP', 'PREVIEW_ONLY'], 'PREVIEW_AND_SKIP'),
     manual_dial_call_time_check: cleanChoice(body.manual_dial_call_time_check, ['DISABLED', 'ENABLED'], 'DISABLED'),
@@ -1486,21 +1695,25 @@ function campaignPayload(body, currentUser) {
     manual_auto_show: ynFlag(body.manual_auto_show, 'N'),
     ready_max_logout: cleanInt(body.ready_max_logout, 0, 0, 9999999),
     callback_display_days: cleanInt(body.callback_display_days, 0, 0, 999),
-    scheduled_callbacks_alert: cleanText(body.scheduled_callbacks_alert, 20) || 'NONE',
+    scheduled_callbacks_alert: cleanChoice(body.scheduled_callbacks_alert, SCHEDULED_CALLBACK_ALERT_OPTIONS, 'NONE'),
+    scheduled_callbacks_email_alert: ynFlag(body.scheduled_callbacks_email_alert, 'N'),
+    scheduled_callbacks_count: cleanChoice(body.scheduled_callbacks_count, ['LIVE', 'ALL_ACTIVE'], 'LIVE'),
+    scheduled_callbacks_force_dial: ynFlag(body.scheduled_callbacks_force_dial, 'N'),
+    scheduled_callbacks_auto_reschedule: cleanChoice(body.scheduled_callbacks_auto_reschedule, SCHEDULED_CALLBACK_AUTO_RESCHEDULE_OPTIONS, 'NONE'),
     next_dial_my_callbacks: cleanChoice(body.next_dial_my_callbacks, ['ENABLED', 'DISABLED'], 'DISABLED'),
     callback_dnc: cleanChoice(body.callback_dnc, ['ENABLED', 'DISABLED'], 'DISABLED'),
     mute_recordings: ynFlag(body.mute_recordings, 'N'),
     amd_type: cleanChoice(body.amd_type, ['AMD', 'CPD', 'KHOMP', 'ViciAMD'], 'AMD'),
-    transfer_button_launch: cleanText(body.transfer_button_launch, 12) || 'NONE',
+    transfer_button_launch: cleanChoice(body.transfer_button_launch, TRANSFER_BUTTON_LAUNCH_OPTIONS, 'NONE'),
     shared_dial_rank: cleanInt(body.shared_dial_rank, 99, 0, 99),
     call_limit_24hour_method: cleanChoice(body.call_limit_24hour_method, ['DISABLED', 'PHONE_NUMBER', 'LEAD'], 'DISABLED'),
     call_limit_24hour_scope: cleanChoice(body.call_limit_24hour_scope, ['SYSTEM_WIDE', 'CAMPAIGN_LISTS'], 'SYSTEM_WIDE'),
     call_limit_24hour: cleanInt(body.call_limit_24hour, 0, 0, 255),
-    call_limit_24hour_override: cleanText(body.call_limit_24hour_override, 40) || 'DISABLED',
+    call_limit_24hour_override: codeText(body.call_limit_24hour_override, 40, 'DISABLED'),
     agent_hide_hangup: ynFlag(body.agent_hide_hangup, 'N'),
     max_logged_in_agents: cleanInt(body.max_logged_in_agents, 0, 0, 99999),
     show_confetti: cleanChoice(body.show_confetti, ['DISABLED', 'SALES', 'CALLBACKS', 'SALES_AND_CALLBACKS'], 'DISABLED'),
-    dead_stop_recording: cleanText(body.dead_stop_recording, 20) || 'DISABLED',
+    dead_stop_recording: cleanChoice(body.dead_stop_recording, DEAD_STOP_RECORDING_OPTIONS, 'DISABLED'),
     daily_phone_number_call_limit: cleanInt(body.daily_phone_number_call_limit, 0, 0, 255),
     call_log_days: cleanInt(body.call_log_days, 0, 0, 99999),
     hangup_again_link: cleanChoice(body.hangup_again_link, ['ENABLED', 'DISABLED'], 'ENABLED'),
@@ -1963,10 +2176,10 @@ async function saveList(req, res, mode) {
 function inboundPayload(body) {
   return {
     group_name: cleanText(body.group_name, 30) || 'New In-Group',
-    group_color: cleanText(body.group_color, 20) || 'WHITE',
+    group_color: cleanChoice(body.group_color, ADMIN_COLOR_OPTIONS, 'WHITE'),
     active: ynFlag(body.active, 'N'),
-    next_agent_call: cleanText(body.next_agent_call, 40).replace(/[^-_0-9a-zA-Z]/g, '') || 'longest_wait_time',
-    queue_priority: cleanInt(body.queue_priority, 0, 0, 99),
+    next_agent_call: cleanExactChoice(body.next_agent_call, NEXT_AGENT_CALL_OPTIONS, 'longest_wait_time'),
+    queue_priority: cleanInt(body.queue_priority, 0, -99, 99),
     drop_call_seconds: cleanInt(body.drop_call_seconds, 360, 0, 9999),
     drop_action: cleanChoice(body.drop_action, ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'], 'MESSAGE'),
     call_time_id: cleanId(body.call_time_id, 20) || '24hours',
@@ -2135,25 +2348,25 @@ function didPayload(body) {
   return {
     did_description: cleanText(body.did_description, 50) || 'New DID',
     did_active: ynFlag(body.did_active, 'Y'),
-    did_route: codeText(body.did_route, 50, 'EXTEN'),
+    did_route: cleanExactChoice(body.did_route, ['EXTEN', 'VOICEMAIL', 'PHONE', 'USER', 'IN_GROUP', 'CALLMENU'], 'EXTEN'),
     extension: cleanText(body.extension, 100),
-    exten_context: cleanText(body.exten_context, 50) || 'default',
+    exten_context: codeText(body.exten_context, 50, 'default'),
     voicemail_ext: cleanText(body.voicemail_ext, 10),
     phone: cleanText(body.phone, 100),
     server_ip: cleanIp(body.server_ip),
     user: cleanId(body.user, 20),
-    user_unavailable_action: codeText(body.user_unavailable_action, 50, 'VOICEMAIL'),
+    user_unavailable_action: cleanExactChoice(body.user_unavailable_action, ['VOICEMAIL', 'IN_GROUP', 'EXTEN', 'PHONE', 'HANGUP'], 'VOICEMAIL'),
     user_route_settings_ingroup: cleanId(body.user_route_settings_ingroup, 20),
     group_id: cleanId(body.group_id, 20),
-    call_handle_method: codeText(body.call_handle_method, 50, 'CID'),
-    agent_search_method: codeText(body.agent_search_method, 50, 'LB'),
+    call_handle_method: cleanExactChoice(body.call_handle_method, ['CID', 'CIDLOOKUP', 'CIDLOOKUPRL', 'ANI', 'DID'], 'CID'),
+    agent_search_method: cleanExactChoice(body.agent_search_method, ['LB', 'LO', 'SO', 'RANDOM', 'CLOSER', 'STICKY'], 'LB'),
     list_id: cleanDigits(body.list_id, 14),
     campaign_id: cleanId(body.campaign_id, 20),
     phone_code: cleanDigits(body.phone_code, 10) || '1',
     menu_id: cleanId(body.menu_id, 50),
     record_call: ynFlag(body.record_call, 'N'),
     filter_inbound_number: cleanText(body.filter_inbound_number, 20),
-    filter_action: codeText(body.filter_action, 50, 'DISABLED'),
+    filter_action: cleanExactChoice(body.filter_action, ['DISABLED', 'EXTEN', 'VOICEMAIL', 'PHONE', 'IN_GROUP', 'CALLMENU'], 'DISABLED'),
     filter_extension: cleanText(body.filter_extension, 100),
     filter_group_id: cleanId(body.filter_group_id, 20),
     filter_campaign_id: cleanId(body.filter_campaign_id, 20),
@@ -2235,12 +2448,12 @@ function phonePayload(body, mode) {
     computer_ip: cleanIp(body.computer_ip),
     server_ip: cleanIp(body.server_ip),
     login: cleanText(body.login, 20),
-    status: codeText(body.status, 20, 'ACTIVE'),
+    status: cleanChoice(body.status, ['ACTIVE', 'SUSPENDED', 'CLOSED', 'PENDING'], 'ACTIVE'),
     active: ynFlag(body.active, 'Y'),
-    phone_type: codeText(body.phone_type, 20, 'SIP'),
+    phone_type: cleanExactChoice(body.phone_type, ['SIP', 'Zap', 'IAX2', 'EXTERNAL'], 'SIP'),
     fullname: cleanText(body.fullname, 50),
-    protocol: codeText(body.protocol, 20, 'SIP'),
-    local_gmt: cleanText(body.local_gmt, 6) || '-5.00',
+    protocol: cleanExactChoice(body.protocol, ['SIP', 'Zap', 'IAX2', 'EXTERNAL'], 'SIP'),
+    local_gmt: cleanExactChoice(body.local_gmt, GMT_OPTIONS, '-5.00', 6),
     outbound_cid: cleanText(body.outbound_cid, 20),
     email: cleanText(body.email, 100),
     template_id: cleanText(body.template_id, 20),
@@ -2338,7 +2551,7 @@ function scriptPayload(body) {
     script_text: cleanText(body.script_text, 12000),
     active: ynFlag(body.active, 'Y'),
     user_group: codeText(body.user_group, 20, '---ALL---'),
-    script_color: cleanText(body.script_color, 20) || 'white',
+    script_color: cleanExactChoice(body.script_color, SCRIPT_COLOR_OPTIONS, 'white', 20),
   };
 }
 
@@ -2500,6 +2713,217 @@ async function saveCallTime(req, res, mode) {
   }
 }
 
+function callMenuPayload(body) {
+  return {
+    menu_name: cleanText(body.menu_name, 100) || 'New Call Menu',
+    menu_prompt: cleanText(body.menu_prompt, 255),
+    menu_timeout: cleanInt(body.menu_timeout, 10, 0, 999),
+    menu_timeout_prompt: cleanText(body.menu_timeout_prompt, 255) || 'NONE',
+    menu_invalid_prompt: cleanText(body.menu_invalid_prompt, 255) || 'NONE',
+    menu_repeat: cleanInt(body.menu_repeat, 0, 0, 99),
+    menu_time_check: boolFlag(body.menu_time_check, '1', '0'),
+    call_time_id: cleanId(body.call_time_id, 20) || '24hours',
+    track_in_vdac: boolFlag(body.track_in_vdac, '1', '0'),
+    custom_dialplan_entry: cleanText(body.custom_dialplan_entry, 12000),
+    tracking_group: codeText(body.tracking_group, 20, 'CALLMENU'),
+    dtmf_log: boolFlag(body.dtmf_log, '1', '0'),
+    dtmf_field: cleanExactChoice(body.dtmf_field, ['NONE', ...LEAD_FIELD_OPTIONS], 'NONE', 50),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    qualify_sql: cleanText(body.qualify_sql, 12000),
+    alt_dtmf_log: boolFlag(body.alt_dtmf_log, '1', '0'),
+    answer_signal: ynFlag(body.answer_signal, 'Y'),
+  };
+}
+
+async function saveCallMenu(req, res, mode) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(mode === 'create' ? req.body?.menu_id : req.params.id, 50);
+  if (!id) return badRequest(res, 'invalid_menu_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_call_menu', 'menu_id', id))) {
+    return res.status(403).json({ ok: false, error: 'call_menu_not_allowed' });
+  }
+  const payload = callMenuPayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'call_menu_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_call_menu
+         SET menu_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'CALLMENU', 'ADD', id, 'GENX ADD CALL MENU', 'INSERT INTO vicidial_call_menu', payload.menu_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_call_menu
+         SET ${assignments}
+         WHERE menu_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'call_menu_not_found' });
+      await adminLog(req, 'CALLMENU', 'MODIFY', id, 'GENX MODIFY CALL MENU', 'UPDATE vicidial_call_menu', payload.menu_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'call_menu_exists' : 'call_menu_write_failed' });
+  }
+}
+
+function shiftWeekdays(value) {
+  return [...new Set(cleanText(value, 20).replace(/[^0-6]/g, '').split(''))].join('') || '0123456';
+}
+
+function shiftPayload(body) {
+  return {
+    shift_name: cleanText(body.shift_name, 50) || 'New Shift',
+    shift_start_time: cleanDigits(body.shift_start_time, 4) || '0900',
+    shift_length: cleanText(body.shift_length, 5).replace(/[^0-9:]/g, '') || '16:00',
+    shift_weekdays: shiftWeekdays(body.shift_weekdays),
+    report_option: ynFlag(body.report_option, 'N'),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+    report_rank: cleanInt(body.report_rank, 1, 0, 999),
+  };
+}
+
+async function saveShift(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCallTimes')) return;
+  const id = cleanId(mode === 'create' ? req.body?.shift_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_shift_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_shifts', 'shift_id', id))) {
+    return res.status(403).json({ ok: false, error: 'shift_not_allowed' });
+  }
+  const payload = shiftPayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'shift_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_shifts
+         SET shift_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'SHIFTS', 'ADD', id, 'GENX ADD SHIFT', 'INSERT INTO vicidial_shifts', payload.shift_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_shifts
+         SET ${assignments}
+         WHERE shift_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'shift_not_found' });
+      await adminLog(req, 'SHIFTS', 'MODIFY', id, 'GENX MODIFY SHIFT', 'UPDATE vicidial_shifts', payload.shift_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'shift_exists' : 'shift_write_failed' });
+  }
+}
+
+function statusPayload(body) {
+  return {
+    status_name: cleanText(body.status_name, 30) || 'New Status',
+    selectable: ynFlag(body.selectable, 'N'),
+    human_answered: ynFlag(body.human_answered, 'N'),
+    category: codeText(body.category, 20, 'UNDEFINED'),
+    sale: ynFlag(body.sale, 'N'),
+    dnc: ynFlag(body.dnc, 'N'),
+    customer_contact: ynFlag(body.customer_contact, 'N'),
+    not_interested: ynFlag(body.not_interested, 'N'),
+    unworkable: ynFlag(body.unworkable, 'N'),
+    scheduled_callback: ynFlag(body.scheduled_callback, 'N'),
+    completed: ynFlag(body.completed, 'N'),
+    min_sec: cleanInt(body.min_sec, 0, 0, 99999),
+    max_sec: cleanInt(body.max_sec, 0, 0, 99999),
+    answering_machine: ynFlag(body.answering_machine, 'N'),
+  };
+}
+
+async function saveStatus(req, res, mode) {
+  if (!requireModify(req, res, 'modifyStatuses')) return;
+  const id = cleanId(mode === 'create' ? req.body?.status : req.params.id, 6);
+  if (!id) return badRequest(res, 'invalid_status');
+  const payload = statusPayload(req.body || {});
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_statuses
+         SET status = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'STATUSES', 'ADD', id, 'GENX ADD STATUS', 'INSERT INTO vicidial_statuses', payload.status_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_statuses
+         SET ${assignments}
+         WHERE status = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'status_not_found' });
+      await adminLog(req, 'STATUSES', 'MODIFY', id, 'GENX MODIFY STATUS', 'UPDATE vicidial_statuses', payload.status_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'status_exists' : 'status_write_failed' });
+  }
+}
+
+function campaignStatusPayload(body) {
+  return {
+    campaign_id: cleanId(body.campaign_id, 20),
+    ...statusPayload(body),
+  };
+}
+
+async function saveCampaignStatus(req, res, mode) {
+  if (!canModify(req.genxUser, 'modifyStatuses') && !canModify(req.genxUser, 'modifyCampaigns')) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = cleanId(mode === 'create' ? req.body?.status : req.params.id, 6);
+  if (!id) return badRequest(res, 'invalid_status');
+  const payload = campaignStatusPayload(req.body || {});
+  if (!payload.campaign_id) return badRequest(res, 'campaign_required');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, payload.campaign_id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_campaign_statuses
+         SET status = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'CAMPAIGN_STATUS', 'ADD', payload.campaign_id, 'GENX ADD CAMPAIGN STATUS', 'INSERT INTO vicidial_campaign_statuses', `${id} - ${payload.status_name}`);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_campaign_statuses
+         SET ${assignments}
+         WHERE campaign_id = ?
+           AND status = ?`,
+        [...values, payload.campaign_id, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'campaign_status_not_found' });
+      await adminLog(req, 'CAMPAIGN_STATUS', 'MODIFY', payload.campaign_id, 'GENX MODIFY CAMPAIGN STATUS', 'UPDATE vicidial_campaign_statuses', `${id} - ${payload.status_name}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'campaign_status_exists' : 'campaign_status_write_failed' });
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     const system = await systemStatus();
@@ -2576,6 +3000,14 @@ app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(
 app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
 app.post('/api/admin/call-times', requireAccess, (req, res) => saveCallTime(req, res, 'create'));
 app.put('/api/admin/call-times/:id', requireAccess, (req, res) => saveCallTime(req, res, 'update'));
+app.post('/api/admin/call-menus', requireAccess, (req, res) => saveCallMenu(req, res, 'create'));
+app.put('/api/admin/call-menus/:id', requireAccess, (req, res) => saveCallMenu(req, res, 'update'));
+app.post('/api/admin/shifts', requireAccess, (req, res) => saveShift(req, res, 'create'));
+app.put('/api/admin/shifts/:id', requireAccess, (req, res) => saveShift(req, res, 'update'));
+app.post('/api/admin/statuses', requireAccess, (req, res) => saveStatus(req, res, 'create'));
+app.put('/api/admin/statuses/:id', requireAccess, (req, res) => saveStatus(req, res, 'update'));
+app.post('/api/admin/campaign-statuses', requireAccess, (req, res) => saveCampaignStatus(req, res, 'create'));
+app.put('/api/admin/campaign-statuses/:id', requireAccess, (req, res) => saveCampaignStatus(req, res, 'update'));
 
 app.use(express.static(distDir, {
   etag: true,

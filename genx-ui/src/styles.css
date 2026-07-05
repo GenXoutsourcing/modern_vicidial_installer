@@ -679,6 +679,31 @@ h2 {
   resize: vertical;
 }
 
+.field-grid select[multiple] {
+  min-height: 132px;
+  padding: 8px;
+}
+
+.field-grid select[multiple] option {
+  padding: 5px 7px;
+}
+
+.field-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  color: var(--blue);
+  font-size: 0.75rem;
+  font-weight: 820;
+  text-decoration: none;
+}
+
+.field-link:hover {
+  color: var(--text);
+}
+
 .status-chip-list {
   display: flex;
   flex-wrap: wrap;
