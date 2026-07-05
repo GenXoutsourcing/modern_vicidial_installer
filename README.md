@@ -81,6 +81,14 @@ This repo contains the main installer and the files it expects to find in the sa
 
 The `genx-vicidial-overlay/` folder contains the modern UI overlay files from the GENX VICIDIAL skin work. See `genx-vicidial-overlay/README.md` and `genx-vicidial-overlay/OVERLAY_README.md` for included files, deployment notes, and the required agent testing flow.
 
+## GENX sandbox and app planning
+
+Planning docs for the new standalone GenX UI and reporting platform are in `docs/`:
+
+- `docs/genx-sandbox-architecture.md` - two-server sandbox layout, FQDNs, roles, access packet, and safety rules
+- `docs/genx-application-roadmap.md` - React/Node application direction, feature phases, reporting goals, and integration rules
+- `docs/genx-installer-requirements.md` - repeatable AlmaLinux 9 installer requirements for app-only and hybrid Dynamic Portal deployments
+
 ## SSL and firewall notes
 
 If you do not install the SSL certificate during the initial install, you may need to temporarily turn the firewall off before trying again after a reboot. Turn it back on after the certificate is working.
