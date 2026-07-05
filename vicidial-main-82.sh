@@ -955,7 +955,7 @@ EOF
 
 ##confbridge fix
 cd "$SCRIPT_DIR"
-yes | cp -rf "$SCRIPT_DIR/extensions.conf" /etc/asterisk/extensions.conf
+cp -f "$SCRIPT_DIR/extensions.conf" /etc/asterisk/extensions.conf
 cp -f "$SCRIPT_DIR/confbridge-vicidial.conf" /etc/asterisk/
 
 tee -a /etc/asterisk/confbridge.conf <<EOF
