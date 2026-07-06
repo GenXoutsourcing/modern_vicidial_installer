@@ -180,6 +180,8 @@ function publicUser(row) {
     modifyUsers: row.modify_users === '1',
     modifyIngroups: row.modify_ingroups === '1',
     modifyInboundDids: row.modify_inbound_dids === '1',
+    deleteIngroups: row.delete_ingroups === '1',
+    deleteInboundDids: row.delete_inbound_dids === '1',
     modifyUsergroups: row.modify_usergroups === '1',
     modifyScripts: row.modify_scripts === '1',
     modifyFilters: row.modify_filters === '1',
@@ -252,6 +254,8 @@ async function authenticateVicidialUser(username, password) {
             u.modify_users,
             u.modify_ingroups,
             u.modify_inbound_dids,
+            u.delete_ingroups,
+            u.delete_inbound_dids,
             u.modify_usergroups,
             u.modify_scripts,
             u.modify_filters,
@@ -3617,6 +3621,23 @@ async function saveInboundGroup(req, res, mode) {
   }
 }
 
+async function deleteInboundGroup(req, res) {
+  if (!requireModify(req, res, 'deleteIngroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_group_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedQueueGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'ingroup_not_allowed' });
+  }
+  try {
+    const result = await execute('DELETE FROM vicidial_inbound_groups WHERE group_id = ?', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ingroup_not_found' });
+    await adminLog(req, 'INGROUPS', 'DELETE', id, 'GENX DELETE INBOUND GROUP', 'DELETE FROM vicidial_inbound_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'ingroup_delete_failed' });
+  }
+}
+
 function dynamicAssignments(payload) {
   const keys = Object.keys(payload);
   return {
@@ -3825,6 +3846,23 @@ async function saveDid(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'did_exists' : 'did_write_failed' });
+  }
+}
+
+async function deleteDid(req, res) {
+  if (!requireModify(req, res, 'deleteInboundDids')) return;
+  const id = didPattern(req.params.id);
+  if (!id) return badRequest(res, 'invalid_did_pattern');
+  if (!(await didVisibleToUser(req.genxUser, id))) {
+    return res.status(403).json({ ok: false, error: 'did_not_allowed' });
+  }
+  try {
+    const result = await execute('DELETE FROM vicidial_inbound_dids WHERE did_pattern = ?', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'did_not_found' });
+    await adminLog(req, 'DIDS', 'DELETE', id, 'GENX DELETE DID', 'DELETE FROM vicidial_inbound_dids', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'did_delete_failed' });
   }
 }
 
@@ -4380,6 +4418,24 @@ async function saveCallMenu(req, res, mode) {
   }
 }
 
+async function deleteCallMenu(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(req.params.id, 50);
+  if (!id) return badRequest(res, 'invalid_menu_id');
+  if (!scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_call_menu', 'menu_id', id))) {
+    return res.status(403).json({ ok: false, error: 'call_menu_not_allowed' });
+  }
+  try {
+    await execute('DELETE FROM vicidial_call_menu_options WHERE menu_id = ?', [id]);
+    const result = await execute('DELETE FROM vicidial_call_menu WHERE menu_id = ?', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'call_menu_not_found' });
+    await adminLog(req, 'CALLMENU', 'DELETE', id, 'GENX DELETE CALL MENU', 'DELETE FROM vicidial_call_menu', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'call_menu_delete_failed' });
+  }
+}
+
 function callMenuOptionKey(raw) {
   const [menuRaw, ...optionParts] = String(raw || '').split('__');
   return {
@@ -4450,6 +4506,26 @@ async function saveCallMenuOption(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'call_menu_option_exists' : 'call_menu_option_write_failed' });
+  }
+}
+
+async function deleteCallMenuOption(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const key = callMenuOptionKey(req.params.id);
+  if (!key.menu_id || !key.option_value) return badRequest(res, 'invalid_call_menu_option_key');
+  if (!(await callMenuVisibleToUser(req.genxUser, key.menu_id))) {
+    return res.status(403).json({ ok: false, error: 'call_menu_not_allowed' });
+  }
+  try {
+    const result = await execute(
+      'DELETE FROM vicidial_call_menu_options WHERE menu_id = ? AND option_value = ?',
+      [key.menu_id, key.option_value],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'call_menu_option_not_found' });
+    await adminLog(req, 'CALLMENUOPT', 'DELETE', key.menu_id, 'GENX DELETE CALL MENU OPTION', 'DELETE FROM vicidial_call_menu_options', key.option_value);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'call_menu_option_delete_failed' });
   }
 }
 
@@ -4857,10 +4933,12 @@ app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
+app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
 app.post('/api/admin/user-groups', requireAccess, (req, res) => saveUserGroup(req, res, 'create'));
 app.put('/api/admin/user-groups/:id', requireAccess, (req, res) => saveUserGroup(req, res, 'update'));
 app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'create'));
 app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
+app.delete('/api/admin/dids/:id', requireAccess, deleteDid);
 app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
 app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
 app.post('/api/admin/servers', requireAccess, (req, res) => saveServer(req, res, 'create'));
@@ -4875,8 +4953,10 @@ app.post('/api/admin/call-times', requireAccess, (req, res) => saveCallTime(req,
 app.put('/api/admin/call-times/:id', requireAccess, (req, res) => saveCallTime(req, res, 'update'));
 app.post('/api/admin/call-menus', requireAccess, (req, res) => saveCallMenu(req, res, 'create'));
 app.put('/api/admin/call-menus/:id', requireAccess, (req, res) => saveCallMenu(req, res, 'update'));
+app.delete('/api/admin/call-menus/:id', requireAccess, deleteCallMenu);
 app.post('/api/admin/call-menu-options', requireAccess, (req, res) => saveCallMenuOption(req, res, 'create'));
 app.put('/api/admin/call-menu-options/:id', requireAccess, (req, res) => saveCallMenuOption(req, res, 'update'));
+app.delete('/api/admin/call-menu-options/:id', requireAccess, deleteCallMenuOption);
 app.post('/api/admin/shifts', requireAccess, (req, res) => saveShift(req, res, 'create'));
 app.put('/api/admin/shifts/:id', requireAccess, (req, res) => saveShift(req, res, 'update'));
 app.post('/api/admin/pause-codes', requireAccess, (req, res) => savePauseCode(req, res, 'create'));

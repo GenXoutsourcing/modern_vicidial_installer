@@ -27,6 +27,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Timer,
+  Trash2,
   TrendingUp,
   Users,
   X,
@@ -373,6 +374,18 @@ function userCan(user, entity) {
   if (entity === 'shifts') return Boolean(user?.modifyCallTimes);
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
+  return false;
+}
+
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions']);
+
+function userCanDelete(user, entity) {
+  if (!DELETABLE_ENTITIES.has(entity)) return false;
+  if (Number(user?.userLevel || 0) >= 9) return true;
+  if (entity === 'inbound') return Boolean(user?.deleteIngroups);
+  if (entity === 'dids') return Boolean(user?.deleteInboundDids);
+  if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
+  if (entity === 'callMenuOptions') return Boolean(user?.modifyIngroups);
   return false;
 }
 
@@ -3188,6 +3201,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const mode = action.mode || 'create';
   const fields = actionFields(action.entity, mode, admin, form);
   const label = entityLabel(action.entity);
@@ -3231,6 +3246,33 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
       setSaving(false);
     }
   }
+
+  async function handleDelete() {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setDeleting(true);
+    setError('');
+    const id = entityId(action.entity, form);
+    const pathEntity = entityPath(action.entity);
+    try {
+      const payload = await apiFetch(`/admin/${pathEntity}/${encodeURIComponent(id)}`, token, { method: 'DELETE' });
+      onSaved(payload.data);
+      onClose();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user does not have permission to delete this' : 'The delete failed');
+      setConfirmingDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity);
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -3321,6 +3363,18 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           </div>
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
+            {canDelete && (
+              <button
+                type="button"
+                className={confirmingDelete ? 'danger-action confirming' : 'danger-action'}
+                disabled={deleting}
+                onClick={handleDelete}
+              >
+                <Trash2 size={18} aria-hidden="true" />
+                {deleting ? 'Deleting' : confirmingDelete ? 'Confirm Delete?' : 'Delete'}
+              </button>
+            )}
+            <span className="modal-actions-spacer" />
             <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-action" disabled={saving}>
               <Save size={18} aria-hidden="true" />
