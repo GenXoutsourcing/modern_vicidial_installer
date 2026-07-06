@@ -18,7 +18,7 @@ export const LEGACY_ADMIN_GROUPS = [
       { label: 'Lists', href: '/vicidial/admin.php?ADD=100' },
       { label: 'Add List', href: '/vicidial/admin.php?ADD=111' },
       { label: 'Drop Lists', href: '/vicidial/admin.php?ADD=130' },
-      { label: 'DNC', href: '/vicidial/admin.php?ADD=121' },
+      { label: 'DNC', href: '/vicidial/admin.php?ADD=121', view: 'dnc' },
       { label: 'Scripts', href: '/vicidial/admin.php?ADD=1000000' },
       { label: 'Filters', href: '/vicidial/admin.php?ADD=10000000' },
     ],

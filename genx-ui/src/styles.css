@@ -199,6 +199,10 @@ h2 {
   color: var(--danger);
 }
 
+.form-success {
+  color: var(--teal, #73fbd3);
+}
+
 .app-shell {
   width: min(2200px, calc(100% - 48px));
   margin: 0 auto;

@@ -193,6 +193,7 @@ const NAV_ITEMS = [
   { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
   { key: 'leadLoader', label: 'Lead Loader', eyebrow: 'Admin', title: 'Lead Loader', icon: FileText },
+  { key: 'dnc', label: 'DNC', eyebrow: 'Compliance', title: 'Do Not Call Management', icon: ShieldCheck },
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
   { key: 'dids', label: 'DIDs', eyebrow: 'Inbound', title: 'DID Routing', icon: PhoneCall },
   { key: 'callMenus', label: 'Call Menus', eyebrow: 'Inbound', title: 'Call Menu Routing', icon: Compass },
@@ -361,6 +362,7 @@ function userCan(user, entity) {
   if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);
   if (entity === 'leadLoader') return Boolean(user?.loadLeads);
+  if (entity === 'dnc') return Boolean(user?.deleteFromDnc);
   if (entity === 'inbound') return Boolean(user?.modifyIngroups);
   if (entity === 'dids') return Boolean(user?.modifyInboundDids);
   if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
@@ -4238,6 +4240,140 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   );
 }
 
+const DNC_SYSTEM_SCOPE = 'SYSTEM_INTERNAL';
+
+function DncView({ admin, user, token }) {
+  const canManage = userCan(user, 'dnc');
+  const dncCampaigns = (admin?.campaigns || []).filter((row) => ['Y', 'AREACODE'].includes(row.use_campaign_dnc));
+  const [scope, setScope] = useState(DNC_SYSTEM_SCOPE);
+  const [action, setAction] = useState('add');
+  const [numbers, setNumbers] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const [searchPhone, setSearchPhone] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!canManage) {
+      setError('Your VICIdial user is not allowed to manage the DNC list');
+      return;
+    }
+    setSubmitting(true);
+    setError('');
+    setResult(null);
+    try {
+      const payload = await apiFetch('/admin/dnc', token, {
+        method: 'POST',
+        body: JSON.stringify({ scope, action, phone_numbers: numbers }),
+      });
+      setResult(payload.processed);
+      setNumbers('');
+    } catch (requestError) {
+      const messages = {
+        phone_numbers_required: 'Paste at least one phone number first',
+        invalid_dnc_campaign: 'That campaign does not have campaign DNC enabled',
+        dnc_campaign_not_allowed: 'Your VICIdial user cannot manage DNC for that campaign',
+        permission_denied: 'Your VICIdial user is not allowed to manage the DNC list',
+      };
+      setError(messages[requestError.message] || 'DNC update failed');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function runSearch(event) {
+    event.preventDefault();
+    setSearching(true);
+    setSearchResults(null);
+    try {
+      const payload = await apiFetch(`/admin/dnc/search?phone=${encodeURIComponent(searchPhone.replace(/[^0-9]/g, ''))}`, token);
+      setSearchResults(payload.entries || []);
+    } catch (requestError) {
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <section className="metric-grid admin-metric-grid" aria-label="DNC metrics">
+        <MetricCard icon={ShieldCheck} label="Campaign DNC Lists" value={formatNumber(dncCampaigns.length)} detail="Campaigns with DNC enabled" accent="#00d9ff" />
+        <MetricCard icon={LockKeyhole} label="Delete Access" value={canManage ? 'Allowed' : 'No'} detail="VICIdial delete_from_dnc permission" accent="#ffd166" />
+      </section>
+      <section className="admin-grid">
+        <Panel eyebrow="Compliance" title="Add / Remove Numbers" icon={ShieldCheck} className="admin-wide-panel">
+          <p className="action-copy">Paste one phone number per line. Choose the internal system list, or a specific campaign's DNC list.</p>
+          <form className="entity-form" onSubmit={submit}>
+            <div className="field-grid">
+              <label>
+                <span>Scope</span>
+                <select value={scope} onChange={(event) => setScope(event.target.value)}>
+                  <option value={DNC_SYSTEM_SCOPE}>SYSTEM_INTERNAL - Internal DNC list</option>
+                  {dncCampaigns.map((row) => (
+                    <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Action</span>
+                <select value={action} onChange={(event) => setAction(event.target.value)}>
+                  <option value="add">Add to DNC</option>
+                  <option value="delete">Remove from DNC</option>
+                </select>
+              </label>
+              <label className="wide-field">
+                <span>Phone Numbers (one per line)</span>
+                <textarea rows={8} value={numbers} onChange={(event) => setNumbers(event.target.value)} placeholder={'18005551212\n18005551213'} />
+              </label>
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            {result !== null && <p className="form-success">{result} number{result === 1 ? '' : 's'} processed</p>}
+            <div className="modal-actions">
+              <button type="submit" className="primary-action" disabled={submitting || !canManage}>
+                <ShieldCheck size={18} aria-hidden="true" />
+                {submitting ? 'Processing' : action === 'add' ? 'Add to DNC' : 'Remove from DNC'}
+              </button>
+            </div>
+          </form>
+        </Panel>
+        <Panel eyebrow="Compliance" title="DNC Log Search" icon={Search}>
+          <form className="entity-form" onSubmit={runSearch}>
+            <div className="field-grid">
+              <label>
+                <span>Phone Number</span>
+                <input value={searchPhone} onChange={(event) => setSearchPhone(event.target.value)} placeholder="18005551212" />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button type="submit" className="secondary-action" disabled={searching || searchPhone.replace(/[^0-9]/g, '').length < 3}>
+                <Search size={16} aria-hidden="true" />
+                {searching ? 'Searching' : 'Search'}
+              </button>
+            </div>
+          </form>
+          {searchResults && (
+            <DataTable
+              emptyLabel="No DNC log entries found for that number"
+              rows={searchResults.map((row, index) => ({ ...row, id: index }))}
+              columns={[
+                { key: 'campaign_id', label: 'Campaign', render: (row) => (row.campaign_id === '-SYSINT-' ? 'SYSTEM' : row.campaign_id) },
+                { key: 'action', label: 'Action', render: (row) => <StatusPill ok={row.action === 'add'}>{row.action.toUpperCase()}</StatusPill> },
+                { key: 'action_date', label: 'Date', render: (row) => formatDateTime(row.action_date) },
+                { key: 'user', label: 'User' },
+              ]}
+            />
+          )}
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 const INBOUND_HANDLING_TABS = [
   { key: 'ALL', label: 'All' },
   { key: 'PHONE', label: 'Phone' },
@@ -5081,6 +5217,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
+  if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'callMenus') return <CallMenusView admin={admin} user={user} onAction={onAction} />;

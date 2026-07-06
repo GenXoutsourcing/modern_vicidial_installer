@@ -182,6 +182,7 @@ function publicUser(row) {
     modifyInboundDids: row.modify_inbound_dids === '1',
     deleteIngroups: row.delete_ingroups === '1',
     deleteInboundDids: row.delete_inbound_dids === '1',
+    deleteFromDnc: row.delete_from_dnc === '1',
     modifyUsergroups: row.modify_usergroups === '1',
     modifyScripts: row.modify_scripts === '1',
     modifyFilters: row.modify_filters === '1',
@@ -256,6 +257,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_inbound_dids,
             u.delete_ingroups,
             u.delete_inbound_dids,
+            u.delete_from_dnc,
             u.modify_usergroups,
             u.modify_scripts,
             u.modify_filters,
@@ -3365,6 +3367,80 @@ async function loadLeads(req, res) {
   }
 }
 
+const DNC_SYSTEM_SCOPE = 'SYSTEM_INTERNAL';
+const DNC_LOG_SYSTEM_CAMPAIGN = '-SYSINT-';
+
+function parseDncPhoneNumbers(raw) {
+  const cleaned = String(raw || '').replace(/[^X\n0-9]/gi, '');
+  return [...new Set(cleaned.split('\n').map((line) => line.trim()).filter(Boolean))].slice(0, 5000);
+}
+
+async function bulkDnc(req, res) {
+  const scope = cleanText(req.body?.scope, 8) || DNC_SYSTEM_SCOPE;
+  const isSystem = scope === DNC_SYSTEM_SCOPE;
+  if (!requireModify(req, res, 'deleteFromDnc')) return;
+  const action = req.body?.action === 'delete' ? 'delete' : 'add';
+  const numbers = parseDncPhoneNumbers(req.body?.phone_numbers);
+  if (!numbers.length) return badRequest(res, 'phone_numbers_required');
+
+  if (!isSystem) {
+    const [campaign] = await rows(
+      "SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = ? AND use_campaign_dnc IN ('Y', 'AREACODE') LIMIT 1",
+      [scope],
+      [],
+    );
+    if (!campaign) return badRequest(res, 'invalid_dnc_campaign');
+    if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, scope)) {
+      return res.status(403).json({ ok: false, error: 'dnc_campaign_not_allowed' });
+    }
+  }
+
+  const table = isSystem ? 'vicidial_dnc' : 'vicidial_campaign_dnc';
+  const logCampaignId = isSystem ? DNC_LOG_SYSTEM_CAMPAIGN : scope;
+  let processed = 0;
+
+  try {
+    for (const phoneNumber of numbers) {
+      if (action === 'add') {
+        if (isSystem) {
+          await execute('INSERT IGNORE INTO vicidial_dnc (phone_number) VALUES (?)', [phoneNumber]);
+        } else {
+          await execute('INSERT IGNORE INTO vicidial_campaign_dnc (phone_number, campaign_id) VALUES (?, ?)', [phoneNumber, scope]);
+        }
+      } else if (isSystem) {
+        await execute('DELETE FROM vicidial_dnc WHERE phone_number = ?', [phoneNumber]);
+      } else {
+        await execute('DELETE FROM vicidial_campaign_dnc WHERE phone_number = ? AND campaign_id = ?', [phoneNumber, scope]);
+      }
+      await execute(
+        'INSERT INTO vicidial_dnc_log (phone_number, campaign_id, action, action_date, user) VALUES (?, ?, ?, NOW(), ?)',
+        [phoneNumber, logCampaignId, action, req.genxUser?.user || ''],
+      );
+      processed += 1;
+    }
+    await adminLog(req, 'DNC', action === 'add' ? 'ADD' : 'DELETE', scope, `GENX ${action.toUpperCase()} DNC`, `${table} bulk ${action}`, `${processed} numbers`);
+    return res.json({ ok: true, processed });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'dnc_write_failed' });
+  }
+}
+
+async function dncSearch(req, res) {
+  if (!requireModify(req, res, 'deleteFromDnc')) return;
+  const phone = cleanText(req.query?.phone, 18).replace(/[^0-9]/g, '');
+  if (phone.length < 3) return badRequest(res, 'phone_search_too_short');
+  const entries = await rows(
+    `SELECT campaign_id, action, action_date, user
+     FROM vicidial_dnc_log
+     WHERE phone_number = ?
+     ORDER BY action_date DESC
+     LIMIT 200`,
+    [phone],
+    [],
+  );
+  return res.json({ ok: true, entries });
+}
+
 function inboundPayload(body) {
   const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
   const longText = (value) => cleanText(value, 12000);
@@ -4931,6 +5007,8 @@ app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 
 app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
+app.post('/api/admin/dnc', requireAccess, bulkDnc);
+app.get('/api/admin/dnc/search', requireAccess, dncSearch);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
