@@ -1245,6 +1245,7 @@ function actionDefaults(entity, admin) {
       protocol: 'SIP',
       local_gmt: '-5.00',
       ASTmgrUSERNAME: 'cron',
+      ASTmgrSECRET: '1234',
       login_user: '',
       login_campaign: '',
       park_on_extension: '8301',
@@ -1315,15 +1316,23 @@ function actionDefaults(entity, admin) {
       max_vicidial_trunks: '23',
       telnet_host: 'localhost',
       telnet_port: '5038',
+      ASTmgrUSERNAME: 'cron',
+      ASTmgrSECRET: '1234',
+      ASTmgrUSERNAMEupdate: 'updatecron',
+      ASTmgrUSERNAMElisten: 'listencron',
+      ASTmgrUSERNAMEsend: 'sendcron',
       local_gmt: '-5.00',
+      answer_transfer_agent: '8365',
       ext_context: 'default',
       sys_perf_log: 'N',
       vd_server_logs: 'Y',
       agi_output: 'FILE',
       vicidial_balance_active: 'N',
+      vicidial_balance_rank: '0',
       balance_trunks_offlimits: '0',
       recording_web_link: 'SERVER_IP',
       alt_server_ip: '',
+      active_twin_server_ip: '',
       generate_vicidial_conf: 'Y',
       rebuild_conf_files: 'Y',
       outbound_calls_per_second: '5',
@@ -1336,11 +1345,13 @@ function actionDefaults(entity, admin) {
       user_group: '---ALL---',
       auto_restart_asterisk: 'N',
       asterisk_temp_no_restart: 'N',
+      voicemail_dump_exten: '85026666666666',
       voicemail_dump_exten_no_inst: '85026666666667',
       gather_asterisk_output: 'N',
       web_socket_url: '',
       external_web_socket_url: '',
       conf_qualify: 'Y',
+      conf_secret: 'test',
       routing_prefix: '13',
       conf_engine: 'MEETME',
       conf_update_interval: '60',
@@ -2442,6 +2453,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'login', label: 'Login' },
       { key: 'pass', label: mode === 'edit' ? 'New Phone Password' : 'Phone Password', type: 'password' },
       { key: 'ASTmgrUSERNAME', label: 'Asterisk Manager User' },
+      { key: 'ASTmgrSECRET', label: 'Asterisk Manager Secret', type: 'password' },
       { key: 'login_user', label: 'Login User' },
       { key: 'login_pass', label: mode === 'edit' ? 'New Login Password' : 'Login Password', type: 'password' },
       { key: 'login_campaign', label: 'Login Campaign', type: campaignOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...campaignOptions], form?.login_campaign) },
@@ -2549,13 +2561,20 @@ function actionFields(entity, mode, admin, form = {}) {
       { section: 'Asterisk and Dialplan' },
       { key: 'telnet_host', label: 'Telnet Host' },
       { key: 'telnet_port', label: 'Telnet Port', type: 'number' },
+      { key: 'ASTmgrUSERNAME', label: 'Asterisk Manager User' },
+      { key: 'ASTmgrSECRET', label: 'Asterisk Manager Secret', type: 'password' },
+      { key: 'ASTmgrUSERNAMEupdate', label: 'Asterisk Manager User (Update)' },
+      { key: 'ASTmgrUSERNAMElisten', label: 'Asterisk Manager User (Listen)' },
+      { key: 'ASTmgrUSERNAMEsend', label: 'Asterisk Manager User (Send)' },
       { key: 'ext_context', label: 'Extension Context', type: phoneContextOptions.length ? 'select' : 'text', options: withCurrentOption(phoneContextOptions, form?.ext_context) },
+      { key: 'answer_transfer_agent', label: 'Answer Transfer Agent Exten' },
       { key: 'agi_output', label: 'AGI Output', type: 'select', options: enumOptions(['NONE', 'STDERR', 'FILE', 'BOTH']) },
       { key: 'generate_vicidial_conf', label: 'Generate VICIdial Conf', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'rebuild_conf_files', label: 'Rebuild Conf Files', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'custom_dialplan_entry', label: 'Custom Dialplan Entry', type: 'textarea', wide: true },
       { key: 'routing_prefix', label: 'Routing Prefix' },
       { key: 'conf_engine', label: 'Conference Engine', type: 'select', options: enumOptions(['MEETME', 'CONFBRIDGE']) },
+      { key: 'conf_secret', label: 'Conference File Secret', type: 'password' },
       { key: 'conf_update_interval', label: 'Conference Update Interval', type: 'number' },
       { key: 'conf_qualify', label: 'Conference Qualify', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'ara_url', label: 'ARA URL', type: 'textarea', wide: true },
@@ -2563,6 +2582,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'sys_perf_log', label: 'System Performance Log', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'vd_server_logs', label: 'VD Server Logs', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'vicidial_balance_active', label: 'VICIdial Balance Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'vicidial_balance_rank', label: 'VICIdial Balance Rank', type: 'number' },
       { key: 'balance_trunks_offlimits', label: 'Balance Trunks Off Limits', type: 'number' },
       { key: 'outbound_calls_per_second', label: 'Outbound Calls Per Second', type: 'number' },
       { key: 'sounds_update', label: 'Sounds Update', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -2575,7 +2595,9 @@ function actionFields(entity, mode, admin, form = {}) {
       { section: 'Network and Recording' },
       { key: 'recording_web_link', label: 'Recording Web Link', type: 'select', options: enumOptions(['SERVER_IP', 'ALT_IP', 'EXTERNAL_IP']) },
       { key: 'alt_server_ip', label: 'Alt Server IP' },
+      { key: 'active_twin_server_ip', label: 'Active Twin Server IP' },
       { key: 'external_server_ip', label: 'External Server IP' },
+      { key: 'voicemail_dump_exten', label: 'VM Dump Extension' },
       { key: 'voicemail_dump_exten_no_inst', label: 'VM Dump No Instructions' },
       { key: 'web_socket_url', label: 'WebSocket URL', type: 'textarea', wide: true },
       { key: 'external_web_socket_url', label: 'External WebSocket URL', type: 'textarea', wide: true },
@@ -4162,9 +4184,20 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   );
 }
 
+const INBOUND_HANDLING_TABS = [
+  { key: 'ALL', label: 'All' },
+  { key: 'PHONE', label: 'Phone' },
+  { key: 'EMAIL', label: 'Email' },
+  { key: 'CHAT', label: 'Chat' },
+];
+
 function InboundView({ admin, user, onAction }) {
   const groups = admin?.inboundGroups || [];
   const canManage = userCan(user, 'inbound');
+  const [handlingFilter, setHandlingFilter] = useState('ALL');
+  const filteredGroups = handlingFilter === 'ALL'
+    ? groups
+    : groups.filter((row) => (row.group_handling || 'PHONE') === handlingFilter);
 
   return (
     <>
@@ -4174,9 +4207,26 @@ function InboundView({ admin, user, onAction }) {
       </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Inbound Admin" title="Inbound Group Routing" icon={Headphones} className="admin-wide-panel">
+          <div className="tab-row" role="tablist" aria-label="Filter by handling type">
+            {INBOUND_HANDLING_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={handlingFilter === tab.key}
+                className={handlingFilter === tab.key ? 'tab-pill active' : 'tab-pill'}
+                onClick={() => setHandlingFilter(tab.key)}
+              >
+                {tab.label}
+                {tab.key !== 'ALL' && (
+                  <span className="tab-count">{groups.filter((row) => (row.group_handling || 'PHONE') === tab.key).length}</span>
+                )}
+              </button>
+            ))}
+          </div>
           <DataTable
             emptyLabel="No inbound groups configured"
-            rows={groups.map((row) => ({ ...row, id: row.group_id }))}
+            rows={filteredGroups.map((row) => ({ ...row, id: row.group_id }))}
             columns={[
               {
                 key: 'group',
@@ -4188,6 +4238,7 @@ function InboundView({ admin, user, onAction }) {
                   </>
                 ),
               },
+              { key: 'group_handling', label: 'Handling', render: (row) => <StatusPill ok={(row.group_handling || 'PHONE') === 'PHONE'}>{row.group_handling || 'PHONE'}</StatusPill> },
               { key: 'next_agent_call', label: 'Routing', render: (row) => row.next_agent_call || 'Default' },
               { key: 'queue_priority', label: 'Priority', render: (row) => row.queue_priority ?? '0' },
               { key: 'drop_call_seconds', label: 'Drop Sec', render: (row) => row.drop_call_seconds ?? '0' },
