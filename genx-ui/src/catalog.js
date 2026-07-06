@@ -4,8 +4,8 @@ export const LEGACY_ADMIN_GROUPS = [
     items: [
       { label: 'Users', href: '/vicidial/admin.php?ADD=0A' },
       { label: 'Add User', href: '/vicidial/admin.php?ADD=1' },
-      { label: 'User Groups', href: '/vicidial/admin.php?ADD=100000' },
-      { label: 'Add User Group', href: '/vicidial/admin.php?ADD=111111' },
+      { label: 'User Groups', href: '/vicidial/admin.php?ADD=100000', view: 'userGroups' },
+      { label: 'Add User Group', href: '/vicidial/admin.php?ADD=111111', view: 'userGroups' },
       { label: 'Remote Agents', href: '/vicidial/admin.php?ADD=10000' },
       { label: 'Extension Groups', href: '/vicidial/admin.php?ADD=12000' },
     ],

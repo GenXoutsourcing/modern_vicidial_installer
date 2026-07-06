@@ -958,6 +958,7 @@ function actionDefaults(entity, admin) {
       access_recordings: '0',
       alter_admin_interface_options: '1',
       modify_settings_containers: '0',
+      modify_email_accounts: '0',
       phone_pass: '',
       delete_users: '0',
       delete_user_groups: '0',
@@ -2168,6 +2169,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'ast_admin_access', label: 'Asterisk Admin Access', type: 'select', options: flagOptions() },
       { key: 'ast_delete_phones', label: 'Asterisk Delete Phones', type: 'select', options: flagOptions() },
       { key: 'modify_settings_containers', label: 'Settings Containers', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
+      { key: 'modify_email_accounts', label: 'Email Accounts Admin', type: 'select', options: flagOptions() },
       { section: 'Delete Permissions' },
       { key: 'delete_users', label: 'Delete Users', type: 'select', options: flagOptions() },
       { key: 'delete_user_groups', label: 'Delete User Groups', type: 'select', options: flagOptions() },
@@ -2192,6 +2194,8 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
       { key: 'agentonly_callbacks', label: 'Agent-Only Callbacks', type: 'select', options: flagOptions() },
       { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
+      { key: 'agentcall_email', label: 'Agent Email Calls', type: 'select', options: flagOptions() },
+      { key: 'agentcall_chat', label: 'Agent Chat Calls', type: 'select', options: flagOptions() },
       { key: 'vicidial_recording', label: 'Agent Recording', type: 'select', options: flagOptions() },
       { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
       { key: 'alter_agent_interface_options', label: 'Agent UI Options', type: 'select', options: flagOptions() },
@@ -4682,7 +4686,7 @@ function StatusesView({ admin, user, onAction }) {
   );
 }
 
-function CatalogPanels({ groups, query, emptyLabel }) {
+function CatalogPanels({ groups, query, emptyLabel, onNavigate }) {
   const normalized = query.trim().toLowerCase();
   const filtered = groups
     .map((group) => ({
@@ -4704,10 +4708,22 @@ function CatalogPanels({ groups, query, emptyLabel }) {
         <Panel key={group.title} eyebrow="VICIdial" title={group.title} icon={ExternalLink}>
           <div className="link-list">
             {group.items.map((item) => (
-              <a key={`${group.title}-${item.label}`} className="launch-link" href={item.href} target="_blank" rel="noreferrer">
-                <span>{item.label}</span>
-                <ExternalLink size={15} aria-hidden="true" />
-              </a>
+              item.view ? (
+                <button
+                  key={`${group.title}-${item.label}`}
+                  type="button"
+                  className="launch-link launch-link-native"
+                  onClick={() => onNavigate?.(item.view)}
+                >
+                  <span>{item.label}</span>
+                  <ShieldCheck size={15} aria-hidden="true" title="Native GenX screen" />
+                </button>
+              ) : (
+                <a key={`${group.title}-${item.label}`} className="launch-link" href={item.href} target="_blank" rel="noreferrer">
+                  <span>{item.label}</span>
+                  <ExternalLink size={15} aria-hidden="true" />
+                </a>
+              )
             ))}
           </div>
         </Panel>
@@ -4810,7 +4826,7 @@ function ReportsView({ dashboard, admin, user }) {
   );
 }
 
-function MapView() {
+function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -4832,7 +4848,7 @@ function MapView() {
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search admin pages" />
       </section>
 
-      <CatalogPanels groups={LEGACY_ADMIN_GROUPS} query={query} emptyLabel="No admin pages match that search" />
+      <CatalogPanels groups={LEGACY_ADMIN_GROUPS} query={query} emptyLabel="No admin pages match that search" onNavigate={onNavigate} />
     </>
   );
 }
@@ -4952,7 +4968,7 @@ function SystemView({ admin, user, onAction }) {
   );
 }
 
-function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSaved }) {
+function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
@@ -4972,7 +4988,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'map') return <MapView />;
+  if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
   return <CommandView dashboard={dashboard} />;
 }
 
@@ -5106,6 +5122,7 @@ function AdminShell({ token, user, onLogout }) {
         token={token}
         onAction={openAction}
         onSaved={handleSaved}
+        onNavigate={setActiveView}
       />
 
       <footer className="footer-line">
