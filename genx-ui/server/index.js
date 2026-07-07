@@ -6552,6 +6552,96 @@ function requireAgentAccess(req, res, next) {
 
 // Legacy vicidial.php login: validate phone login/pass + user login/pass, then
 // return the campaigns this user may log into (LogiNCamPaigns equivalent).
+// Phone columns the agent screen needs — mirrors the legacy vicidial.php
+// phones SELECT (login + webphone + conference fields).
+const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip, protocol, ext_context,
+  phone_ring_timeout, on_hook_agent, is_webphone, conf_secret, use_external_server_ip, codecs_list,
+  outbound_cid, webphone_dialpad, webphone_auto_answer, webphone_dialbox, webphone_mute,
+  webphone_volume, webphone_debug, webphone_layout, webphone_settings`;
+
+// Port of the legacy webphone iframe URL build (agc/vicidial.php ~5138-5267).
+// Returns null when the phone is not a webphone.
+async function buildWebphoneUrl(phone, userGroup, confExten, reqHost) {
+  const isWebphone = String(phone.is_webphone || '');
+  if (isWebphone !== 'Y' && isWebphone !== 'Y_API_LAUNCH') return null;
+
+  const [ug] = await rows(
+    'SELECT webphone_url_override, webphone_dialpad_override, webphone_systemkey_override, webphone_layout FROM vicidial_user_groups WHERE user_group = ? LIMIT 1',
+    [userGroup || ''],
+    [],
+  );
+  const [sys] = await rows('SELECT webphone_url, webphone_systemkey FROM system_settings LIMIT 1', [], []);
+  const [srv] = await rows(
+    'SELECT external_server_ip, web_socket_url, external_web_socket_url FROM servers WHERE server_ip = ? LIMIT 1',
+    [phone.server_ip],
+    [],
+  );
+
+  let webphoneUrl = String(ug?.webphone_url_override || '');
+  if (webphoneUrl.length < 6) webphoneUrl = String(sys?.webphone_url || '');
+  if (webphoneUrl.length < 6) return null;
+  webphoneUrl = webphoneUrl.replace(/LOCALFQDN/g, reqHost || '');
+
+  const systemKey = String(ug?.webphone_systemkey_override || '') || String(sys?.webphone_systemkey || '');
+  let dialpad = String(phone.webphone_dialpad || '');
+  const dialpadOverride = String(ug?.webphone_dialpad_override || '');
+  if (dialpadOverride && dialpadOverride !== 'DISABLED') dialpad = dialpadOverride;
+  let layout = String(phone.webphone_layout || '');
+  if (ug?.webphone_layout) layout = String(ug.webphone_layout);
+
+  const useExternal = phone.use_external_server_ip === 'Y';
+  let webphoneServerIp = phone.server_ip;
+  if (useExternal && srv?.external_server_ip) webphoneServerIp = srv.external_server_ip;
+  let webSocketUrl = String(srv?.web_socket_url || '');
+  if (useExternal && String(srv?.external_web_socket_url || '').length > 5) {
+    webSocketUrl = String(srv.external_web_socket_url);
+  }
+
+  // Settings-container scrub: strip comments and whitespace outside quotes.
+  let settingsScrubbed = '';
+  if (phone.webphone_settings) {
+    const [container] = await rows(
+      'SELECT container_entry FROM vicidial_settings_containers WHERE container_id = ? LIMIT 1',
+      [phone.webphone_settings],
+      [],
+    );
+    if (container?.container_entry) {
+      for (let line of String(container.container_entry).split(/\r\n|\r|\n/)) {
+        if (line.indexOf('#') === 0) line = '';
+        line = line.replace(/"[^"]*"|\s+/g, (m) => (m.startsWith('"') ? m : ''));
+        if (line !== '') settingsScrubbed += `${line}\\n`;
+      }
+    }
+  }
+
+  let options = 'INITIAL_LOAD';
+  if (dialpad === 'Y') options += '--DIALPAD_Y';
+  if (dialpad === 'N') options += '--DIALPAD_N';
+  if (dialpad === 'TOGGLE') options += '--DIALPAD_TOGGLE';
+  if (dialpad === 'TOGGLE_OFF') options += '--DIALPAD_OFF_TOGGLE';
+  if (phone.webphone_auto_answer === 'Y') options += '--AUTOANSWER_Y';
+  if (phone.webphone_auto_answer === 'N') options += '--AUTOANSWER_N';
+  if (phone.webphone_dialbox === 'Y') options += '--DIALBOX_Y';
+  if (phone.webphone_dialbox === 'N') options += '--DIALBOX_N';
+  if (phone.webphone_mute === 'Y') options += '--MUTE_Y';
+  if (phone.webphone_mute === 'N') options += '--MUTE_N';
+  if (phone.webphone_volume === 'Y') options += '--VOLUME_Y';
+  if (phone.webphone_volume === 'N') options += '--VOLUME_N';
+  if (phone.webphone_debug === 'Y') options += '--DEBUG';
+  if (webSocketUrl.length > 5) options += `--WEBSOCKETURL${webSocketUrl}`;
+  if (layout) options += `--WEBPHONELAYOUT${layout}`;
+  if (confExten) options += `--SESSION${confExten}`;
+  if (settingsScrubbed) options += `--SETTINGS${settingsScrubbed}`;
+
+  const codecs = String(phone.codecs_list || '').replace(/[ \-&]/g, '');
+  const b64 = (v) => Buffer.from(String(v == null ? '' : v)).toString('base64');
+  const params = `phone_login=${b64(phone.extension)}&phone_login=${b64(phone.extension)}`
+    + `&phone_pass=${b64(phone.conf_secret)}&server_ip=${b64(webphoneServerIp)}`
+    + `&callerid=${b64(phone.outbound_cid)}&protocol=${b64(phone.protocol)}`
+    + `&codecs=${b64(codecs)}&options=${b64(options)}&system_key=${b64(systemKey)}`;
+  return { url: `${webphoneUrl}?${params}`, launch: isWebphone };
+}
+
 async function agentAuth(req, res) {
   const phoneLogin = cleanId(req.body?.phone_login, 20);
   const phonePass = String(req.body?.phone_pass || '');
@@ -6560,7 +6650,7 @@ async function agentAuth(req, res) {
   if (!phoneLogin || !phonePass || !userLogin || !userPass) return badRequest(res, 'all_fields_required');
 
   const [phone] = await rows(
-    `SELECT login, pass, extension, server_ip, protocol, ext_context, phone_ring_timeout, on_hook_agent
+    `SELECT ${AGENT_PHONE_COLUMNS}
      FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
     [phoneLogin],
     [],
@@ -6605,15 +6695,7 @@ async function agentAuth(req, res) {
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, {
     user: agentUser,
-    agentPhone: {
-      login: phone.login,
-      extension: phone.extension,
-      server_ip: phone.server_ip,
-      protocol: phone.protocol,
-      ext_context: phone.ext_context,
-      phone_ring_timeout: phone.phone_ring_timeout,
-      on_hook_agent: phone.on_hook_agent,
-    },
+    agentPhone: { ...phone, pass: undefined },
     expiresAt: Date.now() + config.sessionTtlMs,
   });
   return res.json({
@@ -6676,7 +6758,7 @@ async function agentLogin(req, res) {
   if (await agentLiveRow(user)) return res.status(409).json({ ok: false, error: 'already_logged_in' });
 
   const phone = req.agentPhone || (await rows(
-    `SELECT login, extension, server_ip, protocol, ext_context, phone_ring_timeout, on_hook_agent
+    `SELECT ${AGENT_PHONE_COLUMNS}
      FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
     [phoneLogin],
     [],
@@ -6733,9 +6815,29 @@ async function agentLogin(req, res) {
       [user],
       [],
     );
-    const callsToday = Number(callsRow?.calls || 0);
     const autodial = campaign.dial_method === 'MANUAL' ? 'N' : 'Y';
     const closerCampaigns = String(campaign.closer_campaigns || '').trim();
+
+    // Campaign-agent stats row: fetch weight/calls_today/grade, create if new
+    // (legacy vicidial.php ~5295).
+    let campaignWeight = 0;
+    let callsToday = 0;
+    let campaignGrade = 1;
+    const [vca] = await rows(
+      'SELECT campaign_weight, calls_today, campaign_grade FROM vicidial_campaign_agents WHERE user = ? AND campaign_id = ? LIMIT 1',
+      [user, campaignId],
+      [],
+    );
+    if (vca) {
+      campaignWeight = Number(vca.campaign_weight || 0);
+      callsToday = Number(vca.calls_today || 0);
+      campaignGrade = Number(vca.campaign_grade || 1);
+    } else {
+      await execute(
+        "INSERT INTO vicidial_campaign_agents (user, campaign_id, campaign_rank, campaign_weight, calls_today, campaign_grade) VALUES (?, ?, '0', '0', '0', '1')",
+        [user, campaignId],
+      ).catch(() => {});
+    }
 
     await execute(
       `INSERT INTO vicidial_live_agents
@@ -6744,15 +6846,19 @@ async function agentLogin(req, res) {
           user_level, campaign_weight, calls_today, last_state_change, outbound_autodial,
           manager_ingroup_set, on_hook_ring_time, on_hook_agent, campaign_grade, pause_code,
           last_inbound_call_time, last_inbound_call_finish, last_inbound_call_time_filtered, last_inbound_call_finish_filtered)
-       VALUES (?, ?, ?, ?, 'PAUSED', '', ?, '', '', '', ?, NOW(), NOW(), NOW(), ?, ?, 0, ?, NOW(), ?,
-               'N', ?, ?, 1, 'LOGIN', NOW(), NOW(), NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, 'PAUSED', '', ?, '', '', '', ?, NOW(), NOW(), NOW(), ?, ?, ?, ?, NOW(), ?,
+               'N', ?, ?, ?, 'LOGIN', NOW(), NOW(), NOW(), NOW())`,
       [user, phone.server_ip, confExten, phone.extension, campaignId, rand, closerCampaigns,
-        Number(req.genxUser.userLevel || 1), callsToday, autodial,
-        Number(phone.phone_ring_timeout || 60), phone.on_hook_agent === 'Y' ? 'Y' : 'N'],
+        Number(req.genxUser.userLevel || 1), campaignWeight, callsToday, autodial,
+        Number(phone.phone_ring_timeout || 60), phone.on_hook_agent === 'Y' ? 'Y' : 'N', campaignGrade],
     );
+
+    // Webphone agents dial themselves into the session from the iframe; only
+    // hard phones get the manager Originate (legacy vicidial.php ~5140).
+    const webphone = await buildWebphoneUrl(phone, req.genxUser.userGroup, confExten, req.headers?.host || '');
     await execute(
       'INSERT INTO vicidial_session_data SET session_name = ?, user = ?, campaign_id = ?, server_ip = ?, conf_exten = ?, extension = ?, login_time = NOW(), webphone_url = ?, agent_login_call = ?',
-      [sessionName, user, campaignId, phone.server_ip, confExten, phone.extension, '', ''],
+      [sessionName, user, campaignId, phone.server_ip, confExten, phone.extension, webphone?.url || '', ''],
     );
 
     const logResult = await execute(
@@ -6763,18 +6869,21 @@ async function agentLogin(req, res) {
     );
     await execute('UPDATE vicidial_live_agents SET agent_log_id = ? WHERE user = ?', [logResult.insertId, user]);
 
-    // Ring the agent's phone into the conference.
+    // Ring the agent's phone into the conference (hard phones only).
     const callerCode = `S${nowEpoch}${String(rand).slice(0, 4)}`.slice(0, 20);
-    const dialString = `${phone.protocol || 'SIP'}/${phone.extension}`;
+    let dialString = `${phone.protocol || 'SIP'}/${phone.extension}`;
+    if (phone.on_hook_agent === 'Y') dialString = 'Local/8300@default';
     const context = phone.ext_context || 'default';
-    await execute(
-      `INSERT INTO vicidial_manager
-         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
-          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
-       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
-      [phone.server_ip, callerCode, `Channel: ${dialString}`, `Context: ${context}`, `Exten: ${confExten}`,
-        `Callerid: "${callerCode}" <${campaign.campaign_cid || ''}>`],
-    );
+    if (!webphone) {
+      await execute(
+        `INSERT INTO vicidial_manager
+           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+            cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
+        [phone.server_ip, callerCode, `Channel: ${dialString}`, `Context: ${context}`, `Exten: ${confExten}`,
+          `Callerid: "${callerCode}" <${campaign.campaign_cid || ''}>`],
+      );
+    }
     await execute(
       "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'APL', notes = ?",
       [callerCode, user, `${confExten} ${context} ${dialString}`],
@@ -6785,7 +6894,12 @@ async function agentLogin(req, res) {
       [user, campaignId, nowEpoch, req.genxUser.userGroup || '', phone.extension],
     ).catch(() => {});
 
-    return res.json({ ok: true, live: await agentLiveRow(user), pauseCodes: await agentPauseCodes(campaignId) });
+    return res.json({
+      ok: true,
+      live: await agentLiveRow(user),
+      pauseCodes: await agentPauseCodes(campaignId),
+      webphoneUrl: webphone?.url || null,
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'agent_login_failed' });
   }
@@ -6825,7 +6939,18 @@ async function agentStatus(req, res) {
       }
     }
   }
-  return res.json({ ok: true, live, lead, pauseCodes: await agentPauseCodes(live.campaign_id) });
+  // Webphone URL is persisted in session_data so a page reload can restore
+  // the phone iframe.
+  const [sess] = await rows(
+    'SELECT webphone_url FROM vicidial_session_data WHERE user = ? ORDER BY login_time DESC LIMIT 1',
+    [req.genxUser.user],
+    [],
+  );
+  return res.json({
+    ok: true, live, lead,
+    pauseCodes: await agentPauseCodes(live.campaign_id),
+    webphoneUrl: sess?.webphone_url || null,
+  });
 }
 
 // Legacy dispo screen status list: campaign selectable statuses + system ones.

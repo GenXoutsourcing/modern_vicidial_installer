@@ -12216,6 +12216,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [manualNumber, setManualNumber] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [webphoneUrl, setWebphoneUrl] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -12223,6 +12224,10 @@ function AgentConsole({ token, authInfo, onExit }) {
       setLive(payload.live);
       setLead(payload.lead || null);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
+      setWebphoneUrl((prev) => {
+        if (!payload.live) return null;
+        return payload.webphoneUrl && payload.webphoneUrl !== prev ? payload.webphoneUrl : prev;
+      });
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
@@ -12249,6 +12254,8 @@ function AgentConsole({ token, authInfo, onExit }) {
       const payload = await apiFetch(path, token, { method: 'POST', body: JSON.stringify(body || {}) });
       setLive(payload.live);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
+      if (!payload.live) setWebphoneUrl(null);
+      else if (payload.webphoneUrl) setWebphoneUrl(payload.webphoneUrl);
       return payload;
     } catch (requestError) {
       if (requestError.status === 401) {
@@ -12288,6 +12295,7 @@ function AgentConsole({ token, authInfo, onExit }) {
           </button>
         </div>
       </header>
+      <div className="agent-layout">
       <div className="agent-body">
         {!live && (
           <Panel eyebrow="Campaign" title="Select a Campaign" icon={Headphones} className="admin-wide-panel">
@@ -12296,7 +12304,11 @@ function AgentConsole({ token, authInfo, onExit }) {
               onSubmit={async (event) => {
                 event.preventDefault();
                 const payload = await act('/agent/login', { campaign_id: campaignId });
-                if (payload) setMessage('Logged in — your phone should be ringing');
+                if (payload) {
+                  setMessage(payload.webphoneUrl
+                    ? 'Logged in — webphone loading, allow microphone access'
+                    : 'Logged in — your phone should be ringing');
+                }
               }}
             >
               <div className="field-grid">
@@ -12470,6 +12482,19 @@ function AgentConsole({ token, authInfo, onExit }) {
             )}
           </Panel>
         )}
+      </div>
+      {live && webphoneUrl && (
+        <div className="agent-webphone">
+          <iframe
+            src={webphoneUrl}
+            id="webphone"
+            name="webphone"
+            title="Webphone"
+            scrolling="auto"
+            allow="microphone *; speaker-selection *; autoplay *;"
+          />
+        </div>
+      )}
       </div>
     </main>
   );

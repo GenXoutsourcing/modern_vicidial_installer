@@ -1686,6 +1686,38 @@ select option:hover {
   margin: 0 auto;
 }
 
+/* Legacy-style webphone iframe docked on the right of the agent screen */
+.agent-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.agent-layout .agent-body {
+  flex: 1 1 560px;
+  min-width: 0;
+  margin: 0;
+}
+
+.agent-webphone {
+  flex: 0 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 217, 255, 0.18);
+  background: rgba(4, 14, 30, 0.55);
+}
+
+.agent-webphone iframe {
+  display: block;
+  width: 460px;
+  max-width: 92vw;
+  height: 500px;
+  border: 0;
+  background-color: transparent;
+}
+
 /* Keep Chrome autofill from painting login inputs white. */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
