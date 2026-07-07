@@ -438,7 +438,7 @@ function userCan(user, entity) {
   if (entity === 'leadFilters') return Boolean(user?.modifyFilters);
   if (entity === 'filterPhoneGroups') return Boolean(user?.modifyFilters);
   if (entity === 'callTimes') return Boolean(user?.modifyCallTimes);
-  if (entity === 'shifts') return Boolean(user?.modifyCallTimes);
+  if (entity === 'shifts') return Boolean(user?.modifyShifts);
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
   if (entity === 'remoteAgents') return Boolean(user?.modifyRemoteagents);
@@ -8267,7 +8267,7 @@ function AudioStorePanel({ user }) {
   }, [token]);
   useEffect(load, [load]);
 
-  const canEdit = Number(user?.userLevel || 0) >= 8;
+  const canEdit = Number(user?.userLevel || 0) >= 9 || Boolean(user?.modifyAudiostore);
 
   async function upload(file) {
     setBusy(true);

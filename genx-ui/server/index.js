@@ -209,6 +209,8 @@ function publicUser(row) {
     customFieldsModify: row.custom_fields_modify === '1',
     vdcAgentApiAccess: row.vdc_agent_api_access === '1',
     modifyTimeclockLog: row.modify_timeclock_log === '1',
+    modifyShifts: row.modify_shifts === '1',
+    modifyAudiostore: row.modify_audiostore === '1',
     astDeletePhones: row.ast_delete_phones === '1',
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
@@ -378,6 +380,8 @@ async function authenticateVicidialUser(username, password) {
             u.custom_fields_modify,
             u.vdc_agent_api_access,
             u.modify_timeclock_log,
+            u.modify_shifts,
+            u.modify_audiostore,
             u.ast_delete_phones,
             u.modify_remoteagents,
             u.delete_remote_agents,
@@ -13182,7 +13186,7 @@ function shiftPayload(body) {
 }
 
 async function saveShift(req, res, mode) {
-  if (!requireModify(req, res, 'modifyCallTimes')) return;
+  if (!requireModify(req, res, 'modifyShifts')) return;
   const id = cleanId(mode === 'create' ? req.body?.shift_id : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_shift_id');
   if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_shifts', 'shift_id', id))) {
@@ -13735,7 +13739,10 @@ async function listAudioStore(req, res) {
 
 async function uploadAudio(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
-  if (Number(req.genxUser.userLevel || 0) < 8) return res.status(403).json({ ok: false, error: 'level_8_required' });
+  // Legacy audio_store.php gate: modify_audiostore (level 9 always).
+  if (!(Number(req.genxUser.userLevel || 0) >= 9 || Boolean(req.genxUser.modifyAudiostore))) {
+    return res.status(403).json({ ok: false, error: 'audiostore_permission_required' });
+  }
   const name = String(req.query?.filename || '');
   if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
   const ext = name.split('.').pop().toLowerCase();
@@ -13776,7 +13783,9 @@ function streamAudio(req, res) {
 
 async function deleteAudio(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
-  if (Number(req.genxUser.userLevel || 0) < 8) return res.status(403).json({ ok: false, error: 'level_8_required' });
+  if (!(Number(req.genxUser.userLevel || 0) >= 9 || Boolean(req.genxUser.modifyAudiostore))) {
+    return res.status(403).json({ ok: false, error: 'audiostore_permission_required' });
+  }
   const name = String(req.params?.name || '');
   if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
   const filePath = path.join(AUDIO_STORE_DIR, name);
