@@ -6925,11 +6925,13 @@ async function testLeadFilter(req, res) {
   if (!filter) return res.status(404).json({ ok: false, error: 'filter_not_found' });
   const filterSql = String(filter.lead_filter_sql || '').replace(/\\/g, '').trim();
   if (!filterSql) return res.json({ ok: true, matches: 0, empty_filter: true });
-  if (/;|--|\b(insert|update|delete|drop|alter|create|grant|truncate|replace|load|outfile)\b/i.test(filterSql)) {
+  // A WHERE fragment cannot write, and the pool rejects stacked statements;
+  // just refuse separators/comments (status values like 'DROP' are fine).
+  if (/;|--|\/\*|\binto\s+(outfile|dumpfile)\b/i.test(filterSql)) {
     return res.status(400).json({ ok: false, error: 'filter_sql_not_testable' });
   }
   try {
-    const [row] = await rows(`SELECT COUNT(*) AS matches FROM vicidial_list WHERE ${filterSql}`, [], []);
+    const [row] = await rows(`SELECT COUNT(*) AS matches FROM vicidial_list WHERE (${filterSql})`, [], []);
     return res.json({ ok: true, matches: Number(row?.matches || 0) });
   } catch (error) {
     return res.status(400).json({ ok: false, error: 'filter_sql_invalid' });
