@@ -125,9 +125,9 @@ export const REPORT_GROUPS = [
     title: 'Agents and Teams',
     items: [
       { label: 'Agent Time Detail', href: '/vicidial/AST_agent_time_detail.php', view: 'reportAgentTimeDetail' },
-      { label: 'Agent Status Detail', href: '/vicidial/AST_agent_status_detail.php' },
-      { label: 'Agent Performance Detail', href: '/vicidial/AST_agent_performance_detail.php' },
-      { label: 'Agent Performance', href: '/vicidial/AST_agent_performance.php' },
+      { label: 'Agent Status Detail', href: '/vicidial/AST_agent_status_detail.php', view: 'reportAgentStatusDetail' },
+      { label: 'Agent Performance Detail', href: '/vicidial/AST_agent_performance_detail.php', view: 'reportAgentPerformance' },
+      { label: 'Agent Performance', href: '/vicidial/AST_agent_performance.php', view: 'reportAgentPerformance' },
       { label: 'Team Performance', href: '/vicidial/AST_team_performance_detail.php' },
       { label: 'Performance Comparison', href: '/vicidial/AST_performance_comparison_report.php' },
       { label: 'Single Agent Daily', href: '/vicidial/AST_agent_days_detail.php' },
@@ -135,7 +135,7 @@ export const REPORT_GROUPS = [
       { label: 'User Group Login', href: '/vicidial/AST_usergroup_login_report.php' },
       { label: 'User Group Hourly', href: '/vicidial/AST_user_group_hourly_detail.php' },
       { label: 'User Logins', href: '/vicidial/user_logins_report.php' },
-      { label: 'Agent Disposition', href: '/vicidial/AST_agent_disposition.php' },
+      { label: 'Agent Disposition', href: '/vicidial/AST_agent_disposition.php', view: 'reportAgentDisposition' },
     ],
   },
   {

@@ -9823,6 +9823,315 @@ function AgentTimeDetailReportView({ token, onLogout }) {
   );
 }
 
+// Shared filter bar (dates + campaign select) for the agent reports.
+function AgentReportFilterBar({ beginDate, endDate, setBeginDate, setEndDate, campaignId, setCampaignId, campaigns, campaignLabel, loading, onSubmit }) {
+  return (
+    <form className="entity-form report-filter-bar" onSubmit={onSubmit}>
+      <div className="field-grid">
+        <label>
+          <span>Begin Date</span>
+          <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+        </label>
+        <label>
+          <span>End Date</span>
+          <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+        </label>
+        <label>
+          <span>Campaign</span>
+          <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+            <option value="">{campaignLabel}</option>
+            {campaigns.map((row) => (
+              <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="modal-actions">
+        <button type="submit" className="primary-action" disabled={loading}>
+          <Search size={16} aria-hidden="true" />
+          {loading ? 'Loading' : 'Run Report'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Builds user rows + status columns from a flat user/status/calls list.
+function buildStatusMatrix(entries, nameKey = 'full_name') {
+  const statusSet = new Set();
+  const users = new Map();
+  for (const row of entries || []) {
+    const status = String(row.status || '');
+    statusSet.add(status);
+    const key = String(row.user);
+    if (!users.has(key)) users.set(key, { user: key, name: row[nameKey] || '', counts: {}, total: 0 });
+    const bucket = users.get(key);
+    bucket.counts[status] = (bucket.counts[status] || 0) + Number(row.calls || 0);
+    bucket.total += Number(row.calls || 0);
+  }
+  return { statuses: [...statusSet].sort().slice(0, 20), users: [...users.values()] };
+}
+
+// Native AST_agent_status_detail.php: user x status matrix from agent_log.
+function AgentStatusDetailReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignId, setCampaignId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaign, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (campaign) params.set('campaign', campaign);
+      const payload = await apiFetch(`/reports/agent-status-detail?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or campaign' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const matrix = buildStatusMatrix(data?.entries);
+  const haSet = new Set(data?.humanAnswered || []);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Agent Status Detail</h2>
+          <p className="action-copy">Dispositions set by each agent in the date range.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Dates" icon={Search} className="admin-wide-panel">
+        <AgentReportFilterBar
+          beginDate={beginDate} endDate={endDate} setBeginDate={setBeginDate} setEndDate={setEndDate}
+          campaignId={campaignId} setCampaignId={setCampaignId} campaigns={data?.campaigns || []}
+          campaignLabel="All campaigns" loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(campaignId, beginDate, endDate);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {data && (
+        <Panel eyebrow="Matrix" title="Agent Statuses" icon={Users} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No agent dispositions in the date range"
+            rows={matrix.users.map((row) => ({ ...row, id: row.user }))}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'name', label: 'Name' },
+              { key: 'total', label: 'Total', render: (row) => formatNumber(row.total) },
+              { key: 'ha', label: 'HA', render: (row) => formatNumber(Object.entries(row.counts).reduce((sum, [status, calls]) => sum + (haSet.has(status) ? calls : 0), 0)) },
+              ...matrix.statuses.map((status) => ({
+                key: `st-${status}`, label: status, render: (row) => formatNumber(row.counts[status] || 0),
+              })),
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native AST_agent_performance_detail.php core: per-agent times + status matrix.
+function AgentPerformanceReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignId, setCampaignId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaign, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (campaign) params.set('campaign', campaign);
+      const payload = await apiFetch(`/reports/agent-performance?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or campaign' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const s = data?.sections;
+  const matrix = buildStatusMatrix(s?.statuses, 'none');
+  const haSet = new Set(s?.humanAnswered || []);
+  const statusByUser = new Map(matrix.users.map((row) => [row.user, row]));
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Agent Performance Detail</h2>
+          <p className="action-copy">Per-agent call counts, time breakdown and dispositions.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Dates" icon={Search} className="admin-wide-panel">
+        <AgentReportFilterBar
+          beginDate={beginDate} endDate={endDate} setBeginDate={setBeginDate} setEndDate={setEndDate}
+          campaignId={campaignId} setCampaignId={setCampaignId} campaigns={data?.campaigns || []}
+          campaignLabel="All campaigns" loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(campaignId, beginDate, endDate);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Agents" title="Performance Totals" icon={Users} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No agent activity in the date range"
+              rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'ha', label: 'HA', render: (row) => {
+                  const counts = statusByUser.get(String(row.user))?.counts || {};
+                  return formatNumber(Object.entries(counts).reduce((sum, [status, calls]) => sum + (haSet.has(status) ? calls : 0), 0));
+                } },
+                { key: 'pause_sec', label: 'Pause', render: (row) => formatSeconds(row.pause_sec) },
+                { key: 'wait_sec', label: 'Wait', render: (row) => formatSeconds(row.wait_sec) },
+                { key: 'talk_sec', label: 'Talk', render: (row) => formatSeconds(row.talk_sec) },
+                { key: 'dispo_sec', label: 'Wrapup', render: (row) => formatSeconds(row.dispo_sec) },
+                { key: 'dead_sec', label: 'Dead', render: (row) => formatSeconds(row.dead_sec) },
+                { key: 'avg_talk', label: 'Avg Talk', render: (row) => `${row.calls ? Math.round(row.talk_sec / row.calls) : 0}s` },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Matrix" title="Dispositions" icon={Activity} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No agent dispositions in the date range"
+              rows={matrix.users.map((row) => ({ ...row, id: row.user }))}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'total', label: 'Total', render: (row) => formatNumber(row.total) },
+                ...matrix.statuses.map((status) => ({
+                  key: `st-${status}`, label: status, render: (row) => formatNumber(row.counts[status] || 0),
+                })),
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
+// Native AST_agent_disposition.php: one campaign, outbound-log agent stats.
+function AgentDispositionReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignId, setCampaignId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaign, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (campaign) params.set('campaign', campaign);
+      const payload = await apiFetch(`/reports/agent-disposition?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or campaign' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const s = data?.sections;
+  const matrix = buildStatusMatrix(s?.statuses, 'none');
+  const statusByUser = new Map(matrix.users.map((row) => [row.user, row]));
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Agent Disposition</h2>
+          <p className="action-copy">Per-agent outbound calls and dispositions for one campaign.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Dates" icon={Search} className="admin-wide-panel">
+        <AgentReportFilterBar
+          beginDate={beginDate} endDate={endDate} setBeginDate={setBeginDate} setEndDate={setEndDate}
+          campaignId={campaignId} setCampaignId={setCampaignId} campaigns={data?.campaigns || []}
+          campaignLabel="Select a campaign" loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(campaignId, beginDate, endDate);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <Panel eyebrow="Agents" title="Calls and Dispositions" icon={Users} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No outbound calls for this campaign in the date range"
+            rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'full_name', label: 'Name' },
+              { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+              { key: 'talk_sec', label: 'Talk Time', render: (row) => formatSeconds(row.talk_sec) },
+              { key: 'avg_sec', label: 'Avg', render: (row) => `${Math.round(Number(row.avg_sec || 0))}s` },
+              ...matrix.statuses.map((status) => ({
+                key: `st-${status}`, label: status,
+                render: (row) => formatNumber(statusByUser.get(String(row.user))?.counts[status] || 0),
+              })),
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -10053,6 +10362,9 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportIvr') return <IvrReportView token={token} />;
   if (activeView === 'reportForecasting') return <InboundForecastingReportView token={token} />;
   if (activeView === 'reportAgentTimeDetail') return <AgentTimeDetailReportView token={token} />;
+  if (activeView === 'reportAgentStatusDetail') return <AgentStatusDetailReportView token={token} />;
+  if (activeView === 'reportAgentPerformance') return <AgentPerformanceReportView token={token} />;
+  if (activeView === 'reportAgentDisposition') return <AgentDispositionReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

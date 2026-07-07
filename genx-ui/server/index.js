@@ -5340,6 +5340,145 @@ async function agentTimeDetailReport(req, res) {
   });
 }
 
+// Shared campaign/user-group filters for the agent_log based agent reports.
+function agentLogFilters(req, params) {
+  const clauses = [];
+  const campaignId = cleanId(req.query?.campaign, 20);
+  if (campaignId) {
+    if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) return null;
+    clauses.push('al.campaign_id = ?');
+    params.push(campaignId);
+  }
+  const scopeParams = [];
+  clauses.push(scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'al.user_group', scopeParams));
+  params.push(...scopeParams);
+  return clauses.join(' AND ');
+}
+
+async function agentReportPickers(req) {
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  return rows(`SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`, campaignParams, []);
+}
+
+// Native port of AST_agent_status_detail.php: user x status count matrix from
+// the agent log.
+async function agentStatusDetailReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const filters = agentLogFilters(req, params);
+  if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const campaigns = await agentReportPickers(req);
+
+  const entries = await rows(
+    `SELECT al.user, u.full_name, al.status, COUNT(*) AS calls
+     FROM vicidial_agent_log al
+     LEFT JOIN vicidial_users u ON u.user = al.user
+     WHERE al.event_time >= ? AND al.event_time <= ? AND al.status IS NOT NULL AND al.status != '' AND ${filters}
+     GROUP BY al.user, al.status ORDER BY al.user ASC, al.status ASC LIMIT 10000`,
+    params,
+    [],
+  );
+  const haRows = await rows(
+    `SELECT status FROM vicidial_statuses WHERE human_answered = 'Y'
+     UNION SELECT status FROM vicidial_campaign_statuses WHERE human_answered = 'Y' LIMIT 500`,
+    [],
+    [],
+  );
+  return res.json({
+    ok: true,
+    campaigns,
+    range: { beginDate, endDate },
+    entries,
+    humanAnswered: haRows.map((row) => row.status),
+  });
+}
+
+// Native port of AST_agent_performance_detail.php (core stats): per-agent call
+// and time totals from the agent log plus a per-status matrix.
+async function agentPerformanceReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const filters = agentLogFilters(req, params);
+  if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const campaigns = await agentReportPickers(req);
+  const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+
+  const [agents, statuses] = await Promise.all([
+    rows(
+      `SELECT al.user, u.full_name, al.user_group, COUNT(al.lead_id) AS calls,
+              ${cap('al.pause_sec')} AS pause_sec, ${cap('al.wait_sec')} AS wait_sec,
+              ${cap('al.talk_sec')} AS talk_sec, ${cap('al.dispo_sec')} AS dispo_sec,
+              ${cap('al.dead_sec')} AS dead_sec
+       FROM vicidial_agent_log al
+       LEFT JOIN vicidial_users u ON u.user = al.user
+       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT al.user, al.status, COUNT(*) AS calls
+       FROM vicidial_agent_log al
+       WHERE al.event_time >= ? AND al.event_time <= ? AND al.status IS NOT NULL AND al.status != '' AND ${filters}
+       GROUP BY al.user, al.status LIMIT 10000`,
+      params,
+      [],
+    ),
+  ]);
+  const haRows = await rows(
+    `SELECT status FROM vicidial_statuses WHERE human_answered = 'Y'
+     UNION SELECT status FROM vicidial_campaign_statuses WHERE human_answered = 'Y' LIMIT 500`,
+    [],
+    [],
+  );
+  return res.json({
+    ok: true,
+    campaigns,
+    range: { beginDate, endDate },
+    sections: { agents, statuses, humanAnswered: haRows.map((row) => row.status) },
+  });
+}
+
+// Native port of AST_agent_disposition.php: one campaign, per-agent calls from
+// the outbound log plus a disposition matrix.
+async function agentDispositionReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:01`;
+  const end = `${endDate} 23:59:59`;
+  const campaigns = await agentReportPickers(req);
+  const campaignId = cleanId(req.query?.campaign, 20);
+  if (!campaignId) return res.json({ ok: true, campaigns, sections: null, range: { beginDate, endDate } });
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+
+  const params = [begin, end, campaignId];
+  const [agents, statuses] = await Promise.all([
+    rows(
+      `SELECT vl.user, u.full_name, COUNT(*) AS calls,
+              COALESCE(SUM(vl.length_in_sec),0) AS talk_sec, COALESCE(AVG(vl.length_in_sec),0) AS avg_sec
+       FROM vicidial_log vl
+       LEFT JOIN vicidial_users u ON u.user = vl.user
+       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id = ?
+       GROUP BY vl.user ORDER BY calls DESC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT user, status, COUNT(*) AS calls FROM vicidial_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       GROUP BY user, status LIMIT 10000`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, campaigns, range: { beginDate, endDate }, sections: { agents, statuses } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9038,6 +9177,9 @@ app.get('/api/reports/did-detail', requireAccess, didDetailReport);
 app.get('/api/reports/ivr', requireAccess, ivrReport);
 app.get('/api/reports/inbound-forecasting', requireAccess, inboundForecastingReport);
 app.get('/api/reports/agent-time-detail', requireAccess, agentTimeDetailReport);
+app.get('/api/reports/agent-status-detail', requireAccess, agentStatusDetailReport);
+app.get('/api/reports/agent-performance', requireAccess, agentPerformanceReport);
+app.get('/api/reports/agent-disposition', requireAccess, agentDispositionReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
