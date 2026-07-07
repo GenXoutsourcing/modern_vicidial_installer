@@ -6283,6 +6283,66 @@ async function apiLogReport(req, res) {
   return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
 }
 
+// Native port of AST_agent_debug_log_report.php: agent-screen AJAX log rows.
+async function agentDebugLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const userId = cleanId(req.query?.user, 20);
+  let filterSql = '';
+  if (userId) {
+    filterSql = ' AND user = ?';
+    params.push(userId);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT user, start_time, db_time, run_time, php_script, action, lead_id, stage
+       FROM vicidial_ajax_log WHERE db_time >= ? AND db_time <= ?${filterSql}
+       ORDER BY db_time DESC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT action, COUNT(*) AS events, COALESCE(AVG(run_time),0) AS avg_run_time
+       FROM vicidial_ajax_log WHERE db_time >= ? AND db_time <= ?${filterSql}
+       GROUP BY action ORDER BY events DESC LIMIT 100`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
+// Native port of AST_3way_press_log_report.php: 3-way press events.
+async function threewayPressLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const userId = cleanId(req.query?.user, 20);
+  let filterSql = '';
+  if (userId) {
+    filterSql = ' AND user = ?';
+    params.push(userId);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT call_date, user, lead_id, phone_number, dialstring, outbound_cid, result,
+              call_transfer, server_ip, caller_code
+       FROM vicidial_3way_press_log WHERE call_date >= ? AND call_date <= ?${filterSql}
+       ORDER BY call_date DESC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT result, COUNT(*) AS events FROM vicidial_3way_press_log
+       WHERE call_date >= ? AND call_date <= ?${filterSql} GROUP BY result ORDER BY events DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -10003,6 +10063,8 @@ app.get('/api/reports/sip-event', requireAccess, sipEventReport);
 app.get('/api/reports/amd-log', requireAccess, amdLogReport);
 app.get('/api/reports/recording-access', requireAccess, recordingAccessReport);
 app.get('/api/reports/api-log', requireAccess, apiLogReport);
+app.get('/api/reports/agent-debug-log', requireAccess, agentDebugLogReport);
+app.get('/api/reports/threeway-press-log', requireAccess, threewayPressLogReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
