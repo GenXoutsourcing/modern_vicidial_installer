@@ -230,31 +230,99 @@ function publicUser(row) {
   };
 }
 
+// Sessions survive service restarts: the in-memory Map is a cache over a DB
+// table keyed by the token's SHA-256 (the raw token is never stored at rest).
+const tokenHash = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+const sessionTableReady = (async () => {
+  try {
+    await execute(
+      `CREATE TABLE IF NOT EXISTS genx_ui_sessions (
+         token_hash CHAR(64) NOT NULL PRIMARY KEY,
+         session_data MEDIUMTEXT,
+         expires_at BIGINT UNSIGNED NOT NULL DEFAULT 0,
+         KEY expires_at (expires_at)
+       )`,
+    );
+    await execute('DELETE FROM genx_ui_sessions WHERE expires_at < ?', [Date.now()]);
+    return true;
+  } catch (error) {
+    console.error('genx_ui_sessions table unavailable; sessions are memory-only', error.message);
+    return false;
+  }
+})();
+
+async function persistSession(token, session) {
+  if (!(await sessionTableReady)) return;
+  try {
+    await execute(
+      'REPLACE INTO genx_ui_sessions (token_hash, session_data, expires_at) VALUES (?, ?, ?)',
+      [tokenHash(token), JSON.stringify({ user: session.user, agentPhone: session.agentPhone || null }), session.expiresAt],
+    );
+  } catch { /* memory session still works */ }
+}
+
+async function forgetSession(token) {
+  sessions.delete(token);
+  if (!(await sessionTableReady)) return;
+  try {
+    await execute('DELETE FROM genx_ui_sessions WHERE token_hash = ?', [tokenHash(token)]);
+  } catch { /* best effort */ }
+}
+
 function createSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, {
+  const session = {
     user,
     expiresAt: Date.now() + config.sessionTtlMs,
-  });
+    persistedAt: Date.now(),
+  };
+  sessions.set(token, session);
+  persistSession(token, session);
   return token;
 }
 
-function sessionFromRequest(req) {
+async function sessionFromRequest(req) {
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
   if (!token) return null;
-  const session = sessions.get(token);
+  let session = sessions.get(token);
+  if (!session && (await sessionTableReady)) {
+    // Cache miss (e.g. service restart) — rehydrate from the table.
+    try {
+      const [row] = await rows(
+        'SELECT session_data, expires_at FROM genx_ui_sessions WHERE token_hash = ? LIMIT 1',
+        [tokenHash(token)],
+        [],
+      );
+      if (row && Number(row.expires_at) > Date.now()) {
+        const data = JSON.parse(row.session_data || '{}');
+        session = {
+          user: data.user,
+          agentPhone: data.agentPhone || null,
+          expiresAt: Number(row.expires_at),
+          persistedAt: Date.now(),
+        };
+        sessions.set(token, session);
+      }
+    } catch { /* fall through to unauthenticated */ }
+  }
   if (!session) return null;
   if (session.expiresAt <= Date.now()) {
-    sessions.delete(token);
+    forgetSession(token);
     return null;
   }
   session.expiresAt = Date.now() + config.sessionTtlMs;
+  // Refresh the persisted expiry at most every 5 minutes, not per request.
+  if (Date.now() - (session.persistedAt || 0) > 5 * 60 * 1000) {
+    session.persistedAt = Date.now();
+    persistSession(token, session);
+  }
   return session;
 }
 
-function requireAccess(req, res, next) {
-  const session = sessionFromRequest(req);
+async function requireAccess(req, res, next) {
+  const session = await sessionFromRequest(req);
   if (session?.user?.userLevel >= config.minUserLevel) {
     req.genxUser = session.user;
     return next();
@@ -6542,8 +6610,8 @@ async function urlLogReport(req, res) {
 // (legacy vicidial.php login form), not the admin console. Agent sessions are
 // marked and only valid for /api/agent/* routes; admin sessions also work so
 // admins can drive the screen.
-function requireAgentAccess(req, res, next) {
-  const session = sessionFromRequest(req);
+async function requireAgentAccess(req, res, next) {
+  const session = await sessionFromRequest(req);
   if (session?.agentPhone || session?.user?.userLevel >= config.minUserLevel) {
     req.genxUser = session.user;
     req.agentPhone = session.agentPhone || null;
@@ -6721,11 +6789,14 @@ async function agentAuth(req, res) {
     permissions: { allowedCampaigns: allowed },
   };
   const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, {
+  const agentSession = {
     user: agentUser,
     agentPhone: { ...phone, pass: undefined },
     expiresAt: Date.now() + config.sessionTtlMs,
-  });
+    persistedAt: Date.now(),
+  };
+  sessions.set(token, agentSession);
+  persistSession(token, agentSession);
   return res.json({
     ok: true,
     token,
@@ -11835,7 +11906,7 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', requireAccess, (req, res) => {
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (token) sessions.delete(token);
+  if (token) forgetSession(token);
   res.json({ ok: true });
 });
 
@@ -12234,4 +12305,5 @@ setInterval(() => {
       sessions.delete(token);
     }
   }
+  execute('DELETE FROM genx_ui_sessions WHERE expires_at < ?', [now]).catch(() => {});
 }, 5 * 60 * 1000).unref();
