@@ -4242,10 +4242,13 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const isDetail = mode === 'editDetail';
   const isCopy = action.entity === 'campaignCopy';
 
+  // Reset only when a different record/action is opened. Depending on `admin`
+  // here wiped in-progress edits every time the 30s background refresh landed.
   useEffect(() => {
     setForm({ ...actionDefaults(action.entity, admin), ...(action.row || {}), pass: '' });
     setError('');
-  }, [action, admin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action]);
 
   async function submit(event) {
     event.preventDefault();
