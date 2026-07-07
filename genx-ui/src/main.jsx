@@ -12145,25 +12145,73 @@ function AgentLoginPage({ onAuthed }) {
   // Phone fields stay hidden unless the user record has no phone_login set
   // (mirrors the legacy agc campaign-login form).
   const [needPhone, setNeedPhone] = useState(false);
+  // Campaign chooser lives on the login form like legacy; the list comes from
+  // /agent/auth which scopes to the user group's allowed campaigns.
+  const [campaignId, setCampaignId] = useState('');
+  const [campaigns, setCampaigns] = useState(null);
+  const authedRef = useRef(null);
 
   const setField = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+
+  const AUTH_ERRORS = {
+    invalid_phone_credentials: 'Invalid phone login or password',
+    invalid_user_credentials: 'Invalid user login or password',
+    all_fields_required: 'User login and password are required',
+    phone_login_required: 'No phone set on this user — enter phone credentials',
+  };
+
+  // Auth once per set of credentials; reused between Refresh and Submit.
+  async function ensureAuth() {
+    const key = JSON.stringify(form);
+    if (authedRef.current?.key === key) return authedRef.current.payload;
+    const payload = await apiFetch('/agent/auth', '', { method: 'POST', body: JSON.stringify(form) });
+    authedRef.current = { key, payload };
+    setCampaigns(payload.campaigns || []);
+    return payload;
+  }
+
+  async function refreshCampaigns() {
+    setBusy(true);
+    setError('');
+    try {
+      await ensureAuth();
+    } catch (requestError) {
+      if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      setError(AUTH_ERRORS[requestError.message] || 'Login failed');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
     setError('');
     try {
-      const payload = await apiFetch('/agent/auth', '', { method: 'POST', body: JSON.stringify(form) });
+      const payload = await ensureAuth();
       window.localStorage.setItem(AGENT_TOKEN_KEY, payload.token);
-      onAuthed(payload);
+      // Re-attach directly when a live session already exists.
+      if (payload.live) {
+        onAuthed(payload);
+        return;
+      }
+      if (!campaignId) {
+        setError('Please select a campaign');
+        return;
+      }
+      const login = await apiFetch('/agent/login', payload.token, {
+        method: 'POST',
+        body: JSON.stringify({ campaign_id: campaignId }),
+      });
+      onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes });
     } catch (requestError) {
-      const map = {
-        invalid_phone_credentials: 'Invalid phone login or password',
-        invalid_user_credentials: 'Invalid user login or password',
-        all_fields_required: 'User login and password are required',
-        phone_login_required: 'No phone set on this user — enter phone credentials',
-      };
       if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      const map = {
+        ...AUTH_ERRORS,
+        already_logged_in: 'This user already has a live agent session',
+        no_conference_available: 'No free conference on that phone server',
+        campaign_not_allowed: 'Campaign not allowed for your user group',
+      };
       setError(map[requestError.message] || 'Login failed');
     } finally {
       setBusy(false);
@@ -12201,10 +12249,30 @@ function AgentLoginPage({ onAuthed }) {
               </label>
             </>
           )}
+          <label>
+            <span>Campaign</span>
+            <select
+              value={campaignId}
+              onChange={(event) => setCampaignId(event.target.value)}
+              onFocus={() => { if (campaigns === null && form.user && form.pass) refreshCampaigns(); }}
+            >
+              <option value="">-- PLEASE SELECT A CAMPAIGN --</option>
+              {(campaigns || []).map((row) => (
+                <option key={row.campaign_id} value={row.campaign_id}>
+                  {row.campaign_id} - {row.campaign_name || ''}
+                </option>
+              ))}
+            </select>
+          </label>
           {error && <p className="form-error">{error}</p>}
-          <button type="submit" className="primary-action" disabled={busy}>
-            {busy ? 'Checking...' : 'Continue'}
-          </button>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={busy}>
+              {busy ? 'Working...' : 'Submit'}
+            </button>
+            <button type="button" className="secondary-action" disabled={busy || !form.user || !form.pass} onClick={refreshCampaigns}>
+              Refresh Campaign List
+            </button>
+          </div>
         </form>
       </section>
     </main>
@@ -12217,7 +12285,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [campaignId, setCampaignId] = useState('');
   const [live, setLive] = useState(authInfo?.live || null);
   const [lead, setLead] = useState(null);
-  const [pauseCodes, setPauseCodes] = useState([]);
+  const [pauseCodes, setPauseCodes] = useState(authInfo?.pauseCodes || []);
   const [dispoStatuses, setDispoStatuses] = useState([]);
   const [showDispo, setShowDispo] = useState(false);
   const [callbackTime, setCallbackTime] = useState('');
@@ -12225,7 +12293,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [manualNumber, setManualNumber] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [webphoneUrl, setWebphoneUrl] = useState(null);
+  const [webphoneUrl, setWebphoneUrl] = useState(authInfo?.webphoneUrl || null);
   const [showPhone, setShowPhone] = useState(true);
   const [sidePanel, setSidePanel] = useState('');
   const [agentsView, setAgentsView] = useState(null);
@@ -12404,7 +12472,15 @@ function AgentConsole({ token, authInfo, onExit }) {
                   Hangup Customer
                 </button>
               )}
-              <button type="button" className="secondary-action" disabled={busy || live.status === 'INCALL'} onClick={() => act('/agent/logout')}>
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={busy || live.status === 'INCALL'}
+                onClick={async () => {
+                  const payload = await act('/agent/logout');
+                  if (payload) onExit();
+                }}
+              >
                 <LogOut size={16} aria-hidden="true" />
                 Logout Agent
               </button>
