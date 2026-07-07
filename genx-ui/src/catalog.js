@@ -137,6 +137,7 @@ export const REPORT_GROUPS = [
       { label: 'User Group Login', href: '/vicidial/AST_usergroup_login_report.php', view: 'reportUserGroupLogin' },
       { label: 'User Group Hourly', href: '/vicidial/AST_user_group_hourly_detail.php', view: 'reportUserGroupHourly' },
       { label: 'User Logins', href: '/vicidial/user_logins_report.php', view: 'reportUserLogins' },
+      { label: 'User Stats', href: '/vicidial/user_stats.php', view: 'reportUserStats' },
       { label: 'Agent Disposition', href: '/vicidial/AST_agent_disposition.php', view: 'reportAgentDisposition' },
     ],
   },

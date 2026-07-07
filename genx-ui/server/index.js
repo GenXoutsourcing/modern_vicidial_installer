@@ -5778,6 +5778,125 @@ async function userLoginsReport(req, res) {
   return res.json({ ok: true, users, entries: [...today, ...history] });
 }
 
+// Native port of user_stats.php + user_status.php + AST_agent_time_sheet.php:
+// one endpoint returns the live snapshot, per-status call totals, pause-code
+// breakdown, timeclock time sheet, login/logout events, park log and in-group
+// change history for a single user.
+async function userStatsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const rangeStart = `${beginDate} 00:00:00`;
+  const rangeEnd = `${endDate} 23:59:59`;
+
+  const pickerParams = [];
+  const pickerScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', pickerParams);
+  const users = await rows(
+    `SELECT user, full_name FROM vicidial_users WHERE ${pickerScope} ORDER BY user ASC LIMIT 2000`,
+    pickerParams,
+    [],
+  );
+
+  const userId = cleanId(req.query?.user, 20);
+  if (!userId) return res.json({ ok: true, users, range: { beginDate, endDate } });
+
+  const infoParams = [userId];
+  const infoScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', infoParams);
+  const [info] = await rows(`SELECT user, full_name, user_group, user_level, active FROM vicidial_users WHERE user = ? AND ${infoScope} LIMIT 1`, infoParams, []);
+  if (!info) return res.status(404).json({ ok: false, error: 'user_not_found' });
+
+  const [liveRows, timeclockStatus, outbound, inbound, pauses, parks, loginEvents, timesheet, timeclockRows, closerChanges] = await Promise.all([
+    rows(
+      `SELECT status, campaign_id, lead_id, calls_today, conf_exten, extension, server_ip, closer_campaigns,
+              last_call_time, last_state_change, last_update_time, pause_code, outbound_autodial
+       FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
+      [userId],
+      [],
+    ),
+    rows('SELECT event_date, status, ip_address FROM vicidial_timeclock_status WHERE user = ? LIMIT 1', [userId], []),
+    rows(
+      `SELECT status, COUNT(*) AS calls, SUM(length_in_sec) AS seconds
+       FROM vicidial_log WHERE user = ? AND call_date >= ? AND call_date <= ?
+       GROUP BY status ORDER BY status`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT status, COUNT(*) AS calls, SUM(length_in_sec - queue_seconds) AS seconds
+       FROM vicidial_closer_log WHERE user = ? AND call_date >= ? AND call_date <= ?
+       GROUP BY status ORDER BY status`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT al.sub_status, COUNT(*) AS segments, SUM(IF(al.pause_sec < 65000, al.pause_sec, 0)) AS pause_seconds,
+              MAX(pc.pause_code_name) AS pause_code_name
+       FROM vicidial_agent_log al
+       LEFT JOIN vicidial_pause_codes pc ON pc.pause_code = al.sub_status AND pc.campaign_id = al.campaign_id
+       WHERE al.user = ? AND al.event_time >= ? AND al.event_time <= ? AND al.sub_status IS NOT NULL AND al.sub_status != ''
+       GROUP BY al.sub_status ORDER BY pause_seconds DESC LIMIT 100`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT parked_time, status, lead_id, parked_sec FROM park_log
+       WHERE user = ? AND parked_time >= ? AND parked_time <= ?
+       ORDER BY parked_time DESC LIMIT 200`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT event, event_date, campaign_id, user_group, server_ip, extension, computer_ip, phone_login, webserver
+       FROM vicidial_user_log WHERE user = ? AND event_date >= ? AND event_date <= ?
+       ORDER BY event_date DESC LIMIT 500`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT DATE(FROM_UNIXTIME(event_epoch)) AS day,
+              SUM(IF(event IN ('LOGOUT','FORCED_LOGOUT') AND login_sec < 650000, login_sec, 0)) AS login_seconds,
+              SUM(event = 'LOGIN') AS logins,
+              SUM(event IN ('LOGOUT','FORCED_LOGOUT')) AS logouts
+       FROM vicidial_timeclock_log
+       WHERE user = ? AND event_epoch >= UNIX_TIMESTAMP(?) AND event_epoch <= UNIX_TIMESTAMP(?)
+       GROUP BY day ORDER BY day DESC LIMIT 100`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT event, FROM_UNIXTIME(event_epoch) AS event_date, login_sec, ip_address, manager_user
+       FROM vicidial_timeclock_log
+       WHERE user = ? AND event_epoch >= UNIX_TIMESTAMP(?) AND event_epoch <= UNIX_TIMESTAMP(?)
+       ORDER BY event_epoch DESC LIMIT 500`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+    rows(
+      `SELECT campaign_id, event_date, blended, closer_campaigns, manager_change
+       FROM vicidial_user_closer_log WHERE user = ? AND event_date >= ? AND event_date <= ?
+       ORDER BY event_date DESC LIMIT 200`,
+      [userId, rangeStart, rangeEnd],
+      [],
+    ),
+  ]);
+
+  return res.json({
+    ok: true,
+    users,
+    range: { beginDate, endDate },
+    info,
+    live: liveRows[0] || null,
+    timeclockStatus: timeclockStatus[0] || null,
+    outbound,
+    inbound,
+    pauses,
+    parks,
+    loginEvents,
+    timesheet,
+    timeclockRows,
+    closerChanges,
+  });
+}
+
 // Native port of AST_performance_comparison_report.php: agent stats over the
 // legacy trailing windows (today, -1, -2, -3, -5, -10, -30 days).
 const COMPARISON_WINDOWS = [0, 1, 2, 3, 5, 10, 30];
@@ -13306,6 +13425,7 @@ app.get('/api/reports/team-performance', requireAccess, teamPerformanceReport);
 app.get('/api/reports/agent-days', requireAccess, agentDaysReport);
 app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
 app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
+app.get('/api/reports/user-stats', requireAccess, userStatsReport);
 app.get('/api/reports/performance-comparison', requireAccess, performanceComparisonReport);
 app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
 app.get('/api/reports/export-calls', requireAccess, exportCallsReport);

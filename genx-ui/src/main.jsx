@@ -3978,12 +3978,7 @@ function UserConnections({ admin, userId, token, onLogout, onNavigate }) {
     };
   }, [targetUser, token, onLogout]);
 
-  const legacyLinks = [
-    ['User Stats', `/vicidial/user_stats.php?user=${encodeURIComponent(targetUser)}`],
-    ['User Status', `/vicidial/user_status.php?user=${encodeURIComponent(targetUser)}`],
-    ['Time Sheet', `/vicidial/AST_agent_time_sheet.php?agent=${encodeURIComponent(targetUser)}`],
-    ['Logins Summary', `/vicidial/user_logins_report.php?user=${encodeURIComponent(targetUser)}`],
-  ];
+  const legacyLinks = [];
 
   function setCampaignRank(campaignId, key, value) {
     setRanks((current) => ({
@@ -4036,6 +4031,14 @@ function UserConnections({ admin, userId, token, onLogout, onNavigate }) {
             {label}
           </a>
         ))}
+        <button type="button" className="row-action" onClick={() => onNavigate('reportUserStats', { user: targetUser })}>
+          <Gauge size={15} aria-hidden="true" />
+          User Stats / Status / Time Sheet
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportUserLogins')}>
+          <ShieldCheck size={15} aria-hidden="true" />
+          Logins Summary
+        </button>
         <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'user', id: targetUser })}>
           <Clock3 size={15} aria-hidden="true" />
           CallBack Holds
@@ -11511,6 +11514,221 @@ function UserGroupLoginReportView({ token, onLogout }) {
 }
 
 // Native user_logins_report.php: daily login and failed-login history.
+// Native user_stats.php + user_status.php + AST_agent_time_sheet.php in one
+// view: live status, per-status call totals, pause codes, time sheet,
+// login/logout events, park log and in-group changes for one user.
+function UserStatsReportView({ token, onLogout, initialUser }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [userId, setUserId] = useState(initialUser || '');
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (user, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (user) params.set('user', user);
+      const payload = await apiFetch(`/reports/user-stats?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 404 ? 'User not found or not in your viewable groups' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    setUserId(initialUser || '');
+    load(initialUser || '', today, today);
+  }, [load, initialUser, today]);
+
+  const users = data?.users || [];
+  const live = data?.live;
+  const outTotals = (data?.outbound || []).reduce((acc, row) => ({ calls: acc.calls + Number(row.calls || 0), seconds: acc.seconds + Number(row.seconds || 0) }), { calls: 0, seconds: 0 });
+  const inTotals = (data?.inbound || []).reduce((acc, row) => ({ calls: acc.calls + Number(row.calls || 0), seconds: acc.seconds + Number(row.seconds || 0) }), { calls: 0, seconds: 0 });
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>User Stats</h2>
+          <p className="action-copy">Live status, calls, pause codes, time sheet and login history for one user.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="User and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(userId, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>User</span>
+              <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+                <option value="">Pick a user</option>
+                {userId && !users.some((row) => row.user === userId) && <option value={userId}>{userId}</option>}
+                {users.map((row) => (
+                  <option key={row.user} value={row.user}>{row.user} - {row.full_name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading || !userId}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {data?.info && (
+        <>
+          <Panel eyebrow={`${data.info.user} - ${data.info.full_name || ''}`} title="Live Status" icon={Radio} className="admin-wide-panel">
+            {live ? (
+              <p className="connection-summary">
+                <StatusPill ok={live.status !== 'PAUSED'}>{live.status}{live.pause_code ? ` (${live.pause_code})` : ''}</StatusPill>
+                {' '}Campaign {live.campaign_id} | Session {live.conf_exten} on {live.server_ip} | {live.extension}
+                {Number(live.lead_id) > 0 ? ` | On lead ${live.lead_id}` : ''} | Calls today: {formatNumber(live.calls_today)}
+                {live.closer_campaigns?.trim() ? ` | In-groups: ${live.closer_campaigns.trim()}` : ''}
+                {live.last_state_change ? ` | State since ${formatDateTime(live.last_state_change)}` : ''}
+              </p>
+            ) : (
+              <p className="connection-summary">Not logged into the agent screen right now.</p>
+            )}
+            {data.timeclockStatus && (
+              <p className="connection-summary">
+                Timeclock: {data.timeclockStatus.status} since {formatDateTime(data.timeclockStatus.event_date)} ({data.timeclockStatus.ip_address})
+              </p>
+            )}
+          </Panel>
+          <Panel eyebrow="Calls" title={`Outbound (${formatNumber(outTotals.calls)} calls, ${formatSeconds(outTotals.seconds)})`} icon={PhoneCall}>
+            <DataTable
+              emptyLabel="No outbound calls in the range"
+              rows={(data.outbound || []).map((row) => ({ ...row, id: row.status }))}
+              columns={[
+                { key: 'status', label: 'Status' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'seconds', label: 'Talk Time', render: (row) => formatSeconds(row.seconds) },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Calls" title={`Inbound (${formatNumber(inTotals.calls)} calls, ${formatSeconds(inTotals.seconds)})`} icon={Headphones}>
+            <DataTable
+              emptyLabel="No inbound calls in the range"
+              rows={(data.inbound || []).map((row) => ({ ...row, id: row.status }))}
+              columns={[
+                { key: 'status', label: 'Status' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'seconds', label: 'Talk Time', render: (row) => formatSeconds(row.seconds) },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Pauses" title={`Pause Codes (${formatNumber((data.pauses || []).length)})`} icon={Timer}>
+            <DataTable
+              emptyLabel="No pause-code segments in the range"
+              rows={(data.pauses || []).map((row) => ({ ...row, id: row.sub_status }))}
+              columns={[
+                { key: 'sub_status', label: 'Code' },
+                { key: 'pause_code_name', label: 'Name', render: (row) => row.pause_code_name || '—' },
+                { key: 'segments', label: 'Segments', render: (row) => formatNumber(row.segments) },
+                { key: 'pause_seconds', label: 'Total', render: (row) => formatSeconds(row.pause_seconds) },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Timeclock" title="Time Sheet" icon={Clock3}>
+            <DataTable
+              emptyLabel="No timeclock activity in the range"
+              rows={(data.timesheet || []).map((row) => ({ ...row, id: row.day }))}
+              columns={[
+                { key: 'day', label: 'Day', render: (row) => String(row.day).slice(0, 10) },
+                { key: 'logins', label: 'Logins', render: (row) => formatNumber(row.logins) },
+                { key: 'logouts', label: 'Logouts', render: (row) => formatNumber(row.logouts) },
+                { key: 'login_seconds', label: 'Logged In', render: (row) => formatSeconds(row.login_seconds) },
+              ]}
+            />
+            <p className="connection-summary">
+              Range total: {formatSeconds((data.timesheet || []).reduce((acc, row) => acc + Number(row.login_seconds || 0), 0))}
+            </p>
+          </Panel>
+          <Panel eyebrow="Sessions" title={`Agent Login / Logout Events (${formatNumber((data.loginEvents || []).length)})`} icon={ShieldCheck} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No agent screen sessions in the range"
+              rows={(data.loginEvents || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
+              columns={[
+                { key: 'event', label: 'Event' },
+                { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'extension', label: 'Extension' },
+                { key: 'phone_login', label: 'Phone' },
+                { key: 'computer_ip', label: 'Computer IP' },
+                { key: 'server_ip', label: 'Server' },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Timeclock" title={`Timeclock Events (${formatNumber((data.timeclockRows || []).length)})`} icon={Clock3}>
+            <DataTable
+              emptyLabel="No timeclock events in the range"
+              rows={(data.timeclockRows || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
+              columns={[
+                { key: 'event', label: 'Event' },
+                { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+                { key: 'login_sec', label: 'Session', render: (row) => (Number(row.login_sec) > 0 ? formatSeconds(row.login_sec) : '—') },
+                { key: 'ip_address', label: 'IP' },
+                { key: 'manager_user', label: 'By Manager', render: (row) => row.manager_user || '—' },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Calls" title={`Park Log (${formatNumber((data.parks || []).length)})`} icon={PhoneCall}>
+            <DataTable
+              emptyLabel="No parked calls in the range"
+              rows={(data.parks || []).map((row, index) => ({ ...row, id: `${row.parked_time}-${index}` }))}
+              columns={[
+                { key: 'parked_time', label: 'Time', render: (row) => formatDateTime(row.parked_time) },
+                { key: 'status', label: 'Status' },
+                { key: 'lead_id', label: 'Lead' },
+                { key: 'parked_sec', label: 'Held', render: (row) => formatSeconds(row.parked_sec) },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Sessions" title={`In-Group Changes (${formatNumber((data.closerChanges || []).length)})`} icon={Headphones}>
+            <DataTable
+              emptyLabel="No in-group selection changes in the range"
+              rows={(data.closerChanges || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
+              columns={[
+                { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'blended', label: 'Blended' },
+                { key: 'closer_campaigns', label: 'In-Groups' },
+                { key: 'manager_change', label: 'By Manager' },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
 function UserLoginsReportView({ token, onLogout }) {
   const [userId, setUserId] = useState('');
   const [data, setData] = useState(null);
@@ -14919,6 +15137,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportAgentDays') return <AgentDaysReportView token={token} />;
   if (activeView === 'reportUserGroupLogin') return <UserGroupLoginReportView token={token} />;
   if (activeView === 'reportUserLogins') return <UserLoginsReportView token={token} />;
+  if (activeView === 'reportUserStats') return <UserStatsReportView token={token} initialUser={viewParams?.user} />;
   if (activeView === 'reportPerformanceComparison') return <PerformanceComparisonReportView token={token} />;
   if (activeView === 'reportUserGroupHourly') return <UserGroupHourlyReportView token={token} />;
   if (activeView === 'reportExports') return <ExportsReportView token={token} />;
