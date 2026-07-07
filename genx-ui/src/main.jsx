@@ -210,6 +210,20 @@ const NAV_ITEMS = [
   { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
 ];
 
+// Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
+// muscle-memory transfers: Users | Campaigns | Lists | Scripts | Filters |
+// Inbound | User Groups | Admin | Reports.
+const NAV_GROUPS = [
+  { title: '', keys: ['command'] },
+  { title: 'Users', keys: ['users', 'userGroups'] },
+  { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
+  { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc'] },
+  { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
+  { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
+  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'map'] },
+  { title: 'Reports', keys: ['reports', 'recordings'] },
+];
+
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
@@ -5818,50 +5832,64 @@ function AdminShell({ token, user, onLogout }) {
         </div>
       </header>
 
-      <nav className="admin-nav" aria-label="GenX admin navigation">
-        {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
-          <button
-            type="button"
-            key={key}
-            className={key === activeView ? 'active' : ''}
-            onClick={() => setActiveView(key)}
-          >
-            <Icon size={17} aria-hidden="true" />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
+      <div className="shell-body">
+        <nav className="side-nav" aria-label="GenX admin navigation">
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group.title || 'top'}>
+              {group.title && <p className="nav-group-title">{group.title}</p>}
+              {group.keys.map((key) => {
+                const item = NAV_ITEMS.find((navItem) => navItem.key === key);
+                if (!item) return null;
+                const Icon = item.icon;
+                return (
+                  <button
+                    type="button"
+                    key={key}
+                    className={key === activeView ? 'active' : ''}
+                    onClick={() => setActiveView(key)}
+                  >
+                    <Icon size={16} aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
 
-      <section className="workspace-strip">
-        <div>
-          <p className="eyebrow">{activeMeta.eyebrow}</p>
-          <h2>{activeMeta.title}</h2>
+        <div className="shell-main">
+          <section className="workspace-strip">
+            <div>
+              <p className="eyebrow">{activeMeta.eyebrow}</p>
+              <h2>{activeMeta.title}</h2>
+            </div>
+            <div className="strip-items">
+              {activeView === 'command' && <RangeControl value={range} onChange={setRange} />}
+              <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
+              <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
+              <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.3</span>
+            </div>
+          </section>
+
+          {error && <div className="alert">{error}</div>}
+          {isLoading && <div className="loading-band">Loading live VICIdial data</div>}
+
+          <AdminPage
+            activeView={activeView}
+            dashboard={dashboardState.data}
+            admin={adminState.data}
+            user={user}
+            token={token}
+            onAction={openAction}
+            onSaved={handleSaved}
+            onNavigate={setActiveView}
+          />
+
+          <footer className="footer-line">
+            <span><Search size={14} aria-hidden="true" /> GenX admin app connected to VICIdial data layer</span>
+          </footer>
         </div>
-        <div className="strip-items">
-          {activeView === 'command' && <RangeControl value={range} onChange={setRange} />}
-          <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
-          <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
-          <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.3</span>
-        </div>
-      </section>
-
-      {error && <div className="alert">{error}</div>}
-      {isLoading && <div className="loading-band">Loading live VICIdial data</div>}
-
-      <AdminPage
-        activeView={activeView}
-        dashboard={dashboardState.data}
-        admin={adminState.data}
-        user={user}
-        token={token}
-        onAction={openAction}
-        onSaved={handleSaved}
-        onNavigate={setActiveView}
-      />
-
-      <footer className="footer-line">
-        <span><Search size={14} aria-hidden="true" /> GenX admin app connected to VICIdial data layer</span>
-      </footer>
+      </div>
 
       {action && (
         <ActionModal
