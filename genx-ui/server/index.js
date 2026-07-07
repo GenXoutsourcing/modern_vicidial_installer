@@ -6558,7 +6558,7 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
   phone_ring_timeout, on_hook_agent, is_webphone, conf_secret, use_external_server_ip, codecs_list,
   outbound_cid, webphone_dialpad, webphone_auto_answer, webphone_dialbox, webphone_mute,
   webphone_volume, webphone_debug, webphone_layout, webphone_settings,
-  VICIDIAL_park_on_extension, VICIDIAL_park_on_filename`;
+  VICIDIAL_park_on_extension, VICIDIAL_park_on_filename, voicemail_dump_exten, voicemail_id`;
 
 // CONFBRIDGE servers keep agent rooms in vicidial_confbridges and agents join
 // with a '2'-prefixed exten (legacy $conf_table / $session_prepend logic);
@@ -7612,6 +7612,172 @@ async function agentParkCustomer(req, res) {
   }
 }
 
+// RedirectNameVmail port: send the customer to a phone's voicemail box
+// (exten = voicemail_dump_exten + target phone's voicemail_id).
+async function agentXferVmail(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
+  const target = cleanId(req.body?.extension, 20);
+  if (!target) return badRequest(res, 'extension_required');
+
+  const channel = await agentCustomerChannel(live);
+  if (!channel) return res.status(409).json({ ok: false, error: 'customer_channel_not_found' });
+  const [vmPhone] = await rows(
+    'SELECT voicemail_id FROM phones WHERE server_ip = ? AND extension = ? LIMIT 1',
+    [live.server_ip, target],
+    [],
+  );
+  const vmId = vmPhone?.voicemail_id || target;
+  const dumpExten = req.agentPhone?.voicemail_dump_exten || '85026666666666';
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const queryCID = `LVvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+  const context = req.agentPhone?.ext_context || 'default';
+
+  try {
+    if (live.uniqueid) {
+      await execute(
+        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER' WHERE uniqueid = ?",
+        [nowEpoch, live.uniqueid],
+      ).catch(() => {});
+    }
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Redirect', ?, ?, ?, ?, 'Priority: 1')`,
+      [live.server_ip, queryCID, `Channel: ${channel}`, `Context: ${context}`, `Exten: ${dumpExten}${vmId}`],
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'vmail_xfer_failed' });
+  }
+}
+
+// CALLLOGview port: agent's own calls for one day, gated by the user group's
+// agent_call_log_view flag and the campaign call_log_days window.
+async function agentCallLog(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [ug] = await rows(
+    'SELECT agent_call_log_view FROM vicidial_user_groups WHERE user_group = ? LIMIT 1',
+    [req.genxUser.userGroup || ''],
+    [],
+  );
+  const [camp] = await rows(
+    'SELECT call_log_days FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const days = Number(camp?.call_log_days);
+  if (ug?.agent_call_log_view !== 'Y' || Number.isNaN(days) || days < 0) {
+    return res.json({ ok: true, enabled: false, rows: [] });
+  }
+  let date = cleanReportDate(req.query?.date, new Date().toISOString().slice(0, 10));
+  if (days > 0) {
+    const oldest = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    if (date < oldest) date = oldest;
+  }
+  const out = await rows(
+    `SELECT vl.call_date, vl.length_in_sec, vl.status, vl.phone_number, vl.lead_id, vl.campaign_id,
+            vl.alt_dial, vl.term_reason, 'OUT' AS direction, CONCAT(li.first_name, ' ', li.last_name) AS full_name
+     FROM vicidial_log vl LEFT JOIN vicidial_list li ON li.lead_id = vl.lead_id
+     WHERE vl.user = ? AND vl.call_date >= ? AND vl.call_date <= ? ORDER BY vl.call_date DESC LIMIT 500`,
+    [user, `${date} 00:00:00`, `${date} 23:59:59`],
+    [],
+  );
+  const inbound = await rows(
+    `SELECT vc.call_date, vc.length_in_sec, vc.status, vc.phone_number, vc.lead_id, vc.campaign_id,
+            '' AS alt_dial, vc.term_reason, 'IN' AS direction, CONCAT(li.first_name, ' ', li.last_name) AS full_name
+     FROM vicidial_closer_log vc LEFT JOIN vicidial_list li ON li.lead_id = vc.lead_id
+     WHERE vc.user = ? AND vc.call_date >= ? AND vc.call_date <= ? ORDER BY vc.call_date DESC LIMIT 500`,
+    [user, `${date} 00:00:00`, `${date} 23:59:59`],
+    [],
+  );
+  const all = [...out, ...inbound].sort((a, b) => String(b.call_date).localeCompare(String(a.call_date)));
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode !== '0') all.forEach((r) => { r.phone_number = maskPhoneNumber(r.phone_number, phoneMode); });
+  return res.json({ ok: true, enabled: true, date, days, rows: all });
+}
+
+// LEADINFOview port (core): lead detail + its call history + callback row.
+async function agentLeadInfo(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
+  if (!leadId) return badRequest(res, 'lead_id_required');
+
+  const [lead] = await rows(
+    `SELECT lead_id, list_id, status, phone_code, phone_number, first_name, last_name, city, state,
+            postal_code, alt_phone, address3, email, called_count, entry_date, last_local_call_time
+     FROM vicidial_list WHERE lead_id = ? LIMIT 1`,
+    [leadId],
+    [],
+  );
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const history = await rows(
+    `SELECT call_date, length_in_sec, status, user, campaign_id, 'OUT' AS direction
+     FROM vicidial_log WHERE lead_id = ?
+     UNION ALL
+     SELECT call_date, length_in_sec, status, user, campaign_id, 'IN' AS direction
+     FROM vicidial_closer_log WHERE lead_id = ?
+     ORDER BY call_date DESC LIMIT 100`,
+    [leadId, leadId],
+    [],
+  );
+  const [callback] = await rows(
+    'SELECT callback_id, status, entry_time, callback_time, comments, recipient FROM vicidial_callbacks WHERE lead_id = ? ORDER BY callback_id DESC LIMIT 1',
+    [leadId],
+    [],
+  );
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode !== '0') {
+    lead.phone_number = maskPhoneNumber(lead.phone_number, phoneMode);
+    lead.alt_phone = maskPhoneNumber(lead.alt_phone, phoneMode);
+  }
+  return res.json({ ok: true, lead, history, callback: callback || null });
+}
+
+// CALLSINQUEUEgrab port: tag a LIVE queued call so the dialer sends it here.
+async function agentQueueGrab(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const autoCallId = Number(req.body?.auto_call_id || 0);
+  if (!autoCallId) return badRequest(res, 'auto_call_id_required');
+  const [camp] = await rows(
+    'SELECT view_calls_in_queue, grab_calls_in_queue FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  if (/NONE/i.test(String(camp?.view_calls_in_queue || 'NONE')) || String(camp?.grab_calls_in_queue || 'N') === 'N') {
+    return res.status(403).json({ ok: false, error: 'grab_disabled' });
+  }
+  const result = await execute(
+    "UPDATE vicidial_auto_calls SET agent_grab = ? WHERE auto_call_id = ? AND agent_grab = '' AND status = 'LIVE'",
+    [user, autoCallId],
+  );
+  if (!result.affectedRows) return res.status(409).json({ ok: false, error: 'grab_failed' });
+  const [vac] = await rows(
+    'SELECT call_time, campaign_id, uniqueid, phone_number, lead_id, queue_priority, call_type FROM vicidial_auto_calls WHERE auto_call_id = ? LIMIT 1',
+    [autoCallId],
+    [],
+  );
+  if (vac) {
+    await execute(
+      'INSERT INTO vicidial_grab_call_log SET auto_call_id = ?, user = ?, event_date = NOW(), call_time = ?, campaign_id = ?, uniqueid = ?, phone_number = ?, lead_id = ?, queue_priority = ?, call_type = ?',
+      [autoCallId, user, vac.call_time, vac.campaign_id, vac.uniqueid, vac.phone_number, vac.lead_id, vac.queue_priority, vac.call_type],
+    ).catch(() => {});
+  }
+  return res.json({ ok: true });
+}
+
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
 // leg is a Local channel into the conf whose Exten is the prefixed number.
 async function agentManualDial(req, res) {
@@ -7619,7 +7785,11 @@ async function agentManualDial(req, res) {
   const user = req.genxUser.user;
   const live = await agentLiveRow(user);
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
-  if (Number(live.lead_id) > 0) return res.status(409).json({ ok: false, error: 'already_on_call' });
+  // A lead may be re-dialed on its ALT/ADDR3 numbers before dispo; anything
+  // else requires a clear line.
+  if (Number(live.lead_id) > 0 && Number(req.body?.lead_id || 0) !== Number(live.lead_id)) {
+    return res.status(409).json({ ok: false, error: 'already_on_call' });
+  }
 
   const requestedLead = Number(req.body?.lead_id || 0);
   const callbackId = Number(req.body?.callback_id || 0);
@@ -7637,13 +7807,18 @@ async function agentManualDial(req, res) {
 
   try {
     let lead;
+    // ALT/ADDR3 dial the lead's alternate or address3 number (legacy alt_dial).
+    const altDial = ['ALT', 'ADDR3'].includes(String(req.body?.alt_dial || '')) ? String(req.body.alt_dial) : 'MAIN';
     if (requestedLead) {
       [lead] = await rows(
-        'SELECT lead_id, list_id, phone_code, phone_number, called_count FROM vicidial_list WHERE lead_id = ? LIMIT 1',
+        'SELECT lead_id, list_id, phone_code, phone_number, alt_phone, address3, called_count FROM vicidial_list WHERE lead_id = ? LIMIT 1',
         [requestedLead],
         [],
       );
       if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+      if (altDial === 'ALT') lead.phone_number = String(lead.alt_phone || '').replace(/[^0-9]/g, '');
+      if (altDial === 'ADDR3') lead.phone_number = String(lead.address3 || '').replace(/[^0-9]/g, '');
+      if (String(lead.phone_number || '').length < 5) return badRequest(res, 'alt_number_missing');
     } else {
       const listId = Number(campaign.manual_dial_list_id || 0) || 998;
       const insert = await execute(
@@ -7687,9 +7862,9 @@ async function agentManualDial(req, res) {
       `INSERT INTO vicidial_log
          (uniqueid, lead_id, list_id, campaign_id, call_date, start_epoch, status, phone_code,
           phone_number, user, comments, processed, user_group, alt_dial, called_count)
-       VALUES (?, ?, ?, ?, NOW(), ?, 'INCALL', ?, ?, ?, 'MANUAL', 'N', ?, 'MAIN', ?)`,
+       VALUES (?, ?, ?, ?, NOW(), ?, 'INCALL', ?, ?, ?, 'MANUAL', 'N', ?, ?, ?)`,
       [uniqueid, lead.lead_id, lead.list_id, live.campaign_id, nowEpoch, lead.phone_code || '1',
-        lead.phone_number, user, req.genxUser.userGroup || '', calledCount],
+        lead.phone_number, user, req.genxUser.userGroup || '', altDial, calledCount],
     );
     await execute(
       "UPDATE vicidial_live_agents SET status = 'INCALL', lead_id = ?, uniqueid = ?, callerid = ?, comments = 'MANUAL', last_call_time = NOW(), last_state_change = NOW() WHERE user = ?",
@@ -11604,6 +11779,10 @@ app.post('/api/agent/xfer-blind', requireAgentAccess, agentXferBlind);
 app.post('/api/agent/threeway-dial', requireAgentAccess, agentThreewayDial);
 app.post('/api/agent/threeway-hangup', requireAgentAccess, agentThreewayHangup);
 app.post('/api/agent/park', requireAgentAccess, agentParkCustomer);
+app.post('/api/agent/xfer-vmail', requireAgentAccess, agentXferVmail);
+app.get('/api/agent/call-log', requireAgentAccess, agentCallLog);
+app.get('/api/agent/lead-info', requireAgentAccess, agentLeadInfo);
+app.post('/api/agent/queue-grab', requireAgentAccess, agentQueueGrab);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));

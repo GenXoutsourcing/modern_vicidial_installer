@@ -12297,6 +12297,10 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [showPhone, setShowPhone] = useState(true);
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
+  const [callLog, setCallLog] = useState(null);
+  const [callLogDate, setCallLogDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [leadInfo, setLeadInfo] = useState(null);
+  const [vmExten, setVmExten] = useState('');
   const [xferGroup, setXferGroup] = useState('');
   const [xferExten, setXferExten] = useState('');
   const [threewayNumber, setThreewayNumber] = useState('');
@@ -12400,6 +12404,8 @@ function AgentConsole({ token, authInfo, onExit }) {
       agents: ['/agent/agents-view', setAgentsView],
       queue: ['/agent/calls-in-queue', setQueueView],
       callbacks: ['/agent/callbacks', setCallbacks],
+      calllog: [`/agent/call-log?date=${callLogDate}`, setCallLog],
+      leadinfo: [`/agent/lead-info${lead ? `?lead_id=${lead.lead_id}` : ''}`, setLeadInfo],
     };
     const [path, setter] = paths[sidePanel];
     let cancelled = false;
@@ -12407,7 +12413,7 @@ function AgentConsole({ token, authInfo, onExit }) {
     load();
     const timer = window.setInterval(load, 4000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [live ? 1 : 0, sidePanel, token]);
+  }, [live ? 1 : 0, sidePanel, token, callLogDate, lead ? lead.lead_id : 0]);
 
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
@@ -12560,7 +12566,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               </div>
             )}
             <div className="connection-actions">
-              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`]].map(([key, label]) => (
+              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log']].map(([key, label]) => (
                 <button
                   type="button"
                   key={key}
@@ -12600,7 +12606,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             {queueView && !queueView.enabled && <p className="connection-summary">Calls-in-queue view disabled for this campaign</p>}
             {queueView?.enabled && (
               <table className="data-table">
-                <thead><tr><th>Group</th><th>Phone</th><th>Type</th><th>Waiting</th></tr></thead>
+                <thead><tr><th>Group</th><th>Phone</th><th>Type</th><th>Waiting</th><th /></tr></thead>
                 <tbody>
                   {(queueView.calls || []).map((c) => (
                     <tr key={c.auto_call_id}>
@@ -12608,9 +12614,22 @@ function AgentConsole({ token, authInfo, onExit }) {
                       <td>{c.phone_number}</td>
                       <td>{c.call_type}</td>
                       <td>{formatSeconds(Math.max(0, Math.floor(Date.now() / 1000) - Number(c.call_epoch || 0)))}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="row-action"
+                          disabled={busy}
+                          onClick={async () => {
+                            const payload = await act('/agent/queue-grab', { auto_call_id: c.auto_call_id });
+                            if (payload) setMessage(`Grabbed queued call ${c.auto_call_id}`);
+                          }}
+                        >
+                          Grab
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {!(queueView.calls || []).length && <tr><td colSpan={4}>No calls waiting</td></tr>}
+                  {!(queueView.calls || []).length && <tr><td colSpan={5}>No calls waiting</td></tr>}
                 </tbody>
               </table>
             )}
@@ -12650,6 +12669,64 @@ function AgentConsole({ token, authInfo, onExit }) {
             </table>
           </Panel>
         )}
+        {live && sidePanel === 'calllog' && (
+          <Panel eyebrow="History" title="My Call Log" icon={Clock3} className="admin-wide-panel">
+            {callLog && !callLog.enabled && <p className="connection-summary">Call log view not enabled (user group flag or campaign call log days)</p>}
+            {callLog?.enabled && (
+              <>
+                <div className="field-grid">
+                  <label>
+                    <span>Date</span>
+                    <input type="date" value={callLogDate} onChange={(event) => setCallLogDate(event.target.value)} />
+                  </label>
+                </div>
+                <table className="data-table">
+                  <thead><tr><th>Date/Time</th><th>Dir</th><th>Length</th><th>Status</th><th>Phone</th><th>Name</th><th>Campaign</th></tr></thead>
+                  <tbody>
+                    {(callLog.rows || []).map((r, idx) => (
+                      <tr key={idx}>
+                        <td>{formatDateTime(r.call_date)}</td>
+                        <td>{r.direction}</td>
+                        <td>{formatSeconds(Number(r.length_in_sec || 0))}</td>
+                        <td>{r.status}</td>
+                        <td>{r.phone_number}</td>
+                        <td>{r.full_name}</td>
+                        <td>{r.campaign_id}</td>
+                      </tr>
+                    ))}
+                    {!(callLog.rows || []).length && <tr><td colSpan={7}>No calls on {callLog.date}</td></tr>}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </Panel>
+        )}
+        {live && sidePanel === 'leadinfo' && leadInfo?.lead && (
+          <Panel eyebrow={`Lead ${leadInfo.lead.lead_id}`} title="Lead Info & Call History" icon={Users} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">Status: {leadInfo.lead.status}</span>
+              <span className="connection-status">Called: {leadInfo.lead.called_count}x</span>
+              <span className="connection-status">Entered: {formatDateTime(leadInfo.lead.entry_date)}</span>
+              {leadInfo.callback && <span className="connection-status">Callback {leadInfo.callback.status}: {formatDateTime(leadInfo.callback.callback_time)}</span>}
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Date/Time</th><th>Dir</th><th>Length</th><th>Status</th><th>Agent</th><th>Campaign</th></tr></thead>
+              <tbody>
+                {(leadInfo.history || []).map((r, idx) => (
+                  <tr key={idx}>
+                    <td>{formatDateTime(r.call_date)}</td>
+                    <td>{r.direction}</td>
+                    <td>{formatSeconds(Number(r.length_in_sec || 0))}</td>
+                    <td>{r.status}</td>
+                    <td>{r.user}</td>
+                    <td>{r.campaign_id}</td>
+                  </tr>
+                ))}
+                {!(leadInfo.history || []).length && <tr><td colSpan={6}>No prior calls</td></tr>}
+              </tbody>
+            </table>
+          </Panel>
+        )}
         {live && lead && (
           <Panel eyebrow={`Lead ${lead.lead_id}`} title={`${lead.first_name || ''} ${lead.last_name || ''} — ${lead.phone_code || ''} ${lead.phone_number || ''}`} icon={PhoneCall} className="admin-wide-panel">
             <div className="connection-actions">
@@ -12667,6 +12744,35 @@ function AgentConsole({ token, authInfo, onExit }) {
                 <Activity size={16} aria-hidden="true" />
                 Disposition Call
               </button>
+              <button type="button" className="row-action" onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}>
+                Lead Info
+              </button>
+              {lead.alt_phone && (
+                <button
+                  type="button"
+                  className="row-action"
+                  disabled={busy}
+                  onClick={async () => {
+                    const payload = await act('/agent/manual-dial', { lead_id: lead.lead_id, alt_dial: 'ALT' });
+                    if (payload) setMessage(`Dialing ALT ${lead.alt_phone}`);
+                  }}
+                >
+                  Dial Alt
+                </button>
+              )}
+              {lead.address3 && /\d{5}/.test(lead.address3) && (
+                <button
+                  type="button"
+                  className="row-action"
+                  disabled={busy}
+                  onClick={async () => {
+                    const payload = await act('/agent/manual-dial', { lead_id: lead.lead_id, alt_dial: 'ADDR3' });
+                    if (payload) setMessage('Dialing address3 number');
+                  }}
+                >
+                  Dial Addr3
+                </button>
+              )}
             </div>
             {live.status === 'INCALL' && xferOptions && (
               <div className="entity-form">
@@ -12756,6 +12862,28 @@ function AgentConsole({ token, authInfo, onExit }) {
                     >
                       {parked ? 'Grab Parked Call' : 'Park Customer'}
                     </button>
+                  )}
+                  {xferOptions.flags?.vmTransfer && (
+                    <>
+                      <input
+                        type="text"
+                        value={vmExten}
+                        placeholder="VM extension"
+                        style={{ maxWidth: 140 }}
+                        onChange={(event) => setVmExten(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        disabled={busy || !vmExten.trim()}
+                        onClick={async () => {
+                          const payload = await act('/agent/xfer-vmail', { extension: vmExten.trim() });
+                          if (payload) setMessage(`Customer sent to voicemail ${vmExten.trim()} — disposition the call`);
+                        }}
+                      >
+                        To Voicemail
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
