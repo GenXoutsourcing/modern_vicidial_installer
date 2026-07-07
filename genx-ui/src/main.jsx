@@ -375,8 +375,8 @@ function Login({ onLogin }) {
         <div className="brand-lock">
           <div className="brand-mark">GX</div>
           <div>
-            <p className="eyebrow">GenX</p>
-            <h1>Command Center</h1>
+            <p className="eyebrow">GenX Contact Center</p>
+            <h1>Mission Control</h1>
           </div>
         </div>
         <form onSubmit={submit} className="login-form">
@@ -15456,8 +15456,8 @@ function AdminShell({ token, user, onLogout }) {
         <div className="brand-lock">
           <div className="brand-mark">GX</div>
           <div>
-            <p className="eyebrow">GenX</p>
-            <h1>Command Center</h1>
+            <p className="eyebrow">GenX Contact Center</p>
+            <h1>Mission Control</h1>
           </div>
         </div>
         <div className="topbar-actions">
