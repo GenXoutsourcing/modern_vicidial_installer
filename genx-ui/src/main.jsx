@@ -13275,7 +13275,15 @@ function AgentApp() {
         onAuthed={(payload) => setState({
           checking: false,
           token: payload.token,
-          authInfo: { campaigns: payload.campaigns || [], live: payload.live, user: payload.user, phone: payload.phone },
+          authInfo: {
+            campaigns: payload.campaigns || [],
+            live: payload.live,
+            user: payload.user,
+            phone: payload.phone,
+            webphoneUrl: payload.webphoneUrl || null,
+            pauseCodes: payload.pauseCodes || [],
+            userPass: payload.userPass || '',
+          },
         })}
       />
     );
