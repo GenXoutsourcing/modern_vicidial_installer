@@ -3491,6 +3491,71 @@ async function agentMonitorLogReport(req, res) {
   return res.json({ ok: true, entries, range: { beginDate, endDate } });
 }
 
+async function realtimeMainReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const agentParams = [];
+  const agentCampaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'la.campaign_id', agentParams);
+  const agents = await rows(
+    `SELECT la.user, u.full_name, la.status, la.campaign_id, la.server_ip, la.calls_today,
+            la.last_call_time, la.pause_code, la.callerid
+     FROM vicidial_live_agents la
+     LEFT JOIN vicidial_users u ON u.user = la.user
+     WHERE ${agentCampaignWhere}
+     ORDER BY la.campaign_id ASC, la.status ASC
+     LIMIT 500`,
+    agentParams,
+    [],
+  );
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'c.campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT c.campaign_id, c.campaign_name, c.active, c.dial_method, c.hopper_level,
+            COALESCE(live.live_agents, 0) AS live_agents,
+            COALESCE(autod.auto_calls, 0) AS auto_calls
+     FROM vicidial_campaigns c
+     LEFT JOIN (SELECT campaign_id, COUNT(*) AS live_agents FROM vicidial_live_agents GROUP BY campaign_id) live
+       ON live.campaign_id = c.campaign_id
+     LEFT JOIN (SELECT campaign_id, COUNT(*) AS auto_calls FROM vicidial_auto_calls GROUP BY campaign_id) autod
+       ON autod.campaign_id = c.campaign_id
+     WHERE c.active = 'Y' AND ${campaignWhere}
+     ORDER BY c.campaign_id ASC
+     LIMIT 100`,
+    campaignParams,
+    [],
+  );
+
+  return res.json({ ok: true, agents, campaigns, generatedAt: new Date().toISOString() });
+}
+
+async function campaignSummaryReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const params = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'c.campaign_id', params);
+  const campaigns = await rows(
+    `SELECT c.campaign_id, c.campaign_name, c.active, c.dial_method, c.hopper_level,
+            cs.dialable_leads, cs.calls_today, cs.answers_today, cs.drops_today, cs.drops_answers_today_pct,
+            cs.differential_onemin, cs.agents_average_onemin, cs.balance_trunk_fill,
+            cs.status_category_1, cs.status_category_count_1,
+            cs.status_category_2, cs.status_category_count_2,
+            cs.status_category_3, cs.status_category_count_3,
+            cs.status_category_4, cs.status_category_count_4,
+            cs.agent_calls_today, cs.agent_wait_today, cs.agent_custtalk_today,
+            cs.agent_acw_today, cs.agent_pause_today,
+            COALESCE(live.live_agents, 0) AS live_agents
+     FROM vicidial_campaigns c
+     LEFT JOIN vicidial_campaign_stats cs ON cs.campaign_id = c.campaign_id
+     LEFT JOIN (SELECT campaign_id, COUNT(*) AS live_agents FROM vicidial_live_agents GROUP BY campaign_id) live
+       ON live.campaign_id = c.campaign_id
+     WHERE c.active = 'Y' AND ${campaignWhere}
+     ORDER BY c.campaign_id ASC
+     LIMIT 100`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, campaigns, generatedAt: new Date().toISOString() });
+}
+
 function inboundPayload(body) {
   const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
   const longText = (value) => cleanText(value, 12000);
@@ -5137,6 +5202,8 @@ app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/dnc', requireAccess, bulkDnc);
 app.get('/api/admin/dnc/search', requireAccess, dncSearch);
 app.get('/api/reports/agent-monitor-log', requireAccess, agentMonitorLogReport);
+app.get('/api/reports/realtime-main', requireAccess, realtimeMainReport);
+app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

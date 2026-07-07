@@ -5180,6 +5180,129 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
   );
 }
 
+function useLiveReport(path, token, intervalMs = 5000) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const payload = await apiFetch(path, token);
+        if (!cancelled) {
+          setData(payload);
+          setError('');
+        }
+      } catch (requestError) {
+        if (!cancelled) setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'Live data unavailable');
+      }
+    }
+    load();
+    const timer = window.setInterval(load, intervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [path, token, intervalMs]);
+
+  return { data, error };
+}
+
+function RealtimeMainReportView({ token }) {
+  const { data, error } = useLiveReport('/reports/realtime-main', token, 5000);
+  const agents = data?.agents || [];
+  const campaigns = data?.campaigns || [];
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Real-Time</p>
+          <h2>Real-Time Main</h2>
+          <p className="action-copy">Live agent status and per-campaign dial activity. Refreshes every 5 seconds.</p>
+        </div>
+      </section>
+      {error && <p className="form-error">{error}</p>}
+      <section className="admin-grid">
+        <Panel eyebrow="Live" title={`Live Agents (${formatNumber(agents.length)})`} icon={Headphones} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No agents currently logged in"
+            rows={agents.map((row, index) => ({ ...row, id: index }))}
+            columns={[
+              { key: 'user', label: 'Agent', render: (row) => row.full_name || row.user },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'READY'}>{row.status}</StatusPill> },
+              { key: 'pause_code', label: 'Pause Code', render: (row) => row.pause_code || 'None' },
+              { key: 'calls_today', label: 'Calls Today', render: (row) => formatNumber(row.calls_today) },
+              { key: 'server_ip', label: 'Server' },
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Live" title="Campaign Dial Activity" icon={Radio}>
+          <DataTable
+            emptyLabel="No active campaigns"
+            rows={campaigns.map((row) => ({ ...row, id: row.campaign_id }))}
+            columns={[
+              { key: 'campaign_id', label: 'Campaign', render: (row) => (
+                <>
+                  <strong>{row.campaign_id}</strong>
+                  <span>{row.campaign_name}</span>
+                </>
+              ) },
+              { key: 'dial_method', label: 'Dial Method' },
+              { key: 'live_agents', label: 'Agents', render: (row) => formatNumber(row.live_agents) },
+              { key: 'auto_calls', label: 'Active Calls', render: (row) => formatNumber(row.auto_calls) },
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function CampaignSummaryReportView({ token }) {
+  const { data, error } = useLiveReport('/reports/campaign-summary', token, 5000);
+  const campaigns = data?.campaigns || [];
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Real-Time</p>
+          <h2>Campaign Summary</h2>
+          <p className="action-copy">Dial-pacing operations view: dial level, drops, and agent time breakdown per campaign. Refreshes every 5 seconds.</p>
+        </div>
+      </section>
+      {error && <p className="form-error">{error}</p>}
+      <section className="admin-grid">
+        {campaigns.map((row) => (
+          <Panel key={row.campaign_id} eyebrow={row.campaign_id} title={row.campaign_name || row.campaign_id} icon={Radio}>
+            <div className="quick-stack">
+              <MetricCard icon={Users} label="Live Agents" value={formatNumber(row.live_agents)} detail={`${row.dial_method || 'Unknown'} dial method`} accent="#00d9ff" />
+              <MetricCard icon={Database} label="Dialable Leads" value={formatNumber(row.dialable_leads)} detail={`Hopper level ${row.hopper_level ?? 0}`} accent="#73fbd3" />
+              <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(row.calls_today)} detail={`${formatNumber(row.answers_today)} answered`} accent="#a8c7ff" />
+              <MetricCard icon={Gauge} label="Drop Rate" value={`${row.drops_answers_today_pct || 0}%`} detail={`${formatNumber(row.drops_today)} drops today`} accent="#ffd166" />
+            </div>
+            <div className="breakdown-list">
+              {[1, 2, 3, 4].map((n) => (
+                row[`status_category_${n}`] ? (
+                  <div className="breakdown-row" key={n}>
+                    <div className="breakdown-copy">
+                      <strong>{row[`status_category_${n}`]}</strong>
+                      <span>{formatNumber(row[`status_category_count_${n}`])}</span>
+                    </div>
+                  </div>
+                ) : null
+              ))}
+            </div>
+          </Panel>
+        ))}
+        {!campaigns.length && <div className="empty-state">No active campaigns</div>}
+      </section>
+    </>
+  );
+}
+
 function AgentMonitorLogReportView({ token }) {
   const today = new Date().toISOString().slice(0, 10);
   const [beginDate, setBeginDate] = useState(today);
@@ -5418,6 +5541,8 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'statuses') return <StatusesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} onNavigate={onNavigate} />;
   if (activeView === 'reportAgentMonitorLog') return <AgentMonitorLogReportView admin={admin} user={user} token={token} />;
+  if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} />;
+  if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
