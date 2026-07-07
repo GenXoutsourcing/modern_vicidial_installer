@@ -7132,7 +7132,7 @@ async function agentDispoStatuses(req, res) {
   );
   // Dispo hotkeys: pressing the key on the dispo screen submits that status.
   const hotkeys = await rows(
-    "SELECT hotkey, status, status_name FROM vicidial_campaign_hotkeys WHERE campaign_id = ? AND active = 'Y' ORDER BY hotkey LIMIT 20",
+    "SELECT hotkey, status, status_name FROM vicidial_campaign_hotkeys WHERE campaign_id = ? AND selectable = 'Y' ORDER BY hotkey LIMIT 20",
     [live.campaign_id],
     [],
   ).catch(() => []);
