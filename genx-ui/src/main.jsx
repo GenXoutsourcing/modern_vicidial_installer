@@ -12142,6 +12142,9 @@ function AgentLoginPage({ onAuthed }) {
   const [form, setForm] = useState({ phone_login: '', phone_pass: '', user: '', pass: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Phone fields stay hidden unless the user record has no phone_login set
+  // (mirrors the legacy agc campaign-login form).
+  const [needPhone, setNeedPhone] = useState(false);
 
   const setField = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
 
@@ -12157,8 +12160,10 @@ function AgentLoginPage({ onAuthed }) {
       const map = {
         invalid_phone_credentials: 'Invalid phone login or password',
         invalid_user_credentials: 'Invalid user login or password',
-        all_fields_required: 'All four fields are required',
+        all_fields_required: 'User login and password are required',
+        phone_login_required: 'No phone set on this user — enter phone credentials',
       };
+      if (requestError.message === 'phone_login_required') setNeedPhone(true);
       setError(map[requestError.message] || 'Login failed');
     } finally {
       setBusy(false);
@@ -12177,14 +12182,6 @@ function AgentLoginPage({ onAuthed }) {
         </div>
         <form className="login-form" onSubmit={submit}>
           <label>
-            <span>Phone Login</span>
-            <input type="text" value={form.phone_login} onChange={setField('phone_login')} autoComplete="off" />
-          </label>
-          <label>
-            <span>Phone Password</span>
-            <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} autoComplete="off" />
-          </label>
-          <label>
             <span>User Login</span>
             <input type="text" value={form.user} onChange={setField('user')} autoComplete="off" />
           </label>
@@ -12192,6 +12189,18 @@ function AgentLoginPage({ onAuthed }) {
             <span>User Password</span>
             <input type="password" value={form.pass} onChange={setField('pass')} autoComplete="off" />
           </label>
+          {needPhone && (
+            <>
+              <label>
+                <span>Phone Login</span>
+                <input type="text" value={form.phone_login} onChange={setField('phone_login')} autoComplete="off" />
+              </label>
+              <label>
+                <span>Phone Password</span>
+                <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} autoComplete="off" />
+              </label>
+            </>
+          )}
           {error && <p className="form-error">{error}</p>}
           <button type="submit" className="primary-action" disabled={busy}>
             {busy ? 'Checking...' : 'Continue'}
@@ -12217,6 +12226,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [webphoneUrl, setWebphoneUrl] = useState(null);
+  const [showPhone, setShowPhone] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -12484,7 +12494,13 @@ function AgentConsole({ token, authInfo, onExit }) {
         )}
       </div>
       {live && webphoneUrl && (
-        <div className="agent-webphone">
+        <div className={showPhone ? 'agent-webphone' : 'agent-webphone webphone-hidden'}>
+          <div className="webphone-toolbar">
+            <span className="connection-status">Webphone</span>
+            <button type="button" className="row-action" onClick={() => setShowPhone((v) => !v)}>
+              {showPhone ? 'Hide' : 'Show'}
+            </button>
+          </div>
           <iframe
             src={webphoneUrl}
             id="webphone"

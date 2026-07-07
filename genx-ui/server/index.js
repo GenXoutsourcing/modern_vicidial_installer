@@ -6643,24 +6643,17 @@ async function buildWebphoneUrl(phone, userGroup, confExten, reqHost) {
 }
 
 async function agentAuth(req, res) {
-  const phoneLogin = cleanId(req.body?.phone_login, 20);
-  const phonePass = String(req.body?.phone_pass || '');
+  // Like legacy agc: when the user record carries phone_login/phone_pass the
+  // login form only asks for user + pass; explicit phone creds still accepted.
+  let phoneLogin = cleanId(req.body?.phone_login, 20);
+  let phonePass = String(req.body?.phone_pass || '');
   const userLogin = cleanId(req.body?.user, 20);
   const userPass = String(req.body?.pass || '');
-  if (!phoneLogin || !phonePass || !userLogin || !userPass) return badRequest(res, 'all_fields_required');
-
-  const [phone] = await rows(
-    `SELECT ${AGENT_PHONE_COLUMNS}
-     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
-    [phoneLogin],
-    [],
-  );
-  if (!phone || String(phone.pass || '') !== phonePass) {
-    return res.status(401).json({ ok: false, error: 'invalid_phone_credentials' });
-  }
+  if (!userLogin || !userPass) return badRequest(res, 'all_fields_required');
 
   const [userRow] = await rows(
     `SELECT u.user, u.pass, u.full_name, u.user_level, u.user_group, u.active,
+            u.phone_login, u.phone_pass,
             u.admin_hide_lead_data, u.admin_hide_phone_data, ug.allowed_campaigns
      FROM vicidial_users u
      LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
@@ -6671,6 +6664,22 @@ async function agentAuth(req, res) {
   if (!userRow || userRow.active !== 'Y' || Number(userRow.user_level || 0) < 1
     || !passwordMatches(userPass, userRow.pass)) {
     return res.status(401).json({ ok: false, error: 'invalid_user_credentials' });
+  }
+
+  if (!phoneLogin) {
+    phoneLogin = String(userRow.phone_login || '').trim();
+    phonePass = String(userRow.phone_pass || '');
+    if (!phoneLogin) return res.status(401).json({ ok: false, error: 'phone_login_required' });
+  }
+
+  const [phone] = await rows(
+    `SELECT ${AGENT_PHONE_COLUMNS}
+     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
+    [phoneLogin],
+    [],
+  );
+  if (!phone || String(phone.pass || '') !== phonePass) {
+    return res.status(401).json({ ok: false, error: 'invalid_phone_credentials' });
   }
 
   const allowed = accessScope(userRow.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---']);
