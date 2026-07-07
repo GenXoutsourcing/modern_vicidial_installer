@@ -208,6 +208,7 @@ const NAV_ITEMS = [
   { key: 'recordings', label: 'Recordings', eyebrow: 'Reports', title: 'Recent Recordings', icon: Activity },
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
   { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
+  { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
@@ -215,7 +216,7 @@ const NAV_ITEMS = [
 // Inbound | User Groups | Admin | Reports.
 const NAV_GROUPS = [
   { title: '', keys: ['command'] },
-  { title: 'Users', keys: ['users', 'userGroups'] },
+  { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
   { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
@@ -435,10 +436,11 @@ function userCan(user, entity) {
   if (entity === 'shifts') return Boolean(user?.modifyCallTimes);
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
+  if (entity === 'remoteAgents') return Boolean(user?.modifyRemoteagents);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -455,6 +457,7 @@ function userCanDelete(user, entity) {
   if (entity === 'leadFilters') return Boolean(user?.deleteFilters);
   if (entity === 'userGroups') return Boolean(user?.deleteUserGroups);
   if (entity === 'carriers') return Boolean(user?.modifyCarriers);
+  if (entity === 'remoteAgents') return Boolean(user?.deleteRemoteAgents);
   return false;
 }
 
@@ -1569,6 +1572,22 @@ function actionDefaults(entity, admin) {
       report_option: 'N',
       user_group: group,
       report_rank: '1',
+    };
+  }
+
+  if (entity === 'remoteAgents') {
+    return {
+      user_start: '',
+      number_of_lines: '1',
+      server_ip: admin?.servers?.[0]?.server_ip || '',
+      conf_exten: '',
+      status: 'INACTIVE',
+      campaign_id: campaign,
+      closer_campaigns: '',
+      extension_group: 'NONE',
+      extension_group_order: 'NONE',
+      on_hook_agent: 'N',
+      on_hook_ring_time: '15',
     };
   }
 
@@ -2846,6 +2865,23 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'remoteAgents') {
+    const serverOptions = (admin?.servers || []).map((row) => ({ value: row.server_ip, label: `${row.server_id || row.server_ip} - ${row.server_ip}` }));
+    return [
+      { key: 'user_start', label: 'User ID Start', disabled: false },
+      { key: 'number_of_lines', label: 'Number of Lines', type: 'number' },
+      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions },
+      { key: 'conf_exten', label: 'External Extension' },
+      { key: 'status', label: 'Status', type: 'select', options: enumOptions(['ACTIVE', 'INACTIVE']) },
+      { key: 'campaign_id', label: 'Campaign', type: campaignOptions.length ? 'select' : 'text', options: campaignOptions },
+      { key: 'closer_campaigns', label: 'In-Groups (space-separated)', type: 'textarea', wide: true },
+      { key: 'extension_group', label: 'Extension Group' },
+      { key: 'extension_group_order', label: 'Extension Group Order', type: 'select', options: enumOptions(['NONE', 'RANDOM', 'UP_COUNT', 'DOWN_COUNT', 'UP_EXTEN', 'DOWN_EXTEN']) },
+      { key: 'on_hook_agent', label: 'On-Hook Agent', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'on_hook_ring_time', label: 'On-Hook Ring Time', type: 'number' },
+    ];
+  }
+
   if (entity === 'shifts') {
     return [
       { key: 'shift_id', label: 'Shift ID', disabled: mode === 'edit' },
@@ -3106,6 +3142,7 @@ function entityLabel(entity) {
     shifts: 'Shift',
     statuses: 'System Status',
     campaignStatuses: 'Campaign Status',
+    remoteAgents: 'Remote Agent',
   }[entity] || 'Record';
 }
 
@@ -3134,6 +3171,7 @@ function entityId(entity, row) {
     shifts: row.shift_id,
     statuses: row.status,
     campaignStatuses: row.status,
+    remoteAgents: row.remote_agent_id,
   }[entity];
 }
 
@@ -3150,6 +3188,7 @@ function entityPath(entity) {
     callMenus: 'call-menus',
     callMenuOptions: 'call-menu-options',
     campaignStatuses: 'campaign-statuses',
+    remoteAgents: 'remote-agents',
   }[entity] || entity;
 }
 
@@ -6581,6 +6620,38 @@ function HopperListReportView({ token, initialCampaignId }) {
   );
 }
 
+function RemoteAgentsView({ admin, user, onAction }) {
+  const remoteAgents = admin?.remoteAgents || [];
+  const canManage = userCan(user, 'remoteAgents');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="remoteAgents" label="Remote Agent" user={user} onAction={onAction}>
+        <p className="action-copy">Off-system agents dialed at an external number: ACD calls route out to their phone with no agent screen.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Users" title={`Remote Agents (${formatNumber(remoteAgents.length)})`} icon={Headphones} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No remote agents configured"
+            rows={remoteAgents.map((row) => ({ ...row, id: row.remote_agent_id }))}
+            columns={[
+              { key: 'remote_agent_id', label: 'ID' },
+              { key: 'user_start', label: 'User Start' },
+              { key: 'number_of_lines', label: 'Lines', render: (row) => formatNumber(row.number_of_lines) },
+              { key: 'server_ip', label: 'Server' },
+              { key: 'conf_exten', label: 'Extension' },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'ACTIVE'}>{row.status}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('remoteAgents', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -6729,6 +6800,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;

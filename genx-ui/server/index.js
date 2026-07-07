@@ -205,6 +205,8 @@ function publicUser(row) {
     downloadLists: row.download_lists === '1',
     modifyLeads: Number(row.modify_leads || 0),
     astDeletePhones: row.ast_delete_phones === '1',
+    modifyRemoteagents: row.modify_remoteagents === '1',
+    deleteRemoteAgents: row.delete_remote_agents === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -292,6 +294,8 @@ async function authenticateVicidialUser(username, password) {
             u.download_lists,
             u.modify_leads,
             u.ast_delete_phones,
+            u.modify_remoteagents,
+            u.delete_remote_agents,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -911,6 +915,7 @@ async function adminData(user) {
     audioStore,
     voicemailBoxes,
     musicOnHold,
+    remoteAgents,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2109,6 +2114,25 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT remote_agent_id,
+              user_start,
+              number_of_lines,
+              server_ip,
+              conf_exten,
+              status,
+              campaign_id,
+              closer_campaigns,
+              extension_group,
+              extension_group_order,
+              on_hook_agent,
+              on_hook_ring_time
+       FROM vicidial_remote_agents
+       ORDER BY remote_agent_id ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2193,6 +2217,7 @@ async function adminData(user) {
     })),
     servers,
     carriers,
+    remoteAgents,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4104,6 +4129,64 @@ async function callMenuConnections(req, res) {
   );
 
   return res.json({ ok: true, dids, callMenus, campaigns, ingroups });
+}
+
+function remoteAgentPayload(body) {
+  return {
+    user_start: cleanId(body.user_start, 20),
+    number_of_lines: cleanInt(body.number_of_lines, 1, 1, 250),
+    server_ip: cleanIp(body.server_ip),
+    conf_exten: codeText(body.conf_exten, 20),
+    status: cleanChoice(body.status, ['ACTIVE', 'INACTIVE'], 'INACTIVE'),
+    campaign_id: cleanId(body.campaign_id, 8),
+    closer_campaigns: cleanText(body.closer_campaigns, 2000),
+    extension_group: cleanId(body.extension_group, 20) || 'NONE',
+    extension_group_order: cleanChoice(body.extension_group_order, ['NONE', 'RANDOM', 'UP_COUNT', 'DOWN_COUNT', 'UP_EXTEN', 'DOWN_EXTEN'], 'NONE'),
+    on_hook_agent: ynFlag(body.on_hook_agent, 'N'),
+    on_hook_ring_time: cleanInt(body.on_hook_ring_time, 15, 1, 999),
+  };
+}
+
+async function saveRemoteAgent(req, res, mode) {
+  if (!requireModify(req, res, 'modifyRemoteagents')) return;
+  const payload = remoteAgentPayload(req.body || {});
+  if (!payload.user_start || !payload.server_ip || !payload.conf_exten || !payload.campaign_id) {
+    return badRequest(res, 'missing_required_fields');
+  }
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, payload.campaign_id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const { assignments, values } = dynamicAssignments(payload);
+  try {
+    if (mode === 'create') {
+      const result = await execute(`INSERT INTO vicidial_remote_agents SET ${assignments}`, values);
+      await adminLog(req, 'REMOTEAGENTS', 'ADD', String(result.insertId), 'GENX ADD REMOTE AGENT', 'INSERT INTO vicidial_remote_agents', payload.user_start);
+    } else {
+      const id = cleanInt(req.params.id, 0, 1, 999999999);
+      if (!id) return badRequest(res, 'invalid_remote_agent_id');
+      const result = await execute(`UPDATE vicidial_remote_agents SET ${assignments} WHERE remote_agent_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'remote_agent_not_found' });
+      await adminLog(req, 'REMOTEAGENTS', 'MODIFY', String(id), 'GENX MODIFY REMOTE AGENT', 'UPDATE vicidial_remote_agents', payload.user_start);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'remote_agent_save_failed' });
+  }
+}
+
+// Legacy ADD=61111: delete the remote agent row.
+async function deleteRemoteAgent(req, res) {
+  if (!requireModify(req, res, 'deleteRemoteAgents')) return;
+  const id = cleanInt(req.params.id, 0, 1, 999999999);
+  if (!id) return badRequest(res, 'invalid_remote_agent_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_remote_agents WHERE remote_agent_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'remote_agent_not_found' });
+    await adminLog(req, 'REMOTEAGENTS', 'DELETE', String(id), 'GENX DELETE REMOTE AGENT', 'DELETE FROM vicidial_remote_agents', String(id));
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'remote_agent_delete_failed' });
+  }
 }
 
 async function listWithScope(req, listId) {
@@ -6215,6 +6298,9 @@ app.put('/api/admin/servers/:id', requireAccess, (req, res) => saveServer(req, r
 app.post('/api/admin/carriers', requireAccess, (req, res) => saveCarrier(req, res, 'create'));
 app.put('/api/admin/carriers/:id', requireAccess, (req, res) => saveCarrier(req, res, 'update'));
 app.delete('/api/admin/servers/:id', requireAccess, deleteServer);
+app.post('/api/admin/remote-agents', requireAccess, (req, res) => saveRemoteAgent(req, res, 'create'));
+app.put('/api/admin/remote-agents/:id', requireAccess, (req, res) => saveRemoteAgent(req, res, 'update'));
+app.delete('/api/admin/remote-agents/:id', requireAccess, deleteRemoteAgent);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
