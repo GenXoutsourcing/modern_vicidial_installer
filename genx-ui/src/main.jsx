@@ -6059,8 +6059,13 @@ function ListCustomFieldsPanel({ listId, token, onLogout }) {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(null); // null | 'new' | field_id
   const [form, setForm] = useState(CUSTOM_FIELD_FORM_DEFAULTS);
+  const [rerank, setRerank] = useState(false);
   const [state, setState] = useState('');
   const [confirming, setConfirming] = useState(0);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copySource, setCopySource] = useState('');
+  const [copyOption, setCopyOption] = useState('APPEND');
+  const [copyConfirm, setCopyConfirm] = useState(false);
 
   const load = useCallback(() => {
     if (!list) return;
@@ -6102,7 +6107,10 @@ function ListCustomFieldsPanel({ listId, token, onLogout }) {
       const path = isNew
         ? `/admin/lists/${encodeURIComponent(list)}/custom-fields`
         : `/admin/lists/${encodeURIComponent(list)}/custom-fields/${encodeURIComponent(editing)}`;
-      const payload = await apiFetch(path, token, { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(form) });
+      const payload = await apiFetch(path, token, {
+        method: isNew ? 'POST' : 'PUT',
+        body: JSON.stringify(rerank ? { ...form, field_rerank: 'YES' } : form),
+      });
       setData(payload);
       setEditing(null);
       setState('Field saved');
@@ -6177,8 +6185,62 @@ function ListCustomFieldsPanel({ listId, token, onLogout }) {
             <Plus size={15} aria-hidden="true" /> Add Custom Field
           </button>
         )}
+        {data.canModify && editing === null && (
+          <button type="button" className="row-action" onClick={() => { setCopyOpen((open) => !open); setCopyConfirm(false); }}>
+            <Compass size={15} aria-hidden="true" /> Copy Fields From List
+          </button>
+        )}
         {state && state !== 'working' && <span className="connection-status">{state}</span>}
       </div>
+      {copyOpen && editing === null && (
+        <form
+          className="entity-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (copyOption === 'REPLACE' && !copyConfirm) {
+              setCopyConfirm(true);
+              return;
+            }
+            setCopyConfirm(false);
+            setState('working');
+            try {
+              const payload = await apiFetch(`/admin/lists/${encodeURIComponent(list)}/custom-fields/copy`, token, {
+                method: 'POST',
+                body: JSON.stringify({ source_list_id: copySource, copy_option: copyOption }),
+              });
+              setData(payload);
+              setCopyOpen(false);
+              setState('Fields copied');
+            } catch (requestError) {
+              if (requestError.status === 401) {
+                onLogout();
+                return;
+              }
+              setState(requestError.status === 403 ? 'Not permitted' : 'Copy failed - check the source list has custom fields');
+            }
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Source List ID</span>
+              <input value={copySource} placeholder="Required" onChange={(event) => setCopySource(event.target.value)} />
+            </label>
+            <label>
+              <span>Copy Option</span>
+              <select value={copyOption} onChange={(event) => { setCopyOption(event.target.value); setCopyConfirm(false); }}>
+                <option value="APPEND">APPEND (skip existing labels)</option>
+                <option value="UPDATE">UPDATE (overwrite existing labels)</option>
+                <option value="REPLACE">REPLACE (delete this list's fields first)</option>
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className={copyConfirm ? 'danger-action confirming' : 'primary-action'} disabled={state === 'working' || !copySource}>
+              {state === 'working' ? 'Copying' : copyConfirm ? 'Confirm REPLACE (destroys current fields + data)?' : 'Copy Fields'}
+            </button>
+          </div>
+        </form>
+      )}
       {editing !== null && (
         <form className="entity-form" onSubmit={saveField}>
           <div className="field-grid">
@@ -6240,6 +6302,10 @@ function ListCustomFieldsPanel({ listId, token, onLogout }) {
             </label>
           </div>
           <div className="modal-actions">
+            <label className="check-option">
+              <input type="checkbox" checked={rerank} onChange={(event) => setRerank(event.target.checked)} />
+              <span>Shift colliding ranks down (legacy re-rank)</span>
+            </label>
             <button type="submit" className="primary-action" disabled={state === 'working'}>
               <Save size={16} aria-hidden="true" />
               {state === 'working' ? 'Saving' : editing === 'new' ? 'Add Field' : 'Save Field'}

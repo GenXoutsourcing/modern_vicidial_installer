@@ -10734,6 +10734,69 @@ function cleanCustomFieldPayload(body) {
   };
 }
 
+// Runs the CREATE/ALTER needed for a field definition and returns the legacy
+// field_cost. Throws on invalid definitions (e.g. choice types w/o options).
+async function applyCustomFieldDdl(listId, def) {
+  const dbBacked = customFieldIsDbBacked(def);
+  let ddl = { sql: '', cost: 3 };
+  if (dbBacked) {
+    ddl = customColumnDdl(def);
+    if (ddl.error) throw new Error(ddl.error);
+  }
+  const tableExists = await customTableExists(listId);
+  const table = quoteId(customTable(listId));
+  const columnSql = dbBacked ? `${quoteId(def.field_label)} ${ddl.sql}${customDefaultClause(def)}` : '';
+  const ddlRan = [];
+  if (!tableExists) {
+    const createSql = dbBacked
+      ? `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL, ${columnSql}) ENGINE=MyISAM`
+      : `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL) ENGINE=MyISAM`;
+    await pool.query(createSql);
+    ddlRan.push(createSql);
+  } else if (dbBacked) {
+    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
+    const alterSql = `ALTER TABLE ${table} ${columnRow ? 'MODIFY' : 'ADD'} ${columnSql}`;
+    await pool.query(alterSql);
+    ddlRan.push(alterSql);
+  }
+  return { cost: ddl.cost, ddlRan };
+}
+
+async function dropCustomFieldColumnAndDef(listId, def) {
+  let ddlRan = '';
+  if (customFieldIsDbBacked(def) && await customTableExists(listId)) {
+    const table = quoteId(customTable(listId));
+    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
+    if (columnRow) {
+      ddlRan = `ALTER TABLE ${table} DROP ${quoteId(def.field_label)}`;
+      await pool.query(ddlRan);
+    }
+  }
+  await execute('DELETE FROM vicidial_lists_fields WHERE field_id = ? LIMIT 1', [def.field_id]);
+  return ddlRan;
+}
+
+// Legacy field_rerank=YES: bump fields colliding on the saved field's rank,
+// cascading up one rank at a time.
+async function rerankCustomFields(listId, fieldId, startRank) {
+  let rank = startRank;
+  let lastMoved = [Number(fieldId)];
+  for (let guard = 0; guard < 200; guard++) {
+    const colliders = await rows(
+      `SELECT field_id FROM vicidial_lists_fields
+       WHERE list_id = ? AND field_rank = ? AND field_id NOT IN (${lastMoved.map(() => '?').join(',')})
+       ORDER BY field_id`,
+      [listId, rank, ...lastMoved],
+      [],
+    );
+    if (!colliders.length) break;
+    const ids = colliders.map((row) => Number(row.field_id));
+    await execute(`UPDATE vicidial_lists_fields SET field_rank = field_rank + 1 WHERE field_id IN (${ids.map(() => '?').join(',')})`, ids);
+    lastMoved = ids;
+    rank += 1;
+  }
+}
+
 async function saveListCustomField(req, res, mode) {
   if (!canModifyCustomFields(req, res)) return;
   const listId = Number(req.params.id) || 0;
@@ -10755,41 +10818,77 @@ async function saveListCustomField(req, res, mode) {
       label = existing.field_label;
     }
     const def = { ...payload, field_label: label };
-    const dbBacked = customFieldIsDbBacked(def);
-    let ddl = { sql: '', cost: 3 };
-    if (dbBacked) {
-      ddl = customColumnDdl(def);
-      if (ddl.error) return badRequest(res, ddl.error);
-    }
-    const tableExists = await customTableExists(listId);
-    const table = quoteId(customTable(listId));
-    const columnSql = dbBacked ? `${quoteId(label)} ${ddl.sql}${customDefaultClause(def)}` : '';
-    const ddlRan = [];
-    if (!tableExists) {
-      const createSql = dbBacked
-        ? `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL, ${columnSql}) ENGINE=MyISAM`
-        : `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL) ENGINE=MyISAM`;
-      await pool.query(createSql);
-      ddlRan.push(createSql);
-    } else if (dbBacked) {
-      const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [label], []);
-      const alterSql = `ALTER TABLE ${table} ${columnRow ? 'MODIFY' : 'ADD'} ${columnSql}`;
-      await pool.query(alterSql);
-      ddlRan.push(alterSql);
+    let ddlResult;
+    try {
+      ddlResult = await applyCustomFieldDdl(listId, def);
+    } catch (ddlError) {
+      return badRequest(res, ddlError.message || 'ddl_failed');
     }
     if (mode === 'create') {
-      const { assignments, values } = dynamicAssignments({ ...def, list_id: listId, field_cost: ddl.cost });
+      const { assignments, values } = dynamicAssignments({ ...def, list_id: listId, field_cost: ddlResult.cost });
       const result = await execute(`INSERT INTO vicidial_lists_fields SET ${assignments}`, values);
       fieldId = Number(result.insertId || 0);
-      await adminLog(req, 'CUSTOM_FIELDS', 'ADD', String(listId), 'ADMIN ADD CUSTOM LIST FIELD', `${ddlRan.join(' | ')} | INSERT vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
+      await adminLog(req, 'CUSTOM_FIELDS', 'ADD', String(listId), 'ADMIN ADD CUSTOM LIST FIELD', `${ddlResult.ddlRan.join(' | ')} | INSERT vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
     } else {
-      const { assignments, values } = dynamicAssignments({ ...payload, field_cost: ddl.cost });
+      const { assignments, values } = dynamicAssignments({ ...payload, field_cost: ddlResult.cost });
       await execute(`UPDATE vicidial_lists_fields SET ${assignments} WHERE field_id = ? AND list_id = ?`, [...values, fieldId, listId]);
-      await adminLog(req, 'CUSTOM_FIELDS', 'MODIFY', String(listId), 'ADMIN MODIFY CUSTOM LIST FIELD', `${ddlRan.join(' | ')} | UPDATE vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
+      await adminLog(req, 'CUSTOM_FIELDS', 'MODIFY', String(listId), 'ADMIN MODIFY CUSTOM LIST FIELD', `${ddlResult.ddlRan.join(' | ')} | UPDATE vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
+    }
+    if (req.body?.field_rerank === 'YES' && payload.field_rank > 0) {
+      await rerankCustomFields(listId, fieldId, payload.field_rank);
     }
     return getListCustomFields(req, res);
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'custom_field_save_failed' });
+  }
+}
+
+// Legacy COPY_FIELDS_SUBMIT: copy every field definition (and its column)
+// from one list to another. APPEND skips labels the target already has,
+// UPDATE overwrites them, REPLACE deletes the target's fields first.
+async function copyListCustomFields(req, res) {
+  if (!canModifyCustomFields(req, res)) return;
+  const listId = Number(req.params.id) || 0;
+  const sourceListId = Number(req.body?.source_list_id) || 0;
+  const option = ['APPEND', 'UPDATE', 'REPLACE'].includes(req.body?.copy_option) ? req.body.copy_option : 'APPEND';
+  if (!listId || !sourceListId) return badRequest(res, 'invalid_list_ids');
+  if (listId === sourceListId) return badRequest(res, 'same_list');
+  try {
+    const sourceDefs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? ORDER BY field_rank, field_order, field_id LIMIT 200', [sourceListId], []);
+    if (!sourceDefs.length) return badRequest(res, 'source_has_no_fields');
+    const targetDefs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? LIMIT 200', [listId], []);
+    const targetByLabel = new Map(targetDefs.map((row) => [row.field_label, row]));
+    let added = 0;
+    let updated = 0;
+    let removed = 0;
+    if (option === 'REPLACE') {
+      for (const def of targetDefs) {
+        await dropCustomFieldColumnAndDef(listId, def);
+        removed += 1;
+      }
+      targetByLabel.clear();
+    }
+    for (const source of sourceDefs) {
+      const payload = cleanCustomFieldPayload(source);
+      const def = { ...payload, field_label: source.field_label };
+      const existing = targetByLabel.get(source.field_label);
+      if (existing) {
+        if (option !== 'UPDATE') continue;
+        const { cost } = await applyCustomFieldDdl(listId, def);
+        const { assignments, values } = dynamicAssignments({ ...payload, field_cost: cost });
+        await execute(`UPDATE vicidial_lists_fields SET ${assignments} WHERE field_id = ?`, [...values, existing.field_id]);
+        updated += 1;
+      } else {
+        const { cost } = await applyCustomFieldDdl(listId, def);
+        const { assignments, values } = dynamicAssignments({ ...def, list_id: listId, field_cost: cost });
+        await execute(`INSERT INTO vicidial_lists_fields SET ${assignments}`, values);
+        added += 1;
+      }
+    }
+    await adminLog(req, 'CUSTOM_FIELDS', 'COPY', String(listId), 'ADMIN COPY CUSTOM LIST FIELDS', `from list ${sourceListId} option ${option}`, `added ${added}, updated ${updated}, removed ${removed}`);
+    return getListCustomFields(req, res);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'custom_field_copy_failed' });
   }
 }
 
@@ -10801,16 +10900,7 @@ async function deleteListCustomField(req, res) {
   try {
     const [def] = await rows('SELECT * FROM vicidial_lists_fields WHERE field_id = ? AND list_id = ? LIMIT 1', [fieldId, listId], []);
     if (!def) return res.status(404).json({ ok: false, error: 'field_not_found' });
-    let ddlRan = '';
-    if (customFieldIsDbBacked(def) && await customTableExists(listId)) {
-      const table = quoteId(customTable(listId));
-      const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
-      if (columnRow) {
-        ddlRan = `ALTER TABLE ${table} DROP ${quoteId(def.field_label)}`;
-        await pool.query(ddlRan);
-      }
-    }
-    await execute('DELETE FROM vicidial_lists_fields WHERE field_id = ? AND list_id = ? LIMIT 1', [fieldId, listId]);
+    const ddlRan = await dropCustomFieldColumnAndDef(listId, def);
     await adminLog(req, 'CUSTOM_FIELDS', 'DELETE', String(listId), 'ADMIN DELETE CUSTOM LIST FIELD', `${ddlRan} | DELETE vicidial_lists_fields ${def.field_label}`, `field_id ${fieldId}`);
     return getListCustomFields(req, res);
   } catch (error) {
@@ -13461,6 +13551,7 @@ app.get('/api/admin/lists/:id/custom-fields', requireAccess, getListCustomFields
 app.post('/api/admin/lists/:id/custom-fields', requireAccess, (req, res) => saveListCustomField(req, res, 'create'));
 app.put('/api/admin/lists/:id/custom-fields/:fieldId', requireAccess, (req, res) => saveListCustomField(req, res, 'update'));
 app.delete('/api/admin/lists/:id/custom-fields/:fieldId', requireAccess, deleteListCustomField);
+app.post('/api/admin/lists/:id/custom-fields/copy', requireAccess, copyListCustomFields);
 app.post('/api/admin/conf-templates', requireAccess, (req, res) => saveConfTemplate(req, res, 'create'));
 app.put('/api/admin/conf-templates/:id', requireAccess, (req, res) => saveConfTemplate(req, res, 'update'));
 app.delete('/api/admin/conf-templates/:id', requireAccess, deleteConfTemplate);
