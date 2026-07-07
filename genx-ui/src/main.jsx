@@ -14075,7 +14075,7 @@ function AgentConsole({ token, authInfo, onExit }) {
     setMessage('');
     try {
       const payload = await apiFetch(path, token, { method: 'POST', body: JSON.stringify(body || {}) });
-      setLive(payload.live);
+      if (payload.live !== undefined) setLive(payload.live);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
       if (!payload.live) {
         setWebphoneUrl(null);
