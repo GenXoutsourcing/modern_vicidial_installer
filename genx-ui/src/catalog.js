@@ -119,6 +119,7 @@ export const REPORT_GROUPS = [
       { label: 'List Campaign Statuses', href: '/vicidial/AST_LISTS_campaign_stats.php', view: 'reportListCampaignStatuses' },
       { label: 'Campaign Status List', href: '/vicidial/AST_campaign_status_list_report.php', view: 'reportCampaignStatusList' },
       { label: 'Dialer Inventory', href: '/vicidial/AST_dialer_inventory_report.php', view: 'reportDialerInventory' },
+      { label: 'CallBack Holds', href: '/vicidial/admin.php?ADD=81', view: 'reportCallbackHolds' },
     ],
   },
   {

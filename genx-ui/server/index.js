@@ -6136,6 +6136,12 @@ async function adminChangeLogReport(req, res) {
     filterSql += ' AND event_section = ?';
     params.push(section);
   }
+  // Legacy ADD=720000000000000 per-record mode filters on record_id=stage.
+  const record = cleanText(req.query?.record, 100);
+  if (record) {
+    filterSql += ' AND record_id = ?';
+    params.push(record);
+  }
   const [entries, sections] = await Promise.all([
     rows(
       `SELECT admin_log_id, event_date, user, ip_address, event_section, event_type, record_id,
@@ -6149,6 +6155,57 @@ async function adminChangeLogReport(req, res) {
     rows('SELECT DISTINCT event_section FROM vicidial_admin_log ORDER BY event_section LIMIT 100', [], []),
   ]);
   return res.json({ ok: true, entries, sections: sections.map((row) => row.event_section), range: { beginDate, endDate } });
+}
+
+// Legacy admin.php callbacks-on-hold pages (ADD=8 user / 81 campaign /
+// 811 list / 8111 user group, all rendered by ADD=82). The bulk deactivate
+// actions (SUB=89 month / SUB=899 week) are gated by the same modify flag
+// legacy checks for each scope.
+const CALLBACK_HOLD_SCOPES = {
+  user: { column: 'user', permission: 'modifyUsers' },
+  campaign: { column: 'campaign_id', permission: 'modifyCampaigns' },
+  list: { column: 'list_id', permission: 'modifyLists' },
+  user_group: { column: 'user_group', permission: 'modifyUsergroups' },
+};
+
+async function callbackHoldsReport(req, res) {
+  const scope = CALLBACK_HOLD_SCOPES[String(req.query?.scope || '')];
+  const id = cleanText(req.query?.id, 40);
+  if (!scope || !id) return badRequest(res, 'scope_and_id_required');
+  const entries = await rows(
+    `SELECT callback_id, lead_id, list_id, campaign_id, status, entry_time, callback_time,
+            modify_date, user, recipient, comments, user_group
+     FROM vicidial_callbacks
+     WHERE status IN ('ACTIVE','LIVE') AND ${scope.column} = ?
+     ORDER BY recipient, status DESC, callback_time
+     LIMIT 5000`,
+    [id],
+    [],
+  );
+  return res.json({ ok: true, entries, canDeactivate: canModify(req.genxUser, scope.permission) });
+}
+
+async function callbackHoldsDeactivate(req, res) {
+  const body = req.body || {};
+  const scope = CALLBACK_HOLD_SCOPES[String(body.scope || '')];
+  const id = cleanText(body.id, 40);
+  const window = String(body.window || '');
+  if (!scope || !id || !['month', 'week'].includes(window)) return badRequest(res, 'bad_request');
+  if (!requireModify(req, res, scope.permission)) return;
+  // Legacy cutoffs: midnight one calendar month back / midnight 7 days back.
+  const cutoff = window === 'month' ? 'DATE_SUB(CURDATE(), INTERVAL 1 MONTH)' : 'DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+  try {
+    const result = await execute(
+      `UPDATE vicidial_callbacks SET status = 'INACTIVE'
+       WHERE ${scope.column} = ? AND status IN ('LIVE','ACTIVE') AND callback_time < ${cutoff}`,
+      [id],
+    );
+    const deactivated = Number(result.affectedRows || 0);
+    await adminLog(req, 'CALLBACKS', 'MODIFY', id, 'GENX DEACTIVATE OLD CALLBACKS', `UPDATE vicidial_callbacks INACTIVE ${body.scope} older than ${window}`, `${deactivated} deactivated`);
+    return res.json({ ok: true, deactivated });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'callback_deactivate_failed' });
+  }
 }
 
 // Native port of AST_dial_log_report.php: raw dial-log rows for one day range.
@@ -6810,7 +6867,8 @@ async function agentAuth(req, res) {
 async function agentLiveRow(user) {
   const [row] = await rows(
     `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid, uniqueid,
-            calls_today, pause_code, agent_log_id, UNIX_TIMESTAMP(last_state_change) AS state_epoch
+            calls_today, pause_code, agent_log_id, preview_lead_id,
+            UNIX_TIMESTAMP(last_state_change) AS state_epoch
      FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
     [user],
     [],
@@ -7098,8 +7156,11 @@ async function agentStatus(req, res) {
     );
     if (closer) inbound = closer;
   }
-  // Customer-leg presence for dead-call detection (legacy custchannellive).
+  // Customer-leg presence for dead-call detection (legacy custchannellive),
+  // plus carrier-failure lookup when the leg never materialized
+  // (manDiaLlookCaLL's carrier-log check).
   let customerChannels = null;
+  let dialFail = null;
   if (live.status === 'INCALL') {
     const [cnt] = await rows(
       'SELECT COUNT(*) AS n FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ?',
@@ -7107,12 +7168,35 @@ async function agentStatus(req, res) {
       [],
     );
     customerChannels = Number(cnt?.n || 0);
+    if (customerChannels === 0 && /^M/.test(String(live.callerid || ''))) {
+      const [clog] = await rows(
+        'SELECT uniqueid, channel FROM call_log WHERE caller_code = ? AND server_ip = ? ORDER BY start_time DESC LIMIT 1',
+        [live.callerid, live.server_ip],
+        [],
+      );
+      if (clog?.uniqueid) {
+        const [carrier] = await rows(
+          "SELECT dialstatus, hangup_cause, sip_hangup_cause, sip_hangup_reason FROM vicidial_carrier_log WHERE uniqueid = ? AND dialstatus IN ('BUSY','CHANUNAVAIL','CONGESTION','DNC','DISCONNECT') LIMIT 1",
+          [clog.uniqueid],
+          [],
+        );
+        if (carrier) dialFail = carrier;
+      }
+    }
   }
+  // Legacy DiaLableLeaDsCounT: hopper-eligible lead count for the status bar.
+  const [stats] = await rows(
+    'SELECT dialable_leads FROM vicidial_campaign_stats WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
   return res.json({
     ok: true, live, lead,
     pauseCodes: await agentPauseCodes(live.campaign_id),
     webphoneUrl: sess?.webphone_url || null,
     customerChannels,
+    dialFail,
+    dialableLeads: stats ? Number(stats.dialable_leads || 0) : null,
     inbound,
   });
 }
@@ -8069,6 +8153,42 @@ async function agentDialNext(req, res) {
   );
   if (!claimed.affectedRows) return res.status(409).json({ ok: false, error: 'hopper_race' });
 
+  // Preview mode (campaign manual_preview_dial): show the lead first; the
+  // agent then dials it (manual-dial) or skips (preview-skip reverts it).
+  const [camp] = await rows(
+    'SELECT manual_preview_dial FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const previewMode = String(camp?.manual_preview_dial || 'DISABLED');
+  if (previewMode !== 'DISABLED') {
+    const [lead] = await rows(
+      'SELECT lead_id, status, called_count FROM vicidial_list WHERE lead_id = ? LIMIT 1',
+      [hop.lead_id],
+      [],
+    );
+    if (!lead) {
+      await execute("UPDATE vicidial_hopper SET status = 'READY', user = '' WHERE hopper_id = ?", [hop.hopper_id]).catch(() => {});
+      return res.status(404).json({ ok: false, error: 'lead_not_found' });
+    }
+    await execute(
+      "UPDATE vicidial_list SET status = 'INCALL', user = ?, called_count = called_count + 1 WHERE lead_id = ?",
+      [user, lead.lead_id],
+    );
+    await execute(
+      'UPDATE vicidial_live_agents SET lead_id = ?, preview_lead_id = ? WHERE user = ?',
+      [lead.lead_id, lead.lead_id, user],
+    );
+    await execute("UPDATE vicidial_hopper SET status = 'DONE' WHERE hopper_id = ?", [hop.hopper_id]).catch(() => {});
+    return res.json({
+      ok: true,
+      preview: true,
+      allowSkip: previewMode === 'PREVIEW_AND_SKIP',
+      prevStatus: lead.status,
+      live: await agentLiveRow(user),
+    });
+  }
+
   req.body = { ...req.body, lead_id: hop.lead_id };
   // Mark the hopper row DONE once the dial goes out (legacy VDhopper flow).
   const result = await new Promise((resolve) => {
@@ -8085,6 +8205,31 @@ async function agentDialNext(req, res) {
   }
   await execute("UPDATE vicidial_hopper SET status = 'READY', user = '' WHERE hopper_id = ?", [hop.hopper_id]).catch(() => {});
   return res.status(result?.httpStatus || 500).json(result || { ok: false, error: 'dial_next_failed' });
+}
+
+// manDiaLskip port: revert a previewed lead (status + called_count) and log
+// the skip; the agent moves on without dialing.
+async function agentPreviewSkip(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const previewLead = Number(live.preview_lead_id || 0);
+  if (!previewLead || Number(live.lead_id) !== previewLead) {
+    return res.status(409).json({ ok: false, error: 'no_preview_lead' });
+  }
+  const prevStatus = cleanId(req.body?.prev_status, 8) || 'NEW';
+
+  await execute(
+    'UPDATE vicidial_list SET status = ?, called_count = GREATEST(called_count - 1, 0), user = ? WHERE lead_id = ?',
+    [prevStatus, user, previewLead],
+  );
+  await execute("UPDATE vicidial_live_agents SET lead_id = 0, preview_lead_id = '0' WHERE user = ?", [user]);
+  await execute(
+    'INSERT INTO vicidial_agent_skip_log SET campaign_id = ?, previous_status = ?, previous_called_count = 0, user = ?, lead_id = ?, event_date = NOW()',
+    [live.campaign_id, prevStatus, user, previewLead],
+  ).catch(() => {});
+  return res.json({ ok: true, live: await agentLiveRow(user) });
 }
 
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
@@ -8139,11 +8284,16 @@ async function agentManualDial(req, res) {
       lead = { lead_id: insert.insertId, list_id: listId, phone_code: '1', phone_number: phoneNumber, called_count: 0 };
     }
 
-    const calledCount = Number(lead.called_count || 0) + 1;
+    // Previewed leads already had their called_count bumped at preview time.
+    const wasPreviewed = Number(live.preview_lead_id || 0) === Number(lead.lead_id);
+    const calledCount = Number(lead.called_count || 0) + (wasPreviewed ? 0 : 1);
     await execute(
       "UPDATE vicidial_list SET status = 'INCALL', user = ?, called_since_last_reset = 'Y', called_count = ?, last_local_call_time = NOW() WHERE lead_id = ?",
       [user, calledCount, lead.lead_id],
     );
+    if (wasPreviewed) {
+      await execute("UPDATE vicidial_live_agents SET preview_lead_id = '0' WHERE user = ?", [user]).catch(() => {});
+    }
 
     // Caller code: M + mdHis (<=9 chars) + 10-digit lead id, exactly legacy.
     const pad = (n) => String(n).padStart(2, '0');
@@ -12060,6 +12210,8 @@ app.get('/api/reports/export-callbacks', requireAccess, exportCallbacksReport);
 app.get('/api/reports/export-calls-carrier', requireAccess, exportCallsCarrierReport);
 app.get('/api/reports/called-counts', requireAccess, calledCountsReport);
 app.get('/api/reports/admin-log', requireAccess, adminChangeLogReport);
+app.get('/api/reports/callback-holds', requireAccess, callbackHoldsReport);
+app.post('/api/reports/callback-holds/deactivate', requireAccess, callbackHoldsDeactivate);
 app.get('/api/reports/dial-log', requireAccess, dialLogReport);
 app.get('/api/reports/carrier-log', requireAccess, carrierLogReport);
 app.get('/api/reports/hangup-cause', requireAccess, hangupCauseReport);
@@ -12226,6 +12378,7 @@ app.put('/api/agent/lead', requireAgentAccess, agentUpdateLead);
 app.get('/api/agent/script', requireAgentAccess, agentScript);
 app.get('/api/agent/web-forms', requireAgentAccess, agentWebForms);
 app.post('/api/agent/dial-next', requireAgentAccess, agentDialNext);
+app.post('/api/agent/preview-skip', requireAgentAccess, agentPreviewSkip);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));

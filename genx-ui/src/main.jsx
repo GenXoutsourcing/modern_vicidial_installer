@@ -3863,6 +3863,18 @@ function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, o
           <Activity size={15} aria-hidden="true" />
           Status List Report
         </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportListCampaignStatuses', { campaignId: campaign })}>
+          <Gauge size={15} aria-hidden="true" />
+          Lead Statuses in Campaign
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'campaign', id: campaign })}>
+          <Clock3 size={15} aria-hidden="true" />
+          CallBack Holds
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'CAMPAIGNS', record: campaign })}>
+          <ShieldCheck size={15} aria-hidden="true" />
+          Admin Changes
+        </button>
         {userCan(user, 'campaigns') && (
           <button
             type="button"
@@ -3886,7 +3898,7 @@ const GRADE_OPTIONS = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1'];
 // Mirrors legacy user modify (ADD=3) connections: stats/status/time-sheet
 // report links (legacy pages until built natively) and the per-user
 // campaign / in-group rank grids.
-function UserConnections({ admin, userId, token, onLogout }) {
+function UserConnections({ admin, userId, token, onLogout, onNavigate }) {
   const targetUser = String(userId || '');
   const [ranks, setRanks] = useState(null);
   const [saveState, setSaveState] = useState('');
@@ -3967,6 +3979,14 @@ function UserConnections({ admin, userId, token, onLogout }) {
             {label}
           </a>
         ))}
+        <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'user', id: targetUser })}>
+          <Clock3 size={15} aria-hidden="true" />
+          CallBack Holds
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'USERS', record: targetUser })}>
+          <ShieldCheck size={15} aria-hidden="true" />
+          Admin Changes
+        </button>
       </div>
       {hasRankRows && (
         <div className="rank-grids">
@@ -4042,7 +4062,7 @@ function UserConnections({ admin, userId, token, onLogout }) {
 // Mirrors legacy list modify (ADD=311) connections: status/timezone/owner/rank
 // breakdowns, list download, reset of called-status, and clear-list. Delete
 // uses the modal's standard delete button.
-function ListConnections({ admin, listId, user, token, onLogout, onSaved }) {
+function ListConnections({ admin, listId, user, token, onLogout, onSaved, onNavigate }) {
   const list = String(listId || '');
   const [stats, setStats] = useState(null);
   const [actionState, setActionState] = useState('');
@@ -4179,10 +4199,14 @@ function ListConnections({ admin, listId, user, token, onLogout, onSaved }) {
             {confirming === 'clear' ? 'Confirm Clear ALL Leads?' : 'Clear List'}
           </button>
         )}
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=LISTS&stage=${encodeURIComponent(list)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'list', id: list })}>
+          <Clock3 size={15} aria-hidden="true" />
+          CallBack Holds
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'LISTS', record: list })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
         {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
       </div>
     </div>
@@ -4191,7 +4215,7 @@ function ListConnections({ admin, listId, user, token, onLogout, onSaved }) {
 
 // Mirrors legacy in-group modify (ADD=3111) cross-references: agent rank
 // grid, DIDs / call menus / campaigns pointing at this group.
-function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwitchAction }) {
+function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwitchAction, onNavigate }) {
   const group = String(groupId || '');
   const [data, setData] = useState(null);
   const [saveState, setSaveState] = useState('');
@@ -4308,10 +4332,10 @@ function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwit
           <ExternalLink size={15} aria-hidden="true" />
           In-Group Report
         </a>
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=INGROUPS&stage=${encodeURIComponent(group)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'INGROUPS', record: group })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
       </div>
     </div>
   );
@@ -4319,7 +4343,7 @@ function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwit
 
 // Mirrors legacy script modify (ADD=3111111): preview plus campaigns /
 // in-groups / list overrides / user-group overrides using the script.
-function ScriptConnections({ scriptId, scriptText, token, onLogout }) {
+function ScriptConnections({ scriptId, scriptText, token, onLogout, onNavigate }) {
   const script = String(scriptId || '');
   const [data, setData] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -4374,10 +4398,10 @@ function ScriptConnections({ scriptId, scriptText, token, onLogout }) {
           <Search size={15} aria-hidden="true" />
           {previewOpen ? 'Hide Preview' : 'Preview Script'}
         </button>
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=SCRIPTS&stage=${encodeURIComponent(script)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'SCRIPTS', record: script })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
       </div>
       {previewOpen && (
         <iframe
@@ -4393,7 +4417,7 @@ function ScriptConnections({ scriptId, scriptText, token, onLogout }) {
 
 // Generic small cross-reference panel used by entities whose legacy modify
 // page just lists "X USING THIS Y" tables plus an admin-changes link.
-function ReferencePanel({ title, lists, legacyLinks }) {
+function ReferencePanel({ title, lists, legacyLinks, actions }) {
   return (
     <div className="campaign-tool-panel campaign-connections">
       <div className="campaign-tool-head">
@@ -4413,13 +4437,19 @@ function ReferencePanel({ title, lists, legacyLinks }) {
           </div>
         ))}
       </div>
-      {Boolean(legacyLinks?.length) && (
+      {Boolean(legacyLinks?.length || actions?.length) && (
         <div className="connection-actions">
-          {legacyLinks.map(([label, href]) => (
+          {(legacyLinks || []).map(([label, href]) => (
             <a key={label} className="row-action" href={href} target="_blank" rel="noreferrer">
               <ExternalLink size={15} aria-hidden="true" />
               {label}
             </a>
+          ))}
+          {(actions || []).map(([label, onClick]) => (
+            <button key={label} type="button" className="row-action" onClick={onClick}>
+              <ShieldCheck size={15} aria-hidden="true" />
+              {label}
+            </button>
           ))}
         </div>
       )}
@@ -4427,7 +4457,7 @@ function ReferencePanel({ title, lists, legacyLinks }) {
   );
 }
 
-function LeadFilterConnections({ filterId, token, onLogout }) {
+function LeadFilterConnections({ filterId, token, onLogout, onNavigate }) {
   const filter = String(filterId || '');
   const [data, setData] = useState(null);
 
@@ -4474,8 +4504,8 @@ function LeadFilterConnections({ filterId, token, onLogout }) {
           ['Campaigns using this filter', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
           ['Users using this filter', data.users || [], (row) => `${row.user} - ${row.full_name || ''}`],
         ]}
-        legacyLinks={[
-          ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=FILTERS&stage=${encodeURIComponent(filter)}`],
+        actions={[
+          ['Admin Changes', () => onNavigate('reportAdminLog', { section: 'FILTERS', record: filter })],
         ]}
       />
       <div className="connection-actions">
@@ -4486,7 +4516,7 @@ function LeadFilterConnections({ filterId, token, onLogout }) {
   );
 }
 
-function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, admin }) {
+function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, admin, onNavigate }) {
   const group = String(groupId || '');
   const [data, setData] = useState(null);
 
@@ -4538,10 +4568,14 @@ function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, 
         })}
       </div>
       <div className="connection-actions">
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=USERGROUPS&stage=${encodeURIComponent(group)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'user_group', id: group })}>
+          <Clock3 size={15} aria-hidden="true" />
+          CallBack Holds
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'USERGROUPS', record: group })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
       </div>
     </div>
   );
@@ -4549,7 +4583,7 @@ function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, 
 
 // Phone delete needs the composite key (extension + server_ip), so it gets a
 // dedicated panel instead of the generic modal delete button.
-function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved, onClose }) {
+function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved, onClose, onNavigate }) {
   const ext = String(extension || '');
   const ip = String(serverIp || '');
   const [confirming, setConfirming] = useState(false);
@@ -4592,10 +4626,10 @@ function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved,
             {state === 'working' ? 'Deleting' : confirming ? `Confirm Delete ${ext}@${ip}?` : 'Delete Phone'}
           </button>
         )}
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=PHONES&stage=${encodeURIComponent(ext)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'PHONES', record: ext })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
         {state && state !== 'working' && <span className="connection-status">{state}</span>}
       </div>
     </div>
@@ -4603,7 +4637,7 @@ function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved,
 }
 
 // Server delete needs the composite key (server_id + server_ip).
-function ServerConnections({ serverId, serverIp, user, token, onLogout, onSaved, onClose }) {
+function ServerConnections({ serverId, serverIp, user, token, onLogout, onSaved, onClose, onNavigate }) {
   const id = String(serverId || '');
   const ip = String(serverIp || '');
   const [confirming, setConfirming] = useState(false);
@@ -4646,10 +4680,10 @@ function ServerConnections({ serverId, serverIp, user, token, onLogout, onSaved,
             {state === 'working' ? 'Deleting' : confirming ? `Confirm Delete ${id}@${ip}?` : 'Delete Server'}
           </button>
         )}
-        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=SERVERS&stage=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">
-          <ExternalLink size={15} aria-hidden="true" />
+        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'SERVERS', record: id })}>
+          <ShieldCheck size={15} aria-hidden="true" />
           Admin Changes
-        </a>
+        </button>
         {state && state !== 'working' && <span className="connection-status">{state}</span>}
       </div>
     </div>
@@ -4678,7 +4712,7 @@ function useConnections(path, token, onLogout) {
   return data;
 }
 
-function DidConnections({ didId, token, onLogout }) {
+function DidConnections({ didId, token, onLogout, onNavigate }) {
   const id = String(didId || '');
   const data = useConnections(id ? `/admin/dids/${encodeURIComponent(id)}/connections` : '', token, onLogout);
   if (!id || !data || data.error) return null;
@@ -4692,14 +4726,14 @@ function DidConnections({ didId, token, onLogout }) {
         ['In-groups using as dial CID', data.ingroups || [], (row) => `${row.group_id} - ${row.group_name || ''}`],
         ['Lists using as CID override', data.lists || [], (row) => `${row.list_id} - ${row.list_name || ''}`],
       ]}
-      legacyLinks={[
-        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=DIDS&stage=${encodeURIComponent(id)}`],
+      actions={[
+        ['Admin Changes', () => onNavigate('reportAdminLog', { section: 'DIDS', record: id })],
       ]}
     />
   );
 }
 
-function CallMenuConnections({ menuId, token, onLogout }) {
+function CallMenuConnections({ menuId, token, onLogout, onNavigate }) {
   const id = String(menuId || '');
   const data = useConnections(id ? `/admin/call-menus/${encodeURIComponent(id)}/connections` : '', token, onLogout);
   if (!id || !data || data.error) return null;
@@ -4712,8 +4746,8 @@ function CallMenuConnections({ menuId, token, onLogout }) {
         ['Campaigns using this menu', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
         ['In-groups using this menu', data.ingroups || [], (row) => `${row.group_id} - ${row.group_name || ''}`],
       ]}
-      legacyLinks={[
-        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=CALLMENUS&stage=${encodeURIComponent(id)}`],
+      actions={[
+        ['Admin Changes', () => onNavigate('reportAdminLog', { section: 'CALLMENUS', record: id })],
       ]}
     />
   );
@@ -4824,11 +4858,11 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         )}
 
         {isEdit && action.entity === 'dids' && (
-          <DidConnections didId={form.did_id} token={token} onLogout={onLogout} />
+          <DidConnections didId={form.did_id} token={token} onLogout={onLogout} onNavigate={onNavigate} />
         )}
 
         {isEdit && action.entity === 'callMenus' && (
-          <CallMenuConnections menuId={form.menu_id} token={token} onLogout={onLogout} />
+          <CallMenuConnections menuId={form.menu_id} token={token} onLogout={onLogout} onNavigate={onNavigate} />
         )}
 
         {isEdit && action.entity === 'servers' && (
@@ -4840,6 +4874,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onLogout={onLogout}
             onSaved={onSaved}
             onClose={onClose}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4852,6 +4887,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onLogout={onLogout}
             onSaved={onSaved}
             onClose={onClose}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4863,6 +4899,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             admin={admin}
             onLogout={onLogout}
             onSwitchAction={onSwitchAction}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4871,6 +4908,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             filterId={form.lead_filter_id}
             token={token}
             onLogout={onLogout}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4880,6 +4918,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             scriptText={form.script_text}
             token={token}
             onLogout={onLogout}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4891,6 +4930,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onLogout={onLogout}
             onSwitchAction={onSwitchAction}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4902,6 +4942,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onLogout={onLogout}
             onSaved={onSaved}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -4911,6 +4952,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             userId={form.user}
             token={token}
             onLogout={onLogout}
+            onNavigate={onNavigate}
           />
         )}
 
@@ -7987,8 +8029,8 @@ function CampaignTogglePicker({ campaigns, selected, onChange, emptyLabel = 'No 
 
 // Native AST_LISTS_campaign_stats.php: list summary, status-flag rollups and
 // status-category counts for every list in the selected campaigns.
-function ListCampaignStatusesReportView({ token, onLogout }) {
-  const [selected, setSelected] = useState([]);
+function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) {
+  const [selected, setSelected] = useState(initialCampaignId ? [String(initialCampaignId)] : []);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -8012,8 +8054,10 @@ function ListCampaignStatusesReportView({ token, onLogout }) {
   }, [token, onLogout]);
 
   useEffect(() => {
-    load([]);
-  }, [load]);
+    const initial = initialCampaignId ? [String(initialCampaignId)] : [];
+    setSelected(initial);
+    load(initial);
+  }, [load, initialCampaignId]);
 
   const campaigns = data?.campaigns || [];
   const lists = data?.lists;
@@ -11183,21 +11227,23 @@ function CalledCountsReportView({ token, onLogout }) {
 }
 
 // Native AST_admin_report.php: administration change log.
-function AdminChangeLogReportView({ token, onLogout }) {
+function AdminChangeLogReportView({ token, onLogout, initialSection, initialRecord }) {
   const today = new Date().toISOString().slice(0, 10);
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
-  const [section, setSection] = useState('');
+  const [section, setSection] = useState(initialSection || '');
+  const [record, setRecord] = useState(initialRecord || '');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async (begin, end, sectionFilter) => {
+  const load = useCallback(async (begin, end, sectionFilter, recordFilter) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({ begin_date: begin, end_date: end });
       if (sectionFilter) params.set('section', sectionFilter);
+      if (recordFilter) params.set('record', recordFilter);
       const payload = await apiFetch(`/reports/admin-log?${params.toString()}`, token);
       setData(payload);
     } catch (requestError) {
@@ -11212,8 +11258,10 @@ function AdminChangeLogReportView({ token, onLogout }) {
   }, [token, onLogout]);
 
   useEffect(() => {
-    load(today, today, '');
-  }, [load, today]);
+    setSection(initialSection || '');
+    setRecord(initialRecord || '');
+    load(today, today, initialSection || '', initialRecord || '');
+  }, [load, today, initialSection, initialRecord]);
 
   return (
     <>
@@ -11229,7 +11277,7 @@ function AdminChangeLogReportView({ token, onLogout }) {
           className="entity-form report-filter-bar"
           onSubmit={(event) => {
             event.preventDefault();
-            load(beginDate, endDate, section);
+            load(beginDate, endDate, section, record);
           }}
         >
           <div className="field-grid">
@@ -11249,6 +11297,10 @@ function AdminChangeLogReportView({ token, onLogout }) {
                   <option key={item} value={item}>{item}</option>
                 ))}
               </select>
+            </label>
+            <label>
+              <span>Record ID</span>
+              <input value={record} placeholder="All records" onChange={(event) => setRecord(event.target.value)} />
             </label>
           </div>
           <div className="modal-actions">
@@ -11274,6 +11326,165 @@ function AdminChangeLogReportView({ token, onLogout }) {
             { key: 'event_code', label: 'Event' },
           ]}
         />
+      </Panel>
+    </>
+  );
+}
+
+// Legacy admin.php callbacks-on-hold pages (ADD=8/81/811/8111 → ADD=82):
+// ACTIVE/LIVE callbacks scoped by user, campaign, list or user group, with
+// the bulk "deactivate older than a month/week" actions (SUB=89/899).
+const CALLBACK_HOLD_SCOPE_OPTIONS = [
+  ['campaign', 'Campaign'],
+  ['user', 'User'],
+  ['list', 'List'],
+  ['user_group', 'User Group'],
+];
+
+function CallbackHoldsReportView({ token, onLogout, initialScope, initialId }) {
+  const [scope, setScope] = useState(initialScope || 'campaign');
+  const [holdId, setHoldId] = useState(initialId || '');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [confirming, setConfirming] = useState('');
+  const [actionState, setActionState] = useState('');
+
+  const load = useCallback(async (scopeValue, idValue) => {
+    if (!idValue) {
+      setData(null);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ scope: scopeValue, id: idValue });
+      const payload = await apiFetch(`/reports/callback-holds?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError('The callback listings failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    setScope(initialScope || 'campaign');
+    setHoldId(initialId || '');
+    setConfirming('');
+    setActionState('');
+    load(initialScope || 'campaign', initialId || '');
+  }, [load, initialScope, initialId]);
+
+  async function deactivate(window) {
+    if (confirming !== window) {
+      setConfirming(window);
+      return;
+    }
+    setConfirming('');
+    setActionState('working');
+    try {
+      const payload = await apiFetch('/reports/callback-holds/deactivate', token, {
+        method: 'POST',
+        body: JSON.stringify({ scope, id: holdId, window }),
+      });
+      setActionState(`${formatNumber(payload.deactivated)} callback${payload.deactivated === 1 ? '' : 's'} made INACTIVE`);
+      load(scope, holdId);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setActionState(requestError.status === 403 ? 'Not permitted' : 'Deactivate failed');
+    }
+  }
+
+  const entries = data?.entries || [];
+  const scopeLabel = (CALLBACK_HOLD_SCOPE_OPTIONS.find(([value]) => value === scope) || [])[1] || 'Campaign';
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>CallBack Holds</h2>
+          <p className="action-copy">ACTIVE and LIVE callbacks on hold for a campaign, user, list or user group.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Scope" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setConfirming('');
+            setActionState('');
+            load(scope, holdId);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Scope</span>
+              <select value={scope} onChange={(event) => setScope(event.target.value)}>
+                {CALLBACK_HOLD_SCOPE_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{scopeLabel} ID</span>
+              <input value={holdId} placeholder="Required" onChange={(event) => setHoldId(event.target.value)} />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading || !holdId}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Show Callbacks'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="Callbacks" title={`Callback Hold Listings (${formatNumber(entries.length)})`} icon={Clock3} className="admin-wide-panel">
+        <DataTable
+          emptyLabel={holdId ? 'No ACTIVE or LIVE callbacks for this selection' : 'Pick a scope and ID to list callbacks on hold'}
+          rows={entries.map((row) => ({ ...row, id: row.callback_id }))}
+          columns={[
+            { key: 'lead_id', label: 'Lead' },
+            { key: 'list_id', label: 'List' },
+            { key: 'campaign_id', label: 'Campaign' },
+            { key: 'entry_time', label: 'Entry Date', render: (row) => formatDateTime(row.entry_time) },
+            { key: 'callback_time', label: 'Callback Date', render: (row) => formatDateTime(row.callback_time) },
+            { key: 'user', label: 'User' },
+            { key: 'recipient', label: 'Recipient' },
+            { key: 'status', label: 'Status' },
+            { key: 'user_group', label: 'Group' },
+          ]}
+        />
+        {data?.canDeactivate && holdId && (
+          <div className="connection-actions">
+            <button
+              type="button"
+              className={confirming === 'month' ? 'danger-action confirming compact-action' : 'row-action'}
+              disabled={actionState === 'working'}
+              onClick={() => deactivate('month')}
+            >
+              {confirming === 'month' ? 'Confirm Deactivate?' : 'Remove LIVE Callbacks older than one month'}
+            </button>
+            <button
+              type="button"
+              className={confirming === 'week' ? 'danger-action confirming compact-action' : 'row-action'}
+              disabled={actionState === 'working'}
+              onClick={() => deactivate('week')}
+            >
+              {confirming === 'week' ? 'Confirm Deactivate?' : 'Remove LIVE Callbacks older than one week'}
+            </button>
+            {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
+          </div>
+        )}
       </Panel>
     </>
   );
@@ -12423,6 +12634,9 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [webForms, setWebForms] = useState(null);
   const [dispoHotkeys, setDispoHotkeys] = useState([]);
   const [inboundInfo, setInboundInfo] = useState(null);
+  const [previewInfo, setPreviewInfo] = useState(null);
+  const [dialableLeads, setDialableLeads] = useState(null);
+  const [dialFail, setDialFail] = useState(null);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -12461,6 +12675,9 @@ function AgentConsole({ token, authInfo, onExit }) {
         setCustomerGone(0);
       }
       setInboundInfo(payload.inbound || null);
+      if (payload.dialableLeads !== undefined) setDialableLeads(payload.dialableLeads);
+      setDialFail(payload.dialFail || null);
+      if (!payload.live || !Number(payload.live.preview_lead_id)) setPreviewInfo(null);
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
@@ -12684,6 +12901,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               <span className="connection-status">Phone: {live.extension} @ {live.server_ip}</span>
               <span className="connection-status">Conference: {live.conf_exten}</span>
               <span className="connection-status">Calls today: {formatNumber(live.calls_today)}</span>
+              {dialableLeads != null && <span className="connection-status">Dialable leads: {formatNumber(dialableLeads)}</span>}
               {Number(live.lead_id) > 0 && <span className="connection-status">On lead: {live.lead_id} ({live.callerid})</span>}
             </div>
             <div className="modal-actions">
@@ -12754,7 +12972,12 @@ function AgentConsole({ token, authInfo, onExit }) {
                     disabled={busy}
                     onClick={async () => {
                       const payload = await act('/agent/dial-next', {});
-                      if (payload) setMessage('Dialing next lead from the hopper');
+                      if (payload?.preview) {
+                        setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
+                        setMessage('Previewing lead — Dial This Lead or Skip');
+                      } else if (payload) {
+                        setMessage('Dialing next lead from the hopper');
+                      }
                     }}
                   >
                     <PhoneCall size={16} aria-hidden="true" />
@@ -13009,8 +13232,49 @@ function AgentConsole({ token, authInfo, onExit }) {
             </div>
             {lead.address1 && <p className="connection-summary">{lead.address1} {lead.address2 || ''} {lead.address3 || ''}</p>}
             {lead.comments && <p className="connection-summary">Comments: {lead.comments}</p>}
-            {customerGone >= 2 && live.status === 'INCALL' && (
+            {dialFail && (
+              <p className="form-error">
+                Call failed: {dialFail.dialstatus}{dialFail.sip_hangup_reason ? ` — ${dialFail.sip_hangup_reason}` : ''} — hang up and disposition
+              </p>
+            )}
+            {!dialFail && customerGone >= 2 && live.status === 'INCALL' && (
               <p className="form-error">No customer channel in your session — the caller may have hung up</p>
+            )}
+            {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && (
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  disabled={busy}
+                  onClick={async () => {
+                    const payload = await act('/agent/manual-dial', { lead_id: lead.lead_id });
+                    if (payload) {
+                      setPreviewInfo(null);
+                      setMessage(`Dialing previewed lead ${lead.lead_id}`);
+                    }
+                  }}
+                >
+                  <PhoneCall size={16} aria-hidden="true" />
+                  Dial This Lead
+                </button>
+                {(previewInfo?.allowSkip ?? true) && (
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={busy}
+                    onClick={async () => {
+                      const payload = await act('/agent/preview-skip', { prev_status: previewInfo?.prevStatus || 'NEW' });
+                      if (payload) {
+                        setPreviewInfo(null);
+                        setLead(null);
+                        setMessage('Lead skipped and reverted');
+                      }
+                    }}
+                  >
+                    Skip Lead
+                  </button>
+                )}
+              </div>
             )}
             {editLead ? (
               <div className="entity-form">
@@ -13570,7 +13834,8 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
   if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
   if (activeView === 'reportListStatuses') return <ListStatusesReportView token={token} />;
-  if (activeView === 'reportListCampaignStatuses') return <ListCampaignStatusesReportView token={token} />;
+  if (activeView === 'reportListCampaignStatuses') return <ListCampaignStatusesReportView token={token} initialCampaignId={viewParams?.campaignId} />;
+  if (activeView === 'reportCallbackHolds') return <CallbackHoldsReportView token={token} initialScope={viewParams?.scope} initialId={viewParams?.id} />;
   if (activeView === 'reportCampaignStatusList') return <CampaignStatusListReportView token={token} />;
   if (activeView === 'reportDialerInventory') return <DialerInventoryReportView token={token} />;
   if (activeView === 'reportOutboundCalling') return <OutboundCallingReportView token={token} />;
@@ -13596,7 +13861,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportUserGroupHourly') return <UserGroupHourlyReportView token={token} />;
   if (activeView === 'reportExports') return <ExportsReportView token={token} />;
   if (activeView === 'reportCalledCounts') return <CalledCountsReportView token={token} />;
-  if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} />;
+  if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} initialSection={viewParams?.section} initialRecord={viewParams?.record} />;
   if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
   if (LOG_REPORT_CONFIGS[activeView]) return <LogReportView token={token} config={LOG_REPORT_CONFIGS[activeView]} />;
   if (activeView === 'reportServerPerformance') return <ServerPerformanceReportView token={token} />;
