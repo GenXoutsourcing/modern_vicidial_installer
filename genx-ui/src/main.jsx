@@ -12364,6 +12364,10 @@ function AgentConsole({ token, authInfo, onExit }) {
         no_conference_available: 'No free conference on that phone server',
         campaign_not_allowed: 'Campaign not allowed for your user group',
         phone_not_found: 'Phone not found or inactive',
+        customer_channel_not_found: 'No live customer channel found (call may have ended)',
+        channel_not_found: '3-way leg not found (may have already hung up)',
+        no_parked_call: 'No parked call to grab',
+        not_on_call: 'No customer call in progress',
       };
       setMessage(map[requestError.message] || 'Action failed');
       return null;
