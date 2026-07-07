@@ -12637,6 +12637,8 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [previewInfo, setPreviewInfo] = useState(null);
   const [dialableLeads, setDialableLeads] = useState(null);
   const [dialFail, setDialFail] = useState(null);
+  const [customFields, setCustomFields] = useState(null);
+  const [showForm, setShowForm] = useState(false);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -13276,6 +13278,78 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
               </div>
             )}
+            {showForm && customFields && (
+              <div className="entity-form">
+                {!customFields.fields?.length && <p className="connection-summary">No custom fields defined for list {customFields.listId}</p>}
+                {Boolean(customFields.fields?.length) && (
+                  <>
+                    <div className="field-grid">
+                      {customFields.fields.map((f) => (
+                        <label key={f.label}>
+                          <span>{f.description || f.label}{f.required ? ' *' : ''}</span>
+                          {['SELECT', 'MULTI', 'RADIO', 'SWITCH'].includes(f.type) ? (
+                            <select
+                              value={f.value}
+                              disabled={f.readonly}
+                              onChange={(event) => setCustomFields((cur) => ({
+                                ...cur,
+                                fields: cur.fields.map((x) => (x.label === f.label ? { ...x, value: event.target.value } : x)),
+                              }))}
+                            >
+                              <option value="">--</option>
+                              {f.options.map((opt) => {
+                                const [val, text] = opt.split(',');
+                                return <option key={val} value={val}>{text || val}</option>;
+                              })}
+                            </select>
+                          ) : f.type === 'AREA' ? (
+                            <textarea
+                              value={f.value}
+                              rows={3}
+                              disabled={f.readonly}
+                              onChange={(event) => setCustomFields((cur) => ({
+                                ...cur,
+                                fields: cur.fields.map((x) => (x.label === f.label ? { ...x, value: event.target.value } : x)),
+                              }))}
+                            />
+                          ) : (
+                            <input
+                              type={f.type === 'DATE' ? 'date' : f.type === 'TIME' ? 'time' : 'text'}
+                              value={f.value}
+                              maxLength={f.max || 255}
+                              disabled={f.readonly}
+                              onChange={(event) => setCustomFields((cur) => ({
+                                ...cur,
+                                fields: cur.fields.map((x) => (x.label === f.label ? { ...x, value: event.target.value } : x)),
+                              }))}
+                            />
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="modal-actions">
+                      <button
+                        type="button"
+                        className="primary-action"
+                        disabled={busy}
+                        onClick={async () => {
+                          const values = Object.fromEntries(customFields.fields.filter((f) => !f.readonly).map((f) => [f.label, f.value]));
+                          try {
+                            await apiFetch('/agent/custom-fields', token, {
+                              method: 'PUT',
+                              body: JSON.stringify({ lead_id: lead.lead_id, values }),
+                            });
+                            setMessage('Custom fields saved');
+                          } catch { setMessage('Custom fields save failed'); }
+                        }}
+                      >
+                        Save Form
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             {editLead ? (
               <div className="entity-form">
                 <div className="field-grid">
@@ -13334,6 +13408,19 @@ function AgentConsole({ token, authInfo, onExit }) {
               </button>
               <button type="button" className="row-action" onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}>
                 Lead Info
+              </button>
+              <button
+                type="button"
+                className="row-action"
+                onClick={() => {
+                  const next = !showForm;
+                  setShowForm(next);
+                  if (next) {
+                    apiFetch(`/agent/custom-fields?lead_id=${lead.lead_id}`, token).then(setCustomFields).catch(() => {});
+                  }
+                }}
+              >
+                Form
               </button>
               {(webForms?.forms || []).map((f) => (
                 <button

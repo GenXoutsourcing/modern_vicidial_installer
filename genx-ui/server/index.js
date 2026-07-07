@@ -7894,6 +7894,92 @@ async function agentCallLog(req, res) {
   return res.json({ ok: true, enabled: true, date, days, rows: all });
 }
 
+// Custom fields (legacy FORM tab): definitions in vicidial_lists_fields per
+// list, data in the per-list custom_{list_id} table (column = field_label).
+const CUSTOM_EDITABLE_TYPES = ['TEXT', 'AREA', 'SELECT', 'MULTI', 'RADIO', 'CHECKBOX', 'DATE', 'TIME', 'SWITCH'];
+const customColOk = (name) => /^[A-Za-z0-9_]{1,64}$/.test(name);
+
+async function agentCustomFieldDefs(listId) {
+  return rows(
+    `SELECT field_label, field_name, field_type, field_options, field_size, field_max,
+            field_default, field_required, field_rank, field_order
+     FROM vicidial_lists_fields WHERE list_id = ? AND field_type NOT IN ('HIDDEN','HIDEBLOB','BUTTON')
+     ORDER BY field_rank, field_order LIMIT 100`,
+    [listId],
+    [],
+  );
+}
+
+async function agentCustomFields(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
+  if (!leadId) return badRequest(res, 'lead_id_required');
+  const [lead] = await rows('SELECT list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []);
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const listId = Number(lead.list_id || 0);
+
+  const defs = await agentCustomFieldDefs(listId);
+  if (!defs.length) return res.json({ ok: true, listId, fields: [], values: {} });
+  let values = {};
+  try {
+    const [row] = await rows(`SELECT * FROM \`custom_${listId}\` WHERE lead_id = ? LIMIT 1`, [leadId], []);
+    if (row) values = row;
+  } catch { /* custom table may not exist yet */ }
+  const fields = defs.filter((d) => customColOk(d.field_label)).map((d) => ({
+    label: d.field_label,
+    description: d.field_name || d.field_label,
+    type: d.field_type,
+    options: String(d.field_options || '').split(/\r\n|\r|\n/).filter(Boolean),
+    size: d.field_size,
+    max: d.field_max,
+    required: d.field_required === 'Y',
+    readonly: !CUSTOM_EDITABLE_TYPES.includes(d.field_type),
+    value: values[d.field_label] != null ? String(values[d.field_label]) : String(d.field_default || ''),
+  }));
+  return res.json({ ok: true, listId, fields });
+}
+
+async function agentCustomFieldsSave(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(req.body?.lead_id || 0) || Number(live.lead_id || 0);
+  if (!leadId || leadId !== Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'lead_not_active' });
+  const [lead] = await rows('SELECT list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []);
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const listId = Number(lead.list_id || 0);
+
+  const defs = await agentCustomFieldDefs(listId);
+  const editable = new Map(defs
+    .filter((d) => CUSTOM_EDITABLE_TYPES.includes(d.field_type) && customColOk(d.field_label))
+    .map((d) => [d.field_label, d]));
+  const incoming = req.body?.values || {};
+  const cols = [];
+  const params = [];
+  for (const [col, val] of Object.entries(incoming)) {
+    if (!editable.has(col)) continue;
+    cols.push(col);
+    params.push(cleanText(val, Number(editable.get(col).field_max) || 255));
+  }
+  if (!cols.length) return badRequest(res, 'no_fields');
+
+  try {
+    // Upsert: unchanged UPDATEs report 0 affected rows, so a plain
+    // update-then-insert would false-trigger duplicate inserts.
+    await execute(
+      `INSERT INTO \`custom_${listId}\` (lead_id, ${cols.map((c) => `\`${c}\``).join(', ')})
+       VALUES (?, ${cols.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(', ')}`,
+      [leadId, ...params],
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'custom_fields_save_failed' });
+  }
+}
+
 // LEADINFOview port (core): lead detail + its call history + callback row.
 async function agentLeadInfo(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
@@ -12379,6 +12465,8 @@ app.get('/api/agent/script', requireAgentAccess, agentScript);
 app.get('/api/agent/web-forms', requireAgentAccess, agentWebForms);
 app.post('/api/agent/dial-next', requireAgentAccess, agentDialNext);
 app.post('/api/agent/preview-skip', requireAgentAccess, agentPreviewSkip);
+app.get('/api/agent/custom-fields', requireAgentAccess, agentCustomFields);
+app.put('/api/agent/custom-fields', requireAgentAccess, agentCustomFieldsSave);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
