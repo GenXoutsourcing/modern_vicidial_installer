@@ -6559,6 +6559,22 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
   outbound_cid, webphone_dialpad, webphone_auto_answer, webphone_dialbox, webphone_mute,
   webphone_volume, webphone_debug, webphone_layout, webphone_settings`;
 
+// CONFBRIDGE servers keep agent rooms in vicidial_confbridges and agents join
+// with a '2'-prefixed exten (legacy $conf_table / $session_prepend logic);
+// customers join the plain conf exten either way.
+const confEngineCache = new Map();
+async function serverConfInfo(serverIp) {
+  if (confEngineCache.has(serverIp)) return confEngineCache.get(serverIp);
+  const [row] = await rows('SELECT conf_engine FROM servers WHERE server_ip = ? LIMIT 1', [serverIp], []);
+  const confbridge = String(row?.conf_engine || '') === 'CONFBRIDGE';
+  const info = {
+    confTable: confbridge ? 'vicidial_confbridges' : 'vicidial_conferences',
+    agentPrefix: confbridge ? '2' : '',
+  };
+  confEngineCache.set(serverIp, info);
+  return info;
+}
+
 // Port of the legacy webphone iframe URL build (agc/vicidial.php ~5138-5267).
 // Returns null when the phone is not a webphone.
 async function buildWebphoneUrl(phone, userGroup, confExten, reqHost) {
@@ -6787,10 +6803,12 @@ async function agentLogin(req, res) {
 
   try {
     // Conference: reuse a previously reserved room for this phone, else grab a
-    // blank one (legacy UPDATE-where-blank LIMIT 1 pattern).
+    // blank one (legacy UPDATE-where-blank LIMIT 1 pattern) — from the table
+    // matching the server's conf engine.
+    const confInfo = await serverConfInfo(phone.server_ip);
     let confExten = null;
     const [prev] = await rows(
-      'SELECT conf_exten FROM vicidial_conferences WHERE extension = ? AND server_ip = ? LIMIT 1',
+      `SELECT conf_exten FROM ${confInfo.confTable} WHERE extension = ? AND server_ip = ? LIMIT 1`,
       [phone.extension, phone.server_ip],
       [],
     );
@@ -6798,11 +6816,11 @@ async function agentLogin(req, res) {
       confExten = prev.conf_exten;
     } else {
       await execute(
-        "UPDATE vicidial_conferences SET extension = ?, leave_3way = '0' WHERE server_ip = ? AND (extension = '' OR extension IS NULL) LIMIT 1",
+        `UPDATE ${confInfo.confTable} SET extension = ?, leave_3way = '0' WHERE server_ip = ? AND (extension = '' OR extension IS NULL) LIMIT 1`,
         [phone.extension, phone.server_ip],
       );
       const [reserved] = await rows(
-        'SELECT conf_exten FROM vicidial_conferences WHERE server_ip = ? AND (extension = ? OR extension = ?) LIMIT 1',
+        `SELECT conf_exten FROM ${confInfo.confTable} WHERE server_ip = ? AND (extension = ? OR extension = ?) LIMIT 1`,
         [phone.server_ip, phone.extension, user],
         [],
       );
@@ -6890,7 +6908,8 @@ async function agentLogin(req, res) {
            (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
             cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
          VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
-        [phone.server_ip, callerCode, `Channel: ${dialString}`, `Context: ${context}`, `Exten: ${confExten}`,
+        [phone.server_ip, callerCode, `Channel: ${dialString}`, `Context: ${context}`,
+          `Exten: ${confInfo.agentPrefix}${confExten}`,
           `Callerid: "${callerCode}" <${campaign.campaign_cid || ''}>`],
       );
     }
@@ -6934,6 +6953,7 @@ async function agentWebphoneCall(req, res) {
     [live.campaign_id],
     [],
   );
+  const confInfo = await serverConfInfo(live.server_ip);
   const protodial = (phone.protocol === 'EXTERNAL' || phone.protocol === 'Local') ? 'Local' : (phone.protocol || 'SIP');
   const queryCID = `ACagcW${Math.floor(Date.now() / 1000)}${String(user).slice(0, 8)}`.slice(0, 20);
   await execute(
@@ -6942,7 +6962,7 @@ async function agentWebphoneCall(req, res) {
         cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
      VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
     [live.server_ip, queryCID, `Channel: ${protodial}/${phone.extension}`,
-      `Context: ${phone.ext_context || 'default'}`, `Exten: ${live.conf_exten}`,
+      `Context: ${phone.ext_context || 'default'}`, `Exten: ${confInfo.agentPrefix}${live.conf_exten}`,
       `Callerid: "${queryCID}" <${campaign?.campaign_cid || ''}>`],
   );
   return res.json({ ok: true, live });
@@ -7192,8 +7212,9 @@ async function agentLogout(req, res) {
       "DELETE FROM web_client_sessions WHERE extension = ? AND server_ip = ? AND program = 'vicidial'",
       [live.extension, live.server_ip],
     ).catch(() => {});
+    const confInfo = await serverConfInfo(live.server_ip);
     await execute(
-      "UPDATE vicidial_conferences SET extension = '' WHERE server_ip = ? AND extension = ?",
+      `UPDATE ${confInfo.confTable} SET extension = '' WHERE server_ip = ? AND extension = ?`,
       [live.server_ip, live.extension],
     ).catch(() => {});
 
