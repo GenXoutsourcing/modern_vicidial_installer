@@ -6865,6 +6865,7 @@ async function agentLogin(req, res) {
     // Webphone agents dial themselves into the session from the iframe; only
     // hard phones get the manager Originate (legacy vicidial.php ~5140).
     const webphone = await buildWebphoneUrl(phone, req.genxUser.userGroup, confExten, req.headers?.host || '');
+    await execute('DELETE FROM vicidial_session_data WHERE user = ?', [user]);
     await execute(
       'INSERT INTO vicidial_session_data SET session_name = ?, user = ?, campaign_id = ?, server_ip = ?, conf_exten = ?, extension = ?, login_time = NOW(), webphone_url = ?, agent_login_call = ?',
       [sessionName, user, campaignId, phone.server_ip, confExten, phone.extension, webphone?.url || '', ''],
@@ -7001,10 +7002,10 @@ async function agentDispo(req, res) {
     await execute('UPDATE vicidial_list SET status = ?, user = ? WHERE lead_id = ?', [dispo, user, leadId]);
 
     // Tag the most recent call-log row for this lead (outbound then inbound).
-    const fourHoursAgo = new Date(Date.now() - 4 * 3600000).toISOString().slice(0, 19).replace('T', ' ');
+    // Window computed in SQL so it uses the DB server's clock/timezone.
     const logResult = await execute(
-      'UPDATE vicidial_log SET status = ?, user = ? WHERE lead_id = ? AND user = ? AND call_date > ? ORDER BY uniqueid DESC LIMIT 1',
-      [dispo, user, leadId, user, fourHoursAgo],
+      'UPDATE vicidial_log SET status = ?, user = ? WHERE lead_id = ? AND user = ? AND call_date > NOW() - INTERVAL 4 HOUR ORDER BY uniqueid DESC LIMIT 1',
+      [dispo, user, leadId, user],
     );
     if (!logResult.affectedRows) {
       await execute(
