@@ -729,6 +729,57 @@ h2 {
   font-weight: 750;
 }
 
+.rank-grids {
+  display: grid;
+  gap: 12px;
+}
+
+.rank-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.rank-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: rgba(4, 12, 23, 0.6);
+}
+
+.rank-row > span {
+  min-width: 120px;
+  color: var(--text);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.rank-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.rank-row select,
+.rank-row input {
+  min-height: 30px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: rgba(3, 9, 18, 0.8);
+  color: var(--text);
+}
+
+.rank-row input {
+  width: 90px;
+}
+
 .campaign-tool-head h3 {
   margin: 2px 0 0;
   color: var(--text);

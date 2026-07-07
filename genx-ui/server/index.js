@@ -3610,6 +3610,117 @@ async function whiteboardReport(req, res) {
   return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
 }
 
+// Mirrors legacy admin.php ADD=6 (user delete): remove the user row plus their
+// campaign/in-group rank rows, deactivate remote agents they started.
+async function deleteUser(req, res) {
+  if (!requireModify(req, res, 'deleteUsers')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_user_id');
+  if (id === req.genxUser.user) return res.status(403).json({ ok: false, error: 'cannot_delete_self' });
+  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, target.user_group)) {
+    return res.status(403).json({ ok: false, error: 'user_not_allowed' });
+  }
+  try {
+    await execute('DELETE FROM vicidial_users WHERE user = ? LIMIT 1', [id]);
+    await execute('DELETE FROM vicidial_campaign_agents WHERE user = ?', [id]).catch(() => {});
+    await execute('DELETE FROM vicidial_inbound_group_agents WHERE user = ?', [id]).catch(() => {});
+    await execute("UPDATE vicidial_remote_agents SET status = 'INACTIVE' WHERE user_start = ?", [id]).catch(() => {});
+    await adminLog(req, 'USERS', 'DELETE', id, 'GENX DELETE USER', 'DELETE FROM vicidial_users + agent rank rows', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'user_delete_failed' });
+  }
+}
+
+// Per-user campaign/in-group rank grids from legacy user modify (ADD=3).
+async function getUserRanks(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user_id');
+
+  const campaignParams = [id];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_rank, campaign_grade
+     FROM vicidial_campaign_agents WHERE user = ? AND ${campaignWhere}
+     ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+
+  const groupParams = [id];
+  const groupWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'group_id', groupParams);
+  const ingroups = await rows(
+    `SELECT group_id, group_rank, group_grade, daily_limit
+     FROM vicidial_inbound_group_agents WHERE user = ? AND ${groupWhere}
+     ORDER BY group_id ASC LIMIT 500`,
+    groupParams,
+    [],
+  );
+
+  return res.json({ ok: true, campaigns, ingroups });
+}
+
+async function saveUserRanks(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user_id');
+  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, target.user_group)) {
+    return res.status(403).json({ ok: false, error: 'user_not_allowed' });
+  }
+
+  const campaigns = Array.isArray(req.body?.campaigns) ? req.body.campaigns.slice(0, 200) : [];
+  const ingroups = Array.isArray(req.body?.ingroups) ? req.body.ingroups.slice(0, 200) : [];
+
+  try {
+    for (const entry of campaigns) {
+      const campaignId = cleanId(entry.campaign_id, 20);
+      if (!campaignId || !scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) continue;
+      const rank = cleanInt(entry.campaign_rank, 0, -9, 9);
+      const grade = cleanInt(entry.campaign_grade, 1, 1, 10);
+      const updated = await execute(
+        'UPDATE vicidial_campaign_agents SET campaign_rank = ?, campaign_grade = ? WHERE user = ? AND campaign_id = ?',
+        [rank, grade, id, campaignId],
+      );
+      if (updated.affectedRows < 1) {
+        await execute(
+          `INSERT INTO vicidial_campaign_agents (user, campaign_id, campaign_rank, campaign_weight, calls_today, campaign_grade)
+           VALUES (?, ?, ?, 0, 0, ?)`,
+          [id, campaignId, rank, grade],
+        ).catch(() => {});
+      }
+    }
+
+    for (const entry of ingroups) {
+      const groupId = cleanId(entry.group_id, 20);
+      if (!groupId || !scopeAllows(req.genxUser?.permissions?.allowedQueueGroups, groupId)) continue;
+      const rank = cleanInt(entry.group_rank, 0, -9, 9);
+      const grade = cleanInt(entry.group_grade, 1, 1, 10);
+      const dailyLimit = cleanInt(entry.daily_limit, -1, -1, 99999);
+      const updated = await execute(
+        'UPDATE vicidial_inbound_group_agents SET group_rank = ?, group_grade = ?, daily_limit = ? WHERE user = ? AND group_id = ?',
+        [rank, grade, dailyLimit, id, groupId],
+      );
+      if (updated.affectedRows < 1) {
+        await execute(
+          `INSERT INTO vicidial_inbound_group_agents (user, group_id, group_rank, group_weight, calls_today, group_grade, daily_limit)
+           VALUES (?, ?, ?, 0, 0, ?, ?)`,
+          [id, groupId, rank, grade, dailyLimit],
+        ).catch(() => {});
+      }
+    }
+
+    await adminLog(req, 'USERS', 'MODIFY', id, 'GENX MODIFY USER RANKS', 'UPDATE vicidial_campaign_agents / vicidial_inbound_group_agents', `${campaigns.length} campaigns, ${ingroups.length} ingroups`);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'user_ranks_save_failed' });
+  }
+}
+
 // Cascade mirrors legacy admin.php ADD=61 (campaign delete): callbacks are
 // archived before deletion, and every campaign-scoped config/stats table is
 // purged so no orphan rows remain.
@@ -5505,6 +5616,9 @@ app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
 app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
+app.delete('/api/admin/users/:id', requireAccess, deleteUser);
+app.get('/api/admin/users/:id/ranks', requireAccess, getUserRanks);
+app.post('/api/admin/users/:id/ranks', requireAccess, saveUserRanks);
 app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);

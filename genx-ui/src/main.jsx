@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -449,6 +449,7 @@ function userCanDelete(user, entity) {
   if (entity === 'callMenuOptions') return Boolean(user?.modifyIngroups);
   if (entity === 'filterPhoneGroups') return Boolean(user?.deleteFilters);
   if (entity === 'campaigns') return Boolean(user?.deleteCampaigns);
+  if (entity === 'users') return Boolean(user?.deleteUsers);
   return false;
 }
 
@@ -3367,6 +3368,165 @@ function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, o
   );
 }
 
+const RANK_OPTIONS = ['9', '8', '7', '6', '5', '4', '3', '2', '1', '0', '-1', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9'];
+const GRADE_OPTIONS = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1'];
+
+// Mirrors legacy user modify (ADD=3) connections: stats/status/time-sheet
+// report links (legacy pages until built natively) and the per-user
+// campaign / in-group rank grids.
+function UserConnections({ admin, userId, token, onLogout }) {
+  const targetUser = String(userId || '');
+  const [ranks, setRanks] = useState(null);
+  const [saveState, setSaveState] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setRanks(null);
+    setSaveState('');
+    if (!targetUser) return undefined;
+    apiFetch(`/admin/users/${encodeURIComponent(targetUser)}/ranks`, token)
+      .then((payload) => {
+        if (!cancelled) setRanks({ campaigns: payload.campaigns || [], ingroups: payload.ingroups || [] });
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setRanks({ campaigns: [], ingroups: [], error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetUser, token, onLogout]);
+
+  const legacyLinks = [
+    ['User Stats', `/vicidial/user_stats.php?user=${encodeURIComponent(targetUser)}`],
+    ['User Status', `/vicidial/user_status.php?user=${encodeURIComponent(targetUser)}`],
+    ['Time Sheet', `/vicidial/AST_agent_time_sheet.php?agent=${encodeURIComponent(targetUser)}`],
+    ['Logins Summary', `/vicidial/user_logins_report.php?user=${encodeURIComponent(targetUser)}`],
+  ];
+
+  function setCampaignRank(campaignId, key, value) {
+    setRanks((current) => ({
+      ...current,
+      campaigns: current.campaigns.map((row) => (row.campaign_id === campaignId ? { ...row, [key]: value } : row)),
+    }));
+  }
+
+  function setGroupRank(groupId, key, value) {
+    setRanks((current) => ({
+      ...current,
+      ingroups: current.ingroups.map((row) => (row.group_id === groupId ? { ...row, [key]: value } : row)),
+    }));
+  }
+
+  async function saveRanks() {
+    setSaveState('working');
+    try {
+      await apiFetch(`/admin/users/${encodeURIComponent(targetUser)}/ranks`, token, {
+        method: 'POST',
+        body: JSON.stringify({ campaigns: ranks.campaigns, ingroups: ranks.ingroups }),
+      });
+      setSaveState('Ranks saved');
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+    }
+  }
+
+  if (!targetUser) return null;
+
+  const hasRankRows = Boolean(ranks && (ranks.campaigns.length || ranks.ingroups.length));
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>Reports and rank grids</h3>
+        </div>
+        <Compass size={20} aria-hidden="true" />
+      </div>
+      <div className="connection-actions">
+        {legacyLinks.map(([label, href]) => (
+          <a key={label} className="row-action" href={href} target="_blank" rel="noreferrer">
+            <ExternalLink size={15} aria-hidden="true" />
+            {label}
+          </a>
+        ))}
+      </div>
+      {hasRankRows && (
+        <div className="rank-grids">
+          {ranks.campaigns.length > 0 && (
+            <div className="rank-grid">
+              <p className="connection-summary">Campaign ranks</p>
+              {ranks.campaigns.map((row) => (
+                <div className="rank-row" key={row.campaign_id}>
+                  <span>{row.campaign_id}</span>
+                  <label>
+                    Rank
+                    <select value={String(row.campaign_rank ?? '0')} onChange={(event) => setCampaignRank(row.campaign_id, 'campaign_rank', event.target.value)}>
+                      {ensureOption(RANK_OPTIONS, row.campaign_rank).map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Grade
+                    <select value={String(row.campaign_grade ?? '1')} onChange={(event) => setCampaignRank(row.campaign_id, 'campaign_grade', event.target.value)}>
+                      {ensureOption(GRADE_OPTIONS, row.campaign_grade).map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                </div>
+              ))}
+            </div>
+          )}
+          {ranks.ingroups.length > 0 && (
+            <div className="rank-grid">
+              <p className="connection-summary">In-group ranks</p>
+              {ranks.ingroups.map((row) => (
+                <div className="rank-row" key={row.group_id}>
+                  <span>{row.group_id}</span>
+                  <label>
+                    Rank
+                    <select value={String(row.group_rank ?? '0')} onChange={(event) => setGroupRank(row.group_id, 'group_rank', event.target.value)}>
+                      {ensureOption(RANK_OPTIONS, row.group_rank).map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Grade
+                    <select value={String(row.group_grade ?? '1')} onChange={(event) => setGroupRank(row.group_id, 'group_grade', event.target.value)}>
+                      {ensureOption(GRADE_OPTIONS, row.group_grade).map((value) => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    Daily Limit
+                    <input
+                      type="number"
+                      min="-1"
+                      value={row.daily_limit ?? -1}
+                      onChange={(event) => setGroupRank(row.group_id, 'daily_limit', event.target.value)}
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="connection-actions">
+            <button type="button" className="row-action" disabled={saveState === 'working'} onClick={saveRanks}>
+              <Save size={15} aria-hidden="true" />
+              {saveState === 'working' ? 'Saving' : 'Save Ranks'}
+            </button>
+            {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
+          </div>
+        </div>
+      )}
+      {ranks && !hasRankRows && (
+        <p className="connection-summary">No campaign or in-group rank rows yet - they appear after the agent logs in, or when set here in legacy.</p>
+      )}
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -3442,7 +3602,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     }
   }
 
-  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity);
+  const isOwnUser = action.entity === 'users' && String(form.user || '') === String(user?.user || '');
+  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -3463,6 +3624,15 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'users' && (
+          <UserConnections
+            admin={admin}
+            userId={form.user}
+            token={token}
+            onLogout={onLogout}
           />
         )}
 
