@@ -5060,7 +5060,7 @@ function CampaignTable({ campaigns }) {
   );
 }
 
-function CommandView({ dashboard }) {
+function CommandView({ dashboard, admin }) {
   const metrics = dashboard?.metrics || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
 
@@ -5116,6 +5116,8 @@ function CommandView({ dashboard }) {
           <MetricCard key={card.label} {...card} />
         ))}
       </section>
+
+      <AdminSummary admin={admin} />
 
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
@@ -5179,7 +5181,6 @@ function CampaignsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar
         entity="campaigns"
         label="Campaign"
@@ -5287,7 +5288,6 @@ function CampaignToolsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar
         entity="pauseCodes"
         label="Pause Code"
@@ -5399,7 +5399,6 @@ function UsersView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="users" label="User" user={user} onAction={onAction}>
         <p className="action-copy">Add operators and control the common VICIdial permission flags from GenX.</p>
       </ActionBar>
@@ -5447,7 +5446,6 @@ function ListsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="lists" label="List" user={user} onAction={onAction}>
         <p className="action-copy">Create lead lists, assign campaigns, and control list status without opening classic admin.</p>
       </ActionBar>
@@ -5717,7 +5715,6 @@ function DncView({ admin, user, token }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <section className="metric-grid admin-metric-grid" aria-label="DNC metrics">
         <MetricCard icon={ShieldCheck} label="Campaign DNC Lists" value={formatNumber(dncCampaigns.length)} detail="Campaigns with DNC enabled" accent="#00d9ff" />
         <MetricCard icon={LockKeyhole} label="Delete Access" value={canManage ? 'Allowed' : 'No'} detail="VICIdial delete_from_dnc permission" accent="#ffd166" />
@@ -5808,7 +5805,6 @@ function InboundView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="inbound" label="In-Group" user={user} onAction={onAction}>
         <p className="action-copy">Build inbound groups and tune queue basics from the GenX control layer.</p>
       </ActionBar>
@@ -5873,7 +5869,6 @@ function UserGroupsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="userGroups" label="Group" user={user} onAction={onAction}>
         <p className="action-copy">Control campaign access, report access, queue visibility, and manager scope from the GenX permission layer.</p>
       </ActionBar>
@@ -5919,7 +5914,6 @@ function DidsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="dids" label="DID" user={user} onAction={onAction}>
         <p className="action-copy">Route inbound numbers to groups, users, phones, menus, voicemail, and filtered fallback paths.</p>
       </ActionBar>
@@ -5966,7 +5960,6 @@ function PhonesView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="phones" label="Phone" user={user} onAction={onAction}>
         <p className="action-copy">Manage phone endpoints, SIP settings, webphone toggles, and user-group ownership.</p>
       </ActionBar>
@@ -6056,7 +6049,6 @@ function ScriptsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="scripts" label="Script" user={user} onAction={onAction}>
         <p className="action-copy">Manage agent scripts, prompt text, active state, color, and user-group ownership.</p>
       </ActionBar>
@@ -6101,7 +6093,6 @@ function LeadFiltersView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="leadFilters" label="Filter" user={user} onAction={onAction}>
         <p className="action-copy">Manage VICIdial lead filter rules used by campaigns and manual dialing controls.</p>
       </ActionBar>
@@ -6145,7 +6136,6 @@ function FilterPhoneGroupsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="filterPhoneGroups" label="Filter Group" user={user} onAction={onAction}>
         <p className="action-copy">Manage phone-number filter groups used by DID and call menu filter routing.</p>
       </ActionBar>
@@ -6189,7 +6179,6 @@ function CallTimesView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="callTimes" label="Call Time" user={user} onAction={onAction}>
         <p className="action-copy">Manage dialing windows, day-specific overrides, after-hours audio, state rules, and holiday blocks.</p>
       </ActionBar>
@@ -6237,7 +6226,6 @@ function CallMenusView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="callMenus" label="Call Menu" user={user} onAction={onAction}>
         <p className="action-copy">Manage IVR call menus, prompt files, timeout handling, call-time checks, and DTMF logging.</p>
       </ActionBar>
@@ -6315,7 +6303,6 @@ function ShiftsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="shifts" label="Shift" user={user} onAction={onAction}>
         <p className="action-copy">Manage login shift windows used by user-group enforcement and reporting visibility.</p>
       </ActionBar>
@@ -6362,7 +6349,6 @@ function StatusesView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar
         entity="statuses"
         label="System Status"
@@ -6950,7 +6936,6 @@ function DropListsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="dropLists" label="Drop List" user={user} onAction={onAction}>
         <p className="action-copy">Scheduled jobs that move dropped/status-matched calls into a callback list for redial.</p>
       </ActionBar>
@@ -6982,7 +6967,6 @@ function MediaToolsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <section className="admin-grid">
         <Panel
           eyebrow="Security"
@@ -7172,7 +7156,6 @@ function RemoteAgentsView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar entity="remoteAgents" label="Remote Agent" user={user} onAction={onAction}>
         <p className="action-copy">Off-system agents dialed at an external number: ACD calls route out to their phone with no agent screen.</p>
       </ActionBar>
@@ -7271,7 +7254,6 @@ function SystemView({ admin, user, onAction }) {
 
   return (
     <>
-      <AdminSummary admin={admin} />
       <ActionBar
         entity="servers"
         label="Server"
@@ -7384,7 +7366,7 @@ function SystemView({ admin, user, onAction }) {
 }
 
 function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
-  if (activeView === 'command') return <CommandView dashboard={dashboard} />;
+  if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
@@ -7414,7 +7396,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
-  return <CommandView dashboard={dashboard} />;
+  return <CommandView dashboard={dashboard} admin={admin} />;
 }
 
 function AdminShell({ token, user, onLogout }) {
