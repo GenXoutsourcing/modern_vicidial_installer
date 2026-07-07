@@ -5928,6 +5928,190 @@ async function exportCallbacksReport(req, res) {
   return csvExportSender(req, res, `callbacks_export_${beginDate}_${endDate}.csv`, EXPORT_CALLBACK_COLUMNS, callbacks);
 }
 
+// Native port of call_report_export_carrier.php: standard call-export rows
+// with the carrier-log and dial-log columns joined on.
+const EXPORT_CARRIER_COLUMNS = [
+  ...EXPORT_CALL_COLUMNS,
+  'carrier_uniqueid', 'carrier_call_date', 'carrier_server_ip', 'hangup_cause', 'dialstatus',
+  'carrier_channel', 'dial_time', 'answered_time', 'carrier_sip_hangup_cause', 'carrier_sip_hangup_reason',
+  'caller_code', 'dial_log_call_date', 'dial_log_extension', 'dial_log_channel', 'dial_log_context',
+  'dial_log_timeout', 'outbound_cid', 'dial_log_sip_hangup_cause', 'dial_log_sip_hangup_reason',
+];
+
+async function exportCallsCarrierReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+  if (!campaignIds.length) return badRequest(res, 'campaign_required');
+
+  const leadCols = 'vi.vendor_lead_code, vi.source_id, vi.gmt_offset_now, vi.phone_code, vi.title, vi.first_name, vi.middle_initial, vi.last_name, vi.address1, vi.address2, vi.address3, vi.city, vi.state, vi.province, vi.postal_code, vi.country_code, vi.gender, vi.date_of_birth, vi.alt_phone, vi.email, vi.security_phrase, vi.comments, vi.rank, vi.owner';
+  const ph = campaignIds.map(() => '?').join(',');
+  const results = await rows(
+    `SELECT vl.call_date, vl.phone_number, vl.status, vl.user, vu.full_name, vl.campaign_id,
+            vl.list_id, ${leadCols}, vl.length_in_sec, vl.user_group, vl.alt_dial,
+            vl.lead_id, vl.uniqueid,
+            vcl.uniqueid AS carrier_uniqueid, vcl.call_date AS carrier_call_date,
+            vcl.server_ip AS carrier_server_ip, vcl.hangup_cause, vcl.dialstatus,
+            vcl.channel AS carrier_channel, vcl.dial_time, vcl.answered_time,
+            vcl.sip_hangup_cause AS carrier_sip_hangup_cause, vcl.sip_hangup_reason AS carrier_sip_hangup_reason,
+            vcl.caller_code,
+            vdl.call_date AS dial_log_call_date, vdl.extension AS dial_log_extension,
+            vdl.channel AS dial_log_channel, vdl.context AS dial_log_context,
+            vdl.timeout AS dial_log_timeout, vdl.outbound_cid,
+            vdl.sip_hangup_cause AS dial_log_sip_hangup_cause, vdl.sip_hangup_reason AS dial_log_sip_hangup_reason
+     FROM vicidial_log vl
+     JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
+     LEFT JOIN vicidial_users vu ON vu.user = vl.user
+     LEFT JOIN vicidial_carrier_log vcl
+       ON SUBSTR(vcl.uniqueid, 1, 10) = SUBSTR(vl.uniqueid, 1, 10) AND vcl.lead_id = vl.lead_id
+     LEFT JOIN vicidial_dial_log vdl
+       ON vdl.caller_code = vcl.caller_code AND vdl.lead_id = vcl.lead_id
+     WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+     ORDER BY vl.call_date ASC LIMIT 100000`,
+    [begin, end, ...campaignIds],
+    [],
+  );
+  await adminLog(req, 'REPORTS', 'EXPORT', '', 'GENX EXPORT CALLS CARRIER', 'SELECT FROM vicidial_log+carrier_log', `${results.length} rows`);
+  return csvExportSender(req, res, `calls_carrier_export_${beginDate}_${endDate}.csv`, EXPORT_CARRIER_COLUMNS, results);
+}
+
+// Native port of called_counts_multilist_report.php: per list, leads with any
+// call activity in the date range vs total leads.
+async function calledCountsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const listIdsRaw = String(req.query?.list_ids || '').split(',').map((item) => cleanId(item, 30)).filter(Boolean).slice(0, 100);
+
+  const listParams = [];
+  const listWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', listParams);
+  const lists = await rows(
+    `SELECT list_id, list_name, campaign_id FROM vicidial_lists WHERE ${listWhere} ORDER BY list_id ASC LIMIT 500`,
+    listParams,
+    [],
+  );
+  if (!listIdsRaw.length) return res.json({ ok: true, lists, entries: null, range: { beginDate, endDate } });
+  const allowed = new Set(lists.map((row) => String(row.list_id)));
+  const listIds = listIdsRaw.filter((id) => allowed.has(id));
+  if (!listIds.length) return res.json({ ok: true, lists, entries: [], range: { beginDate, endDate } });
+
+  const ph = listIds.map(() => '?').join(',');
+  const [totals, outboundCalled, inboundCalled] = await Promise.all([
+    rows(
+      `SELECT list_id, COUNT(*) AS leads FROM vicidial_list WHERE list_id IN (${ph}) GROUP BY list_id`,
+      listIds,
+      [],
+    ),
+    rows(
+      `SELECT vi.list_id, COUNT(DISTINCT vl.lead_id) AS called_leads, COUNT(*) AS calls
+       FROM vicidial_log vl JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
+       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vi.list_id IN (${ph})
+       GROUP BY vi.list_id`,
+      [begin, end, ...listIds],
+      [],
+    ),
+    rows(
+      `SELECT vi.list_id, COUNT(DISTINCT cl.lead_id) AS called_leads, COUNT(*) AS calls
+       FROM vicidial_closer_log cl JOIN vicidial_list vi ON vi.lead_id = cl.lead_id
+       WHERE cl.call_date >= ? AND cl.call_date <= ? AND vi.list_id IN (${ph})
+       GROUP BY vi.list_id`,
+      [begin, end, ...listIds],
+      [],
+    ),
+  ]);
+  const outMap = new Map(outboundCalled.map((row) => [String(row.list_id), row]));
+  const inMap = new Map(inboundCalled.map((row) => [String(row.list_id), row]));
+  const entries = totals.map((row) => {
+    const key = String(row.list_id);
+    const meta = lists.find((item) => String(item.list_id) === key);
+    return {
+      list_id: row.list_id,
+      list_name: meta?.list_name || '',
+      campaign_id: meta?.campaign_id || '',
+      leads: Number(row.leads || 0),
+      outbound_called_leads: Number(outMap.get(key)?.called_leads || 0),
+      outbound_calls: Number(outMap.get(key)?.calls || 0),
+      inbound_called_leads: Number(inMap.get(key)?.called_leads || 0),
+      inbound_calls: Number(inMap.get(key)?.calls || 0),
+    };
+  });
+  return res.json({ ok: true, lists, entries, range: { beginDate, endDate } });
+}
+
+// Native port of AST_admin_report.php: administration change log entries.
+async function adminChangeLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const userId = cleanId(req.query?.user, 20);
+  const section = cleanText(req.query?.section, 30).replace(/[^-_A-Za-z0-9 ]/g, '');
+  let filterSql = '';
+  if (userId) {
+    filterSql += ' AND user = ?';
+    params.push(userId);
+  }
+  if (section) {
+    filterSql += ' AND event_section = ?';
+    params.push(section);
+  }
+  const [entries, sections] = await Promise.all([
+    rows(
+      `SELECT admin_log_id, event_date, user, ip_address, event_section, event_type, record_id,
+              event_code, SUBSTRING(event_sql, 1, 500) AS event_sql, user_group
+       FROM vicidial_admin_log
+       WHERE event_date >= ? AND event_date <= ?${filterSql}
+       ORDER BY event_date DESC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows('SELECT DISTINCT event_section FROM vicidial_admin_log ORDER BY event_section LIMIT 100', [], []),
+  ]);
+  return res.json({ ok: true, entries, sections: sections.map((row) => row.event_section), range: { beginDate, endDate } });
+}
+
+// Native port of AST_dial_log_report.php: raw dial-log rows for one day range.
+async function dialLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const serverIp = cleanText(req.query?.server_ip, 20).replace(/[^0-9.]/g, '');
+  const hangupCause = cleanId(req.query?.sip_hangup_cause, 10);
+  let filterSql = '';
+  if (serverIp) {
+    filterSql += ' AND server_ip = ?';
+    params.push(serverIp);
+  }
+  if (hangupCause) {
+    filterSql += ' AND sip_hangup_cause = ?';
+    params.push(hangupCause);
+  }
+  const [entries, servers] = await Promise.all([
+    rows(
+      `SELECT caller_code, lead_id, server_ip, call_date, extension, channel, context, timeout,
+              outbound_cid, sip_hangup_cause, sip_hangup_reason, uniqueid
+       FROM vicidial_dial_log
+       WHERE call_date >= ? AND call_date <= ?${filterSql}
+       ORDER BY call_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows("SELECT server_ip, server_description FROM servers WHERE active_asterisk_server = 'Y' ORDER BY server_ip ASC LIMIT 100", [], []),
+  ]);
+  return res.json({ ok: true, entries, servers, range: { beginDate, endDate } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9638,6 +9822,10 @@ app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
 app.get('/api/reports/export-calls', requireAccess, exportCallsReport);
 app.get('/api/reports/export-leads', requireAccess, exportLeadsReport);
 app.get('/api/reports/export-callbacks', requireAccess, exportCallbacksReport);
+app.get('/api/reports/export-calls-carrier', requireAccess, exportCallsCarrierReport);
+app.get('/api/reports/called-counts', requireAccess, calledCountsReport);
+app.get('/api/reports/admin-log', requireAccess, adminChangeLogReport);
+app.get('/api/reports/dial-log', requireAccess, dialLogReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

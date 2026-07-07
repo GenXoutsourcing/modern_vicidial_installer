@@ -10886,6 +10886,21 @@ function ExportsReportView({ token, onLogout }) {
             </button>
           </div>
         </Panel>
+        <Panel eyebrow="Export" title="Export Calls by Carrier" icon={PhoneCall}>
+          <p className="connection-summary">Outbound calls with carrier-log and dial-log columns (hangup cause, dialstatus, SIP causes) joined per call. Select at least one campaign.</p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => download(
+                `/reports/export-calls-carrier?${dateQuery}&campaigns=${encodeURIComponent(campaignsSel.join(','))}`,
+                `calls_carrier_export_${beginDate}_${endDate}.csv`,
+              )}
+            >
+              Download Carrier CSV
+            </button>
+          </div>
+        </Panel>
         <Panel eyebrow="Export" title="Callbacks Export" icon={Activity}>
           <p className="connection-summary">Scheduled callbacks with callback time in the date range for your allowed campaigns.</p>
           <div className="modal-actions">
@@ -10902,6 +10917,313 @@ function ExportsReportView({ token, onLogout }) {
           </div>
         </Panel>
       </section>
+    </>
+  );
+}
+
+// Native called_counts_multilist_report.php: leads with call activity per list.
+function CalledCountsReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (listIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (listIds.length) params.set('list_ids', listIds.join(','));
+      const payload = await apiFetch(`/reports/called-counts?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const lists = data?.lists || [];
+  const entries = data?.entries;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Exports</p>
+          <h2>Called Counts by List</h2>
+          <p className="action-copy">Leads with call activity in the date range per selected list.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Lists and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+          </div>
+          <div className="connection-actions">
+            {lists.map((row) => {
+              const id = String(row.list_id);
+              const isSelected = selected.includes(id);
+              return (
+                <button
+                  type="button"
+                  key={id}
+                  className={isSelected ? 'row-action tool-picker-item selected' : 'row-action'}
+                  onClick={() => setSelected(isSelected ? selected.filter((item) => item !== id) : [...selected, id])}
+                >
+                  {row.list_id} - {row.list_name || ''}{isSelected ? ' ✓' : ''}
+                </button>
+              );
+            })}
+            {!lists.length && <span className="connection-summary">No lists available</span>}
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel eyebrow="Counts" title="Called Counts" icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No lists selected"
+            rows={entries.map((row) => ({ ...row, id: String(row.list_id) }))}
+            columns={[
+              { key: 'list_id', label: 'List' },
+              { key: 'list_name', label: 'Name' },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'leads', label: 'Total Leads', render: (row) => formatNumber(row.leads) },
+              { key: 'outbound_called_leads', label: 'Out Called Leads', render: (row) => formatNumber(row.outbound_called_leads) },
+              { key: 'outbound_calls', label: 'Out Calls', render: (row) => formatNumber(row.outbound_calls) },
+              { key: 'inbound_called_leads', label: 'In Called Leads', render: (row) => formatNumber(row.inbound_called_leads) },
+              { key: 'inbound_calls', label: 'In Calls', render: (row) => formatNumber(row.inbound_calls) },
+              { key: 'pct', label: 'Penetration', render: (row) => `${row.leads ? ((row.outbound_called_leads / row.leads) * 100).toFixed(2) : '0.00'}%` },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native AST_admin_report.php: administration change log.
+function AdminChangeLogReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [section, setSection] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (begin, end, sectionFilter) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (sectionFilter) params.set('section', sectionFilter);
+      const payload = await apiFetch(`/reports/admin-log?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load(today, today, '');
+  }, [load, today]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Logs and QA</p>
+          <h2>Administration Change Log</h2>
+          <p className="action-copy">Every admin modification recorded in the change log.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Dates and Section" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(beginDate, endDate, section);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Section</span>
+              <select value={section} onChange={(event) => setSection(event.target.value)}>
+                <option value="">All sections</option>
+                {(data?.sections || []).map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="Changes" title={`Admin Log (${formatNumber((data?.entries || []).length)} rows)`} icon={ShieldCheck} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No admin changes in the date range"
+          rows={(data?.entries || []).map((row) => ({ ...row, id: row.admin_log_id }))}
+          columns={[
+            { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+            { key: 'user', label: 'User' },
+            { key: 'ip_address', label: 'IP' },
+            { key: 'event_section', label: 'Section' },
+            { key: 'event_type', label: 'Type' },
+            { key: 'record_id', label: 'Record' },
+            { key: 'event_code', label: 'Event' },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+}
+
+// Native AST_dial_log_report.php: raw dial-log rows.
+function DialLogReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [serverIp, setServerIp] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (begin, end, server) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (server) params.set('server_ip', server);
+      const payload = await apiFetch(`/reports/dial-log?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load(today, today, '');
+  }, [load, today]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Logs and QA</p>
+          <h2>Dial Log</h2>
+          <p className="action-copy">Raw outbound dial attempts with SIP hangup causes.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Dates and Server" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(beginDate, endDate, serverIp);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Server</span>
+              <select value={serverIp} onChange={(event) => setServerIp(event.target.value)}>
+                <option value="">All servers</option>
+                {(data?.servers || []).map((row) => (
+                  <option key={row.server_ip} value={row.server_ip}>{row.server_ip} - {row.server_description || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="Log" title={`Dial Attempts (${formatNumber((data?.entries || []).length)} rows${(data?.entries || []).length === 2000 ? ', capped' : ''})`} icon={Activity} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No dial-log entries in the date range"
+          rows={(data?.entries || []).map((row, index) => ({ ...row, id: `${row.caller_code}-${index}` }))}
+          columns={[
+            { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
+            { key: 'caller_code', label: 'Caller Code' },
+            { key: 'lead_id', label: 'Lead' },
+            { key: 'server_ip', label: 'Server' },
+            { key: 'extension', label: 'Extension' },
+            { key: 'outbound_cid', label: 'Outbound CID' },
+            { key: 'sip_hangup_cause', label: 'SIP Cause' },
+            { key: 'sip_hangup_reason', label: 'SIP Reason' },
+          ]}
+        />
+      </Panel>
     </>
   );
 }
@@ -11146,6 +11468,9 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportPerformanceComparison') return <PerformanceComparisonReportView token={token} />;
   if (activeView === 'reportUserGroupHourly') return <UserGroupHourlyReportView token={token} />;
   if (activeView === 'reportExports') return <ExportsReportView token={token} />;
+  if (activeView === 'reportCalledCounts') return <CalledCountsReportView token={token} />;
+  if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} />;
+  if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
