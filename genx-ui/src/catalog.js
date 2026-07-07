@@ -89,7 +89,7 @@ export const REPORT_GROUPS = [
       { label: 'Real-Time Main', href: '/vicidial/realtime_report.php?report_display_type=HTML' },
       { label: 'Campaign Summary', href: '/vicidial/AST_timeonVDADallSUMMARY.php' },
       { label: 'Whiteboard', href: '/vicidial/AST_rt_whiteboard_rpt.php' },
-      { label: 'Agent Monitor Log', href: '/vicidial/AST_rt_monitor_log_report.php' },
+      { label: 'Agent Monitor Log', href: '/vicidial/AST_rt_monitor_log_report.php', view: 'reportAgentMonitorLog' },
     ],
   },
   {

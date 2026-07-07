@@ -3454,6 +3454,43 @@ async function dncSearch(req, res) {
   return res.json({ ok: true, entries });
 }
 
+// --- Shared native-report helpers ---
+// Reports take an arbitrary begin/end date (unlike the dashboard's fixed range
+// presets in `dateWhere`/`ranges`), so they get their own small date parser.
+function cleanReportDate(value, fallback) {
+  const text = cleanText(value, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
+}
+
+function parseReportDateRange(req) {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    beginDate: cleanReportDate(req.query?.begin_date, today),
+    endDate: cleanReportDate(req.query?.end_date, today),
+  };
+}
+
+async function agentMonitorLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', params);
+
+  const entries = await rows(
+    `SELECT manager_user, manager_server_ip, manager_phone, agent_user, agent_server_ip,
+            agent_status, campaign_id, lead_id, monitor_start_time, monitor_end_time,
+            monitor_sec, monitor_type
+     FROM vicidial_rt_monitor_log
+     WHERE monitor_start_time BETWEEN ? AND ?
+       AND ${campaignWhere}
+     ORDER BY monitor_start_time DESC
+     LIMIT 2000`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, entries, range: { beginDate, endDate } });
+}
+
 function inboundPayload(body) {
   const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
   const longText = (value) => cleanText(value, 12000);
@@ -5099,6 +5136,7 @@ app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/dnc', requireAccess, bulkDnc);
 app.get('/api/admin/dnc/search', requireAccess, dncSearch);
+app.get('/api/reports/agent-monitor-log', requireAccess, agentMonitorLogReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

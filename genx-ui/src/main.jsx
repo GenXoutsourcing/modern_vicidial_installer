@@ -282,6 +282,49 @@ async function apiFetch(path, token, options = {}) {
   return payload;
 }
 
+function downloadCsv(filename, columns, dataRows) {
+  const escapeCell = (value) => {
+    const text = String(value ?? '');
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const header = columns.map((column) => escapeCell(column.label)).join(',');
+  const lines = dataRows.map((row) => columns.map((column) => escapeCell(column.value(row))).join(','));
+  const csv = [header, ...lines].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function ReportFilterBar({ beginDate, endDate, onBeginDate, onEndDate, onSubmit, loading, children }) {
+  return (
+    <form className="entity-form report-filter-bar" onSubmit={onSubmit}>
+      <div className="field-grid">
+        <label>
+          <span>Begin Date</span>
+          <input type="date" value={beginDate} onChange={(event) => onBeginDate(event.target.value)} />
+        </label>
+        <label>
+          <span>End Date</span>
+          <input type="date" value={endDate} onChange={(event) => onEndDate(event.target.value)} />
+        </label>
+        {children}
+      </div>
+      <div className="modal-actions">
+        <button type="submit" className="primary-action" disabled={loading}>
+          <Search size={16} aria-hidden="true" />
+          {loading ? 'Loading' : 'Run Report'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -3586,7 +3629,7 @@ function DataTable({ columns, rows, emptyLabel }) {
   );
 }
 
-function Panel({ eyebrow, title, icon: Icon, children, className = '' }) {
+function Panel({ eyebrow, title, icon: Icon, children, className = '', headerActions = null }) {
   return (
     <section className={`panel ${className}`}>
       <div className="panel-title">
@@ -3594,6 +3637,7 @@ function Panel({ eyebrow, title, icon: Icon, children, className = '' }) {
           <p className="eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
         </div>
+        {headerActions}
         {Icon && <Icon size={22} aria-hidden="true" />}
       </div>
       {children}
@@ -5069,7 +5113,7 @@ function reportGroupsForUser(user) {
     .filter((group) => group.items.length);
 }
 
-function ReportsView({ dashboard, admin, user }) {
+function ReportsView({ dashboard, admin, user, onNavigate }) {
   const [query, setQuery] = useState('');
   const metrics = dashboard?.metrics || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
@@ -5131,7 +5175,82 @@ function ReportsView({ dashboard, admin, user }) {
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
       </section>
 
-      <CatalogPanels groups={reportGroups} query={query} emptyLabel={user?.viewReports ? 'No reports match that search' : 'Your VICIdial user is not allowed to view reports'} />
+      <CatalogPanels groups={reportGroups} query={query} emptyLabel={user?.viewReports ? 'No reports match that search' : 'Your VICIdial user is not allowed to view reports'} onNavigate={onNavigate} />
+    </>
+  );
+}
+
+function AgentMonitorLogReportView({ token }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [entries, setEntries] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function runReport(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiFetch(`/reports/agent-monitor-log?begin_date=${beginDate}&end_date=${endDate}`, token);
+      setEntries(payload.entries || []);
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setEntries([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const columns = [
+    { key: 'monitor_start_time', label: 'Start', value: (row) => row.monitor_start_time, render: (row) => formatDateTime(row.monitor_start_time) },
+    { key: 'manager_user', label: 'Manager', value: (row) => row.manager_user },
+    { key: 'agent_user', label: 'Agent', value: (row) => row.agent_user },
+    { key: 'campaign_id', label: 'Campaign', value: (row) => row.campaign_id },
+    { key: 'monitor_type', label: 'Type', value: (row) => row.monitor_type },
+    { key: 'agent_status', label: 'Agent Status', value: (row) => row.agent_status },
+    { key: 'monitor_sec', label: 'Duration (sec)', value: (row) => row.monitor_sec, render: (row) => formatNumber(row.monitor_sec) },
+    { key: 'lead_id', label: 'Lead ID', value: (row) => row.lead_id },
+  ];
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Logs and QA</p>
+          <h2>Agent Monitor Log</h2>
+          <p className="action-copy">Audit trail of who monitored (listen/whisper/barge) which agent's calls, and when.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Report Range" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar beginDate={beginDate} endDate={endDate} onBeginDate={setBeginDate} onEndDate={setEndDate} onSubmit={runReport} loading={loading} />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel
+          eyebrow="Results"
+          title={`Monitor Sessions (${formatNumber(entries.length)})`}
+          icon={FileText}
+          className="admin-wide-panel"
+          headerActions={(
+            <button
+              type="button"
+              className="secondary-action compact-action"
+              disabled={!entries.length}
+              onClick={() => downloadCsv(`agent-monitor-log-${beginDate}-to-${endDate}.csv`, columns, entries)}
+            >
+              <FileText size={14} aria-hidden="true" /> Export CSV
+            </button>
+          )}
+        >
+          <DataTable
+            emptyLabel="No monitor sessions found for that range"
+            rows={entries.map((row, index) => ({ ...row, id: index }))}
+            columns={columns.map((column) => ({ key: column.key, label: column.label, render: column.render || column.value }))}
+          />
+        </Panel>
+      )}
     </>
   );
 }
@@ -5297,7 +5416,8 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'callTimes') return <CallTimesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'shifts') return <ShiftsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'statuses') return <StatusesView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} />;
+  if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} onNavigate={onNavigate} />;
+  if (activeView === 'reportAgentMonitorLog') return <AgentMonitorLogReportView admin={admin} user={user} token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
