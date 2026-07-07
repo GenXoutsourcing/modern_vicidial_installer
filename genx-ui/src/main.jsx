@@ -210,6 +210,7 @@ const NAV_ITEMS = [
   { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
   { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
   { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
+  { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
@@ -222,7 +223,7 @@ const NAV_GROUPS = [
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'map'] },
+  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'mediaTools', 'map'] },
   { title: 'Reports', keys: ['reports', 'recordings'] },
 ];
 
@@ -442,10 +443,12 @@ function userCan(user, entity) {
   if (entity === 'phoneAliases') return Boolean(user?.modifyPhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.modifyServers);
+  if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
+  if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -467,6 +470,8 @@ function userCanDelete(user, entity) {
   if (entity === 'phoneAliases') return Boolean(user?.astDeletePhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.astDeletePhones);
+  if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
+  if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
   return false;
 }
 
@@ -1586,6 +1591,14 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'conferences' || entity === 'agentConferences') {
     return { conf_exten: '', server_ip: admin?.servers?.[0]?.server_ip || '', extension: '' };
+  }
+
+  if (entity === 'ipLists') {
+    return { ip_list_id: '', ip_list_name: '', active: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'cidGroups') {
+    return { cid_group_id: '', cid_group_notes: '', cid_group_type: 'AREACODE', user_group: '---ALL---', cid_auto_rotate_minutes: '0', cid_auto_rotate_minimum: '0', cid_auto_rotate_calls: '0' };
   }
 
   if (entity === 'phoneAliases') {
@@ -2905,6 +2918,27 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'ipLists') {
+    return [
+      { key: 'ip_list_id', label: 'IP List ID', disabled: mode === 'edit' },
+      { key: 'ip_list_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'cidGroups') {
+    return [
+      { key: 'cid_group_id', label: 'CID Group ID', disabled: mode === 'edit' },
+      { key: 'cid_group_notes', label: 'Notes' },
+      { key: 'cid_group_type', label: 'Type', type: 'select', options: enumOptions(['AREACODE', 'STATE', 'NONE']) },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'cid_auto_rotate_minutes', label: 'Auto-Rotate Minutes', type: 'number' },
+      { key: 'cid_auto_rotate_minimum', label: 'Auto-Rotate Minimum', type: 'number' },
+      { key: 'cid_auto_rotate_calls', label: 'Auto-Rotate Calls', type: 'number' },
+    ];
+  }
+
   if (entity === 'conferences' || entity === 'agentConferences') {
     const serverOptions = (admin?.servers || []).map((row) => ({ value: row.server_ip, label: `${row.server_id || row.server_ip} - ${row.server_ip}` }));
     return [
@@ -3237,6 +3271,8 @@ function entityLabel(entity) {
     groupAliases: 'Group Alias',
     conferences: 'Conference',
     agentConferences: 'Agent Conference',
+    ipLists: 'IP List',
+    cidGroups: 'CID Group',
   }[entity] || 'Record';
 }
 
@@ -3271,6 +3307,8 @@ function entityId(entity, row) {
     groupAliases: row.group_alias_id,
     conferences: `${row.conf_exten}__${row.server_ip}`,
     agentConferences: `${row.conf_exten}__${row.server_ip}`,
+    ipLists: row.ip_list_id,
+    cidGroups: row.cid_group_id,
   }[entity];
 }
 
@@ -3293,6 +3331,8 @@ function entityPath(entity) {
     groupAliases: 'group-aliases',
     conferences: 'conferences',
     agentConferences: 'agent-conferences',
+    ipLists: 'ip-lists',
+    cidGroups: 'cid-groups',
   }[entity] || entity;
 }
 
@@ -6802,6 +6842,63 @@ function DropListsView({ admin, user, onAction }) {
   );
 }
 
+function MediaToolsView({ admin, user, onAction }) {
+  const ipLists = admin?.lookups?.ipLists || [];
+  const cidGroups = admin?.lookups?.cidGroups || [];
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <section className="admin-grid">
+        <Panel
+          eyebrow="Security"
+          title={`IP Lists (${formatNumber(ipLists.length)})`}
+          icon={ShieldCheck}
+          headerActions={userCan(user, 'ipLists') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('ipLists', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No IP lists (login source restriction lists)"
+            rows={ipLists.map((row) => ({ ...row, id: row.ip_list_id }))}
+            columns={[
+              { key: 'ip_list_id', label: 'ID' },
+              { key: 'ip_list_name', label: 'Name' },
+              { key: 'entry_count', label: 'Entries', render: (row) => formatNumber(row.entry_count) },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'ipLists') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('ipLists', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Telephony"
+          title={`CID Groups (${formatNumber(cidGroups.length)})`}
+          icon={PhoneCall}
+          headerActions={userCan(user, 'cidGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('cidGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No CID groups (rotating outbound CallerID sets)"
+            rows={cidGroups.map((row) => ({ ...row, id: row.cid_group_id }))}
+            columns={[
+              { key: 'cid_group_id', label: 'ID' },
+              { key: 'cid_group_notes', label: 'Notes' },
+              { key: 'cid_group_type', label: 'Type' },
+              { key: 'cid_auto_rotate_minutes', label: 'Rotate Min', render: (row) => formatNumber(row.cid_auto_rotate_minutes) },
+              ...(userCan(user, 'cidGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('cidGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function RemoteAgentsView({ admin, user, onAction }) {
   const remoteAgents = admin?.remoteAgents || [];
   const canManage = userCan(user, 'remoteAgents');
@@ -7027,6 +7124,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'mediaTools') return <MediaToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;

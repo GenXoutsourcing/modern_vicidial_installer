@@ -207,6 +207,7 @@ function publicUser(row) {
     astDeletePhones: row.ast_delete_phones === '1',
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
+    modifyIpLists: row.modify_ip_lists === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -296,6 +297,7 @@ async function authenticateVicidialUser(username, password) {
             u.ast_delete_phones,
             u.modify_remoteagents,
             u.delete_remote_agents,
+            u.modify_ip_lists,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -2050,7 +2052,12 @@ async function adminData(user) {
     ),
     rows(
       `SELECT cid_group_id,
-              cid_group_notes
+              cid_group_notes,
+              cid_group_type,
+              user_group,
+              cid_auto_rotate_minutes,
+              cid_auto_rotate_minimum,
+              cid_auto_rotate_calls
        FROM vicidial_cid_groups
        ORDER BY cid_group_id ASC
        LIMIT 500`,
@@ -2058,10 +2065,15 @@ async function adminData(user) {
       [],
     ),
     rows(
-      `SELECT ip_list_id,
-              ip_list_name
-       FROM vicidial_ip_lists
-       ORDER BY ip_list_id ASC
+      `SELECT l.ip_list_id,
+              l.ip_list_name,
+              l.active,
+              l.user_group,
+              COALESCE(e.entry_count, 0) AS entry_count
+       FROM vicidial_ip_lists l
+       LEFT JOIN (SELECT ip_list_id, COUNT(*) AS entry_count FROM vicidial_ip_list_entries GROUP BY ip_list_id) e
+         ON e.ip_list_id = l.ip_list_id
+       ORDER BY l.ip_list_id ASC
        LIMIT 500`,
       [],
       [],
@@ -4442,6 +4454,94 @@ async function deleteConference(req, res, table) {
   }
 }
 
+async function saveIpList(req, res, mode) {
+  if (!requireModify(req, res, 'modifyIpLists')) return;
+  const payload = {
+    ip_list_name: cleanText(req.body?.ip_list_name, 100) || 'New IP List',
+    active: ynFlag(req.body?.active, 'N'),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.ip_list_id, 30);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_ip_list_id');
+      const { assignments, values } = dynamicAssignments({ ip_list_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_ip_lists SET ${assignments}`, values);
+      await adminLog(req, 'IPLISTS', 'ADD', id, 'GENX ADD IP LIST', 'INSERT INTO vicidial_ip_lists', payload.ip_list_name);
+    } else {
+      const id = cleanId(req.params.id, 30);
+      if (!id) return badRequest(res, 'invalid_ip_list_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_ip_lists SET ${assignments} WHERE ip_list_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ip_list_not_found' });
+      await adminLog(req, 'IPLISTS', 'MODIFY', id, 'GENX MODIFY IP LIST', 'UPDATE vicidial_ip_lists', payload.ip_list_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'ip_list_save_failed' });
+  }
+}
+
+async function deleteIpList(req, res) {
+  if (!requireModify(req, res, 'modifyIpLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_ip_list_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_ip_lists WHERE ip_list_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ip_list_not_found' });
+    await execute('DELETE FROM vicidial_ip_list_entries WHERE ip_list_id = ?', [id]).catch(() => {});
+    await adminLog(req, 'IPLISTS', 'DELETE', id, 'GENX DELETE IP LIST', 'DELETE FROM vicidial_ip_lists + entries', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'ip_list_delete_failed' });
+  }
+}
+
+async function saveCidGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const payload = {
+    cid_group_notes: cleanText(req.body?.cid_group_notes, 255),
+    cid_group_type: cleanChoice(req.body?.cid_group_type, ['AREACODE', 'STATE', 'NONE'], 'AREACODE'),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+    cid_auto_rotate_minutes: cleanInt(req.body?.cid_auto_rotate_minutes, 0, 0, 9999999),
+    cid_auto_rotate_minimum: cleanInt(req.body?.cid_auto_rotate_minimum, 0, 0, 9999999),
+    cid_auto_rotate_calls: cleanInt(req.body?.cid_auto_rotate_calls, 0, 0, 9999999),
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.cid_group_id, 20);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_cid_group_id');
+      const { assignments, values } = dynamicAssignments({ cid_group_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_cid_groups SET ${assignments}`, values);
+      await adminLog(req, 'CIDGROUPS', 'ADD', id, 'GENX ADD CID GROUP', 'INSERT INTO vicidial_cid_groups', payload.cid_group_notes);
+    } else {
+      const id = cleanId(req.params.id, 20);
+      if (!id) return badRequest(res, 'invalid_cid_group_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_cid_groups SET ${assignments} WHERE cid_group_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'cid_group_not_found' });
+      await adminLog(req, 'CIDGROUPS', 'MODIFY', id, 'GENX MODIFY CID GROUP', 'UPDATE vicidial_cid_groups', payload.cid_group_notes);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'cid_group_save_failed' });
+  }
+}
+
+async function deleteCidGroup(req, res) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_cid_group_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_cid_groups WHERE cid_group_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'cid_group_not_found' });
+    await adminLog(req, 'CIDGROUPS', 'DELETE', id, 'GENX DELETE CID GROUP', 'DELETE FROM vicidial_cid_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'cid_group_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6569,6 +6669,12 @@ app.delete('/api/admin/conferences/:id', requireAccess, (req, res) => deleteConf
 app.post('/api/admin/agent-conferences', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'create'));
 app.put('/api/admin/agent-conferences/:id', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'update'));
 app.delete('/api/admin/agent-conferences/:id', requireAccess, (req, res) => deleteConference(req, res, 'vicidial_conferences'));
+app.post('/api/admin/ip-lists', requireAccess, (req, res) => saveIpList(req, res, 'create'));
+app.put('/api/admin/ip-lists/:id', requireAccess, (req, res) => saveIpList(req, res, 'update'));
+app.delete('/api/admin/ip-lists/:id', requireAccess, deleteIpList);
+app.post('/api/admin/cid-groups', requireAccess, (req, res) => saveCidGroup(req, res, 'create'));
+app.put('/api/admin/cid-groups/:id', requireAccess, (req, res) => saveCidGroup(req, res, 'update'));
+app.delete('/api/admin/cid-groups/:id', requireAccess, deleteCidGroup);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
