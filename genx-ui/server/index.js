@@ -7973,10 +7973,12 @@ async function agentRecording(req, res) {
   await execute(
     `INSERT INTO vicidial_manager
        (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
-        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
-     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1')`,
+        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
     [live.server_ip, filename.slice(0, 40), `Channel: Local/${recPrefix}${live.conf_exten}@${context}`,
-      `Context: ${context}`, `Exten: ${recExten}`],
+      `Context: ${context}`, `Exten: ${recExten}`,
+      // Monitor() takes its filename from the CallerID name.
+      `Callerid: "${filename}" <0000000000>`],
   );
   await execute(
     'INSERT INTO recording_log SET channel = ?, server_ip = ?, extension = ?, start_time = NOW(), start_epoch = ?, filename = ?, lead_id = ?, user = ?, vicidial_id = ?',

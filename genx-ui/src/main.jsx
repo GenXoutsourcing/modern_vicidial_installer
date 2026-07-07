@@ -11293,6 +11293,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
               <span>Section</span>
               <select value={section} onChange={(event) => setSection(event.target.value)}>
                 <option value="">All sections</option>
+                {section && !(data?.sections || []).includes(section) && <option value={section}>{section}</option>}
                 {(data?.sections || []).map((item) => (
                   <option key={item} value={item}>{item}</option>
                 ))}
