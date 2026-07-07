@@ -6557,7 +6557,8 @@ function requireAgentAccess(req, res, next) {
 const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip, protocol, ext_context,
   phone_ring_timeout, on_hook_agent, is_webphone, conf_secret, use_external_server_ip, codecs_list,
   outbound_cid, webphone_dialpad, webphone_auto_answer, webphone_dialbox, webphone_mute,
-  webphone_volume, webphone_debug, webphone_layout, webphone_settings`;
+  webphone_volume, webphone_debug, webphone_layout, webphone_settings,
+  VICIDIAL_park_on_extension, VICIDIAL_park_on_filename`;
 
 // CONFBRIDGE servers keep agent rooms in vicidial_confbridges and agents join
 // with a '2'-prefixed exten (legacy $conf_table / $session_prepend logic);
@@ -7374,6 +7375,241 @@ async function agentCallbacks(req, res) {
   }
   const liveCount = callbacks.filter((c) => c.status === 'LIVE').length;
   return res.json({ ok: true, callbacks, count: callbacks.length, liveCount });
+}
+
+// Find the customer leg for the agent's current call: dialer-attached calls
+// carry the channel in vicidial_auto_calls; manual dials show up in
+// live_sip_channels as Local/{conf}@... (legacy HangupConfDial pattern).
+async function agentCustomerChannel(live) {
+  if (live.uniqueid) {
+    const [vac] = await rows(
+      'SELECT channel FROM vicidial_auto_calls WHERE uniqueid = ? LIMIT 1',
+      [live.uniqueid],
+      [],
+    );
+    if (vac?.channel) return vac.channel;
+  }
+  const [chan] = await rows(
+    'SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ? ORDER BY channel LIMIT 1',
+    [live.server_ip, `Local/${live.conf_exten}@%`],
+    [],
+  );
+  return chan?.channel || null;
+}
+
+// Transfer feature flags (user group) + in-group targets for the xfer panel.
+async function agentXferOptions(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [ug] = await rows(
+    `SELECT agent_xfer_consultative, agent_xfer_dial_override, agent_xfer_vm_transfer,
+            agent_xfer_blind_transfer, agent_xfer_dial_with_customer, agent_xfer_park_customer_dial,
+            agent_xfer_park_3way FROM vicidial_user_groups WHERE user_group = ? LIMIT 1`,
+    [req.genxUser.userGroup || ''],
+    [],
+  );
+  const [camp] = await rows(
+    'SELECT default_xfer_group FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const groups = await rows(
+    "SELECT group_id, group_name FROM vicidial_inbound_groups WHERE active = 'Y' ORDER BY group_id LIMIT 200",
+    [],
+    [],
+  );
+  return res.json({
+    ok: true,
+    flags: {
+      blind: (ug?.agent_xfer_blind_transfer ?? 'Y') !== 'N',
+      dialWithCustomer: (ug?.agent_xfer_dial_with_customer ?? 'Y') !== 'N',
+      park: (ug?.agent_xfer_park_customer_dial ?? 'Y') !== 'N',
+      consultative: (ug?.agent_xfer_consultative ?? 'Y') !== 'N',
+      vmTransfer: (ug?.agent_xfer_vm_transfer ?? 'Y') !== 'N',
+    },
+    defaultGroup: camp?.default_xfer_group || '',
+    groups,
+  });
+}
+
+// Legacy XfeRLOCAL/XfeR blind transfer (RedirectVD/Redirect port): close the
+// call log as XFER and Redirect the customer channel to the in-group closer
+// exten (990009*...) or a raw dialplan exten.
+async function agentXferBlind(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
+  const groupId = cleanId(req.body?.group_id, 30);
+  const rawExten = String(req.body?.exten || '').replace(/[^0-9*#]/g, '').slice(0, 30);
+  if (!groupId && !rawExten) return badRequest(res, 'group_or_exten_required');
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  const channel = await agentCustomerChannel(live);
+  if (!channel) return res.status(409).json({ ok: false, error: 'customer_channel_not_found' });
+  const context = req.agentPhone?.ext_context || 'default';
+
+  let dest = rawExten;
+  let queryCID = `LRvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+  if (groupId) {
+    const [lead] = await rows(
+      'SELECT phone_number FROM vicidial_list WHERE lead_id = ? LIMIT 1',
+      [live.lead_id],
+      [],
+    );
+    // "990009*group**lead_id**phone*user*agent_only*" (legacy XfeRLOCAL string)
+    dest = `990009*${groupId}**${live.lead_id}**${lead?.phone_number || ''}*${user}**`;
+    queryCID = `XLvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+  }
+
+  try {
+    if (live.uniqueid) {
+      await execute(
+        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER' WHERE uniqueid = ?",
+        [nowEpoch, live.uniqueid],
+      ).catch(() => {});
+      await execute('DELETE FROM vicidial_auto_calls WHERE uniqueid = ?', [live.uniqueid]).catch(() => {});
+    }
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Redirect', ?, ?, ?, ?, 'Priority: 1')`,
+      [live.server_ip, queryCID, `Channel: ${channel}`, `Context: ${context}`, `Exten: ${dest}`],
+    );
+    // Agent stays INCALL for dispo, customer is gone from the conference.
+    return res.json({ ok: true, live: await agentLiveRow(user), transferredTo: groupId || rawExten });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'xfer_failed' });
+  }
+}
+
+// Legacy 3-way: Originate a Local channel for the 3rd party into the agent's
+// conference (customer-style plain exten). Returns the channel prefix so the
+// client can hang the leg up later (HangupConfDial port).
+async function agentThreewayDial(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const number = String(req.body?.phone_number || '').replace(/[^0-9]/g, '').slice(0, 18);
+  if (number.length < 3) return badRequest(res, 'phone_number_required');
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  const [camp] = await rows(
+    'SELECT dial_prefix, omit_phone_code, campaign_cid FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const prefix = camp?.dial_prefix && camp.dial_prefix !== 'X' ? camp.dial_prefix : '';
+  const context = req.agentPhone?.ext_context || 'default';
+  const dialStr = `${prefix}${number}`;
+  const queryCID = `DXvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+
+  try {
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f, cmd_line_g)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?, 'Timeout: 60000')`,
+      [live.server_ip, queryCID, `Channel: Local/${dialStr}@${context}`, `Context: ${context}`,
+        `Exten: ${live.conf_exten}`, `Callerid: "${queryCID}" <${camp?.campaign_cid || ''}>`],
+    );
+    await execute(
+      "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'XFER', notes = ?",
+      [queryCID, user, `3way ${dialStr} ${context}`],
+    ).catch(() => {});
+    return res.json({ ok: true, threewayChannelPrefix: `Local/${dialStr}@${context}` });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'threeway_dial_failed' });
+  }
+}
+
+// HangupConfDial port: find the live 3-way Local leg by prefix and hang it up.
+async function agentThreewayHangup(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const chanPrefix = String(req.body?.channel_prefix || '').slice(0, 100);
+  if (!chanPrefix.startsWith('Local/')) return badRequest(res, 'channel_prefix_required');
+  const [chan] = await rows(
+    'SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ? ORDER BY channel LIMIT 1',
+    [live.server_ip, `${chanPrefix.replace(/[%_]/g, '')}%`],
+    [],
+  );
+  if (!chan) return res.status(404).json({ ok: false, error: 'channel_not_found' });
+  const queryCID = `GXvdcW${Math.floor(Date.now() / 1000)}`.slice(0, 20);
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
+    [live.server_ip, queryCID, `Channel: ${chan.channel}`],
+  );
+  return res.json({ ok: true });
+}
+
+// RedirectToPark / RedirectFromPark port: park the customer on hold audio and
+// grab them back into the conference.
+async function agentParkCustomer(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
+  const grab = req.body?.grab === true;
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const context = req.agentPhone?.ext_context || 'default';
+  const parkExten = req.agentPhone?.VICIDIAL_park_on_extension || '8301';
+  const parkFile = req.agentPhone?.VICIDIAL_park_on_filename || 'park';
+
+  try {
+    if (!grab) {
+      const channel = await agentCustomerChannel(live);
+      if (!channel) return res.status(409).json({ ok: false, error: 'customer_channel_not_found' });
+      const queryCID = `LPvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+      await execute(
+        'INSERT INTO parked_channels VALUES (?, ?, ?, ?, ?, NOW())',
+        [channel, live.server_ip, live.callerid || '', parkFile, user],
+      ).catch(() => {});
+      await execute(
+        "INSERT INTO park_log SET uniqueid = ?, status = 'PARKED', channel = ?, channel_group = ?, server_ip = ?, parked_time = NOW(), parked_sec = 0, extension = ?, user = ?, lead_id = ?",
+        [live.uniqueid || '', channel, live.campaign_id, live.server_ip, live.callerid || '', user, live.lead_id],
+      ).catch(() => {});
+      await execute(
+        `INSERT INTO vicidial_manager
+           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+            cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
+         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Redirect', ?, ?, ?, ?, 'Priority: 1')`,
+        [live.server_ip, queryCID, `Channel: ${channel}`, `Context: ${context}`, `Exten: ${parkExten}`],
+      );
+      return res.json({ ok: true, parked: true });
+    }
+    // Grab back: redirect the parked channel into the conference (plain exten).
+    const [parkedAny] = await rows(
+      'SELECT channel FROM parked_channels WHERE server_ip = ? AND parked_by = ? ORDER BY parked_time DESC LIMIT 1',
+      [live.server_ip, user],
+      [],
+    );
+    if (!parkedAny) return res.status(404).json({ ok: false, error: 'no_parked_call' });
+    const queryCID = `LGvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Redirect', ?, ?, ?, ?, 'Priority: 1')`,
+      [live.server_ip, queryCID, `Channel: ${parkedAny.channel}`, `Context: ${context}`, `Exten: ${live.conf_exten}`],
+    );
+    await execute('DELETE FROM parked_channels WHERE channel = ? AND server_ip = ?', [parkedAny.channel, live.server_ip]).catch(() => {});
+    await execute(
+      "UPDATE park_log SET status = 'GRABBED', grab_time = NOW(), parked_sec = UNIX_TIMESTAMP(NOW()) - UNIX_TIMESTAMP(parked_time) WHERE channel = ? AND server_ip = ? AND status = 'PARKED' ORDER BY parked_time DESC LIMIT 1",
+      [parkedAny.channel, live.server_ip],
+    ).catch(() => {});
+    return res.json({ ok: true, parked: false });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'park_failed' });
+  }
 }
 
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
@@ -11363,6 +11599,11 @@ app.post('/api/agent/webphone-call', requireAgentAccess, agentWebphoneCall);
 app.get('/api/agent/agents-view', requireAgentAccess, agentAgentsView);
 app.get('/api/agent/calls-in-queue', requireAgentAccess, agentCallsInQueue);
 app.get('/api/agent/callbacks', requireAgentAccess, agentCallbacks);
+app.get('/api/agent/xfer-options', requireAgentAccess, agentXferOptions);
+app.post('/api/agent/xfer-blind', requireAgentAccess, agentXferBlind);
+app.post('/api/agent/threeway-dial', requireAgentAccess, agentThreewayDial);
+app.post('/api/agent/threeway-hangup', requireAgentAccess, agentThreewayHangup);
+app.post('/api/agent/park', requireAgentAccess, agentParkCustomer);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));

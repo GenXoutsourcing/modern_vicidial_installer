@@ -12296,6 +12296,12 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [webphoneUrl, setWebphoneUrl] = useState(authInfo?.webphoneUrl || null);
   const [showPhone, setShowPhone] = useState(true);
   const [sidePanel, setSidePanel] = useState('');
+  const [xferOptions, setXferOptions] = useState(null);
+  const [xferGroup, setXferGroup] = useState('');
+  const [xferExten, setXferExten] = useState('');
+  const [threewayNumber, setThreewayNumber] = useState('');
+  const [threewayChannel, setThreewayChannel] = useState('');
+  const [parked, setParked] = useState(false);
   const [agentsView, setAgentsView] = useState(null);
   const [queueView, setQueueView] = useState(null);
   const [callbacks, setCallbacks] = useState(null);
@@ -12365,6 +12371,22 @@ function AgentConsole({ token, authInfo, onExit }) {
       setBusy(false);
     }
   };
+
+  // Transfer options load once per call (user-group agent_xfer flags + groups).
+  useEffect(() => {
+    if (!live || live.status !== 'INCALL') {
+      setThreewayChannel('');
+      setParked(false);
+      return;
+    }
+    if (xferOptions) return;
+    apiFetch('/agent/xfer-options', token)
+      .then((p) => {
+        setXferOptions(p);
+        if (p.defaultGroup) setXferGroup(p.defaultGroup);
+      })
+      .catch(() => {});
+  }, [live && live.status === 'INCALL' ? 1 : 0, token]);
 
   // Side panels (legacy AGENTSview / CALLSINQUEUEview / CalLBacKLisT): poll
   // the open panel every 4s while the agent is logged in.
@@ -12642,6 +12664,98 @@ function AgentConsole({ token, authInfo, onExit }) {
                 Disposition Call
               </button>
             </div>
+            {live.status === 'INCALL' && xferOptions && (
+              <div className="entity-form">
+                <div className="field-grid">
+                  {xferOptions.flags?.blind && (
+                    <label>
+                      <span>Transfer to In-Group</span>
+                      <select value={xferGroup} onChange={(event) => setXferGroup(event.target.value)}>
+                        <option value="">Select group</option>
+                        {(xferOptions.groups || []).map((g) => (
+                          <option key={g.group_id} value={g.group_id}>{g.group_id} - {g.group_name || ''}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {xferOptions.flags?.blind && (
+                    <label>
+                      <span>Or Dialplan Exten</span>
+                      <input type="text" value={xferExten} onChange={(event) => setXferExten(event.target.value)} placeholder="e.g. 8500" />
+                    </label>
+                  )}
+                  {xferOptions.flags?.dialWithCustomer && (
+                    <label>
+                      <span>3-Way Number</span>
+                      <input type="tel" value={threewayNumber} onChange={(event) => setThreewayNumber(event.target.value)} placeholder="3rd party number" />
+                    </label>
+                  )}
+                </div>
+                <div className="modal-actions">
+                  {xferOptions.flags?.blind && (
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={busy || (!xferGroup && !xferExten)}
+                      onClick={async () => {
+                        const payload = await act('/agent/xfer-blind', xferGroup ? { group_id: xferGroup } : { exten: xferExten });
+                        if (payload) setMessage(`Customer transferred to ${payload.transferredTo} — disposition the call`);
+                      }}
+                    >
+                      Blind Transfer
+                    </button>
+                  )}
+                  {xferOptions.flags?.dialWithCustomer && !threewayChannel && (
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={busy || threewayNumber.replace(/[^0-9]/g, '').length < 3}
+                      onClick={async () => {
+                        const payload = await act('/agent/threeway-dial', { phone_number: threewayNumber.replace(/[^0-9]/g, '') });
+                        if (payload) {
+                          setThreewayChannel(payload.threewayChannelPrefix || '');
+                          setMessage('Dialing 3rd party into your conference');
+                        }
+                      }}
+                    >
+                      Dial 3-Way
+                    </button>
+                  )}
+                  {threewayChannel && (
+                    <button
+                      type="button"
+                      className="danger-action"
+                      disabled={busy}
+                      onClick={async () => {
+                        const payload = await act('/agent/threeway-hangup', { channel_prefix: threewayChannel });
+                        if (payload) {
+                          setThreewayChannel('');
+                          setMessage('3-way leg hung up');
+                        }
+                      }}
+                    >
+                      Hangup 3-Way Leg
+                    </button>
+                  )}
+                  {xferOptions.flags?.park && (
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={busy}
+                      onClick={async () => {
+                        const payload = await act('/agent/park', { grab: parked });
+                        if (payload) {
+                          setParked(!parked);
+                          setMessage(parked ? 'Customer back in conference' : 'Customer parked on hold');
+                        }
+                      }}
+                    >
+                      {parked ? 'Grab Parked Call' : 'Park Customer'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {showDispo && (
               <>
                 <div className="connection-actions">
