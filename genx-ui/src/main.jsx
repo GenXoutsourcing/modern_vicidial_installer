@@ -6933,8 +6933,11 @@ function CampaignSummaryReportView({ token }) {
 }
 
 const WHITEBOARD_REPORT_TYPES = [
-  { value: 'DISPOSITION_TOTALS', label: 'Disposition Totals' },
-  { value: 'AGENT_PERFORMANCE_TOTALS', label: 'Agent Performance Totals' },
+  { value: 'DISPOSITION_TOTALS', label: 'Disposition Totals', labelKey: 'status' },
+  { value: 'AGENT_PERFORMANCE_TOTALS', label: 'Agent Performance Totals', labelKey: 'user' },
+  { value: 'TEAM_PERFORMANCE_TOTALS', label: 'Team Performance Totals', labelKey: 'user_group' },
+  { value: 'INGROUP_PERFORMANCE_TOTALS', label: 'In-Group Performance Totals', labelKey: 'group_id' },
+  { value: 'DID_PERFORMANCE_TOTALS', label: 'DID Performance Totals', labelKey: 'did_pattern' },
 ];
 
 function WhiteboardReportView({ token }) {
@@ -6961,10 +6964,10 @@ function WhiteboardReportView({ token }) {
     }
   }
 
-  const isAgentReport = reportType === 'AGENT_PERFORMANCE_TOTALS';
+  const typeMeta = WHITEBOARD_REPORT_TYPES.find((option) => option.value === reportType) || WHITEBOARD_REPORT_TYPES[0];
   const breakdownItems = (items || []).map((row) => ({
     ...row,
-    label: isAgentReport ? row.user : row.status,
+    label: String(row[typeMeta.labelKey] ?? '(none)'),
     calls: Number(row.calls || 0),
   }));
 
@@ -6974,7 +6977,7 @@ function WhiteboardReportView({ token }) {
         <div>
           <p className="eyebrow">Real-Time</p>
           <h2>Whiteboard</h2>
-          <p className="action-copy">Ranked leaderboard reports. Two of the eleven legacy report types are natively built so far - Disposition Totals and Agent Performance Totals.</p>
+          <p className="action-copy">Ranked leaderboard reports over dispositions, agents, teams, in-groups and DIDs. Rate variants are these totals over your chosen date range.</p>
         </div>
       </section>
       <Panel eyebrow="Filters" title="Report Range and Type" icon={Search} className="admin-wide-panel">
@@ -6993,7 +6996,7 @@ function WhiteboardReportView({ token }) {
       {items && (
         <BreakdownPanel
           eyebrow="Results"
-          title={isAgentReport ? 'Agent Performance Totals' : 'Disposition Totals'}
+          title={typeMeta.label}
           icon={BarChart3}
           items={breakdownItems}
           valueKey="calls"
@@ -12013,6 +12016,91 @@ function SphReportView({ token, onLogout }) {
   );
 }
 
+// Native admin.php ADD=999992/999993: maximum system stats.
+const MAX_STATS_COLUMNS = [
+  { key: 'stats_date', label: 'Date', render: (row) => String(row.stats_date || '').slice(0, 10) },
+  { key: 'stats_type', label: 'Type' },
+  { key: 'campaign_id', label: 'Campaign/Group' },
+  { key: 'max_channels', label: 'Max Channels' },
+  { key: 'max_calls', label: 'Max Calls' },
+  { key: 'max_inbound', label: 'Max Inbound' },
+  { key: 'max_outbound', label: 'Max Outbound' },
+  { key: 'max_agents', label: 'Max Agents' },
+  { key: 'max_remote_agents', label: 'Max Remote' },
+  { key: 'total_calls', label: 'Total Calls', render: (row) => formatNumber(row.total_calls) },
+];
+
+function MaxStatsReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(monthAgo);
+  const [endDate, setEndDate] = useState(today);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiFetch(`/reports/max-stats?begin_date=${begin}&end_date=${end}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load(monthAgo, today);
+  }, [load, monthAgo, today]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>Maximum System Stats</h2>
+          <p className="action-copy">Peak channels, calls and agents for the current period and closed history.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="History Range" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(beginDate, endDate);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="Current" title="Open Period" icon={Activity} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No open max-stats rows"
+          rows={(data?.open || []).map((row, index) => ({ ...row, id: `open-${index}` }))}
+          columns={MAX_STATS_COLUMNS}
+        />
+      </Panel>
+      <Panel eyebrow="History" title="Closed Periods" icon={Database} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No closed max-stats rows in the range"
+          rows={(data?.history || []).map((row, index) => ({ ...row, id: `hist-${index}` }))}
+          columns={MAX_STATS_COLUMNS}
+        />
+      </Panel>
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -12261,6 +12349,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportPhoneStats') return <PhoneStatsReportView token={token} />;
   if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
   if (activeView === 'reportSph') return <SphReportView token={token} />;
+  if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

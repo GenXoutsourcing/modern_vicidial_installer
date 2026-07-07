@@ -170,8 +170,8 @@ export const REPORT_GROUPS = [
     title: 'System',
     items: [
       { label: 'Server Performance', href: '/vicidial/AST_server_performance.php', view: 'reportServerPerformance' },
-      { label: 'Maximum System Stats', href: '/vicidial/admin.php?ADD=999992&stage=TOTAL' },
-      { label: 'Maximum Stats Detail', href: '/vicidial/admin.php?ADD=999993' },
+      { label: 'Maximum System Stats', href: '/vicidial/admin.php?ADD=999992&stage=TOTAL', view: 'reportMaxStats' },
+      { label: 'Maximum Stats Detail', href: '/vicidial/admin.php?ADD=999993', view: 'reportMaxStats' },
       { label: 'Phone Stats', href: '/vicidial/phone_stats.php', view: 'reportPhoneStats' },
       { label: 'Process Report', href: '/vicidial/process_report.php', view: 'reportProcess' },
       { label: 'SPH Report', href: '/vicidial/sph_report.php', view: 'reportSph' },

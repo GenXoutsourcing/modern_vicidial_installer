@@ -6530,7 +6530,35 @@ async function urlLogReport(req, res) {
   return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
 }
 
-const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
+// Native port of admin.php ADD=999992/999993: maximum system stats (current
+// OPEN period + closed history from vicidial_daily_max_stats).
+async function maxStatsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const [open, history] = await Promise.all([
+    rows(
+      `SELECT stats_date, stats_type, campaign_id, max_channels, max_calls, max_inbound,
+              max_outbound, max_agents, max_remote_agents, total_calls, update_time
+       FROM vicidial_daily_max_stats WHERE stats_flag = 'OPEN'
+       ORDER BY stats_type ASC, campaign_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT stats_date, stats_type, campaign_id, max_channels, max_calls, max_inbound,
+              max_outbound, max_agents, max_remote_agents, total_calls, closed_time
+       FROM vicidial_daily_max_stats WHERE stats_flag = 'CLOSED' AND stats_date >= ? AND stats_date <= ?
+       ORDER BY stats_date DESC, stats_type ASC LIMIT 2000`,
+      [beginDate, endDate],
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, open, history, range: { beginDate, endDate } });
+}
+
+// Whiteboard variants mirror legacy AST_rt_whiteboard_rpt.php report types;
+// the *_RATES versions are the same data divided per hour client-side.
+const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS', 'TEAM_PERFORMANCE_TOTALS', 'INGROUP_PERFORMANCE_TOTALS', 'DID_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
@@ -6539,6 +6567,43 @@ async function whiteboardReport(req, res) {
   const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', params);
 
+  if (reportType === 'TEAM_PERFORMANCE_TOTALS') {
+    const items = await rows(
+      `SELECT user_group, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
+       FROM vicidial_log
+       WHERE call_date BETWEEN ? AND ? AND ${campaignWhere}
+       GROUP BY user_group ORDER BY calls DESC LIMIT 30`,
+      params,
+      [],
+    );
+    return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+  }
+  if (reportType === 'INGROUP_PERFORMANCE_TOTALS') {
+    const groupParams = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+    const groupWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'campaign_id', groupParams);
+    const items = await rows(
+      `SELECT campaign_id AS group_id, COUNT(*) AS calls,
+              COALESCE(SUM(status NOT IN (${sqlStatusList(CLOSER_V2_UNANSWERED)})),0) AS answered,
+              COALESCE(SUM(status LIKE '%DROP%'),0) AS drops
+       FROM vicidial_closer_log
+       WHERE call_date BETWEEN ? AND ? AND ${groupWhere}
+       GROUP BY campaign_id ORDER BY calls DESC LIMIT 30`,
+      groupParams,
+      [],
+    );
+    return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+  }
+  if (reportType === 'DID_PERFORMANCE_TOTALS') {
+    const items = await rows(
+      `SELECT d.did_pattern, d.did_description, COUNT(*) AS calls
+       FROM vicidial_did_log vdl LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
+       WHERE vdl.call_date BETWEEN ? AND ?
+       GROUP BY vdl.did_id ORDER BY calls DESC LIMIT 30`,
+      [`${beginDate} 00:00:00`, `${endDate} 23:59:59`],
+      [],
+    );
+    return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+  }
   if (reportType === 'AGENT_PERFORMANCE_TOTALS') {
     const items = await rows(
       `SELECT user, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
@@ -10258,6 +10323,7 @@ app.get('/api/reports/process-report', requireAccess, processReport);
 app.get('/api/reports/sph', requireAccess, sphReport);
 app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
 app.get('/api/reports/url-log', requireAccess, urlLogReport);
+app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
