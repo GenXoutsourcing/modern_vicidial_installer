@@ -6357,7 +6357,32 @@ function LeadSearchView({ admin, user, token, viewParams }) {
 
   const modifyLeads = Number(user?.modifyLeads || 0);
   const canEdit = Number(user?.userLevel || 0) >= 9 || (modifyLeads >= 1 && modifyLeads !== 5);
+  // Legacy: only modify_leads level 3/4 may edit individual log row statuses.
+  const canEditLogs = Number(user?.userLevel || 0) >= 9 || modifyLeads === 3 || modifyLeads === 4;
+  const [logEdit, setLogEdit] = useState(null); // { key, value, state }
   const statuses = admin?.statuses || [];
+
+  async function saveLogStatus(row) {
+    setLogEdit((current) => ({ ...current, state: 'working' }));
+    try {
+      await apiFetch(`/admin/leads/${encodeURIComponent(detail.lead.lead_id)}/log-status`, token, {
+        method: 'POST',
+        body: JSON.stringify({
+          log_table: row.log_table,
+          log_id: row.log_id,
+          old_status: row.status,
+          new_status: logEdit.value,
+        }),
+      });
+      setLogEdit(null);
+      loadDetail(detail.lead.lead_id);
+    } catch (requestError) {
+      setLogEdit((current) => ({
+        ...current,
+        state: requestError.status === 403 ? 'Not permitted (modify_leads 3/4)' : 'Update failed',
+      }));
+    }
+  }
 
   const loadDetail = useCallback(async (leadId) => {
     setError('');
@@ -6598,12 +6623,40 @@ function LeadSearchView({ admin, user, token, viewParams }) {
           <Panel eyebrow="History" title={`Calls (${formatNumber((detail.calls || []).length)})`} icon={PhoneCall} className="admin-wide-panel">
             <DataTable
               emptyLabel="No calls logged for this lead"
-              rows={(detail.calls || []).map((row, index) => ({ ...row, id: `${row.call_date}-${index}` }))}
+              rows={(detail.calls || []).map((row, index) => ({ ...row, id: `${row.log_table}-${row.log_id}-${index}` }))}
               columns={[
                 { key: 'direction', label: 'Dir' },
                 { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
                 { key: 'length_in_sec', label: 'Seconds' },
-                { key: 'status', label: 'Status' },
+                {
+                  key: 'status',
+                  label: 'Status',
+                  render: (row) => {
+                    if (!canEditLogs) return row.status;
+                    if (logEdit?.key !== row.id) {
+                      return (
+                        <button type="button" className="row-action" onClick={() => setLogEdit({ key: row.id, value: row.status, state: '' })}>
+                          {row.status}
+                        </button>
+                      );
+                    }
+                    return (
+                      <span className="log-status-edit">
+                        <input
+                          list="lead-status-options"
+                          value={logEdit.value}
+                          style={{ width: '7em' }}
+                          onChange={(event) => setLogEdit((current) => ({ ...current, value: event.target.value.toUpperCase() }))}
+                        />
+                        <button type="button" className="row-action" disabled={logEdit.state === 'working' || !logEdit.value || logEdit.value === row.status} onClick={() => saveLogStatus(row)}>
+                          {logEdit.state === 'working' ? 'Saving' : 'Set'}
+                        </button>
+                        <button type="button" className="row-action" onClick={() => setLogEdit(null)}>×</button>
+                        {logEdit.state && logEdit.state !== 'working' && <span className="connection-status">{logEdit.state}</span>}
+                      </span>
+                    );
+                  },
+                },
                 { key: 'user', label: 'User' },
                 { key: 'group_id', label: 'Campaign / Group' },
                 { key: 'phone_number', label: 'Phone' },

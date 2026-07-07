@@ -10477,10 +10477,12 @@ async function adminLeadDetail(req, res) {
   const phoneMode = req.genxUser?.adminHidePhoneData || '0';
   const [listRow] = await rows('SELECT list_id, list_name, campaign_id, active FROM vicidial_lists WHERE list_id = ? LIMIT 1', [lead.list_id], []);
   const calls = await rows(
-    `(SELECT 'OUT' AS direction, call_date, length_in_sec, status, user, campaign_id AS group_id, phone_number, term_reason
+    `(SELECT 'OUT' AS direction, 'vicidial_log' AS log_table, uniqueid AS log_id, call_date, length_in_sec,
+             status, user, campaign_id AS group_id, phone_number, term_reason
       FROM vicidial_log WHERE lead_id = ?)
      UNION ALL
-     (SELECT 'IN' AS direction, call_date, length_in_sec, status, user, campaign_id AS group_id, phone_number, term_reason
+     (SELECT 'IN' AS direction, 'vicidial_closer_log' AS log_table, closecallid AS log_id, call_date, length_in_sec,
+             status, user, campaign_id AS group_id, phone_number, term_reason
       FROM vicidial_closer_log WHERE lead_id = ?)
      ORDER BY call_date DESC LIMIT 500`,
     [id, id],
@@ -10600,6 +10602,49 @@ async function adminLeadUpdate(req, res) {
     return res.json({ ok: true, lead: maskLeadRow(req, next || orig), notes });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'lead_update_failed' });
+  }
+}
+
+// Legacy modify-log-status (admin_modify_lead.php modify_log_submit): change
+// the status of ONE specific log row, gated modify_leads level 3 or 4.
+const LEAD_LOG_TABLES = {
+  vicidial_log: { idColumn: 'uniqueid', dateColumn: 'call_date' },
+  vicidial_log_archive: { idColumn: 'uniqueid', dateColumn: 'call_date' },
+  vicidial_closer_log: { idColumn: 'closecallid', dateColumn: 'call_date' },
+  vicidial_closer_log_archive: { idColumn: 'closecallid', dateColumn: 'call_date' },
+  vicidial_agent_log: { idColumn: 'agent_log_id', dateColumn: 'event_time' },
+  vicidial_agent_log_archive: { idColumn: 'agent_log_id', dateColumn: 'event_time' },
+};
+
+async function adminLeadLogStatus(req, res) {
+  const modifyLeads = Number(req.genxUser?.modifyLeads || 0);
+  const isLevel9 = Number(req.genxUser?.userLevel || 0) >= 9;
+  if (!isLevel9 && modifyLeads !== 3 && modifyLeads !== 4) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = Number(req.params.id) || 0;
+  const body = req.body || {};
+  const table = LEAD_LOG_TABLES[String(body.log_table || '')];
+  const logId = cleanText(body.log_id, 30);
+  const oldStatus = cleanId(body.old_status, 8);
+  const newStatus = cleanId(body.new_status, 8);
+  if (!id || !table || !logId || !newStatus || !oldStatus) return badRequest(res, 'missing_fields');
+  if (newStatus === oldStatus) return badRequest(res, 'status_unchanged');
+  try {
+    // Legacy keys on the log date as a safety check; the row ids are already
+    // unique, so matching the expected old status avoids the JS-UTC-vs-DB-
+    // local-time format problem while giving the same protection.
+    const tableName = quoteId(String(body.log_table));
+    const result = await execute(
+      `UPDATE ${tableName} SET status = ? WHERE lead_id = ? AND ${quoteId(table.idColumn)} = ? AND status = ?`,
+      [newStatus, id, logId, oldStatus],
+    );
+    const affected = Number(result.affectedRows || 0);
+    await adminLog(req, 'LEADS', 'MODIFY', String(id), 'MODIFY LEAD LOG STATUS', `UPDATE ${body.log_table} SET status ${oldStatus} -> ${newStatus}`, `${id}|${body.log_table}|${newStatus}|${oldStatus}|${logId}|${affected}`);
+    if (affected < 1) return res.status(404).json({ ok: false, error: 'log_row_not_found' });
+    return res.json({ ok: true, affected });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'log_status_update_failed' });
   }
 }
 
@@ -13546,6 +13591,7 @@ app.get('/api/admin/leads/search', requireAccess, adminLeadSearch);
 app.get('/api/admin/leads/:id', requireAccess, adminLeadDetail);
 app.put('/api/admin/leads/:id', requireAccess, adminLeadUpdate);
 app.get('/api/admin/leads/:id/custom', requireAccess, getLeadCustomData);
+app.post('/api/admin/leads/:id/log-status', requireAccess, adminLeadLogStatus);
 app.put('/api/admin/leads/:id/custom', requireAccess, putLeadCustomData);
 app.get('/api/admin/lists/:id/custom-fields', requireAccess, getListCustomFields);
 app.post('/api/admin/lists/:id/custom-fields', requireAccess, (req, res) => saveListCustomField(req, res, 'create'));
