@@ -7241,12 +7241,128 @@ function DropListsView({ admin, user, onAction }) {
   );
 }
 
+// Audio Store panel (legacy vicidial/audio_store.php): upload, list, play,
+// delete files in the sounds web directory + audio_store_details rows.
+function AudioStorePanel({ user }) {
+  const [store, setStore] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const [playing, setPlaying] = useState('');
+  const audioRef = useRef(null);
+  const token = window.localStorage.getItem(TOKEN_KEY) || '';
+
+  const load = useCallback(() => {
+    apiFetch('/admin/audio-store', token).then(setStore).catch(() => {});
+  }, [token]);
+  useEffect(load, [load]);
+
+  const canEdit = Number(user?.userLevel || 0) >= 8;
+
+  async function upload(file) {
+    setBusy(true);
+    setNote('');
+    try {
+      const response = await fetch(`${API_BASE}/admin/audio-store?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+        body: file,
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'upload_failed');
+      setNote(`Uploaded ${payload.name} (${formatNumber(payload.size)} bytes${payload.wav_asterisk_valid ? `, asterisk: ${payload.wav_asterisk_valid}` : ''})`);
+      load();
+    } catch (error) {
+      setNote(error.message === 'level_8_required' ? 'User level 8+ required to upload' : `Upload failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function play(name) {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (playing === name) { setPlaying(''); return; }
+    try {
+      const response = await fetch(`${API_BASE}/admin/audio-store/file/${encodeURIComponent(name)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('fetch_failed');
+      const url = URL.createObjectURL(await response.blob());
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      setPlaying(name);
+      audio.onended = () => { setPlaying(''); URL.revokeObjectURL(url); };
+      audio.play();
+    } catch {
+      setNote('Playback failed (format may not be browser-playable)');
+      setPlaying('');
+    }
+  }
+
+  return (
+    <Panel eyebrow="Audio" title={`Audio Store (${formatNumber(store?.files?.length || 0)})`} icon={Activity} className="admin-wide-panel">
+      {canEdit && (
+        <div className="modal-actions">
+          <input
+            type="file"
+            accept=".wav,.gsm,.mp3,.ogg,.ulaw,.sln"
+            disabled={busy}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) upload(file);
+              event.target.value = '';
+            }}
+          />
+        </div>
+      )}
+      {note && <p className="connection-summary">{note}</p>}
+      <DataTable
+        emptyLabel={store?.dirMissing ? `Audio directory not initialized (${store?.dir})` : 'No audio files uploaded'}
+        rows={(store?.files || []).map((f) => ({ ...f, id: f.name }))}
+        columns={[
+          { key: 'name', label: 'File' },
+          { key: 'format', label: 'Format' },
+          { key: 'size', label: 'Bytes', render: (row) => formatNumber(row.size) },
+          { key: 'audio_length', label: 'Seconds', render: (row) => (row.audio_length != null ? formatNumber(row.audio_length) : '') },
+          { key: 'wav_format_details', label: 'Wav Details' },
+          { key: 'wav_asterisk_valid', label: 'Asterisk', render: (row) => (row.wav_asterisk_valid ? <StatusPill ok={row.wav_asterisk_valid === 'GOOD' || row.wav_asterisk_valid === 'NA'}>{row.wav_asterisk_valid}</StatusPill> : null) },
+          { key: 'actions',
+            label: 'Action',
+            render: (row) => (
+              <span className="connection-actions">
+                <button type="button" className="row-action" onClick={() => play(row.name)}>
+                  {playing === row.name ? 'Stop' : 'Play'}
+                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="row-action"
+                    disabled={busy}
+                    onClick={async () => {
+                      try {
+                        await apiFetch(`/admin/audio-store/${encodeURIComponent(row.name)}`, token, { method: 'DELETE' });
+                        setNote(`Deleted ${row.name}`);
+                        load();
+                      } catch { setNote('Delete failed'); }
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </span>
+            ) },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function MediaToolsView({ admin, user, onAction }) {
   const ipLists = admin?.lookups?.ipLists || [];
   const cidGroups = admin?.lookups?.cidGroups || [];
 
   return (
     <>
+      <AudioStorePanel user={user} />
       <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Security"

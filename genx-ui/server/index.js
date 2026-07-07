@@ -1,7 +1,9 @@
 import express from 'express';
 import mysql from 'mysql2/promise';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11925,6 +11927,134 @@ app.get('/api/reports/sph', requireAccess, sphReport);
 app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
 app.get('/api/reports/url-log', requireAccess, urlLogReport);
 app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
+// ---- Audio store (legacy vicidial/audio_store.php port) ----
+// Files live in a webroot dir (central-control compatible); rows mirror to
+// audio_store_details. Playback is served through an authenticated route.
+const AUDIO_STORE_DIR = process.env.GENX_UI_AUDIO_DIR || '/var/www/html/genx-sounds';
+const AUDIO_MIME = {
+  wav: 'audio/wav', gsm: 'audio/gsm', mp3: 'audio/mpeg', ogg: 'audio/ogg',
+  ulaw: 'audio/basic', sln: 'application/octet-stream', sln16: 'application/octet-stream',
+};
+
+function audioNameOk(name) {
+  return /^[A-Za-z0-9][\w.-]{0,199}\.[A-Za-z0-9]{2,5}$/.test(name) && !name.includes('..') && !name.includes('/');
+}
+
+function soxi(args, file) {
+  return new Promise((resolve) => {
+    execFile('soxi', [...args, file], { timeout: 5000 }, (err, stdout) => {
+      resolve(err ? null : String(stdout).trim());
+    });
+  });
+}
+
+// Legacy wav_asterisk_valid: PCM 8000hz 16bit mono plays natively on asterisk.
+async function audioAnalyze(filePath, ext) {
+  const out = { audio_length: 0, wav_format_details: '', wav_asterisk_valid: 'NA' };
+  const dur = await soxi(['-D'], filePath);
+  if (dur != null) out.audio_length = Math.round(Number(dur) || 0);
+  if (ext === 'wav') {
+    const [rate, ch, bits] = await Promise.all([
+      soxi(['-r'], filePath), soxi(['-c'], filePath), soxi(['-b'], filePath),
+    ]);
+    if (rate != null) {
+      out.wav_format_details = `${rate}hz ${bits}bit ${Number(ch) === 1 ? 'mono' : `${ch}ch`}`;
+      out.wav_asterisk_valid = (Number(rate) === 8000 && Number(bits) === 16 && Number(ch) === 1) ? 'GOOD' : 'BAD';
+    } else {
+      out.wav_asterisk_valid = 'BAD';
+    }
+  }
+  return out;
+}
+
+async function listAudioStore(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  let files = [];
+  try {
+    files = fs.readdirSync(AUDIO_STORE_DIR).filter(audioNameOk);
+  } catch {
+    return res.json({ ok: true, dir: AUDIO_STORE_DIR, dirMissing: true, files: [] });
+  }
+  const details = await rows('SELECT * FROM audio_store_details LIMIT 2000', [], []);
+  const byName = new Map(details.map((d) => [d.audio_filename, d]));
+  const list = files.map((name) => {
+    const stat = fs.statSync(path.join(AUDIO_STORE_DIR, name));
+    const d = byName.get(name);
+    return {
+      name,
+      size: stat.size,
+      modified: stat.mtime,
+      format: name.split('.').pop().toLowerCase(),
+      audio_length: d ? d.audio_length : null,
+      wav_format_details: d ? d.wav_format_details : '',
+      wav_asterisk_valid: d ? d.wav_asterisk_valid : '',
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  return res.json({ ok: true, dir: AUDIO_STORE_DIR, files: list });
+}
+
+async function uploadAudio(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  if (Number(req.genxUser.userLevel || 0) < 8) return res.status(403).json({ ok: false, error: 'level_8_required' });
+  const name = String(req.query?.filename || '');
+  if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
+  const ext = name.split('.').pop().toLowerCase();
+  if (!AUDIO_MIME[ext]) return badRequest(res, 'unsupported_format');
+  if (!Buffer.isBuffer(req.body) || !req.body.length) return badRequest(res, 'empty_body');
+
+  try {
+    fs.mkdirSync(AUDIO_STORE_DIR, { recursive: true });
+    const filePath = path.join(AUDIO_STORE_DIR, name);
+    fs.writeFileSync(filePath, req.body, { mode: 0o666 });
+    const info = await audioAnalyze(filePath, ext);
+    await execute(
+      `INSERT INTO audio_store_details
+         (audio_filename, audio_format, audio_filesize, audio_epoch, audio_length, wav_format_details, wav_asterisk_valid)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE audio_format = VALUES(audio_format), audio_filesize = VALUES(audio_filesize),
+         audio_epoch = VALUES(audio_epoch), audio_length = VALUES(audio_length),
+         wav_format_details = VALUES(wav_format_details), wav_asterisk_valid = VALUES(wav_asterisk_valid)`,
+      [name, ext, req.body.length, Math.floor(Date.now() / 1000), info.audio_length,
+        info.wav_format_details, info.wav_asterisk_valid],
+    );
+    await adminLog(req, 'AUDIOSTORE', 'UPLOAD', name, 'GENX AUDIO UPLOAD', 'file write + audio_store_details upsert', `${name} ${req.body.length}b`);
+    return res.json({ ok: true, name, size: req.body.length, ...info });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'upload_failed' });
+  }
+}
+
+function streamAudio(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const name = String(req.params?.name || '');
+  if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
+  const filePath = path.join(AUDIO_STORE_DIR, name);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ ok: false, error: 'not_found' });
+  res.setHeader('Content-Type', AUDIO_MIME[name.split('.').pop().toLowerCase()] || 'application/octet-stream');
+  return res.sendFile(filePath);
+}
+
+async function deleteAudio(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  if (Number(req.genxUser.userLevel || 0) < 8) return res.status(403).json({ ok: false, error: 'level_8_required' });
+  const name = String(req.params?.name || '');
+  if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
+  const filePath = path.join(AUDIO_STORE_DIR, name);
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await execute('DELETE FROM audio_store_details WHERE audio_filename = ? LIMIT 1', [name]);
+    await adminLog(req, 'AUDIOSTORE', 'DELETE', name, 'GENX AUDIO DELETE', 'file unlink + audio_store_details delete', name);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'delete_failed' });
+  }
+}
+
+app.get('/api/admin/audio-store', requireAccess, listAudioStore);
+app.post('/api/admin/audio-store', requireAccess, express.raw({ type: () => true, limit: '25mb' }), uploadAudio);
+app.get('/api/admin/audio-store/file/:name', requireAccess, streamAudio);
+app.delete('/api/admin/audio-store/:name', requireAccess, deleteAudio);
+
 app.post('/api/agent/auth', agentAuth);
 app.get('/api/agent/setup', requireAgentAccess, agentSetup);
 app.post('/api/agent/login', requireAgentAccess, agentLogin);
