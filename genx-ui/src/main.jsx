@@ -209,6 +209,7 @@ const NAV_ITEMS = [
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
   { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
   { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
+  { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
@@ -218,7 +219,7 @@ const NAV_GROUPS = [
   { title: '', keys: ['command'] },
   { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
   { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
-  { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc'] },
+  { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
   { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'map'] },
@@ -437,10 +438,11 @@ function userCan(user, entity) {
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
   if (entity === 'remoteAgents') return Boolean(user?.modifyRemoteagents);
+  if (entity === 'dropLists') return Boolean(user?.modifyLists);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -458,6 +460,7 @@ function userCanDelete(user, entity) {
   if (entity === 'userGroups') return Boolean(user?.deleteUserGroups);
   if (entity === 'carriers') return Boolean(user?.modifyCarriers);
   if (entity === 'remoteAgents') return Boolean(user?.deleteRemoteAgents);
+  if (entity === 'dropLists') return Boolean(user?.deleteLists);
   return false;
 }
 
@@ -1572,6 +1575,25 @@ function actionDefaults(entity, admin) {
       report_option: 'N',
       user_group: group,
       report_rank: '1',
+    };
+  }
+
+  if (entity === 'dropLists') {
+    return {
+      dl_id: '',
+      dl_name: '',
+      dl_server: 'active_voicemail_server',
+      dl_times: '0800 1200 1600',
+      dl_weekdays: '12345',
+      dl_monthdays: '',
+      drop_statuses: 'DROP',
+      list_id: '',
+      duplicate_check: 'NONE',
+      run_now_trigger: 'N',
+      active: 'N',
+      user_group: '---ALL---',
+      closer_campaigns: '',
+      dl_minutes: '0',
     };
   }
 
@@ -2865,6 +2887,26 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'dropLists') {
+    const listOptions = (admin?.lists || []).map((row) => ({ value: String(row.list_id), label: `${row.list_id} - ${row.list_name || ''}` }));
+    return [
+      { key: 'dl_id', label: 'Drop List ID', disabled: mode === 'edit' },
+      { key: 'dl_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'dl_server', label: 'Server' },
+      { key: 'dl_times', label: 'Run Times (HHMM, space-separated)' },
+      { key: 'dl_weekdays', label: 'Weekdays (0-6)' },
+      { key: 'dl_monthdays', label: 'Month Days' },
+      { key: 'drop_statuses', label: 'Drop Statuses (space-separated)' },
+      { key: 'list_id', label: 'Destination List', type: listOptions.length ? 'select' : 'text', options: listOptions },
+      { key: 'duplicate_check', label: 'Duplicate Check', type: 'select', options: enumOptions(['NONE', 'DAY', 'WEEK', 'MONTH', '30DAY', '60DAY', '90DAY', '180DAY', '360DAY', 'EVER']) },
+      { key: 'run_now_trigger', label: 'Run Now Trigger', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'closer_campaigns', label: 'In-Groups (space-separated)', type: 'textarea', wide: true },
+      { key: 'dl_minutes', label: 'Minutes Delay', type: 'number' },
+    ];
+  }
+
   if (entity === 'remoteAgents') {
     const serverOptions = (admin?.servers || []).map((row) => ({ value: row.server_ip, label: `${row.server_id || row.server_ip} - ${row.server_ip}` }));
     return [
@@ -3143,6 +3185,7 @@ function entityLabel(entity) {
     statuses: 'System Status',
     campaignStatuses: 'Campaign Status',
     remoteAgents: 'Remote Agent',
+    dropLists: 'Drop List',
   }[entity] || 'Record';
 }
 
@@ -3172,6 +3215,7 @@ function entityId(entity, row) {
     statuses: row.status,
     campaignStatuses: row.status,
     remoteAgents: row.remote_agent_id,
+    dropLists: row.dl_id,
   }[entity];
 }
 
@@ -3189,6 +3233,7 @@ function entityPath(entity) {
     callMenuOptions: 'call-menu-options',
     campaignStatuses: 'campaign-statuses',
     remoteAgents: 'remote-agents',
+    dropLists: 'drop-lists',
   }[entity] || entity;
 }
 
@@ -6623,6 +6668,38 @@ function HopperListReportView({ token, initialCampaignId }) {
   );
 }
 
+function DropListsView({ admin, user, onAction }) {
+  const dropLists = admin?.dropLists || [];
+  const canManage = userCan(user, 'dropLists');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="dropLists" label="Drop List" user={user} onAction={onAction}>
+        <p className="action-copy">Scheduled jobs that move dropped/status-matched calls into a callback list for redial.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Lists" title={`Drop Lists (${formatNumber(dropLists.length)})`} icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No drop lists configured"
+            rows={dropLists.map((row) => ({ ...row, id: row.dl_id }))}
+            columns={[
+              { key: 'dl_id', label: 'ID' },
+              { key: 'dl_name', label: 'Name' },
+              { key: 'list_id', label: 'Dest List' },
+              { key: 'drop_statuses', label: 'Statuses' },
+              { key: 'dl_times', label: 'Run Times' },
+              { key: 'last_run', label: 'Last Run', render: (row) => formatDateTime(row.last_run) },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('dropLists', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function RemoteAgentsView({ admin, user, onAction }) {
   const remoteAgents = admin?.remoteAgents || [];
   const canManage = userCan(user, 'remoteAgents');
@@ -6804,6 +6881,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;

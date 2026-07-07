@@ -916,6 +916,7 @@ async function adminData(user) {
     voicemailBoxes,
     musicOnHold,
     remoteAgents,
+    dropLists,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2133,6 +2134,28 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT dl_id,
+              dl_name,
+              last_run,
+              dl_server,
+              dl_times,
+              dl_weekdays,
+              dl_monthdays,
+              drop_statuses,
+              list_id,
+              duplicate_check,
+              run_now_trigger,
+              active,
+              user_group,
+              closer_campaigns,
+              dl_minutes
+       FROM vicidial_drop_lists
+       ORDER BY dl_id ASC
+       LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2218,6 +2241,7 @@ async function adminData(user) {
     servers,
     carriers,
     remoteAgents,
+    dropLists,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4186,6 +4210,63 @@ async function deleteRemoteAgent(req, res) {
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'remote_agent_delete_failed' });
+  }
+}
+
+function dropListPayload(body) {
+  return {
+    dl_name: cleanText(body.dl_name, 100) || 'New Drop List',
+    dl_server: cleanText(body.dl_server, 30) || 'active_voicemail_server',
+    dl_times: cleanText(body.dl_times, 120),
+    dl_weekdays: cleanText(body.dl_weekdays, 7).replace(/[^0-6]/g, ''),
+    dl_monthdays: cleanText(body.dl_monthdays, 100).replace(/[^-0-9,]/g, ''),
+    drop_statuses: dialStatusesText(parseDialStatuses(body.drop_statuses)),
+    list_id: cleanInt(body.list_id, 0, 0, 99999999999999),
+    duplicate_check: cleanChoice(body.duplicate_check, ['NONE', 'DAY', 'WEEK', 'MONTH', '30DAY', '60DAY', '90DAY', '180DAY', '360DAY', 'EVER'], 'NONE'),
+    run_now_trigger: ynFlag(body.run_now_trigger, 'N'),
+    active: ynFlag(body.active, 'N'),
+    user_group: cleanId(body.user_group, 20) || '---ALL---',
+    closer_campaigns: cleanText(body.closer_campaigns, 2000),
+    dl_minutes: cleanInt(body.dl_minutes, 0, 0, 999999),
+  };
+}
+
+async function saveDropList(req, res, mode) {
+  if (!requireModify(req, res, 'modifyLists')) return;
+  const payload = dropListPayload(req.body || {});
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.dl_id, 30);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_dl_id');
+      const { assignments, values } = dynamicAssignments({ dl_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_drop_lists SET ${assignments}`, values);
+      await adminLog(req, 'LISTS', 'ADD', id, 'GENX ADD DROP LIST', 'INSERT INTO vicidial_drop_lists', payload.dl_name);
+    } else {
+      const id = cleanId(req.params.id, 30);
+      if (!id) return badRequest(res, 'invalid_dl_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_drop_lists SET ${assignments} WHERE dl_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'drop_list_not_found' });
+      await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX MODIFY DROP LIST', 'UPDATE vicidial_drop_lists', payload.dl_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'drop_list_save_failed' });
+  }
+}
+
+// Legacy ADD=631: delete the drop list record.
+async function deleteDropList(req, res) {
+  if (!requireModify(req, res, 'deleteLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_dl_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_drop_lists WHERE dl_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'drop_list_not_found' });
+    await adminLog(req, 'LISTS', 'DELETE', id, 'GENX DELETE DROP LIST', 'DELETE FROM vicidial_drop_lists', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'drop_list_delete_failed' });
   }
 }
 
@@ -6301,6 +6382,9 @@ app.delete('/api/admin/servers/:id', requireAccess, deleteServer);
 app.post('/api/admin/remote-agents', requireAccess, (req, res) => saveRemoteAgent(req, res, 'create'));
 app.put('/api/admin/remote-agents/:id', requireAccess, (req, res) => saveRemoteAgent(req, res, 'update'));
 app.delete('/api/admin/remote-agents/:id', requireAccess, deleteRemoteAgent);
+app.post('/api/admin/drop-lists', requireAccess, (req, res) => saveDropList(req, res, 'create'));
+app.put('/api/admin/drop-lists/:id', requireAccess, (req, res) => saveDropList(req, res, 'update'));
+app.delete('/api/admin/drop-lists/:id', requireAccess, deleteDropList);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
