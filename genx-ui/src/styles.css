@@ -1685,3 +1685,14 @@ select option:hover {
   width: 100%;
   margin: 0 auto;
 }
+
+/* Keep Chrome autofill from painting login inputs white. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #071528 inset;
+  box-shadow: 0 0 0 1000px #071528 inset;
+  -webkit-text-fill-color: #e6f7ff;
+  caret-color: #e6f7ff;
+  transition: background-color 9999s ease-in-out 0s;
+}

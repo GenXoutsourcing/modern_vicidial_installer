@@ -12207,7 +12207,12 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [campaigns, setCampaigns] = useState(authInfo?.campaigns || []);
   const [campaignId, setCampaignId] = useState('');
   const [live, setLive] = useState(authInfo?.live || null);
+  const [lead, setLead] = useState(null);
   const [pauseCodes, setPauseCodes] = useState([]);
+  const [dispoStatuses, setDispoStatuses] = useState([]);
+  const [showDispo, setShowDispo] = useState(false);
+  const [callbackTime, setCallbackTime] = useState('');
+  const [dispoComments, setDispoComments] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -12215,11 +12220,20 @@ function AgentConsole({ token, authInfo, onExit }) {
     try {
       const payload = await apiFetch('/agent/status', token);
       setLive(payload.live);
+      setLead(payload.lead || null);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
   }, [token, onExit]);
+
+  // Load the dispo grid once the agent is on (or has just had) a lead.
+  useEffect(() => {
+    if (!live || !Number(live.lead_id)) return;
+    apiFetch('/agent/dispo-statuses', token)
+      .then((payload) => setDispoStatuses(payload.statuses || []))
+      .catch(() => {});
+  }, [live && Number(live.lead_id) ? 1 : 0, token]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -12353,6 +12367,68 @@ function AgentConsole({ token, authInfo, onExit }) {
               </div>
             )}
             {message && <p className="connection-summary">{message}</p>}
+          </Panel>
+        )}
+        {live && lead && (
+          <Panel eyebrow={`Lead ${lead.lead_id}`} title={`${lead.first_name || ''} ${lead.last_name || ''} — ${lead.phone_code || ''} ${lead.phone_number || ''}`} icon={PhoneCall} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">List: {lead.list_id}</span>
+              <span className="connection-status">Status: {lead.status}</span>
+              <span className="connection-status">Called: {lead.called_count}x</span>
+              {lead.city && <span className="connection-status">{lead.city}, {lead.state} {lead.postal_code}</span>}
+              {lead.email && <span className="connection-status">{lead.email}</span>}
+              {lead.alt_phone && <span className="connection-status">Alt: {lead.alt_phone}</span>}
+            </div>
+            {lead.address1 && <p className="connection-summary">{lead.address1} {lead.address2 || ''} {lead.address3 || ''}</p>}
+            {lead.comments && <p className="connection-summary">Comments: {lead.comments}</p>}
+            <div className="modal-actions">
+              <button type="button" className="primary-action" disabled={busy} onClick={() => setShowDispo(true)}>
+                <Activity size={16} aria-hidden="true" />
+                Disposition Call
+              </button>
+            </div>
+            {showDispo && (
+              <>
+                <div className="connection-actions">
+                  {dispoStatuses.map((row) => (
+                    <button
+                      type="button"
+                      key={row.status}
+                      className="row-action"
+                      disabled={busy || (row.status === 'CALLBK' && !callbackTime)}
+                      onClick={async () => {
+                        const payload = await act('/agent/dispo', {
+                          status: row.status,
+                          lead_id: lead.lead_id,
+                          callback_datetime: callbackTime,
+                          comments: dispoComments,
+                        });
+                        if (payload) {
+                          setShowDispo(false);
+                          setLead(null);
+                          setCallbackTime('');
+                          setDispoComments('');
+                          setMessage(`Dispositioned ${row.status} — paused`);
+                        }
+                      }}
+                    >
+                      {row.status}{row.status_name ? ` - ${row.status_name}` : ''}
+                    </button>
+                  ))}
+                  {!dispoStatuses.length && <span className="connection-summary">No selectable statuses for this campaign</span>}
+                </div>
+                <div className="field-grid">
+                  <label>
+                    <span>Callback Date/Time (for CALLBK)</span>
+                    <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Comments</span>
+                    <input type="text" value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} />
+                  </label>
+                </div>
+              </>
+            )}
           </Panel>
         )}
       </div>

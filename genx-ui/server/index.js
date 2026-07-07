@@ -6571,7 +6571,7 @@ async function agentAuth(req, res) {
 
   const [userRow] = await rows(
     `SELECT u.user, u.pass, u.full_name, u.user_level, u.user_group, u.active,
-            ug.allowed_campaigns
+            u.admin_hide_lead_data, u.admin_hide_phone_data, ug.allowed_campaigns
      FROM vicidial_users u
      LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
      WHERE u.user = ? LIMIT 1`,
@@ -6598,6 +6598,8 @@ async function agentAuth(req, res) {
     fullName: userRow.full_name || userRow.user,
     userLevel: Number(userRow.user_level || 1),
     userGroup: userRow.user_group || '',
+    adminHideLeadData: userRow.admin_hide_lead_data === '1',
+    adminHidePhoneData: userRow.admin_hide_phone_data || '0',
     permissions: { allowedCampaigns: allowed },
   };
   const token = crypto.randomBytes(32).toString('hex');
@@ -6794,7 +6796,135 @@ async function agentStatus(req, res) {
   const live = await agentLiveRow(req.genxUser.user);
   if (!live) return res.json({ ok: true, live: null });
   await execute('UPDATE vicidial_live_agents SET last_update_time = NOW() WHERE user = ?', [req.genxUser.user]).catch(() => {});
-  return res.json({ ok: true, live, pauseCodes: await agentPauseCodes(live.campaign_id) });
+
+  // When the dialer has attached a lead, ship its details for the lead card
+  // (masked like everywhere else per the admin hide flags).
+  let lead = null;
+  if (Number(live.lead_id) > 0) {
+    const [row] = await rows(
+      `SELECT lead_id, list_id, status, phone_code, phone_number, title, first_name, middle_initial,
+              last_name, address1, address2, address3, city, state, postal_code, province, country_code,
+              gender, date_of_birth, alt_phone, email, security_phrase, comments, called_count,
+              vendor_lead_code, source_id
+       FROM vicidial_list WHERE lead_id = ? LIMIT 1`,
+      [live.lead_id],
+      [],
+    );
+    if (row) {
+      const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+      const hideLead = Boolean(req.genxUser?.adminHideLeadData);
+      lead = { ...row };
+      if (phoneMode !== '0') {
+        lead.phone_number = maskPhoneNumber(lead.phone_number, phoneMode);
+        lead.alt_phone = maskPhoneNumber(lead.alt_phone, phoneMode);
+      }
+      if (hideLead) {
+        lead.vendor_lead_code = maskText(lead.vendor_lead_code);
+        lead.security_phrase = maskText(lead.security_phrase);
+        lead.comments = maskText(lead.comments);
+      }
+    }
+  }
+  return res.json({ ok: true, live, lead, pauseCodes: await agentPauseCodes(live.campaign_id) });
+}
+
+// Legacy dispo screen status list: campaign selectable statuses + system ones.
+async function agentDispoStatuses(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const statuses = await rows(
+    `SELECT status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ? AND selectable = 'Y'
+     UNION
+     SELECT status, status_name FROM vicidial_statuses WHERE selectable = 'Y'
+     ORDER BY status LIMIT 200`,
+    [live.campaign_id],
+    [],
+  );
+  return res.json({ ok: true, statuses });
+}
+
+// Port of the updateDISPO core (vdc_db_query.php ~15112): write the lead
+// status, tag recent call-log rows, close the agent_log talk/dispo segment,
+// insert the callback row for CALLBK, and drop the agent back to PAUSED.
+async function agentDispo(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(live.lead_id || 0) || Number(req.body?.lead_id || 0);
+  const dispo = cleanId(req.body?.status, 8);
+  if (!dispo || !leadId) return badRequest(res, 'status_and_lead_required');
+  const comments = cleanText(req.body?.comments, 255);
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  try {
+    // Reset the live agent first, exactly like legacy does.
+    await execute(
+      "UPDATE vicidial_live_agents SET lead_id = 0, status = 'PAUSED', uniqueid = 0, callerid = '', channel = '', comments = '', last_state_change = NOW() WHERE user = ?",
+      [user],
+    );
+    await execute('UPDATE vicidial_list SET status = ?, user = ? WHERE lead_id = ?', [dispo, user, leadId]);
+
+    // Tag the most recent call-log row for this lead (outbound then inbound).
+    const fourHoursAgo = new Date(Date.now() - 4 * 3600000).toISOString().slice(0, 19).replace('T', ' ');
+    const logResult = await execute(
+      'UPDATE vicidial_log SET status = ?, user = ? WHERE lead_id = ? AND user = ? AND call_date > ? ORDER BY uniqueid DESC LIMIT 1',
+      [dispo, user, leadId, user, fourHoursAgo],
+    );
+    if (!logResult.affectedRows) {
+      await execute(
+        'UPDATE vicidial_closer_log SET status = ? WHERE lead_id = ? AND user = ? ORDER BY closecallid DESC LIMIT 1',
+        [dispo, leadId, user],
+      ).catch(() => {});
+    }
+
+    // Close talk/dispo on the agent_log row that carries this lead.
+    const [log] = await rows(
+      'SELECT agent_log_id, dispo_epoch, dispo_sec, talk_epoch, talk_sec FROM vicidial_agent_log WHERE user = ? AND lead_id = ? ORDER BY agent_log_id DESC LIMIT 1',
+      [user, leadId],
+      [],
+    );
+    if (log) {
+      const dispoEpoch = Number(log.dispo_epoch) || nowEpoch;
+      const dispoSec = Number(log.dispo_epoch) ? (nowEpoch - Number(log.dispo_epoch)) + Number(log.dispo_sec || 0) : 0;
+      await execute(
+        'UPDATE vicidial_agent_log SET status = ?, dispo_epoch = ?, dispo_sec = ? WHERE agent_log_id = ?',
+        [dispo, dispoEpoch, Math.max(dispoSec, 0), log.agent_log_id],
+      );
+    }
+    await execute('UPDATE vicidial_campaigns SET campaign_calldate = NOW() WHERE campaign_id = ?', [live.campaign_id]).catch(() => {});
+
+    // Scheduled callback support (legacy CALLBK path).
+    if (dispo === 'CALLBK' || Number(req.body?.is_callback) === 1) {
+      const callbackTime = cleanText(req.body?.callback_datetime, 19).replace('T', ' ');
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(callbackTime)) {
+        const recipient = cleanChoice(req.body?.recipient, ['USERONLY', 'ANYONE'], 'ANYONE');
+        const [leadRow] = await rows('SELECT list_id, status FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []);
+        await execute(
+          `INSERT INTO vicidial_callbacks
+             (lead_id, list_id, campaign_id, status, entry_time, callback_time, user, recipient, comments,
+              user_group, lead_status)
+           VALUES (?, ?, ?, 'ACTIVE', NOW(), ?, ?, ?, ?, ?, ?)`,
+          [leadId, leadRow?.list_id || 0, live.campaign_id, callbackTime, user, recipient, comments,
+            req.genxUser.userGroup || '', leadRow?.status || dispo],
+        );
+      }
+    }
+
+    // Fresh PAUSED agent_log segment, like the post-dispo pause.
+    const inserted = await execute(
+      `INSERT INTO vicidial_agent_log
+         (user, server_ip, event_time, campaign_id, pause_epoch, pause_sec, wait_epoch, user_group, pause_type)
+       VALUES (?, ?, NOW(), ?, ?, 0, ?, ?, 'AGENT')`,
+      [user, live.server_ip, live.campaign_id, nowEpoch, nowEpoch, req.genxUser.userGroup || ''],
+    );
+    await execute('UPDATE vicidial_live_agents SET agent_log_id = ? WHERE user = ?', [inserted.insertId, user]);
+
+    return res.json({ ok: true, live: await agentLiveRow(user) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'dispo_failed' });
+  }
 }
 
 // Legacy VDADready/VDADpause: close the open agent_log segment, flip status;
@@ -10747,6 +10877,8 @@ app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(re
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
 app.post('/api/agent/pause-code', requireAgentAccess, agentPauseCode);
 app.post('/api/agent/logout', requireAgentAccess, agentLogout);
+app.get('/api/agent/dispo-statuses', requireAgentAccess, agentDispoStatuses);
+app.post('/api/agent/dispo', requireAgentAccess, agentDispo);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
