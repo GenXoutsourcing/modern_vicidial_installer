@@ -13651,6 +13651,35 @@ function audioNameOk(name) {
   return /^[A-Za-z0-9][\w.-]{0,199}\.[A-Za-z0-9]{2,5}$/.test(name) && !name.includes('..') && !name.includes('/');
 }
 
+// Audio chooser source for prompt/message fields (legacy audio chooser popup
+// + sounds_list equivalent): central audio store files merged with the local
+// asterisk sounds directory, deduped by extension-less basename — prompt
+// fields store asterisk sound names without extensions.
+const ASTERISK_SOUNDS_DIR = process.env.GENX_UI_SOUNDS_DIR || '/var/lib/asterisk/sounds';
+
+async function listAudioChoices(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const choices = new Map();
+  const addDir = (dir, source) => {
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!audioNameOk(name)) continue;
+      if (!/\.(wav|gsm|ulaw|alaw|sln|sln16|g722|g729|mp3|ogg)$/i.test(name)) continue;
+      const base = name.replace(/\.[^.]+$/, '');
+      if (!choices.has(base)) choices.set(base, { name: base, source });
+    }
+  };
+  addDir(AUDIO_STORE_DIR, 'store');
+  addDir(ASTERISK_SOUNDS_DIR, 'server');
+  const files = [...choices.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return res.json({ ok: true, files });
+}
+
 function soxi(args, file) {
   return new Promise((resolve) => {
     execFile('soxi', [...args, file], { timeout: 5000 }, (err, stdout) => {
@@ -13762,6 +13791,7 @@ async function deleteAudio(req, res) {
 }
 
 app.get('/api/admin/audio-store', requireAccess, listAudioStore);
+app.get('/api/admin/audio-files', requireAccess, listAudioChoices);
 app.post('/api/admin/audio-store', requireAccess, express.raw({ type: () => true, limit: '25mb' }), uploadAudio);
 app.get('/api/admin/audio-store/file/:name', requireAccess, streamAudio);
 app.delete('/api/admin/audio-store/:name', requireAccess, deleteAudio);

@@ -1968,7 +1968,10 @@ function actionFields(entity, mode, admin, form = {}) {
     options: enabled ? options : undefined,
     ...extra,
   });
-  const audioField = (key, label, currentValue, extra = {}) => lookupField(key, label, audioOptionsFor(currentValue), currentValue, true, extra);
+  // Audio prompt fields use the legacy-style chooser (free text + clickable
+  // label opening the audio file list) instead of a select - values can be
+  // pipe-separated lists and files often live only on the dialers.
+  const audioField = (key, label, currentValue, extra = {}) => ({ key, label, type: 'audio', ...extra });
   const voicemailField = (key, label, currentValue, extra = {}) => lookupField(key, label, voicemailOptionsFor(currentValue), currentValue, true, extra);
   const mohField = (key, label, currentValue, extra = {}) => lookupField(key, label, mohOptionsFor(currentValue), currentValue, true, extra);
   const recordingField = (key, label, currentValue, extra = {}) => lookupField(key, label, recordingOptionsFor(currentValue), currentValue, true, extra);
@@ -1983,8 +1986,11 @@ function actionFields(entity, mode, admin, form = {}) {
     return [];
   };
   const routeTargetField = (route, key, label, currentValue, extra = {}) => {
-    const options = routeOptionsFor(route, currentValue);
     const normalized = String(route || '').toUpperCase();
+    if (['MESSAGE', 'HANGUP', 'AUDIO', 'PLAY', 'PRESS_PLAY'].includes(normalized)) {
+      return { key, label, type: 'audio', ...extra };
+    }
+    const options = routeOptionsFor(route, currentValue);
     const selectEnabled = options.length > 0 && !['EXTENSION', 'PRESS_EXTEN', 'AGI', 'WEBFORM'].includes(normalized);
     return {
       key,
@@ -4813,6 +4819,77 @@ function CallMenuConnections({ menuId, token, onLogout, onNavigate }) {
   );
 }
 
+// Audio prompt fields (legacy audio chooser): the field label is a clickable
+// link that opens a filterable list of audio files (central store + asterisk
+// sounds dir); picking one fills the free-text input with the extension-less
+// sound name. Values stay hand-editable (pipe-separated lists etc).
+let audioChoicesCache = null;
+
+function AudioChooserField({ field, value, token, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [files, setFiles] = useState(audioChoicesCache);
+  const [filter, setFilter] = useState('');
+
+  async function toggle(event) {
+    event.preventDefault();
+    const next = !open;
+    setOpen(next);
+    if (next && !audioChoicesCache) {
+      try {
+        const payload = await apiFetch('/admin/audio-files', token);
+        audioChoicesCache = payload.files || [];
+        setFiles(audioChoicesCache);
+      } catch {
+        setFiles([]);
+      }
+    }
+  }
+
+  const query = filter.trim().toLowerCase();
+  const list = (files || []).filter((file) => !query || file.name.toLowerCase().includes(query));
+
+  return (
+    <label className={field.wide ? 'wide-field' : ''}>
+      <span>
+        <button type="button" className="audio-chooser-link" title="Open the audio file chooser" onClick={toggle}>
+          {field.label} {'♪'}
+        </button>
+      </span>
+      <input
+        value={value ?? ''}
+        disabled={field.disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {open && (
+        <div className="audio-chooser-list">
+          <input
+            placeholder={`Filter ${formatNumber((files || []).length)} audio files`}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <div className="audio-chooser-items">
+            {files === null && <em>Loading audio files</em>}
+            {files !== null && !list.length && <em>No matching audio files (upload via Media &amp; Tools / Audio Store)</em>}
+            {list.slice(0, 200).map((file) => (
+              <button
+                type="button"
+                key={file.name}
+                onClick={() => {
+                  onChange(file.name);
+                  setOpen(false);
+                }}
+              >
+                {file.name}{file.source === 'store' ? ' *' : ''}
+              </button>
+            ))}
+            {list.length > 200 && <em>{formatNumber(list.length - 200)} more - keep typing to narrow down</em>}
+          </div>
+        </div>
+      )}
+    </label>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -5036,6 +5113,14 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             {fields.map((field) => (
               field.section ? (
                 <div key={field.section} className="form-section">{field.section}</div>
+              ) : field.type === 'audio' ? (
+                <AudioChooserField
+                  key={field.key}
+                  field={field}
+                  value={form[field.key]}
+                  token={token}
+                  onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
+                />
               ) : (
                 <label key={field.key} className={field.wide ? 'wide-field' : ''}>
                   <span>{field.label}</span>
