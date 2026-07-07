@@ -456,13 +456,16 @@ function userCan(user, entity) {
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.deleteCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
+  if (entity === 'statusCategories') return Boolean(user?.modifyStatuses || user?.modifyServers);
+  if (entity === 'extensionGroups') return Boolean(user?.modifyRemoteagents);
+  if (entity === 'confTemplates') return Boolean(user?.modifyServers);
   if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
   if (entity === 'screenColors') return Boolean(user?.modifyColors);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -495,6 +498,9 @@ function userCanDelete(user, entity) {
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.modifyCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
+  if (entity === 'statusCategories') return Boolean(user?.modifyStatuses || user?.modifyServers);
+  if (entity === 'extensionGroups') return Boolean(user?.deleteRemoteAgents);
+  if (entity === 'confTemplates') return Boolean(user?.modifyServers);
   if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
   if (entity === 'screenColors') return Boolean(user?.modifyColors);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
@@ -1645,6 +1651,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'statusGroups') {
     return { status_group_id: '', status_group_notes: '', user_group: '---ALL---' };
+  }
+
+  if (entity === 'statusCategories') {
+    return { vsc_id: '', vsc_name: '', vsc_description: '', tovdad_display: 'N', sale_category: 'N', dead_lead_category: 'N' };
+  }
+
+  if (entity === 'extensionGroups') {
+    return { extension_group_id: '', extension: '', rank: '0', campaign_groups: '' };
+  }
+
+  if (entity === 'confTemplates') {
+    return { template_id: '', template_name: '', template_contents: '', user_group: '---ALL---' };
   }
 
   if (entity === 'screenLabels') {
@@ -3078,6 +3096,35 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'statusCategories') {
+    return [
+      { key: 'vsc_id', label: 'Category ID', disabled: mode === 'edit' },
+      { key: 'vsc_name', label: 'Name' },
+      { key: 'vsc_description', label: 'Description', wide: true },
+      { key: 'tovdad_display', label: 'TimeOnVDAD Display (max 4)', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'sale_category', label: 'Sale Category', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'dead_lead_category', label: 'Dead Lead Category', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+    ];
+  }
+
+  if (entity === 'extensionGroups') {
+    return [
+      { key: 'extension_group_id', label: 'Extension Group ID', disabled: mode === 'edit' },
+      { key: 'extension', label: 'Extension' },
+      { key: 'rank', label: 'Rank', type: 'number' },
+      { key: 'campaign_groups', label: 'Campaign Groups', type: 'textarea', wide: true },
+    ];
+  }
+
+  if (entity === 'confTemplates') {
+    return [
+      { key: 'template_id', label: 'Template ID', disabled: mode === 'edit' },
+      { key: 'template_name', label: 'Name' },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'template_contents', label: 'Template Contents', type: 'textarea', wide: true },
+    ];
+  }
+
   if (entity === 'moh') {
     return [
       { key: 'moh_id', label: 'MOH ID', disabled: mode === 'edit' },
@@ -3562,6 +3609,9 @@ function entityLabel(entity) {
     stateCallTimes: 'State Call Time',
     holidays: 'Holiday',
     statusGroups: 'Status Group',
+    statusCategories: 'Status Category',
+    extensionGroups: 'Extension Group Entry',
+    confTemplates: 'Conf Template',
     screenLabels: 'Screen Label Set',
     screenColors: 'Screen Color Scheme',
     settingsContainers: 'Settings Container',
@@ -3613,6 +3663,9 @@ function entityId(entity, row) {
     stateCallTimes: row.state_call_time_id,
     holidays: row.holiday_id,
     statusGroups: row.status_group_id,
+    statusCategories: row.vsc_id,
+    extensionGroups: row.extension_id,
+    confTemplates: row.template_id,
     screenLabels: row.label_id,
     screenColors: row.colors_id,
     settingsContainers: row.container_id,
@@ -3646,6 +3699,9 @@ function entityPath(entity) {
     automatedReports: 'automated-reports',
     stateCallTimes: 'state-call-times',
     statusGroups: 'status-groups',
+    statusCategories: 'status-categories',
+    extensionGroups: 'extension-groups',
+    confTemplates: 'conf-templates',
     screenLabels: 'screen-labels',
     screenColors: 'screen-colors',
     settingsContainers: 'settings-containers',
@@ -6731,6 +6787,29 @@ function StatusesView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
+        <Panel
+          eyebrow="Grouping"
+          title={`Status Categories (${formatNumber((admin?.statusCategories || []).length)})`}
+          icon={Gauge}
+          headerActions={userCan(user, 'statusCategories') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusCategories', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No status categories"
+            rows={(admin?.statusCategories || []).map((row) => ({ ...row, id: row.vsc_id }))}
+            columns={[
+              { key: 'vsc_id', label: 'ID' },
+              { key: 'vsc_name', label: 'Name' },
+              { key: 'tovdad_display', label: 'TimeOnVDAD', render: (row) => (row.tovdad_display === 'Y' ? 'Yes' : 'No') },
+              { key: 'sale_category', label: 'Sale', render: (row) => (row.sale_category === 'Y' ? 'Yes' : 'No') },
+              { key: 'dead_lead_category', label: 'Dead Lead', render: (row) => (row.dead_lead_category === 'Y' ? 'Yes' : 'No') },
+              ...(userCan(user, 'statusCategories') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('statusCategories', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
       </section>
     </>
   );
@@ -7873,6 +7952,31 @@ function RemoteAgentsView({ admin, user, onAction }) {
               { key: 'campaign_id', label: 'Campaign' },
               { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'ACTIVE'}>{row.status}</StatusPill> },
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('remoteAgents', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Users"
+          title={`Extension Groups (${formatNumber((admin?.extensionGroups || []).length)})`}
+          icon={PhoneCall}
+          className="admin-wide-panel"
+          headerActions={userCan(user, 'extensionGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('extensionGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No extension group entries (used for external dial-out extension rotation)"
+            rows={(admin?.extensionGroups || []).map((row) => ({ ...row, id: row.extension_id }))}
+            columns={[
+              { key: 'extension_group_id', label: 'Group ID' },
+              { key: 'extension', label: 'Extension' },
+              { key: 'rank', label: 'Rank' },
+              { key: 'campaign_groups', label: 'Campaign Groups', render: (row) => row.campaign_groups || '—' },
+              { key: 'call_count_today', label: 'Calls Today', render: (row) => formatNumber(row.call_count_today) },
+              { key: 'last_call_time', label: 'Last Call', render: (row) => formatDateTime(row.last_call_time) },
+              ...(userCan(user, 'extensionGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('extensionGroups', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -13985,6 +14089,28 @@ function SystemView({ admin, user, onAction }) {
               { key: 'extension', label: 'In Use By', render: (row) => row.extension || 'Empty' },
               { key: 'leave_3way', label: '3-Way Left', render: (row) => (row.leave_3way === '1' ? 'Yes' : 'No') },
               ...(userCan(user, 'agentConferences') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('agentConferences', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Telephony"
+          title={`Conf Templates (${formatNumber((admin?.confTemplates || []).length)})`}
+          icon={FileText}
+          headerActions={userCan(user, 'confTemplates') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('confTemplates', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No conf templates (phone/carrier config templates)"
+            rows={(admin?.confTemplates || []).map((row) => ({ ...row, id: row.template_id }))}
+            columns={[
+              { key: 'template_id', label: 'ID' },
+              { key: 'template_name', label: 'Name' },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'size', label: 'Contents', render: (row) => `${formatNumber(String(row.template_contents || '').length)} chars` },
+              ...(userCan(user, 'confTemplates') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('confTemplates', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>

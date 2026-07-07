@@ -7,7 +7,7 @@ export const LEGACY_ADMIN_GROUPS = [
       { label: 'User Groups', href: '/vicidial/admin.php?ADD=100000', view: 'userGroups' },
       { label: 'Add User Group', href: '/vicidial/admin.php?ADD=111111', view: 'userGroups' },
       { label: 'Remote Agents', href: '/vicidial/admin.php?ADD=10000', view: 'remoteAgents' },
-      { label: 'Extension Groups', href: '/vicidial/admin.php?ADD=12000' },
+      { label: 'Extension Groups', href: '/vicidial/admin.php?ADD=12000', view: 'remoteAgents' },
     ],
   },
   {
@@ -47,7 +47,7 @@ export const LEGACY_ADMIN_GROUPS = [
       { label: 'Carriers', href: '/vicidial/admin.php?ADD=140000000000' },
       { label: 'Conferences', href: '/vicidial/admin.php?ADD=1000000000000', view: 'system' },
       { label: 'Agent Conferences', href: '/vicidial/admin.php?ADD=10000000000000', view: 'system' },
-      { label: 'Conf Templates', href: '/vicidial/admin.php?ADD=130000000000' },
+      { label: 'Conf Templates', href: '/vicidial/admin.php?ADD=130000000000', view: 'system' },
     ],
   },
   {
