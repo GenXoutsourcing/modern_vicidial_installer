@@ -3874,6 +3874,40 @@ async function deleteScript(req, res) {
   }
 }
 
+// Cross-references from legacy filter modify (ADD=31111111): campaigns and
+// users using the lead filter.
+async function leadFilterConnections(req, res) {
+  if (!requireModify(req, res, 'modifyFilters')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_filter_id');
+  const campaigns = await rows(
+    'SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE lead_filter_id = ? ORDER BY campaign_id ASC LIMIT 200',
+    [id],
+    [],
+  );
+  const users = await rows(
+    'SELECT user, full_name FROM vicidial_users WHERE lead_filter_id = ? ORDER BY user ASC LIMIT 200',
+    [id],
+    [],
+  );
+  return res.json({ ok: true, campaigns, users });
+}
+
+// Legacy ADD=61111111: delete the lead filter.
+async function deleteLeadFilter(req, res) {
+  if (!requireModify(req, res, 'deleteFilters')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_filter_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_lead_filters WHERE lead_filter_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'filter_not_found' });
+    await adminLog(req, 'FILTERS', 'DELETE', id, 'GENX DELETE LEAD FILTER', 'DELETE FROM vicidial_lead_filters', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'filter_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -5983,6 +6017,8 @@ app.delete('/api/admin/scripts/:id', requireAccess, deleteScript);
 app.get('/api/admin/scripts/:id/connections', requireAccess, scriptConnections);
 app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(req, res, 'create'));
 app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
+app.delete('/api/admin/lead-filters/:id', requireAccess, deleteLeadFilter);
+app.get('/api/admin/lead-filters/:id/connections', requireAccess, leadFilterConnections);
 app.post('/api/admin/filter-phone-groups', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'create'));
 app.put('/api/admin/filter-phone-groups/:id', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'update'));
 app.delete('/api/admin/filter-phone-groups/:id', requireAccess, deleteFilterPhoneGroup);

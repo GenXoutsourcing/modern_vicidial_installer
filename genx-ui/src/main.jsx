@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -452,6 +452,7 @@ function userCanDelete(user, entity) {
   if (entity === 'users') return Boolean(user?.deleteUsers);
   if (entity === 'lists') return Boolean(user?.deleteLists);
   if (entity === 'scripts') return Boolean(user?.deleteScripts);
+  if (entity === 'leadFilters') return Boolean(user?.deleteFilters);
   return false;
 }
 
@@ -3881,6 +3882,79 @@ function ScriptConnections({ scriptId, scriptText, token, onLogout }) {
   );
 }
 
+// Generic small cross-reference panel used by entities whose legacy modify
+// page just lists "X USING THIS Y" tables plus an admin-changes link.
+function ReferencePanel({ title, lists, legacyLinks }) {
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>{title}</h3>
+        </div>
+        <Compass size={20} aria-hidden="true" />
+      </div>
+      <div className="rank-grids">
+        {lists.map(([listTitle, items, label]) => (
+          <div className="connection-lists" key={listTitle}>
+            <p className="connection-summary">{listTitle}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            {items.slice(0, 8).map((row, index) => (
+              <span className="connection-status" key={`${listTitle}-${index}`}>{label(row)}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+      {Boolean(legacyLinks?.length) && (
+        <div className="connection-actions">
+          {legacyLinks.map(([label, href]) => (
+            <a key={label} className="row-action" href={href} target="_blank" rel="noreferrer">
+              <ExternalLink size={15} aria-hidden="true" />
+              {label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeadFilterConnections({ filterId, token, onLogout }) {
+  const filter = String(filterId || '');
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    if (!filter) return undefined;
+    apiFetch(`/admin/lead-filters/${encodeURIComponent(filter)}/connections`, token)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filter, token, onLogout]);
+
+  if (!filter || !data || data.error) return null;
+
+  return (
+    <ReferencePanel
+      title="Where this filter is used"
+      lists={[
+        ['Campaigns using this filter', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+        ['Users using this filter', data.users || [], (row) => `${row.user} - ${row.full_name || ''}`],
+      ]}
+      legacyLinks={[
+        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=FILTERS&stage=${encodeURIComponent(filter)}`],
+      ]}
+    />
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -3978,6 +4052,14 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'leadFilters' && (
+          <LeadFilterConnections
+            filterId={form.lead_filter_id}
+            token={token}
+            onLogout={onLogout}
           />
         )}
 
