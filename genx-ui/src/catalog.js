@@ -41,8 +41,8 @@ export const LEGACY_ADMIN_GROUPS = [
     title: 'Platform',
     items: [
       { label: 'Phones', href: '/vicidial/admin.php?ADD=10000000000' },
-      { label: 'Phone Aliases', href: '/vicidial/admin.php?ADD=12000000000' },
-      { label: 'Group Aliases', href: '/vicidial/admin.php?ADD=13000000000' },
+      { label: 'Phone Aliases', href: '/vicidial/admin.php?ADD=12000000000', view: 'phones' },
+      { label: 'Group Aliases', href: '/vicidial/admin.php?ADD=13000000000', view: 'phones' },
       { label: 'Servers', href: '/vicidial/admin.php?ADD=100000000000' },
       { label: 'Carriers', href: '/vicidial/admin.php?ADD=140000000000' },
       { label: 'Conferences', href: '/vicidial/admin.php?ADD=1000000000000' },

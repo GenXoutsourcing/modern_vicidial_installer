@@ -917,6 +917,8 @@ async function adminData(user) {
     musicOnHold,
     remoteAgents,
     dropLists,
+    phoneAliases,
+    groupAliases,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2156,6 +2158,17 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      'SELECT alias_id, alias_name, logins_list, user_group FROM phones_alias ORDER BY alias_id ASC LIMIT 500',
+      [],
+      [],
+    ),
+    rows(
+      `SELECT group_alias_id, group_alias_name, caller_id_number, caller_id_name, active, user_group
+       FROM groups_alias ORDER BY group_alias_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2242,6 +2255,8 @@ async function adminData(user) {
     carriers,
     remoteAgents,
     dropLists,
+    phoneAliases,
+    groupAliases,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4267,6 +4282,94 @@ async function deleteDropList(req, res) {
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'drop_list_delete_failed' });
+  }
+}
+
+async function savePhoneAlias(req, res, mode) {
+  if (!requireModify(req, res, 'modifyPhones')) return;
+  const payload = {
+    alias_name: cleanText(req.body?.alias_name, 50) || 'New Phone Alias',
+    logins_list: cleanText(req.body?.logins_list, 255).replace(/[^-_,0-9a-zA-Z]/g, ''),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.alias_id, 20);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_alias_id');
+      const { assignments, values } = dynamicAssignments({ alias_id: id, ...payload });
+      await execute(`INSERT INTO phones_alias SET ${assignments}`, values);
+      await adminLog(req, 'PHONEALIASES', 'ADD', id, 'GENX ADD PHONE ALIAS', 'INSERT INTO phones_alias', payload.alias_name);
+    } else {
+      const id = cleanId(req.params.id, 20);
+      if (!id) return badRequest(res, 'invalid_alias_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE phones_alias SET ${assignments} WHERE alias_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'alias_not_found' });
+      await adminLog(req, 'PHONEALIASES', 'MODIFY', id, 'GENX MODIFY PHONE ALIAS', 'UPDATE phones_alias', payload.alias_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'phone_alias_save_failed' });
+  }
+}
+
+// Legacy ADD=62111111111: delete phone alias, gated ast_delete_phones.
+async function deletePhoneAlias(req, res) {
+  if (!requireModify(req, res, 'astDeletePhones')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_alias_id');
+  try {
+    const result = await execute('DELETE FROM phones_alias WHERE alias_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'alias_not_found' });
+    await adminLog(req, 'PHONEALIASES', 'DELETE', id, 'GENX DELETE PHONE ALIAS', 'DELETE FROM phones_alias', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'phone_alias_delete_failed' });
+  }
+}
+
+async function saveGroupAlias(req, res, mode) {
+  if (!requireModify(req, res, 'modifyPhones')) return;
+  const payload = {
+    group_alias_name: cleanText(req.body?.group_alias_name, 50) || 'New Group Alias',
+    caller_id_number: cleanDigits(req.body?.caller_id_number, 20),
+    caller_id_name: cleanText(req.body?.caller_id_name, 20),
+    active: ynFlag(req.body?.active, 'N'),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.group_alias_id, 30);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_group_alias_id');
+      const { assignments, values } = dynamicAssignments({ group_alias_id: id, ...payload });
+      await execute(`INSERT INTO groups_alias SET ${assignments}`, values);
+      await adminLog(req, 'GROUPALIASES', 'ADD', id, 'GENX ADD GROUP ALIAS', 'INSERT INTO groups_alias', payload.group_alias_name);
+    } else {
+      const id = cleanId(req.params.id, 30);
+      if (!id) return badRequest(res, 'invalid_group_alias_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE groups_alias SET ${assignments} WHERE group_alias_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'group_alias_not_found' });
+      await adminLog(req, 'GROUPALIASES', 'MODIFY', id, 'GENX MODIFY GROUP ALIAS', 'UPDATE groups_alias', payload.group_alias_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'group_alias_save_failed' });
+  }
+}
+
+// Legacy ADD=63111111111: delete group alias.
+async function deleteGroupAlias(req, res) {
+  if (!requireModify(req, res, 'modifyPhones')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_group_alias_id');
+  try {
+    const result = await execute('DELETE FROM groups_alias WHERE group_alias_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'group_alias_not_found' });
+    await adminLog(req, 'GROUPALIASES', 'DELETE', id, 'GENX DELETE GROUP ALIAS', 'DELETE FROM groups_alias', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'group_alias_delete_failed' });
   }
 }
 
@@ -6385,6 +6488,12 @@ app.delete('/api/admin/remote-agents/:id', requireAccess, deleteRemoteAgent);
 app.post('/api/admin/drop-lists', requireAccess, (req, res) => saveDropList(req, res, 'create'));
 app.put('/api/admin/drop-lists/:id', requireAccess, (req, res) => saveDropList(req, res, 'update'));
 app.delete('/api/admin/drop-lists/:id', requireAccess, deleteDropList);
+app.post('/api/admin/phone-aliases', requireAccess, (req, res) => savePhoneAlias(req, res, 'create'));
+app.put('/api/admin/phone-aliases/:id', requireAccess, (req, res) => savePhoneAlias(req, res, 'update'));
+app.delete('/api/admin/phone-aliases/:id', requireAccess, deletePhoneAlias);
+app.post('/api/admin/group-aliases', requireAccess, (req, res) => saveGroupAlias(req, res, 'create'));
+app.put('/api/admin/group-aliases/:id', requireAccess, (req, res) => saveGroupAlias(req, res, 'update'));
+app.delete('/api/admin/group-aliases/:id', requireAccess, deleteGroupAlias);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));

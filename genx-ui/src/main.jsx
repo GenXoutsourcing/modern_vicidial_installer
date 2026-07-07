@@ -439,10 +439,12 @@ function userCan(user, entity) {
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
   if (entity === 'remoteAgents') return Boolean(user?.modifyRemoteagents);
   if (entity === 'dropLists') return Boolean(user?.modifyLists);
+  if (entity === 'phoneAliases') return Boolean(user?.modifyPhones);
+  if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -461,6 +463,8 @@ function userCanDelete(user, entity) {
   if (entity === 'carriers') return Boolean(user?.modifyCarriers);
   if (entity === 'remoteAgents') return Boolean(user?.deleteRemoteAgents);
   if (entity === 'dropLists') return Boolean(user?.deleteLists);
+  if (entity === 'phoneAliases') return Boolean(user?.astDeletePhones);
+  if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   return false;
 }
 
@@ -1576,6 +1580,14 @@ function actionDefaults(entity, admin) {
       user_group: group,
       report_rank: '1',
     };
+  }
+
+  if (entity === 'phoneAliases') {
+    return { alias_id: '', alias_name: '', logins_list: '', user_group: '---ALL---' };
+  }
+
+  if (entity === 'groupAliases') {
+    return { group_alias_id: '', group_alias_name: '', caller_id_number: '', caller_id_name: '', active: 'N', user_group: '---ALL---' };
   }
 
   if (entity === 'dropLists') {
@@ -2887,6 +2899,26 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'phoneAliases') {
+    return [
+      { key: 'alias_id', label: 'Alias ID', disabled: mode === 'edit' },
+      { key: 'alias_name', label: 'Alias Name' },
+      { key: 'logins_list', label: 'Phone Logins (comma-separated)', type: 'textarea', wide: true },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'groupAliases') {
+    return [
+      { key: 'group_alias_id', label: 'Group Alias ID', disabled: mode === 'edit' },
+      { key: 'group_alias_name', label: 'Alias Name' },
+      { key: 'caller_id_number', label: 'CallerID Number' },
+      { key: 'caller_id_name', label: 'CallerID Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
   if (entity === 'dropLists') {
     const listOptions = (admin?.lists || []).map((row) => ({ value: String(row.list_id), label: `${row.list_id} - ${row.list_name || ''}` }));
     return [
@@ -3186,6 +3218,8 @@ function entityLabel(entity) {
     campaignStatuses: 'Campaign Status',
     remoteAgents: 'Remote Agent',
     dropLists: 'Drop List',
+    phoneAliases: 'Phone Alias',
+    groupAliases: 'Group Alias',
   }[entity] || 'Record';
 }
 
@@ -3216,6 +3250,8 @@ function entityId(entity, row) {
     campaignStatuses: row.status,
     remoteAgents: row.remote_agent_id,
     dropLists: row.dl_id,
+    phoneAliases: row.alias_id,
+    groupAliases: row.group_alias_id,
   }[entity];
 }
 
@@ -3234,6 +3270,8 @@ function entityPath(entity) {
     campaignStatuses: 'campaign-statuses',
     remoteAgents: 'remote-agents',
     dropLists: 'drop-lists',
+    phoneAliases: 'phone-aliases',
+    groupAliases: 'group-aliases',
   }[entity] || entity;
 }
 
@@ -5768,6 +5806,49 @@ function PhonesView({ admin, user, onAction }) {
             <MetricCard icon={PhoneCall} label="Active Phones" value={formatNumber(phones.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(phones.length)} configured`} accent="#00d9ff" />
             <MetricCard icon={Headphones} label="Webphones" value={formatNumber(phones.filter((row) => row.is_webphone === 'Y').length)} detail="Browser phone endpoints" accent="#73fbd3" />
           </div>
+        </Panel>
+        <Panel
+          eyebrow="Aliases"
+          title={`Phone Aliases (${formatNumber((admin?.phoneAliases || []).length)})`}
+          icon={PhoneCall}
+          headerActions={canManage ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('phoneAliases', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No phone aliases (multi-phone ring groups for one login)"
+            rows={(admin?.phoneAliases || []).map((row) => ({ ...row, id: row.alias_id }))}
+            columns={[
+              { key: 'alias_id', label: 'Alias' },
+              { key: 'alias_name', label: 'Name' },
+              { key: 'logins_list', label: 'Phone Logins' },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('phoneAliases', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Aliases"
+          title={`Group Aliases (${formatNumber((admin?.groupAliases || []).length)})`}
+          icon={PhoneCall}
+          headerActions={canManage ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('groupAliases', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No group aliases (outbound CallerID sets agents can choose)"
+            rows={(admin?.groupAliases || []).map((row) => ({ ...row, id: row.group_alias_id }))}
+            columns={[
+              { key: 'group_alias_id', label: 'Alias' },
+              { key: 'group_alias_name', label: 'Name' },
+              { key: 'caller_id_number', label: 'CID Number' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('groupAliases', 'edit', row)} /> }] : []),
+            ]}
+          />
         </Panel>
       </section>
     </>
