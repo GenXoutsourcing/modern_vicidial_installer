@@ -6343,6 +6343,193 @@ async function threewayPressLogReport(req, res) {
   return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
 }
 
+// --- System reports ---
+// Native port of AST_server_performance.php: per-server load/CPU/channel
+// aggregates plus a capped time series.
+async function serverPerformanceReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const servers = await rows('SELECT server_ip, server_description FROM servers ORDER BY server_ip ASC LIMIT 100', [], []);
+  const serverIp = cleanText(req.query?.server_ip, 20).replace(/[^0-9.]/g, '');
+  if (!serverIp) return res.json({ ok: true, servers, sections: null, range: { beginDate, endDate } });
+
+  const params = [begin, end, serverIp];
+  const [summaryRow, series] = await Promise.all([
+    rows(
+      `SELECT AVG(sysload) AS avg_load, MAX(sysload) AS max_load,
+              AVG(channels_total) AS avg_channels, MAX(channels_total) AS max_channels,
+              MAX(processes) AS max_processes,
+              AVG(cpu_user_percent) AS avg_cpu_user, AVG(cpu_system_percent) AS avg_cpu_system,
+              AVG(cpu_idle_percent) AS avg_cpu_idle, AVG(freeram) AS avg_freeram,
+              AVG(clients_total) AS avg_clients, MAX(clients_total) AS max_clients
+       FROM server_performance WHERE start_time >= ? AND start_time <= ? AND server_ip = ?`,
+      params,
+      [],
+    ).then((result) => result[0] || {}),
+    rows(
+      `SELECT start_time, sysload, channels_total, trunks_total, clients_total, live_recordings,
+              cpu_user_percent, cpu_system_percent, cpu_idle_percent, freeram, processes
+       FROM server_performance WHERE start_time >= ? AND start_time <= ? AND server_ip = ?
+       ORDER BY start_time ASC LIMIT 1000`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, servers, range: { beginDate, endDate }, sections: { summary: summaryRow, series, serverIp } });
+}
+
+// Native port of phone_stats.php: per-extension call_log stats for a server.
+async function phoneStatsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:01`;
+  const end = `${endDate} 23:59:59`;
+  const phoneParams = [];
+  const phoneWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', phoneParams);
+  const phones = await rows(
+    `SELECT extension, server_ip, fullname FROM phones WHERE ${phoneWhere} ORDER BY extension ASC LIMIT 500`,
+    phoneParams,
+    [],
+  );
+  const extension = cleanId(req.query?.extension, 20);
+  const serverIp = cleanText(req.query?.server_ip, 20).replace(/[^0-9.]/g, '');
+  if (!extension || !serverIp) return res.json({ ok: true, phones, sections: null, range: { beginDate, endDate } });
+
+  const params = [extension, serverIp, begin, end];
+  const [byGroup, totals] = await Promise.all([
+    rows(
+      `SELECT channel_group, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
+       FROM call_log WHERE extension = ? AND server_ip = ? AND start_time >= ? AND start_time <= ?
+       GROUP BY channel_group ORDER BY channel_group ASC LIMIT 100`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
+       FROM call_log WHERE extension = ? AND server_ip = ? AND start_time >= ? AND start_time <= ?`,
+      params,
+      [],
+    ).then((result) => result[0] || { calls: 0, seconds: 0 }),
+  ]);
+  return res.json({ ok: true, phones, range: { beginDate, endDate }, sections: { byGroup, totals, extension, serverIp } });
+}
+
+// Native port of process_report.php: keepalive process runs by serial_id.
+async function processReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const serials = await rows(
+    'SELECT DISTINCT serial_id FROM vicidial_process_log ORDER BY serial_id DESC LIMIT 100',
+    [],
+    [],
+  );
+  const serialId = cleanText(req.query?.serial_id, 50).replace(/[^-_.:0-9A-Za-z]/g, '');
+  if (!serialId) return res.json({ ok: true, serials: serials.map((row) => row.serial_id), sections: null });
+  const [stats, entries] = await Promise.all([
+    rows(
+      'SELECT COUNT(*) AS runs, COALESCE(SUM(run_sec),0) AS total_sec, MIN(run_time) AS first_run, MAX(run_time) AS last_run FROM vicidial_process_log WHERE serial_id = ?',
+      [serialId],
+      [],
+    ).then((result) => result[0] || {}),
+    rows(
+      'SELECT run_time, run_sec, server_ip, script, process, output_lines FROM vicidial_process_log WHERE serial_id = ? ORDER BY run_time ASC LIMIT 1000',
+      [serialId],
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, serials: serials.map((row) => row.serial_id), sections: { stats, entries, serialId } });
+}
+
+// Native port of sph_report.php: sales-per-hour from the precomputed
+// vicidial_agent_sph table.
+async function sphReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const groupParams = [];
+  const groupWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', groupParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns WHERE ${groupWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    groupParams,
+    [],
+  );
+  const shift = cleanChoice(req.query?.shift, ['ALL', 'AM', 'PM'], 'ALL');
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const allowed = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowed.has(id));
+  if (!campaignIds.length) return res.json({ ok: true, campaigns, entries: null, range: { beginDate, endDate } });
+
+  const entries = await rows(
+    `SELECT s.user, u.full_name, s.role, s.campaign_group_id,
+            COALESCE(SUM(s.login_sec),0) AS login_sec, COALESCE(SUM(s.calls),0) AS calls,
+            COALESCE(SUM(s.sales),0) AS sales, COALESCE(AVG(s.sph),0) AS sph
+     FROM vicidial_agent_sph s
+     LEFT JOIN vicidial_users u ON u.user = s.user
+     WHERE s.stat_date >= ? AND s.stat_date <= ? AND s.shift = ?
+       AND s.campaign_group_id IN (${campaignIds.map(() => '?').join(',')})
+     GROUP BY s.user, s.campaign_group_id, s.role
+     ORDER BY sph DESC LIMIT 5000`,
+    [beginDate, endDate, shift, ...campaignIds],
+    [],
+  );
+  return res.json({ ok: true, campaigns, entries, range: { beginDate, endDate }, shift });
+}
+
+// Native port of AST_webserver_url_report.php: login/API URL counts by webserver.
+async function webserverUrlReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const [loginUrls, apiUrls] = await Promise.all([
+    rows(
+      `SELECT webserver, login_url, COUNT(*) AS hits FROM vicidial_user_log
+       WHERE event_date >= ? AND event_date <= ? GROUP BY webserver, login_url
+       ORDER BY webserver, login_url LIMIT 500`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT webserver, api_url, COUNT(*) AS hits FROM vicidial_api_log
+       WHERE api_date >= ? AND api_date <= ? GROUP BY webserver, api_url
+       ORDER BY webserver, api_url LIMIT 500`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, loginUrls, apiUrls, range: { beginDate, endDate } });
+}
+
+// Native port of AST_url_log_report.php: outbound URL posts per call.
+async function urlLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const urlType = cleanId(req.query?.url_type, 30);
+  let filterSql = '';
+  if (urlType) {
+    filterSql = ' AND url_type = ?';
+    params.push(urlType);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT url_log_id, url_date, url_type, uniqueid, response_sec,
+              SUBSTRING(url, 1, 200) AS url, SUBSTRING(url_response, 1, 100) AS url_response
+       FROM vicidial_url_log WHERE url_date >= ? AND url_date <= ?${filterSql}
+       ORDER BY url_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT url_type, COUNT(*) AS hits, COALESCE(AVG(response_sec),0) AS avg_response
+       FROM vicidial_url_log WHERE url_date >= ? AND url_date <= ?${filterSql}
+       GROUP BY url_type ORDER BY hits DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -10065,6 +10252,12 @@ app.get('/api/reports/recording-access', requireAccess, recordingAccessReport);
 app.get('/api/reports/api-log', requireAccess, apiLogReport);
 app.get('/api/reports/agent-debug-log', requireAccess, agentDebugLogReport);
 app.get('/api/reports/threeway-press-log', requireAccess, threewayPressLogReport);
+app.get('/api/reports/server-performance', requireAccess, serverPerformanceReport);
+app.get('/api/reports/phone-stats', requireAccess, phoneStatsReport);
+app.get('/api/reports/process-report', requireAccess, processReport);
+app.get('/api/reports/sph', requireAccess, sphReport);
+app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
+app.get('/api/reports/url-log', requireAccess, urlLogReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

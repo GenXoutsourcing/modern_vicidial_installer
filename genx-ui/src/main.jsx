@@ -11520,6 +11520,57 @@ const LOG_REPORT_CONFIGS = {
       { key: 'call_transfer', label: 'Transfer' },
     ],
   },
+  reportWebserverUrl: {
+    title: 'Webserver URL Report',
+    description: 'Agent login URLs and API URLs used, counted per webserver.',
+    endpoint: '/reports/webserver-url',
+    entriesKey: null,
+    summaries: [
+      {
+        key: 'loginUrls',
+        title: 'Agent Login URLs',
+        columns: [
+          { key: 'webserver', label: 'Webserver' },
+          { key: 'login_url', label: 'Login URL' },
+          { key: 'hits', label: 'Logins', render: (row) => formatNumber(row.hits) },
+        ],
+      },
+      {
+        key: 'apiUrls',
+        title: 'API URLs',
+        columns: [
+          { key: 'webserver', label: 'Webserver' },
+          { key: 'api_url', label: 'API URL' },
+          { key: 'hits', label: 'Calls', render: (row) => formatNumber(row.hits) },
+        ],
+      },
+    ],
+    columns: [],
+  },
+  reportUrlLog: {
+    title: 'URL Log',
+    description: 'Outbound webhook/URL posts made per call.',
+    endpoint: '/reports/url-log',
+    filter: { param: 'url_type', label: 'URL Type' },
+    entriesKey: 'entries',
+    summaries: [{
+      key: 'summary',
+      title: 'URL Type Summary',
+      columns: [
+        { key: 'url_type', label: 'Type' },
+        { key: 'hits', label: 'Hits', render: (row) => formatNumber(row.hits) },
+        { key: 'avg_response', label: 'Avg Response', render: (row) => `${Number(row.avg_response || 0).toFixed(3)}s` },
+      ],
+    }],
+    columns: [
+      { key: 'url_date', label: 'Date', render: (row) => formatDateTime(row.url_date) },
+      { key: 'url_type', label: 'Type' },
+      { key: 'uniqueid', label: 'Unique ID' },
+      { key: 'response_sec', label: 'Response Sec' },
+      { key: 'url', label: 'URL' },
+      { key: 'url_response', label: 'Response' },
+    ],
+  },
   reportApiLog: {
     title: 'API Log',
     description: 'API calls made against this system.',
@@ -11547,6 +11598,420 @@ const LOG_REPORT_CONFIGS = {
     ],
   },
 };
+
+// Native AST_server_performance.php: per-server load/CPU aggregates + series.
+function ServerPerformanceReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [serverIp, setServerIp] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (server, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (server) params.set('server_ip', server);
+      const payload = await apiFetch(`/reports/server-performance?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const s = data?.sections;
+  const num = (value, digits = 2) => Number(value || 0).toFixed(digits);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>Server Performance</h2>
+          <p className="action-copy">Load, CPU, channels and client stats logged per server.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Server and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(serverIp, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Server</span>
+              <select value={serverIp} onChange={(event) => setServerIp(event.target.value)}>
+                <option value="">Select a server</option>
+                {(data?.servers || []).map((row) => (
+                  <option key={row.server_ip} value={row.server_ip}>{row.server_ip} - {row.server_description || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title={`Server ${s.serverIp}`} icon={Activity} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">Avg load: {num(s.summary.avg_load)}</span>
+              <span className="connection-status">Max load: {num(s.summary.max_load)}</span>
+              <span className="connection-status">Avg channels: {num(s.summary.avg_channels, 1)}</span>
+              <span className="connection-status">Max channels: {formatNumber(s.summary.max_channels || 0)}</span>
+              <span className="connection-status">Max processes: {formatNumber(s.summary.max_processes || 0)}</span>
+              <span className="connection-status">CPU user/system/idle: {num(s.summary.avg_cpu_user, 1)}% / {num(s.summary.avg_cpu_system, 1)}% / {num(s.summary.avg_cpu_idle, 1)}%</span>
+              <span className="connection-status">Avg clients: {num(s.summary.avg_clients, 1)} (max {formatNumber(s.summary.max_clients || 0)})</span>
+            </div>
+          </Panel>
+          <Panel eyebrow="Series" title={`Samples (${formatNumber(s.series.length)} rows${s.series.length === 1000 ? ', capped' : ''})`} icon={Database} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No performance samples in the date range"
+              rows={s.series.map((row, index) => ({ ...row, id: `${row.start_time}-${index}` }))}
+              columns={[
+                { key: 'start_time', label: 'Time', render: (row) => formatDateTime(row.start_time) },
+                { key: 'sysload', label: 'Load' },
+                { key: 'channels_total', label: 'Channels' },
+                { key: 'trunks_total', label: 'Trunks' },
+                { key: 'clients_total', label: 'Clients' },
+                { key: 'live_recordings', label: 'Recordings' },
+                { key: 'cpu_user_percent', label: 'CPU U%' },
+                { key: 'cpu_system_percent', label: 'CPU S%' },
+                { key: 'cpu_idle_percent', label: 'CPU I%' },
+                { key: 'freeram', label: 'Free RAM' },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
+// Native phone_stats.php: call_log stats for one phone extension.
+function PhoneStatsReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [phoneKey, setPhoneKey] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (key, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (key) {
+        const [extension, serverIp] = key.split('__');
+        params.set('extension', extension);
+        params.set('server_ip', serverIp);
+      }
+      const payload = await apiFetch(`/reports/phone-stats?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const s = data?.sections;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>Phone Stats</h2>
+          <p className="action-copy">Call counts and time per channel group for one phone.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Phone and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(phoneKey, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Phone</span>
+              <select value={phoneKey} onChange={(event) => setPhoneKey(event.target.value)}>
+                <option value="">Select a phone</option>
+                {(data?.phones || []).map((row) => (
+                  <option key={`${row.extension}__${row.server_ip}`} value={`${row.extension}__${row.server_ip}`}>
+                    {row.extension} @ {row.server_ip} {row.fullname ? `- ${row.fullname}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <Panel eyebrow={`Phone ${s.extension}`} title={`Call Stats (${formatNumber(s.totals.calls)} calls, ${formatSeconds(s.totals.seconds)})`} icon={PhoneCall} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No calls for this phone in the date range"
+            rows={(s.byGroup || []).map((row) => ({ ...row, id: row.channel_group || 'NONE' }))}
+            columns={[
+              { key: 'channel_group', label: 'Channel Group', render: (row) => row.channel_group || '(none)' },
+              { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+              { key: 'seconds', label: 'Time', render: (row) => formatSeconds(row.seconds) },
+              { key: 'avg', label: 'Avg', render: (row) => `${row.calls ? Math.round(row.seconds / row.calls) : 0}s` },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native process_report.php: keepalive process run history per serial_id.
+function ProcessReportView({ token, onLogout }) {
+  const [serialId, setSerialId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (serial) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = serial ? `?serial_id=${encodeURIComponent(serial)}` : '';
+      const payload = await apiFetch(`/reports/process-report${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('');
+  }, [load]);
+
+  const s = data?.sections;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>Process Report</h2>
+          <p className="action-copy">Background process run history.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Process Serial" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(serialId);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Serial ID</span>
+              <select value={serialId} onChange={(event) => setSerialId(event.target.value)}>
+                <option value="">Select a process serial</option>
+                {(data?.serials || []).map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+        {!((data?.serials || []).length) && <p className="connection-summary">No process log entries recorded yet.</p>}
+      </Panel>
+      {s && (
+        <Panel eyebrow={`Serial ${s.serialId}`} title={`Runs (${formatNumber(s.stats.runs || 0)}, total ${formatSeconds(s.stats.total_sec || 0)})`} icon={Activity} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No runs for this serial"
+            rows={(s.entries || []).map((row, index) => ({ ...row, id: `${row.run_time}-${index}` }))}
+            columns={[
+              { key: 'run_time', label: 'Run Time', render: (row) => formatDateTime(row.run_time) },
+              { key: 'run_sec', label: 'Seconds' },
+              { key: 'server_ip', label: 'Server' },
+              { key: 'script', label: 'Script' },
+              { key: 'process', label: 'Process' },
+              { key: 'output_lines', label: 'Output Lines' },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native sph_report.php: sales per hour from vicidial_agent_sph.
+function SphReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [shift, setShift] = useState('ALL');
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaignIds, begin, end, shiftValue) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end, shift: shiftValue });
+      if (campaignIds.length) params.set('campaigns', campaignIds.join(','));
+      const payload = await apiFetch(`/reports/sph?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today, 'ALL');
+  }, [load, today]);
+
+  const entries = data?.entries;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>SPH Report</h2>
+          <p className="action-copy">Sales-per-hour stats from the nightly agent SPH rollup.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaigns, Dates and Shift" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate, shift);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Shift</span>
+              <select value={shift} onChange={(event) => setShift(event.target.value)}>
+                <option value="ALL">ALL</option>
+                <option value="AM">AM</option>
+                <option value="PM">PM</option>
+              </select>
+            </label>
+          </div>
+          <CampaignTogglePicker campaigns={data?.campaigns || []} selected={selected} onChange={setSelected} />
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel eyebrow="SPH" title={`Agent Sales per Hour (${formatNumber(entries.length)} rows)`} icon={Users} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No SPH rollup rows for the selection (the nightly SPH process may not have run)"
+            rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.campaign_group_id}-${index}` }))}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'full_name', label: 'Name' },
+              { key: 'role', label: 'Role' },
+              { key: 'campaign_group_id', label: 'Campaign/Group' },
+              { key: 'login_sec', label: 'Login', render: (row) => formatSeconds(row.login_sec) },
+              { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+              { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
+              { key: 'sph', label: 'SPH', render: (row) => Number(row.sph || 0).toFixed(2) },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
 
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
@@ -11792,6 +12257,10 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} />;
   if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
   if (LOG_REPORT_CONFIGS[activeView]) return <LogReportView token={token} config={LOG_REPORT_CONFIGS[activeView]} />;
+  if (activeView === 'reportServerPerformance') return <ServerPerformanceReportView token={token} />;
+  if (activeView === 'reportPhoneStats') return <PhoneStatsReportView token={token} />;
+  if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
+  if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
