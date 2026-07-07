@@ -5682,6 +5682,87 @@ async function userLoginsReport(req, res) {
   return res.json({ ok: true, users, entries: [...today, ...history] });
 }
 
+// Native port of AST_performance_comparison_report.php: agent stats over the
+// legacy trailing windows (today, -1, -2, -3, -5, -10, -30 days).
+const COMPARISON_WINDOWS = [0, 1, 2, 3, 5, 10, 30];
+
+async function performanceComparisonReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const endDate = cleanReportDate(req.query?.end_date, new Date().toISOString().slice(0, 10));
+  const end = `${endDate} 23:59:59`;
+  const campaigns = await agentReportPickers(req);
+  const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+
+  const saleRows = await rows(
+    `SELECT status FROM vicidial_statuses WHERE sale = 'Y'
+     UNION SELECT status FROM vicidial_campaign_statuses WHERE sale = 'Y' LIMIT 500`,
+    [],
+    [],
+  );
+  const saleIn = sqlStatusList(saleRows.map((row) => row.status));
+
+  const windows = [];
+  for (const daysBack of COMPARISON_WINDOWS) {
+    const beginDay = new Date(new Date(`${endDate}T00:00:00Z`).getTime() - daysBack * 86400000)
+      .toISOString().slice(0, 10);
+    const params = [`${beginDay} 00:00:00`, end];
+    const filters = agentLogFilters(req, params);
+    if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+    const agents = await rows(
+      `SELECT al.user, u.full_name, COUNT(al.lead_id) AS calls,
+              COALESCE(SUM(al.status IN (${saleIn})),0) AS sales,
+              ${cap('al.talk_sec')} AS talk_sec, ${cap('al.pause_sec')} AS pause_sec,
+              ${cap('al.wait_sec')} AS wait_sec, ${cap('al.dispo_sec')} AS dispo_sec,
+              ${cap('al.dead_sec')} AS dead_sec
+       FROM vicidial_agent_log al
+       LEFT JOIN vicidial_users u ON u.user = al.user
+       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
+      params,
+      [],
+    );
+    windows.push({ daysBack, beginDay, agents });
+  }
+  return res.json({ ok: true, campaigns, endDate, windows });
+}
+
+// Native port of AST_user_group_hourly_detail.php: distinct agents logged per
+// user group per hour of one day.
+async function userGroupHourlyReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const day = cleanReportDate(req.query?.date, new Date().toISOString().slice(0, 10));
+  const params = [`${day} 00:00:00`, `${day} 23:59:59`];
+  const filters = agentLogFilters(req, params);
+  if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const campaigns = await agentReportPickers(req);
+
+  const [hourly, totals, grand] = await Promise.all([
+    rows(
+      `SELECT al.user_group, SUBSTR(al.event_time, 12, 2) AS hour, COUNT(DISTINCT al.user) AS agents
+       FROM vicidial_agent_log al
+       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       GROUP BY al.user_group, hour ORDER BY hour ASC, al.user_group ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT al.user_group, COUNT(DISTINCT al.user) AS agents
+       FROM vicidial_agent_log al
+       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       GROUP BY al.user_group ORDER BY al.user_group ASC LIMIT 500`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT COUNT(DISTINCT al.user) AS agents FROM vicidial_agent_log al
+       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}`,
+      params,
+      [],
+    ).then((result) => Number(result[0]?.agents || 0)),
+  ]);
+  return res.json({ ok: true, campaigns, date: day, sections: { hourly, totals, grand } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9387,6 +9468,8 @@ app.get('/api/reports/team-performance', requireAccess, teamPerformanceReport);
 app.get('/api/reports/agent-days', requireAccess, agentDaysReport);
 app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
 app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
+app.get('/api/reports/performance-comparison', requireAccess, performanceComparisonReport);
+app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
