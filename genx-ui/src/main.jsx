@@ -12213,6 +12213,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [showDispo, setShowDispo] = useState(false);
   const [callbackTime, setCallbackTime] = useState('');
   const [dispoComments, setDispoComments] = useState('');
+  const [manualNumber, setManualNumber] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -12333,24 +12334,62 @@ function AgentConsole({ token, authInfo, onExit }) {
               {Number(live.lead_id) > 0 && <span className="connection-status">On lead: {live.lead_id} ({live.callerid})</span>}
             </div>
             <div className="modal-actions">
-              {live.status === 'PAUSED'
-                ? (
-                  <button type="button" className="primary-action" disabled={busy} onClick={() => act('/agent/ready')}>
-                    <Radio size={16} aria-hidden="true" />
-                    Go Ready
-                  </button>
-                )
-                : (
-                  <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/pause')}>
-                    <Clock3 size={16} aria-hidden="true" />
-                    Pause
-                  </button>
-                )}
-              <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/logout')}>
+              {live.status === 'PAUSED' && (
+                <button type="button" className="primary-action" disabled={busy} onClick={() => act('/agent/ready')}>
+                  <Radio size={16} aria-hidden="true" />
+                  Go Ready
+                </button>
+              )}
+              {live.status === 'READY' && (
+                <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/pause')}>
+                  <Clock3 size={16} aria-hidden="true" />
+                  Pause
+                </button>
+              )}
+              {live.status === 'INCALL' && (
+                <button type="button" className="danger-action" disabled={busy} onClick={() => act('/agent/hangup')}>
+                  <PhoneCall size={16} aria-hidden="true" />
+                  Hangup Customer
+                </button>
+              )}
+              <button type="button" className="secondary-action" disabled={busy || live.status === 'INCALL'} onClick={() => act('/agent/logout')}>
                 <LogOut size={16} aria-hidden="true" />
                 Logout Agent
               </button>
             </div>
+            {live.status !== 'INCALL' && !Number(live.lead_id) && (
+              <form
+                className="entity-form report-filter-bar"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const digits = manualNumber.replace(/[^0-9]/g, '');
+                  if (digits.length < 5) return;
+                  const payload = await act('/agent/manual-dial', { phone_number: digits });
+                  if (payload) {
+                    setManualNumber('');
+                    setMessage(`Dialing ${digits} into your conference`);
+                  }
+                }}
+              >
+                <div className="field-grid">
+                  <label>
+                    <span>Manual Dial</span>
+                    <input
+                      type="tel"
+                      value={manualNumber}
+                      placeholder="Phone number"
+                      onChange={(event) => setManualNumber(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="modal-actions">
+                  <button type="submit" className="secondary-action" disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}>
+                    <PhoneCall size={16} aria-hidden="true" />
+                    Dial
+                  </button>
+                </div>
+              </form>
+            )}
             {live.status === 'PAUSED' && pauseCodes.length > 0 && (
               <div className="connection-actions">
                 {pauseCodes.map((row) => (

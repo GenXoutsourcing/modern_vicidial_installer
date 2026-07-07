@@ -6628,7 +6628,7 @@ async function agentAuth(req, res) {
 
 async function agentLiveRow(user) {
   const [row] = await rows(
-    `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid,
+    `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid, uniqueid,
             calls_today, pause_code, agent_log_id, UNIX_TIMESTAMP(last_state_change) AS state_epoch
      FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
     [user],
@@ -7046,6 +7046,158 @@ async function agentLogout(req, res) {
     return res.json({ ok: true, live: null });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'agent_logout_failed' });
+  }
+}
+
+// Legacy manDiaLonly: dial a number into the agent's conference. The customer
+// leg is a Local channel into the conf whose Exten is the prefixed number.
+async function agentManualDial(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (Number(live.lead_id) > 0) return res.status(409).json({ ok: false, error: 'already_on_call' });
+
+  const requestedLead = Number(req.body?.lead_id || 0);
+  const phoneNumber = String(req.body?.phone_number || '').replace(/[^0-9]/g, '').slice(0, 18);
+  if (!requestedLead && phoneNumber.length < 5) return badRequest(res, 'phone_or_lead_required');
+
+  const [campaign] = await rows(
+    `SELECT campaign_id, dial_prefix, omit_phone_code, manual_dial_list_id, campaign_cid
+     FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1`,
+    [live.campaign_id],
+    [],
+  );
+  if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  try {
+    let lead;
+    if (requestedLead) {
+      [lead] = await rows(
+        'SELECT lead_id, list_id, phone_code, phone_number, called_count FROM vicidial_list WHERE lead_id = ? LIMIT 1',
+        [requestedLead],
+        [],
+      );
+      if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+    } else {
+      const listId = Number(campaign.manual_dial_list_id || 0) || 998;
+      const insert = await execute(
+        `INSERT INTO vicidial_list
+           (entry_date, modify_date, status, user, list_id, phone_code, phone_number, called_since_last_reset, called_count)
+         VALUES (NOW(), NOW(), 'INCALL', ?, ?, '1', ?, 'Y', 0)`,
+        [user, listId, phoneNumber],
+      );
+      lead = { lead_id: insert.insertId, list_id: listId, phone_code: '1', phone_number: phoneNumber, called_count: 0 };
+    }
+
+    const calledCount = Number(lead.called_count || 0) + 1;
+    await execute(
+      "UPDATE vicidial_list SET status = 'INCALL', user = ?, called_since_last_reset = 'Y', called_count = ?, last_local_call_time = NOW() WHERE lead_id = ?",
+      [user, calledCount, lead.lead_id],
+    );
+
+    // Caller code: M + mdHis (<=9 chars) + 10-digit lead id, exactly legacy.
+    const pad = (n) => String(n).padStart(2, '0');
+    const d = new Date();
+    let cidDate = `${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    while (cidDate.length > 9) cidDate = cidDate.slice(1);
+    const callerCode = `M${cidDate}${String(lead.lead_id).padStart(10, '0').slice(-10)}`;
+    const uniqueid = `${nowEpoch}.${Math.floor(Math.random() * 900000) + 100000}`;
+
+    const prefix = campaign.dial_prefix && campaign.dial_prefix !== 'X' ? campaign.dial_prefix : '';
+    const phoneCode = campaign.omit_phone_code === 'Y' ? '' : String(lead.phone_code || '');
+    const dialExten = `${prefix}${phoneCode}${lead.phone_number}`;
+    const context = req.agentPhone?.ext_context || 'default';
+    const cidString = `"${callerCode}" <${campaign.campaign_cid || ''}>`;
+
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f, cmd_line_g)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?, 'Timeout: 60000')`,
+      [live.server_ip, callerCode, `Exten: ${dialExten}`, `Context: ${context}`,
+        `Channel: Local/${live.conf_exten}@${context}`, `Callerid: ${cidString}`],
+    );
+    await execute(
+      `INSERT INTO vicidial_log
+         (uniqueid, lead_id, list_id, campaign_id, call_date, start_epoch, status, phone_code,
+          phone_number, user, comments, processed, user_group, alt_dial, called_count)
+       VALUES (?, ?, ?, ?, NOW(), ?, 'INCALL', ?, ?, ?, 'MANUAL', 'N', ?, 'MAIN', ?)`,
+      [uniqueid, lead.lead_id, lead.list_id, live.campaign_id, nowEpoch, lead.phone_code || '1',
+        lead.phone_number, user, req.genxUser.userGroup || '', calledCount],
+    );
+    await execute(
+      "UPDATE vicidial_live_agents SET status = 'INCALL', lead_id = ?, uniqueid = ?, callerid = ?, comments = 'MANUAL', last_call_time = NOW(), last_state_change = NOW() WHERE user = ?",
+      [lead.lead_id, uniqueid, callerCode, user],
+    );
+    // Open the talk segment on the current agent_log row and attach the lead.
+    await execute(
+      'UPDATE vicidial_agent_log SET lead_id = ?, talk_epoch = ?, talk_sec = 0, uniqueid = ? WHERE agent_log_id = ?',
+      [lead.lead_id, nowEpoch, uniqueid, live.agent_log_id],
+    );
+    await execute(
+      "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'MAIN', notes = ?",
+      [callerCode, user, `${dialExten} ${context}`],
+    ).catch(() => {});
+
+    return res.json({ ok: true, live: await agentLiveRow(user) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'manual_dial_failed' });
+  }
+}
+
+// Hangup the customer leg: AMI Hangup when the backend filled in the channel,
+// close the vicidial_log row and the talk segment; agent stays INCALL until
+// they disposition (legacy dispo-pending state).
+async function agentHangup(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  try {
+    const [liveChan] = await rows(
+      'SELECT channel FROM vicidial_live_agents WHERE user = ? LIMIT 1',
+      [user],
+      [],
+    );
+    const [autoCall] = await rows(
+      'SELECT channel, server_ip FROM vicidial_auto_calls WHERE callerid = ? OR uniqueid = ? LIMIT 1',
+      [live.callerid || '', live.uniqueid || ''],
+      [],
+    );
+    const channel = autoCall?.channel || liveChan?.channel || '';
+    if (channel) {
+      await execute(
+        `INSERT INTO vicidial_manager
+           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
+        [autoCall?.server_ip || live.server_ip, `HL${live.callerid || ''}${nowEpoch}`.slice(0, 20), `Channel: ${channel}`],
+      ).catch(() => {});
+    }
+    await execute('DELETE FROM vicidial_auto_calls WHERE callerid = ?', [live.callerid || '']).catch(() => {});
+
+    await execute(
+      'UPDATE vicidial_log SET end_epoch = ?, length_in_sec = ? - start_epoch, term_reason = ? WHERE lead_id = ? AND user = ? AND end_epoch IS NULL ORDER BY start_epoch DESC LIMIT 1',
+      [nowEpoch, nowEpoch, 'AGENT', live.lead_id, user],
+    ).catch(() => {});
+    const [log] = await rows(
+      'SELECT agent_log_id, talk_epoch, dispo_epoch FROM vicidial_agent_log WHERE agent_log_id = ? LIMIT 1',
+      [live.agent_log_id],
+      [],
+    );
+    if (log && Number(log.talk_epoch) && !Number(log.dispo_epoch)) {
+      await execute(
+        'UPDATE vicidial_agent_log SET talk_sec = ?, dispo_epoch = ? WHERE agent_log_id = ?',
+        [Math.max(nowEpoch - Number(log.talk_epoch), 0), nowEpoch, log.agent_log_id],
+      );
+    }
+    return res.json({ ok: true, live: await agentLiveRow(user) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'hangup_failed' });
   }
 }
 
@@ -10879,6 +11031,8 @@ app.post('/api/agent/pause-code', requireAgentAccess, agentPauseCode);
 app.post('/api/agent/logout', requireAgentAccess, agentLogout);
 app.get('/api/agent/dispo-statuses', requireAgentAccess, agentDispoStatuses);
 app.post('/api/agent/dispo', requireAgentAccess, agentDispo);
+app.post('/api/agent/manual-dial', requireAgentAccess, agentManualDial);
+app.post('/api/agent/hangup', requireAgentAccess, agentHangup);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
