@@ -11582,7 +11582,7 @@ function UserGroupLoginReportView({ token, onLogout }) {
 // Native user_stats.php + user_status.php + AST_agent_time_sheet.php in one
 // view: live status, per-status call totals, pause codes, time sheet,
 // login/logout events, park log and in-group changes for one user.
-function UserStatsReportView({ token, onLogout, initialUser }) {
+function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
   const today = new Date().toISOString().slice(0, 10);
   const [userId, setUserId] = useState(initialUser || '');
   const [beginDate, setBeginDate] = useState(today);
@@ -11619,6 +11619,33 @@ function UserStatsReportView({ token, onLogout, initialUser }) {
   const live = data?.live;
   const outTotals = (data?.outbound || []).reduce((acc, row) => ({ calls: acc.calls + Number(row.calls || 0), seconds: acc.seconds + Number(row.seconds || 0) }), { calls: 0, seconds: 0 });
   const inTotals = (data?.inbound || []).reduce((acc, row) => ({ calls: acc.calls + Number(row.calls || 0), seconds: acc.seconds + Number(row.seconds || 0) }), { calls: 0, seconds: 0 });
+
+  // Supervisor action gates mirror the server: emergency logout needs
+  // modify_users, pause/resume needs level 7+ w/ Agent API access, timeclock
+  // corrections need modify_timeclock_log (level 9 always allowed).
+  const level = Number(adminUser?.userLevel || 0);
+  const canForceLogout = level >= 9 || Boolean(adminUser?.modifyUsers);
+  const canExternalPause = level >= 9 || (level > 6 && Boolean(adminUser?.vdcAgentApiAccess));
+  const canTimeclock = level >= 9 || Boolean(adminUser?.modifyTimeclockLog);
+  const [actionState, setActionState] = useState('');
+  const [confirmLogout, setConfirmLogout] = useState(false);
+
+  async function supervisorAction(path, body, label) {
+    setActionState('working');
+    try {
+      const payload = await apiFetch(`/admin/users/${encodeURIComponent(userId)}/${path}`, token, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      });
+      setActionState(`${label} done${payload.status ? ` (${payload.status})` : ''}`);
+      load(userId, beginDate, endDate);
+    } catch (requestError) {
+      setActionState(requestError.status === 403 ? `${label}: not permitted`
+        : requestError.status === 404 ? `${label}: agent not logged in`
+          : requestError.status === 409 ? `${label}: wrong timeclock state`
+            : `${label} failed`);
+    }
+  }
 
   return (
     <>
@@ -11685,6 +11712,47 @@ function UserStatsReportView({ token, onLogout, initialUser }) {
                 Timeclock: {data.timeclockStatus.status} since {formatDateTime(data.timeclockStatus.event_date)} ({data.timeclockStatus.ip_address})
               </p>
             )}
+            <div className="connection-actions">
+              {live && canExternalPause && (
+                <>
+                  <button type="button" className="row-action" disabled={actionState === 'working'} onClick={() => supervisorAction('external-pause', { action: 'PAUSE' }, 'Pause agent')}>
+                    <Timer size={15} aria-hidden="true" /> Pause Agent
+                  </button>
+                  <button type="button" className="row-action" disabled={actionState === 'working'} onClick={() => supervisorAction('external-pause', { action: 'RESUME' }, 'Resume agent')}>
+                    <Radio size={15} aria-hidden="true" /> Resume Agent
+                  </button>
+                </>
+              )}
+              {live && canForceLogout && (
+                <button
+                  type="button"
+                  className={confirmLogout ? 'danger-action confirming compact-action' : 'row-action'}
+                  disabled={actionState === 'working'}
+                  onClick={() => {
+                    if (!confirmLogout) {
+                      setConfirmLogout(true);
+                      return;
+                    }
+                    setConfirmLogout(false);
+                    supervisorAction('emergency-logout', {}, 'Emergency logout');
+                  }}
+                >
+                  <LogOut size={15} aria-hidden="true" />
+                  {confirmLogout ? 'Confirm Emergency Logout?' : 'Emergency Logout'}
+                </button>
+              )}
+              {canTimeclock && (
+                <>
+                  <button type="button" className="row-action" disabled={actionState === 'working'} onClick={() => supervisorAction('timeclock', { action: 'IN' }, 'Timeclock in')}>
+                    <Clock3 size={15} aria-hidden="true" /> Clock User In
+                  </button>
+                  <button type="button" className="row-action" disabled={actionState === 'working'} onClick={() => supervisorAction('timeclock', { action: 'OUT' }, 'Timeclock out')}>
+                    <Clock3 size={15} aria-hidden="true" /> Clock User Out
+                  </button>
+                </>
+              )}
+              {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
+            </div>
           </Panel>
           <Panel eyebrow="Calls" title={`Outbound (${formatNumber(outTotals.calls)} calls, ${formatSeconds(outTotals.seconds)})`} icon={PhoneCall}>
             <DataTable
@@ -15202,7 +15270,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportAgentDays') return <AgentDaysReportView token={token} />;
   if (activeView === 'reportUserGroupLogin') return <UserGroupLoginReportView token={token} />;
   if (activeView === 'reportUserLogins') return <UserLoginsReportView token={token} />;
-  if (activeView === 'reportUserStats') return <UserStatsReportView token={token} initialUser={viewParams?.user} />;
+  if (activeView === 'reportUserStats') return <UserStatsReportView token={token} initialUser={viewParams?.user} adminUser={user} />;
   if (activeView === 'reportPerformanceComparison') return <PerformanceComparisonReportView token={token} />;
   if (activeView === 'reportUserGroupHourly') return <UserGroupHourlyReportView token={token} />;
   if (activeView === 'reportExports') return <ExportsReportView token={token} />;

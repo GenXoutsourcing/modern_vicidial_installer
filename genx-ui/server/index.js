@@ -208,6 +208,7 @@ function publicUser(row) {
     modifyLeads: Number(row.modify_leads || 0),
     customFieldsModify: row.custom_fields_modify === '1',
     vdcAgentApiAccess: row.vdc_agent_api_access === '1',
+    modifyTimeclockLog: row.modify_timeclock_log === '1',
     astDeletePhones: row.ast_delete_phones === '1',
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
@@ -376,6 +377,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_leads,
             u.custom_fields_modify,
             u.vdc_agent_api_access,
+            u.modify_timeclock_log,
             u.ast_delete_phones,
             u.modify_remoteagents,
             u.delete_remote_agents,
@@ -11620,78 +11622,195 @@ async function logoutCampaignAgents(req, res) {
 
   try {
     for (const agent of agents) {
-      let userGroup = '';
-      if (Number(agent.last_update_epoch || 0) > inactiveEpoch) {
-        const [log] = await rows(
-          `SELECT agent_log_id, lead_id, pause_epoch, pause_sec, wait_epoch, wait_sec,
-                  talk_epoch, talk_sec, dispo_epoch, dispo_sec, status, user_group
-           FROM vicidial_agent_log WHERE user = ? ORDER BY agent_log_id DESC LIMIT 1`,
-          [agent.user],
-          [],
-        );
-        if (log) {
-          userGroup = log.user_group || '';
-          const noStatus = !log.status || log.status === 'NULL';
-          if (!Number(log.wait_epoch) || (log.status === 'PAUSE' && !Number(log.dispo_epoch))) {
-            const pauseSec = (nowEpoch - Number(log.pause_epoch || 0)) + Number(log.pause_sec || 0);
-            await execute(
-              "UPDATE vicidial_agent_log SET wait_epoch = ?, pause_sec = ?, pause_type = 'ADMIN' WHERE agent_log_id = ?",
-              [nowEpoch, pauseSec, log.agent_log_id],
-            );
-          } else if (!Number(log.talk_epoch)) {
-            const waitSec = (nowEpoch - Number(log.wait_epoch || 0)) + Number(log.wait_sec || 0);
-            await execute(
-              'UPDATE vicidial_agent_log SET talk_epoch = ?, wait_sec = ? WHERE agent_log_id = ?',
-              [nowEpoch, waitSec, log.agent_log_id],
-            );
-          } else {
-            if (noStatus && Number(log.lead_id) > 0) {
-              await execute("UPDATE vicidial_list SET status = 'PU' WHERE lead_id = ?", [log.lead_id]);
-            }
-            if (!Number(log.dispo_epoch)) {
-              const talkSec = nowEpoch - Number(log.talk_epoch || 0);
-              await execute(
-                `UPDATE vicidial_agent_log SET dispo_epoch = ?, talk_sec = ?${noStatus && Number(log.lead_id) > 0 ? ", status = 'PU'" : ''} WHERE agent_log_id = ?`,
-                [nowEpoch, talkSec, log.agent_log_id],
-              );
-            } else if (!Number(log.dispo_sec)) {
-              await execute(
-                'UPDATE vicidial_agent_log SET dispo_sec = ? WHERE agent_log_id = ?',
-                [nowEpoch - Number(log.dispo_epoch || 0), log.agent_log_id],
-              );
-            }
-          }
-        }
-      }
-
-      await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [agent.user]);
-
-      if (!userGroup) {
-        const [userRow] = await rows('SELECT user_group FROM vicidial_users WHERE user = ?', [agent.user], []);
-        userGroup = userRow?.user_group || '';
-      }
-
-      const kickChannel = `Local/5555${agent.conf_exten || ''}@default`;
-      const queryCID = `ULGH3457${nowEpoch}`;
-      await execute(
-        `INSERT INTO vicidial_manager
-           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
-            cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
-         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, 'Context: default', 'Exten: 8300', 'Priority: 1', ?)`,
-        [agent.server_ip || '', queryCID, `Channel: ${kickChannel}`, `Callerid: ${queryCID}`],
-      ).catch(() => {});
-
-      await execute(
-        `INSERT INTO vicidial_user_log (user, event, campaign_id, event_date, event_epoch, user_group, extension)
-         VALUES (?, 'LOGOUT', ?, NOW(), ?, ?, ?)`,
-        [agent.user, agent.campaign_id, nowEpoch, userGroup, `MGR LOGOUT: ${req.genxUser.user}`],
-      ).catch(() => {});
+      await emergencyLogoutLiveAgent(req, agent, nowEpoch, inactiveEpoch);
     }
-
     await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX LOGOUT ALL CAMPAIGN AGENTS', 'DELETE FROM vicidial_live_agents WHERE campaign_id', `${agents.length} agents`);
     return res.json({ ok: true, loggedOut: agents.length });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'logout_agents_failed' });
+  }
+}
+
+// Per-agent forced logout: closes the open agent_log timing segment, removes
+// the live row, kicks the conference and writes the MGR LOGOUT user_log row.
+// Shared by campaign Log All Agents Out (ADD=62) and the per-user emergency
+// logout (user_status.php).
+async function emergencyLogoutLiveAgent(req, agent, nowEpoch, inactiveEpoch) {
+  let userGroup = '';
+  if (Number(agent.last_update_epoch || 0) > inactiveEpoch) {
+    const [log] = await rows(
+      `SELECT agent_log_id, lead_id, pause_epoch, pause_sec, wait_epoch, wait_sec,
+              talk_epoch, talk_sec, dispo_epoch, dispo_sec, status, user_group
+       FROM vicidial_agent_log WHERE user = ? ORDER BY agent_log_id DESC LIMIT 1`,
+      [agent.user],
+      [],
+    );
+    if (log) {
+      userGroup = log.user_group || '';
+      const noStatus = !log.status || log.status === 'NULL';
+      if (!Number(log.wait_epoch) || (log.status === 'PAUSE' && !Number(log.dispo_epoch))) {
+        const pauseSec = (nowEpoch - Number(log.pause_epoch || 0)) + Number(log.pause_sec || 0);
+        await execute(
+          "UPDATE vicidial_agent_log SET wait_epoch = ?, pause_sec = ?, pause_type = 'ADMIN' WHERE agent_log_id = ?",
+          [nowEpoch, pauseSec, log.agent_log_id],
+        );
+      } else if (!Number(log.talk_epoch)) {
+        const waitSec = (nowEpoch - Number(log.wait_epoch || 0)) + Number(log.wait_sec || 0);
+        await execute(
+          'UPDATE vicidial_agent_log SET talk_epoch = ?, wait_sec = ? WHERE agent_log_id = ?',
+          [nowEpoch, waitSec, log.agent_log_id],
+        );
+      } else {
+        if (noStatus && Number(log.lead_id) > 0) {
+          await execute("UPDATE vicidial_list SET status = 'PU' WHERE lead_id = ?", [log.lead_id]);
+        }
+        if (!Number(log.dispo_epoch)) {
+          const talkSec = nowEpoch - Number(log.talk_epoch || 0);
+          await execute(
+            `UPDATE vicidial_agent_log SET dispo_epoch = ?, talk_sec = ?${noStatus && Number(log.lead_id) > 0 ? ", status = 'PU'" : ''} WHERE agent_log_id = ?`,
+            [nowEpoch, talkSec, log.agent_log_id],
+          );
+        } else if (!Number(log.dispo_sec)) {
+          await execute(
+            'UPDATE vicidial_agent_log SET dispo_sec = ? WHERE agent_log_id = ?',
+            [nowEpoch - Number(log.dispo_epoch || 0), log.agent_log_id],
+          );
+        }
+      }
+    }
+  }
+
+  await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [agent.user]);
+
+  if (!userGroup) {
+    const [userRow] = await rows('SELECT user_group FROM vicidial_users WHERE user = ?', [agent.user], []);
+    userGroup = userRow?.user_group || '';
+  }
+
+  const kickChannel = `Local/5555${agent.conf_exten || ''}@default`;
+  const queryCID = `ULGH3457${nowEpoch}`;
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, 'Context: default', 'Exten: 8300', 'Priority: 1', ?)`,
+    [agent.server_ip || '', queryCID, `Channel: ${kickChannel}`, `Callerid: ${queryCID}`],
+  ).catch(() => {});
+
+  await execute(
+    `INSERT INTO vicidial_user_log (user, event, campaign_id, event_date, event_epoch, user_group, extension)
+     VALUES (?, 'LOGOUT', ?, NOW(), ?, ?, ?)`,
+    [agent.user, agent.campaign_id, nowEpoch, userGroup, `MGR LOGOUT: ${req.genxUser.user}`],
+  ).catch(() => {});
+}
+
+// Legacy user_status.php per-user emergency logout.
+async function emergencyLogoutUser(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user_id');
+  try {
+    const [agent] = await rows(
+      `SELECT user, campaign_id, UNIX_TIMESTAMP(last_update_time) AS last_update_epoch, conf_exten, server_ip
+       FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
+      [id],
+      [],
+    );
+    if (!agent) return res.status(404).json({ ok: false, error: 'agent_not_logged_in' });
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    await emergencyLogoutLiveAgent(req, agent, nowEpoch, nowEpoch - 60);
+    await adminLog(req, 'USERS', 'LOGOUT', id, 'EMERGENCY LOGOUT FROM STATUS PAGE', 'DELETE FROM vicidial_live_agents + conference kick', `campaign ${agent.campaign_id}`);
+    return res.json({ ok: true, loggedOut: id });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'emergency_logout_failed' });
+  }
+}
+
+// Legacy agent_api external_pause: the agent screen polls external_pause and
+// pauses/resumes itself. Value format is ACTION!epoch.
+async function externalPauseUser(req, res) {
+  const u = req.genxUser;
+  const allowed = Number(u?.userLevel || 0) >= 9
+    || (Number(u?.userLevel || 0) > 6 && Boolean(u?.vdcAgentApiAccess));
+  if (!allowed) return res.status(403).json({ ok: false, error: 'permission_denied' });
+  const id = cleanId(req.params.id, 20);
+  const action = req.body?.action === 'RESUME' ? 'RESUME' : 'PAUSE';
+  if (!id) return badRequest(res, 'invalid_user_id');
+  try {
+    const epoch = Math.floor(Date.now() / 1000);
+    const result = await execute('UPDATE vicidial_live_agents SET external_pause = ? WHERE user = ?', [`${action}!${epoch}`, id]);
+    if (Number(result.affectedRows || 0) < 1) return res.status(404).json({ ok: false, error: 'agent_not_logged_in' });
+    await adminLog(req, 'USERS', 'MODIFY', id, `GENX EXTERNAL ${action}`, 'UPDATE vicidial_live_agents external_pause', '');
+    return res.json({ ok: true, action });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'external_pause_failed' });
+  }
+}
+
+// Legacy user_status.php tc_log_user_IN / tc_log_user_OUT: manager timeclock
+// correction, gated by modify_timeclock_log.
+async function managerTimeclock(req, res) {
+  const u = req.genxUser;
+  if (!(Number(u?.userLevel || 0) >= 9 || Boolean(u?.modifyTimeclockLog))) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = cleanId(req.params.id, 20);
+  const action = req.body?.action === 'OUT' ? 'OUT' : 'IN';
+  if (!id) return badRequest(res, 'invalid_user_id');
+  try {
+    const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+    if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+    const nowEpoch = Math.floor(Date.now() / 1000);
+    const ip = cleanText(req.ip || '', 15);
+    let [tcStatus] = await rows('SELECT status, event_epoch FROM vicidial_timeclock_status WHERE user = ? LIMIT 1', [id], []);
+    if (!tcStatus) {
+      await execute(
+        "INSERT INTO vicidial_timeclock_status SET status = 'START', user = ?, user_group = ?, event_epoch = ?, ip_address = ?",
+        [id, target.user_group, nowEpoch, ip],
+      );
+      tcStatus = { status: 'START', event_epoch: nowEpoch };
+    }
+    const lastActionSec = Math.max(0, nowEpoch - Number(tcStatus.event_epoch || nowEpoch));
+    if (action === 'IN') {
+      if (!['AUTOLOGOUT', 'START', 'LOGOUT', 'TIMEOUTLOGOUT'].includes(tcStatus.status)) {
+        return res.status(409).json({ ok: false, error: 'already_clocked_in', status: tcStatus.status });
+      }
+      const insert = await execute(
+        `INSERT INTO vicidial_timeclock_log
+         SET event = 'LOGIN', user = ?, user_group = ?, event_epoch = ?, ip_address = ?, event_date = NOW(),
+             manager_user = ?, manager_ip = ?, notes = 'Manager LOGIN of user from user status page'`,
+        [id, target.user_group, nowEpoch, ip, u.user, ip],
+      );
+      await execute("UPDATE vicidial_timeclock_status SET status = 'LOGIN', user_group = ?, event_epoch = ?, ip_address = ? WHERE user = ?", [target.user_group, nowEpoch, ip, id]);
+      await execute(
+        "INSERT INTO vicidial_timeclock_audit_log SET timeclock_id = ?, event = 'LOGIN', user = ?, user_group = ?, event_epoch = ?, ip_address = ?, event_date = NOW()",
+        [Number(insert.insertId || 0), id, target.user_group, nowEpoch, ip],
+      ).catch(() => {});
+      await adminLog(req, 'TIMECLOCK', 'LOGIN', id, 'USER FORCED LOGIN FROM STATUS PAGE', 'INSERT vicidial_timeclock_log LOGIN', `timeclock_id ${insert.insertId}`);
+      return res.json({ ok: true, status: 'LOGIN' });
+    }
+    if (!['LOGIN', 'START'].includes(tcStatus.status)) {
+      return res.status(409).json({ ok: false, error: 'not_clocked_in', status: tcStatus.status });
+    }
+    const insert = await execute(
+      `INSERT INTO vicidial_timeclock_log
+       SET event = 'LOGOUT', user = ?, user_group = ?, event_epoch = ?, ip_address = ?, login_sec = ?, event_date = NOW(),
+           manager_user = ?, manager_ip = ?, notes = 'Manager LOGOUT of user from user status page'`,
+      [id, target.user_group, nowEpoch, ip, lastActionSec, u.user, ip],
+    );
+    await execute(
+      "UPDATE vicidial_timeclock_log SET login_sec = ?, tcid_link = ? WHERE event = 'LOGIN' AND user = ? ORDER BY timeclock_id DESC LIMIT 1",
+      [lastActionSec, Number(insert.insertId || 0), id],
+    ).catch(() => {});
+    await execute("UPDATE vicidial_timeclock_status SET status = 'LOGOUT', user_group = ?, event_epoch = ?, ip_address = ? WHERE user = ?", [target.user_group, nowEpoch, ip, id]);
+    await execute(
+      "INSERT INTO vicidial_timeclock_audit_log SET timeclock_id = ?, event = 'LOGOUT', user = ?, user_group = ?, event_epoch = ?, ip_address = ?, login_sec = ?, event_date = NOW()",
+      [Number(insert.insertId || 0), id, target.user_group, nowEpoch, ip, lastActionSec],
+    ).catch(() => {});
+    await adminLog(req, 'TIMECLOCK', 'LOGOUT', id, 'USER FORCED LOGOUT FROM STATUS PAGE', 'INSERT vicidial_timeclock_log LOGOUT', `timeclock_id ${insert.insertId} login_sec ${lastActionSec}`);
+    return res.json({ ok: true, status: 'LOGOUT', loginSec: lastActionSec });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'timeclock_action_failed' });
   }
 }
 
@@ -13490,6 +13609,9 @@ app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
 app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
 app.get('/api/reports/user-stats', requireAccess, userStatsReport);
 app.post('/api/admin/blind-monitor', requireAccess, blindMonitor);
+app.post('/api/admin/users/:id/emergency-logout', requireAccess, emergencyLogoutUser);
+app.post('/api/admin/users/:id/external-pause', requireAccess, externalPauseUser);
+app.post('/api/admin/users/:id/timeclock', requireAccess, managerTimeclock);
 app.get('/api/reports/performance-comparison', requireAccess, performanceComparisonReport);
 app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
 app.get('/api/reports/export-calls', requireAccess, exportCallsReport);
