@@ -4025,6 +4025,87 @@ async function deleteCarrier(req, res) {
   }
 }
 
+// Cross-references from legacy DID modify (ADD=3311).
+async function didConnections(req, res) {
+  if (!requireModify(req, res, 'modifyInboundDids')) return;
+  const id = cleanId(req.params.id, 10);
+  if (!id) return badRequest(res, 'invalid_did_id');
+  const [did] = await rows('SELECT did_id, did_pattern FROM vicidial_inbound_dids WHERE did_id = ? LIMIT 1', [id], []);
+  if (!did) return res.status(404).json({ ok: false, error: 'did_not_found' });
+  const pattern = did.did_pattern;
+
+  const callMenus = await rows(
+    `SELECT DISTINCT vm.menu_id, vm.menu_name
+     FROM vicidial_call_menu vm
+     JOIN vicidial_call_menu_options vmo ON vm.menu_id = vmo.menu_id
+     WHERE vmo.option_route = 'DID' AND vmo.option_route_value = ? LIMIT 200`,
+    [pattern],
+    [],
+  );
+  const campaigns = await rows(
+    'SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE campaign_cid = ? LIMIT 200',
+    [pattern],
+    [],
+  );
+  const acCids = await rows(
+    `SELECT camp.campaign_id, camp.campaign_name
+     FROM vicidial_campaign_cid_areacodes campac
+     JOIN vicidial_campaigns camp ON camp.campaign_id = campac.campaign_id
+     WHERE campac.outbound_cid = ? LIMIT 200`,
+    [pattern],
+    [],
+  );
+  const ingroups = await rows(
+    'SELECT group_id, group_name FROM vicidial_inbound_groups WHERE dial_ingroup_cid = ? LIMIT 200',
+    [pattern],
+    [],
+  );
+  const lists = await rows(
+    'SELECT list_id, list_name FROM vicidial_lists WHERE campaign_cid_override = ? LIMIT 200',
+    [pattern],
+    [],
+  );
+
+  return res.json({ ok: true, callMenus, campaigns, acCids, ingroups, lists });
+}
+
+// Cross-references from legacy call menu modify.
+async function callMenuConnections(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(req.params.id, 50);
+  if (!id) return badRequest(res, 'invalid_menu_id');
+
+  const dids = await rows(
+    "SELECT did_id, did_pattern, did_description FROM vicidial_inbound_dids WHERE menu_id = ? AND did_route = 'CALLMENU' LIMIT 200",
+    [id],
+    [],
+  );
+  const callMenus = await rows(
+    `SELECT DISTINCT vm.menu_id, vm.menu_name
+     FROM vicidial_call_menu vm
+     JOIN vicidial_call_menu_options vmo ON vm.menu_id = vmo.menu_id
+     WHERE vmo.option_route = 'CALLMENU' AND vmo.option_route_value = ? LIMIT 200`,
+    [id],
+    [],
+  );
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns
+     WHERE safe_harbor_menu_id = ? OR survey_menu_id = ? OR amd_callmenu = ?
+        OR (agent_hangup_route = 'CALLMENU' AND agent_hangup_value = ?) LIMIT 200`,
+    [id, id, id, id],
+    [],
+  );
+  const ingroups = await rows(
+    `SELECT group_id, group_name FROM vicidial_inbound_groups
+     WHERE hold_time_option_callmenu = ? OR wait_time_option_callmenu = ?
+        OR drop_callmenu = ? OR after_hours_callmenu = ? LIMIT 200`,
+    [id, id, id, id],
+    [],
+  );
+
+  return res.json({ ok: true, dids, callMenus, campaigns, ingroups });
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6124,6 +6205,8 @@ app.get('/api/admin/user-groups/:id/connections', requireAccess, userGroupConnec
 app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'create'));
 app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
 app.delete('/api/admin/dids/:id', requireAccess, deleteDid);
+app.get('/api/admin/dids/:id/connections', requireAccess, didConnections);
+app.get('/api/admin/call-menus/:id/connections', requireAccess, callMenuConnections);
 app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
 app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
 app.delete('/api/admin/phones/:id', requireAccess, deletePhone);

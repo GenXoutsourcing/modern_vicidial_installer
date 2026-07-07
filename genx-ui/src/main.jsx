@@ -4127,6 +4127,69 @@ function ServerConnections({ serverId, serverIp, user, token, onLogout, onSaved,
   );
 }
 
+// Shared fetch hook for the simple connections endpoints.
+function useConnections(path, token, onLogout) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    if (!path) return undefined;
+    apiFetch(path, token)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, token, onLogout]);
+  return data;
+}
+
+function DidConnections({ didId, token, onLogout }) {
+  const id = String(didId || '');
+  const data = useConnections(id ? `/admin/dids/${encodeURIComponent(id)}/connections` : '', token, onLogout);
+  if (!id || !data || data.error) return null;
+  return (
+    <ReferencePanel
+      title="Where this DID is used"
+      lists={[
+        ['Call menus routing to this DID', data.callMenus || [], (row) => `${row.menu_id} - ${row.menu_name || ''}`],
+        ['Campaigns using as CallerID', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+        ['Campaign AC-CIDs using this DID', data.acCids || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+        ['In-groups using as dial CID', data.ingroups || [], (row) => `${row.group_id} - ${row.group_name || ''}`],
+        ['Lists using as CID override', data.lists || [], (row) => `${row.list_id} - ${row.list_name || ''}`],
+      ]}
+      legacyLinks={[
+        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=DIDS&stage=${encodeURIComponent(id)}`],
+      ]}
+    />
+  );
+}
+
+function CallMenuConnections({ menuId, token, onLogout }) {
+  const id = String(menuId || '');
+  const data = useConnections(id ? `/admin/call-menus/${encodeURIComponent(id)}/connections` : '', token, onLogout);
+  if (!id || !data || data.error) return null;
+  return (
+    <ReferencePanel
+      title="Where this call menu is used"
+      lists={[
+        ['DIDs routing here', data.dids || [], (row) => `${row.did_pattern}${row.did_description ? ` - ${row.did_description}` : ''}`],
+        ['Call menus routing here', data.callMenus || [], (row) => `${row.menu_id} - ${row.menu_name || ''}`],
+        ['Campaigns using this menu', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+        ['In-groups using this menu', data.ingroups || [], (row) => `${row.group_id} - ${row.group_name || ''}`],
+      ]}
+      legacyLinks={[
+        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=CALLMENUS&stage=${encodeURIComponent(id)}`],
+      ]}
+    />
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -4226,6 +4289,14 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             user={user}
             onAction={onSwitchAction}
           />
+        )}
+
+        {isEdit && action.entity === 'dids' && (
+          <DidConnections didId={form.did_id} token={token} onLogout={onLogout} />
+        )}
+
+        {isEdit && action.entity === 'callMenus' && (
+          <CallMenuConnections menuId={form.menu_id} token={token} onLogout={onLogout} />
         )}
 
         {isEdit && action.entity === 'servers' && (
