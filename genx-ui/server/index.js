@@ -6536,6 +6536,94 @@ async function urlLogReport(req, res) {
 // agent's phone into it via a vicidial_manager Originate; READY/PAUSE keep the
 // legacy vicidial_agent_log segment accounting; logout mirrors userLOGout.
 // ============================================================================
+// Agents authenticate on the standalone /agent page with phone + user creds
+// (legacy vicidial.php login form), not the admin console. Agent sessions are
+// marked and only valid for /api/agent/* routes; admin sessions also work so
+// admins can drive the screen.
+function requireAgentAccess(req, res, next) {
+  const session = sessionFromRequest(req);
+  if (session?.agentPhone || session?.user?.userLevel >= config.minUserLevel) {
+    req.genxUser = session.user;
+    req.agentPhone = session.agentPhone || null;
+    return next();
+  }
+  return res.status(401).json({ ok: false, error: 'agent_access_required' });
+}
+
+// Legacy vicidial.php login: validate phone login/pass + user login/pass, then
+// return the campaigns this user may log into (LogiNCamPaigns equivalent).
+async function agentAuth(req, res) {
+  const phoneLogin = cleanId(req.body?.phone_login, 20);
+  const phonePass = String(req.body?.phone_pass || '');
+  const userLogin = cleanId(req.body?.user, 20);
+  const userPass = String(req.body?.pass || '');
+  if (!phoneLogin || !phonePass || !userLogin || !userPass) return badRequest(res, 'all_fields_required');
+
+  const [phone] = await rows(
+    `SELECT login, pass, extension, server_ip, protocol, ext_context, phone_ring_timeout, on_hook_agent
+     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
+    [phoneLogin],
+    [],
+  );
+  if (!phone || String(phone.pass || '') !== phonePass) {
+    return res.status(401).json({ ok: false, error: 'invalid_phone_credentials' });
+  }
+
+  const [userRow] = await rows(
+    `SELECT u.user, u.pass, u.full_name, u.user_level, u.user_group, u.active,
+            ug.allowed_campaigns
+     FROM vicidial_users u
+     LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
+     WHERE u.user = ? LIMIT 1`,
+    [userLogin],
+    [],
+  );
+  if (!userRow || userRow.active !== 'Y' || Number(userRow.user_level || 0) < 1
+    || !passwordMatches(userPass, userRow.pass)) {
+    return res.status(401).json({ ok: false, error: 'invalid_user_credentials' });
+  }
+
+  const allowed = accessScope(userRow.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---']);
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(allowed, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name, dial_method FROM vicidial_campaigns
+     WHERE active = 'Y' AND ${campaignWhere} ORDER BY campaign_id ASC LIMIT 200`,
+    campaignParams,
+    [],
+  );
+
+  const agentUser = {
+    user: userRow.user,
+    fullName: userRow.full_name || userRow.user,
+    userLevel: Number(userRow.user_level || 1),
+    userGroup: userRow.user_group || '',
+    permissions: { allowedCampaigns: allowed },
+  };
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, {
+    user: agentUser,
+    agentPhone: {
+      login: phone.login,
+      extension: phone.extension,
+      server_ip: phone.server_ip,
+      protocol: phone.protocol,
+      ext_context: phone.ext_context,
+      phone_ring_timeout: phone.phone_ring_timeout,
+      on_hook_agent: phone.on_hook_agent,
+    },
+    expiresAt: Date.now() + config.sessionTtlMs,
+  });
+  return res.json({
+    ok: true,
+    token,
+    user: { user: agentUser.user, fullName: agentUser.fullName },
+    phone: { login: phone.login, extension: phone.extension, server_ip: phone.server_ip },
+    campaigns,
+    live: await agentLiveRow(agentUser.user),
+  });
+}
+
 async function agentLiveRow(user) {
   const [row] = await rows(
     `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid,
@@ -6576,7 +6664,8 @@ async function agentPauseCodes(campaignId) {
 async function agentLogin(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
   const user = req.genxUser.user;
-  const phoneLogin = cleanId(req.body?.phone_login, 20);
+  // Agent sessions carry their authenticated phone; admin sessions may pass one.
+  const phoneLogin = req.agentPhone ? req.agentPhone.login : cleanId(req.body?.phone_login, 20);
   const campaignId = cleanId(req.body?.campaign_id, 20);
   if (!phoneLogin || !campaignId) return badRequest(res, 'phone_and_campaign_required');
   if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
@@ -6584,12 +6673,12 @@ async function agentLogin(req, res) {
   }
   if (await agentLiveRow(user)) return res.status(409).json({ ok: false, error: 'already_logged_in' });
 
-  const [phone] = await rows(
+  const phone = req.agentPhone || (await rows(
     `SELECT login, extension, server_ip, protocol, ext_context, phone_ring_timeout, on_hook_agent
      FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
     [phoneLogin],
     [],
-  );
+  ))[0];
   if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
   const [campaign] = await rows(
     `SELECT campaign_id, campaign_name, dial_method, campaign_cid, closer_campaigns
@@ -10650,13 +10739,14 @@ app.get('/api/reports/sph', requireAccess, sphReport);
 app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
 app.get('/api/reports/url-log', requireAccess, urlLogReport);
 app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
-app.get('/api/agent/setup', requireAccess, agentSetup);
-app.post('/api/agent/login', requireAccess, agentLogin);
-app.get('/api/agent/status', requireAccess, agentStatus);
-app.post('/api/agent/ready', requireAccess, (req, res) => agentSetStatus(req, res, 'READY'));
-app.post('/api/agent/pause', requireAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
-app.post('/api/agent/pause-code', requireAccess, agentPauseCode);
-app.post('/api/agent/logout', requireAccess, agentLogout);
+app.post('/api/agent/auth', agentAuth);
+app.get('/api/agent/setup', requireAgentAccess, agentSetup);
+app.post('/api/agent/login', requireAgentAccess, agentLogin);
+app.get('/api/agent/status', requireAgentAccess, agentStatus);
+app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
+app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
+app.post('/api/agent/pause-code', requireAgentAccess, agentPauseCode);
+app.post('/api/agent/logout', requireAgentAccess, agentLogout);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

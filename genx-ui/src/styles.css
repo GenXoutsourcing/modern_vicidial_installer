@@ -1661,3 +1661,27 @@ select option:hover {
   background-color: rgba(0, 217, 255, 0.25);
   color: #ffffff;
 }
+
+/* Standalone agent screen layout */
+.agent-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.agent-shell .topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.agent-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+}

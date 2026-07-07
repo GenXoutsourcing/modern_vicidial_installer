@@ -213,14 +213,13 @@ const NAV_ITEMS = [
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
   { key: 'display', label: 'Display', eyebrow: 'Platform', title: 'Screen Labels, Colors and Containers', icon: LayoutDashboard },
   { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
-  { key: 'agentScreen', label: 'Agent Screen', eyebrow: 'Agent', title: 'Agent Screen', icon: Headphones },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
 // muscle-memory transfers: Users | Campaigns | Lists | Scripts | Filters |
 // Inbound | User Groups | Admin | Reports.
 const NAV_GROUPS = [
-  { title: '', keys: ['command', 'agentScreen'] },
+  { title: '', keys: ['command'] },
   { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
   { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
@@ -12132,14 +12131,82 @@ function MaxStatsReportView({ token, onLogout }) {
   );
 }
 
-// Agent screen phase 1: phone+campaign login, live status with 2s polling,
-// READY/PAUSE with pause codes, logout. Mirrors the agc/vicidial.php loop for
-// external SIP phones — logging in rings the selected phone into a conference.
-function AgentScreenView({ token, onLogout }) {
-  const [setup, setSetup] = useState(null);
-  const [phoneLogin, setPhoneLogin] = useState('');
+// ============================================================================
+// Standalone agent app, served at <base>/agent — the genx equivalent of
+// /agc/vicidial.php. Agents authenticate with phone + user credentials (legacy
+// login form) and never see the admin console.
+// ============================================================================
+const AGENT_TOKEN_KEY = 'genx-agent-token';
+
+function AgentLoginPage({ onAuthed }) {
+  const [form, setForm] = useState({ phone_login: '', phone_pass: '', user: '', pass: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const setField = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const payload = await apiFetch('/agent/auth', '', { method: 'POST', body: JSON.stringify(form) });
+      window.localStorage.setItem(AGENT_TOKEN_KEY, payload.token);
+      onAuthed(payload);
+    } catch (requestError) {
+      const map = {
+        invalid_phone_credentials: 'Invalid phone login or password',
+        invalid_user_credentials: 'Invalid user login or password',
+        all_fields_required: 'All four fields are required',
+      };
+      setError(map[requestError.message] || 'Login failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel" aria-label="Agent login">
+        <div className="brand-lock">
+          <div className="brand-mark">GX</div>
+          <div>
+            <p className="eyebrow">GenX</p>
+            <h1>Agent Login</h1>
+          </div>
+        </div>
+        <form className="login-form" onSubmit={submit}>
+          <label>
+            <span>Phone Login</span>
+            <input type="text" value={form.phone_login} onChange={setField('phone_login')} autoComplete="off" />
+          </label>
+          <label>
+            <span>Phone Password</span>
+            <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} autoComplete="off" />
+          </label>
+          <label>
+            <span>User Login</span>
+            <input type="text" value={form.user} onChange={setField('user')} autoComplete="off" />
+          </label>
+          <label>
+            <span>User Password</span>
+            <input type="password" value={form.pass} onChange={setField('pass')} autoComplete="off" />
+          </label>
+          {error && <p className="form-error">{error}</p>}
+          <button type="submit" className="primary-action" disabled={busy}>
+            {busy ? 'Checking...' : 'Continue'}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+// Campaign pick + live console (phase 1: status/ready/pause/pause codes/logout).
+function AgentConsole({ token, authInfo, onExit }) {
+  const [campaigns, setCampaigns] = useState(authInfo?.campaigns || []);
   const [campaignId, setCampaignId] = useState('');
-  const [live, setLive] = useState(null);
+  const [live, setLive] = useState(authInfo?.live || null);
   const [pauseCodes, setPauseCodes] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -12150,21 +12217,9 @@ function AgentScreenView({ token, onLogout }) {
       setLive(payload.live);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
     } catch (requestError) {
-      if (requestError.status === 401) onLogout?.();
+      if (requestError.status === 401) onExit();
     }
-  }, [token, onLogout]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const payload = await apiFetch('/agent/setup', token);
-        setSetup(payload);
-        setLive(payload.live);
-      } catch (requestError) {
-        if (requestError.status === 401) onLogout?.();
-      }
-    })();
-  }, [token, onLogout]);
+  }, [token, onExit]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -12182,7 +12237,7 @@ function AgentScreenView({ token, onLogout }) {
       return payload;
     } catch (requestError) {
       if (requestError.status === 401) {
-        onLogout?.();
+        onExit();
         return null;
       }
       const map = {
@@ -12201,56 +12256,56 @@ function AgentScreenView({ token, onLogout }) {
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
   return (
-    <>
-      <section className="report-hero">
-        <div>
-          <p className="eyebrow">Agent</p>
-          <h2>Agent Screen</h2>
-          <p className="action-copy">Log a phone into a campaign. Your phone rings and joins the agent conference; keep it off-hook while logged in.</p>
+    <main className="app-shell agent-shell">
+      <header className="topbar">
+        <div className="brand-lock">
+          <div className="brand-mark">GX</div>
+          <div>
+            <p className="eyebrow">GenX Agent</p>
+            <h1>{authInfo?.user?.fullName || authInfo?.user?.user || 'Agent'}</h1>
+          </div>
         </div>
-      </section>
-      {!live && (
-        <Panel eyebrow="Login" title="Phone and Campaign" icon={Headphones} className="admin-wide-panel">
-          <form
-            className="entity-form report-filter-bar"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const payload = await act('/agent/login', { phone_login: phoneLogin, campaign_id: campaignId });
-              if (payload) setMessage('Logged in — your phone should be ringing');
-            }}
-          >
-            <div className="field-grid">
-              <label>
-                <span>Phone</span>
-                <select value={phoneLogin} onChange={(event) => setPhoneLogin(event.target.value)}>
-                  <option value="">Select a phone</option>
-                  {(setup?.phones || []).map((row) => (
-                    <option key={row.login} value={row.login}>{row.login} ({row.extension} @ {row.server_ip}){row.fullname ? ` - ${row.fullname}` : ''}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Campaign</span>
-                <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-                  <option value="">Select a campaign</option>
-                  {(setup?.campaigns || []).map((row) => (
-                    <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || ''} ({row.dial_method})</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="modal-actions">
-              <button type="submit" className="primary-action" disabled={busy || !phoneLogin || !campaignId}>
-                <Headphones size={16} aria-hidden="true" />
-                {busy ? 'Logging in' : 'Login to Campaign'}
-              </button>
-            </div>
-          </form>
-          {message && <p className="connection-summary">{message}</p>}
-        </Panel>
-      )}
-      {live && (
-        <>
+        <div className="connection-actions">
+          <span className="connection-status">Phone {authInfo?.phone?.login} ({authInfo?.phone?.extension})</span>
+          <button type="button" className="row-action" onClick={onExit}>
+            <LogOut size={15} aria-hidden="true" />
+            Exit
+          </button>
+        </div>
+      </header>
+      <div className="agent-body">
+        {!live && (
+          <Panel eyebrow="Campaign" title="Select a Campaign" icon={Headphones} className="admin-wide-panel">
+            <form
+              className="entity-form report-filter-bar"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const payload = await act('/agent/login', { campaign_id: campaignId });
+                if (payload) setMessage('Logged in — your phone should be ringing');
+              }}
+            >
+              <div className="field-grid">
+                <label>
+                  <span>Campaign</span>
+                  <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+                    <option value="">Select a campaign</option>
+                    {campaigns.map((row) => (
+                      <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || ''} ({row.dial_method})</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="primary-action" disabled={busy || !campaignId}>
+                  <Headphones size={16} aria-hidden="true" />
+                  {busy ? 'Logging in' : 'Login to Campaign'}
+                </button>
+              </div>
+            </form>
+            {message && <p className="connection-summary">{message}</p>}
+          </Panel>
+        )}
+        {live && (
           <Panel
             eyebrow={`Campaign ${live.campaign_id}`}
             title={`${live.status}${live.pause_code ? ` (${live.pause_code})` : ''} — ${formatSeconds(stateSeconds)} in state`}
@@ -12299,10 +12354,52 @@ function AgentScreenView({ token, onLogout }) {
             )}
             {message && <p className="connection-summary">{message}</p>}
           </Panel>
-        </>
-      )}
-    </>
+        )}
+      </div>
+    </main>
   );
+}
+
+// Root of the standalone agent app (served at <base>/agent).
+function AgentApp() {
+  const [state, setState] = useState({ checking: true, token: '', authInfo: null });
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(AGENT_TOKEN_KEY) || '';
+    if (!stored) {
+      setState({ checking: false, token: '', authInfo: null });
+      return;
+    }
+    apiFetch('/agent/setup', stored)
+      .then((payload) => setState({
+        checking: false,
+        token: stored,
+        authInfo: { campaigns: payload.campaigns || [], live: payload.live, user: null, phone: null },
+      }))
+      .catch(() => {
+        window.localStorage.removeItem(AGENT_TOKEN_KEY);
+        setState({ checking: false, token: '', authInfo: null });
+      });
+  }, []);
+
+  const exit = () => {
+    window.localStorage.removeItem(AGENT_TOKEN_KEY);
+    setState({ checking: false, token: '', authInfo: null });
+  };
+
+  if (state.checking) return null;
+  if (!state.token) {
+    return (
+      <AgentLoginPage
+        onAuthed={(payload) => setState({
+          checking: false,
+          token: payload.token,
+          authInfo: { campaigns: payload.campaigns || [], live: payload.live, user: payload.user, phone: payload.phone },
+        })}
+      />
+    );
+  }
+  return <AgentConsole token={state.token} authInfo={state.authInfo} onExit={exit} />;
 }
 
 function MapView({ onNavigate }) {
@@ -12554,7 +12651,6 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
   if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
-  if (activeView === 'agentScreen') return <AgentScreenView token={token} onLogout={onNavigate ? () => onNavigate('command') : undefined} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
@@ -12804,4 +12900,7 @@ function App() {
   return <AdminShell token={auth.token} user={auth.user} onLogout={logout} />;
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+// <base>/agent serves the standalone agent screen (genx analog of
+// /agc/vicidial.php); everything else is the admin console.
+const IS_AGENT_APP = /\/agent\/?$/.test(window.location.pathname);
+createRoot(document.getElementById('root')).render(IS_AGENT_APP ? <AgentApp /> : <App />);
