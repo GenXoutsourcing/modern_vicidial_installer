@@ -12477,6 +12477,7 @@ function AgentLoginPage({ onAuthed }) {
   // /agent/auth which scopes to the user group's allowed campaigns.
   const [campaignId, setCampaignId] = useState('');
   const [campaigns, setCampaigns] = useState(null);
+  const [needPunch, setNeedPunch] = useState(false);
   const authedRef = useRef(null);
 
   const setField = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -12536,13 +12537,31 @@ function AgentLoginPage({ onAuthed }) {
       onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes, userPass: form.pass });
     } catch (requestError) {
       if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      if (requestError.message === 'timeclock_required') setNeedPunch(true);
       const map = {
         ...AUTH_ERRORS,
         already_logged_in: 'This user already has a live agent session',
         no_conference_available: 'No free conference on that phone server',
         campaign_not_allowed: 'Campaign not allowed for your user group',
+        timeclock_required: 'Your user group requires a timeclock punch-in first',
       };
       setError(map[requestError.message] || 'Login failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Forced timeclock: punch in with the already-authed token, then retry.
+  async function punchIn() {
+    setBusy(true);
+    setError('');
+    try {
+      const payload = await ensureAuth();
+      await apiFetch('/agent/timeclock', payload.token, { method: 'POST', body: JSON.stringify({ action: 'in' }) });
+      setNeedPunch(false);
+      setError('Punched in — press Submit to log in');
+    } catch (requestError) {
+      setError(requestError.message === 'already_punched_in' ? 'Already punched in — press Submit' : 'Timeclock punch failed');
     } finally {
       setBusy(false);
     }
@@ -12602,6 +12621,11 @@ function AgentLoginPage({ onAuthed }) {
             <button type="button" className="secondary-action" disabled={busy || !form.user || !form.pass} onClick={refreshCampaigns}>
               Refresh Campaign List
             </button>
+            {needPunch && (
+              <button type="button" className="secondary-action" disabled={busy} onClick={punchIn}>
+                Punch In to Timeclock
+              </button>
+            )}
           </div>
         </form>
       </section>
@@ -12641,6 +12665,8 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [customFields, setCustomFields] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [altPhones, setAltPhones] = useState(null);
+  const [showAltPhones, setShowAltPhones] = useState(false);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -13095,7 +13121,7 @@ function AgentConsole({ token, authInfo, onExit }) {
         {live && sidePanel === 'callbacks' && (
           <Panel eyebrow="Scheduled" title={`My Callbacks${callbacks ? ` — ${callbacks.liveCount} due` : ''}`} icon={Clock3} className="admin-wide-panel">
             <table className="data-table">
-              <thead><tr><th>Callback Time</th><th>Name</th><th>Phone</th><th>Status</th><th>Comments</th><th /></tr></thead>
+              <thead><tr><th>Callback Time</th><th>Name</th><th>Phone</th><th>Status</th><th>For</th><th>Comments</th><th /></tr></thead>
               <tbody>
                 {(callbacks?.callbacks || []).map((c) => (
                   <tr key={c.callback_id}>
@@ -13103,6 +13129,7 @@ function AgentConsole({ token, authInfo, onExit }) {
                     <td>{c.first_name} {c.last_name}</td>
                     <td>{c.phone_number}</td>
                     <td>{c.status}</td>
+                    <td>{c.recipient === 'ANYONE' ? 'Anyone' : 'Me'}</td>
                     <td>{c.comments}</td>
                     <td>
                       {live.status !== 'INCALL' && !Number(live.lead_id) && (
@@ -13297,6 +13324,52 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
               </div>
             )}
+            {showAltPhones && altPhones && (
+              <table className="data-table">
+                <thead><tr><th>#</th><th>Phone</th><th>Note</th><th>Active</th><th /></tr></thead>
+                <tbody>
+                  {(altPhones.phones || []).map((p) => (
+                    <tr key={p.alt_phone_id}>
+                      <td>{p.alt_phone_count}</td>
+                      <td>{p.phone_code} {p.phone_number}</td>
+                      <td>{p.alt_phone_note}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="row-action"
+                          disabled={busy}
+                          onClick={async () => {
+                            const next = p.active === 'Y' ? 'N' : 'Y';
+                            try {
+                              await apiFetch('/agent/alt-phone-status', token, { method: 'POST', body: JSON.stringify({ alt_phone_id: p.alt_phone_id, active: next }) });
+                              setAltPhones((cur) => ({ ...cur, phones: cur.phones.map((x) => (x.alt_phone_id === p.alt_phone_id ? { ...x, active: next } : x)) }));
+                            } catch { setMessage('Alt phone update failed'); }
+                          }}
+                        >
+                          {p.active === 'Y' ? 'Active' : 'Inactive'}
+                        </button>
+                      </td>
+                      <td>
+                        {live.status !== 'INCALL' && p.active === 'Y' && (
+                          <button
+                            type="button"
+                            className="row-action"
+                            disabled={busy}
+                            onClick={async () => {
+                              const payload = await act('/agent/manual-dial', { lead_id: lead.lead_id, alt_phone_id: p.alt_phone_id });
+                              if (payload) setMessage(`Dialing alt phone #${p.alt_phone_count}`);
+                            }}
+                          >
+                            Dial
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {!(altPhones.phones || []).length && <tr><td colSpan={5}>No alternate phone entries for this lead</td></tr>}
+                </tbody>
+              </table>
+            )}
             {showForm && customFields && (
               <div className="entity-form">
                 {!customFields.fields?.length && <p className="connection-summary">No custom fields defined for list {customFields.listId}</p>}
@@ -13440,6 +13513,17 @@ function AgentConsole({ token, authInfo, onExit }) {
                 }}
               >
                 Form
+              </button>
+              <button
+                type="button"
+                className="row-action"
+                onClick={() => {
+                  const next = !showAltPhones;
+                  setShowAltPhones(next);
+                  if (next) apiFetch(`/agent/alt-phones?lead_id=${lead.lead_id}`, token).then(setAltPhones).catch(() => {});
+                }}
+              >
+                Alt Phones
               </button>
               {(webForms?.forms || []).map((f) => (
                 <button

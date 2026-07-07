@@ -1024,6 +1024,9 @@ async function adminData(user) {
     screenLabels,
     screenColors,
     settingsContainers,
+    statusCategories,
+    extensionGroups,
+    confTemplates,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2392,6 +2395,24 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT vsc_id, vsc_name, vsc_description, tovdad_display, sale_category, dead_lead_category
+       FROM vicidial_status_categories ORDER BY vsc_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT extension_id, extension_group_id, extension, rank, campaign_groups, call_count_today, last_call_time
+       FROM vicidial_extension_groups ORDER BY extension_group_id ASC, rank DESC LIMIT 1000`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT template_id, template_name, template_contents, user_group
+       FROM vicidial_conf_templates ORDER BY template_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2497,6 +2518,9 @@ async function adminData(user) {
     screenLabels,
     screenColors,
     settingsContainers,
+    statusCategories,
+    extensionGroups,
+    confTemplates,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -6861,6 +6885,10 @@ async function agentAuth(req, res) {
     phone: { login: phone.login, extension: phone.extension, server_ip: phone.server_ip },
     campaigns,
     live: await agentLiveRow(agentUser.user),
+    timeclock: {
+      required: await timeclockRequired(agentUser.userGroup, agentUser.userLevel),
+      punchedIn: (await timeclockLastEvent(agentUser.user))?.event === 'LOGIN',
+    },
   });
 }
 
@@ -6913,6 +6941,13 @@ async function agentLogin(req, res) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
   if (await agentLiveRow(user)) return res.status(409).json({ ok: false, error: 'already_logged_in' });
+  // Forced timeclock: the user group may require a timeclock punch-in first.
+  if (await timeclockRequired(req.genxUser.userGroup, req.genxUser.userLevel)) {
+    const punch = await timeclockLastEvent(user);
+    if (!punch || punch.event !== 'LOGIN') {
+      return res.status(403).json({ ok: false, error: 'timeclock_required' });
+    }
+  }
 
   const phone = req.agentPhone || (await rows(
     `SELECT ${AGENT_PHONE_COLUMNS}
@@ -7536,8 +7571,11 @@ async function agentCallbacks(req, res) {
     [live.campaign_id],
     [],
   );
-  const conds = ["recipient = 'USERONLY'", 'vc.user = ?', "vc.status NOT IN ('INACTIVE','DEAD')"];
-  const params = [req.genxUser.user];
+  // USERONLY callbacks belong to this agent; ANYONE callbacks for the current
+  // campaign are visible to every agent in it (legacy CalLBacKLisT behavior).
+  const conds = ["((vc.recipient = 'USERONLY' AND vc.user = ?) OR (vc.recipient = 'ANYONE' AND vc.campaign_id = ?))",
+    "vc.status NOT IN ('INACTIVE','DEAD')"];
+  const params = [req.genxUser.user, live.campaign_id];
   if (Number(camp?.callback_hours_block) > 0) {
     conds.push('vc.entry_time < NOW() - INTERVAL ? HOUR');
     params.push(Number(camp.callback_hours_block));
@@ -7548,7 +7586,7 @@ async function agentCallbacks(req, res) {
   }
   const callbacks = await rows(
     `SELECT vc.callback_id, vc.lead_id, vc.campaign_id, vc.status, vc.entry_time, vc.callback_time,
-            vc.comments, vc.lead_status, vl.first_name, vl.last_name, vl.phone_number, vl.alt_phone
+            vc.comments, vc.lead_status, vc.recipient, vl.first_name, vl.last_name, vl.phone_number, vl.alt_phone
      FROM vicidial_callbacks vc
      LEFT JOIN vicidial_list vl ON vl.lead_id = vc.lead_id
      WHERE ${conds.join(' AND ')} ORDER BY vc.callback_time LIMIT 200`,
@@ -7564,6 +7602,94 @@ async function agentCallbacks(req, res) {
   }
   const liveCount = callbacks.filter((c) => c.status === 'LIVE').length;
   return res.json({ ok: true, callbacks, count: callbacks.length, liveCount });
+}
+
+// Alt phones list (vicidial_list_alt_phones): view entries for the current
+// lead and toggle active (legacy alt_phone_change).
+async function agentAltPhones(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
+  if (!leadId) return badRequest(res, 'lead_id_required');
+  const phones = await rows(
+    'SELECT alt_phone_id, phone_code, phone_number, alt_phone_note, alt_phone_count, active FROM vicidial_list_alt_phones WHERE lead_id = ? ORDER BY alt_phone_count LIMIT 50',
+    [leadId],
+    [],
+  );
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode !== '0') phones.forEach((p) => { p.phone_number = maskPhoneNumber(p.phone_number, phoneMode); });
+  return res.json({ ok: true, phones });
+}
+
+async function agentAltPhoneChange(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const altPhoneId = Number(req.body?.alt_phone_id || 0);
+  const active = req.body?.active === 'N' ? 'N' : 'Y';
+  const leadId = Number(live.lead_id || 0);
+  if (!altPhoneId || !leadId) return badRequest(res, 'alt_phone_id_required');
+  await execute(
+    'UPDATE vicidial_list_alt_phones SET active = ? WHERE alt_phone_id = ? AND lead_id = ?',
+    [active, altPhoneId, leadId],
+  );
+  return res.json({ ok: true });
+}
+
+// AlertControl port: toggle the browser-alert flag on the user record.
+async function agentAlertControl(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const enabled = req.body?.enabled === true ? '1' : '0';
+  await execute('UPDATE vicidial_users SET alert_enabled = ? WHERE user = ?', [enabled, req.genxUser.user]);
+  return res.json({ ok: true, enabled: enabled === '1' });
+}
+
+// Timeclock (legacy timeclock.php): punches in vicidial_timeclock_log; the
+// "day" boundary is system_settings.timeclock_end_of_day (HHMM).
+async function timeclockLastEvent(user) {
+  const [sys] = await rows('SELECT timeclock_end_of_day FROM system_settings LIMIT 1', [], []);
+  const eod = String(sys?.timeclock_end_of_day || '0000').padStart(4, '0');
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  const boundary = new Date(now);
+  boundary.setHours(Number(eod.slice(0, 2)), Number(eod.slice(2, 4)), 10, 0);
+  if (hhmm < eod) boundary.setDate(boundary.getDate() - 1);
+  const [row] = await rows(
+    'SELECT event, event_epoch FROM vicidial_timeclock_log WHERE user = ? AND event_epoch >= ? ORDER BY timeclock_id DESC LIMIT 1',
+    [user, Math.floor(boundary.getTime() / 1000)],
+    [],
+  );
+  return row || null;
+}
+
+async function timeclockRequired(userGroup, userLevel) {
+  const [ug] = await rows(
+    'SELECT forced_timeclock_login FROM vicidial_user_groups WHERE user_group = ? LIMIT 1',
+    [userGroup || ''],
+    [],
+  );
+  const flag = String(ug?.forced_timeclock_login || 'N');
+  return /Y/.test(flag) || (/ADMIN_EXEMPT/.test(flag) && Number(userLevel || 0) < 8);
+}
+
+async function agentTimeclock(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const out = req.body?.action === 'out';
+  const last = await timeclockLastEvent(user);
+  const punchedIn = last && last.event === 'LOGIN';
+  if (!out && punchedIn) return res.status(409).json({ ok: false, error: 'already_punched_in' });
+  if (out && !punchedIn) return res.status(409).json({ ok: false, error: 'not_punched_in' });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const ip = String(req.ip || '').replace(/[^0-9a-fA-F:.]/g, '').slice(0, 40);
+  await execute(
+    `INSERT INTO vicidial_timeclock_log SET event = ?, user = ?, user_group = ?, event_epoch = ?, ip_address = ?, event_date = NOW()${out ? ', login_sec = ?' : ''}`,
+    out
+      ? ['LOGOUT', user, req.genxUser.userGroup || '', nowEpoch, ip, Math.max(nowEpoch - Number(last.event_epoch || nowEpoch), 0)]
+      : ['LOGIN', user, req.genxUser.userGroup || '', nowEpoch, ip],
+  );
+  return res.json({ ok: true, punchedIn: !out });
 }
 
 // Find the customer leg for the agent's current call: dialer-attached calls
@@ -8452,6 +8578,19 @@ async function agentManualDial(req, res) {
       if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
       if (altDial === 'ALT') lead.phone_number = String(lead.alt_phone || '').replace(/[^0-9]/g, '');
       if (altDial === 'ADDR3') lead.phone_number = String(lead.address3 || '').replace(/[^0-9]/g, '');
+      // Dial a specific vicidial_list_alt_phones entry (legacy aX alt_dial).
+      const altPhoneId = Number(req.body?.alt_phone_id || 0);
+      if (altPhoneId) {
+        const [entry] = await rows(
+          "SELECT phone_code, phone_number, alt_phone_count FROM vicidial_list_alt_phones WHERE alt_phone_id = ? AND lead_id = ? AND active = 'Y' LIMIT 1",
+          [altPhoneId, lead.lead_id],
+          [],
+        );
+        if (!entry) return res.status(404).json({ ok: false, error: 'alt_phone_not_found' });
+        lead.phone_number = String(entry.phone_number || '').replace(/[^0-9]/g, '');
+        lead.phone_code = entry.phone_code || lead.phone_code;
+        req._altDialTag = `A${entry.alt_phone_count}`;
+      }
       if (String(lead.phone_number || '').length < 5) return badRequest(res, 'alt_number_missing');
     } else {
       const listId = Number(campaign.manual_dial_list_id || 0) || 998;
@@ -8503,7 +8642,7 @@ async function agentManualDial(req, res) {
           phone_number, user, comments, processed, user_group, alt_dial, called_count)
        VALUES (?, ?, ?, ?, NOW(), ?, 'INCALL', ?, ?, ?, 'MANUAL', 'N', ?, ?, ?)`,
       [uniqueid, lead.lead_id, lead.list_id, live.campaign_id, nowEpoch, lead.phone_code || '1',
-        lead.phone_number, user, req.genxUser.userGroup || '', altDial, calledCount],
+        lead.phone_number, user, req.genxUser.userGroup || '', req._altDialTag || altDial, calledCount],
     );
     await execute(
       "UPDATE vicidial_live_agents SET status = 'INCALL', lead_id = ?, uniqueid = ?, callerid = ?, comments = 'MANUAL', last_call_time = NOW(), last_state_change = NOW() WHERE user = ?",
@@ -10076,6 +10215,173 @@ async function deleteStatusGroup(req, res) {
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'status_group_delete_failed' });
+  }
+}
+
+// Legacy status categories (ADD=16321 add / ADD=431111111111111 modify+delete):
+// gated modify_servers OR modify_statuses, UNDEFINED is reserved, and at most
+// 4 categories may have tovdad_display=Y (extras forced to N like legacy).
+function canModifyStatusCategories(req, res) {
+  if (canModify(req.genxUser, 'modifyStatuses') || canModify(req.genxUser, 'modifyServers')) return true;
+  res.status(403).json({ ok: false, error: 'permission_denied' });
+  return false;
+}
+
+function enumYN(value) {
+  return value === 'Y' ? 'Y' : 'N';
+}
+
+async function saveStatusCategory(req, res, mode) {
+  if (!canModifyStatusCategories(req, res)) return;
+  const payload = {
+    vsc_name: cleanText(req.body?.vsc_name, 50),
+    vsc_description: cleanText(req.body?.vsc_description, 255),
+    tovdad_display: enumYN(req.body?.tovdad_display),
+    sale_category: enumYN(req.body?.sale_category),
+    dead_lead_category: enumYN(req.body?.dead_lead_category),
+  };
+  if (payload.vsc_name.length < 2) return badRequest(res, 'invalid_vsc_name');
+  try {
+    const id = mode === 'create' ? cleanId(req.body?.vsc_id, 20) : cleanId(req.params.id, 20);
+    if (!id || id.length < 2) return badRequest(res, 'invalid_vsc_id');
+    if (/^UNDEFINED$/i.test(id)) return badRequest(res, 'reserved_category');
+    const tovdadCount = await scalar(
+      "SELECT COUNT(*) AS value FROM vicidial_status_categories WHERE tovdad_display = 'Y' AND vsc_id != ?",
+      [id],
+      0,
+    );
+    if (Number(tovdadCount) > 3 && payload.tovdad_display === 'Y') payload.tovdad_display = 'N';
+    if (mode === 'create') {
+      const exists = await scalar('SELECT COUNT(*) AS value FROM vicidial_status_categories WHERE vsc_id = ?', [id], 0);
+      if (Number(exists) > 0) return res.status(409).json({ ok: false, error: 'status_category_exists' });
+      const { assignments, values } = dynamicAssignments({ vsc_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_status_categories SET ${assignments}`, values);
+      await adminLog(req, 'STATUSCATEGORIES', 'ADD', id, 'GENX ADD STATUS CATEGORY', 'INSERT INTO vicidial_status_categories', payload.vsc_name);
+    } else {
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_status_categories SET ${assignments} WHERE vsc_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'status_category_not_found' });
+      await adminLog(req, 'STATUSCATEGORIES', 'MODIFY', id, 'GENX MODIFY STATUS CATEGORY', 'UPDATE vicidial_status_categories', payload.vsc_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'status_category_save_failed' });
+  }
+}
+
+async function deleteStatusCategory(req, res) {
+  if (!canModifyStatusCategories(req, res)) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_vsc_id');
+  if (/^UNDEFINED$/i.test(id)) return badRequest(res, 'reserved_category');
+  try {
+    const result = await execute('DELETE FROM vicidial_status_categories WHERE vsc_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'status_category_not_found' });
+    await adminLog(req, 'STATUSCATEGORIES', 'DELETE', id, 'GENX DELETE STATUS CATEGORY', 'DELETE FROM vicidial_status_categories', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'status_category_delete_failed' });
+  }
+}
+
+// Legacy extension groups (ADD=22111 add / update near ADD=19598 / ADD=62111
+// delete): duplicate (group_id, extension) pairs rejected; delete is gated by
+// delete_remote_agents like legacy's LOGdelete_remote_agents check.
+async function saveExtensionGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyRemoteagents')) return;
+  const payload = {
+    extension_group_id: cleanId(req.body?.extension_group_id, 20),
+    extension: cleanText(req.body?.extension, 100),
+    rank: Math.max(0, Math.trunc(Number(req.body?.rank) || 0)),
+    campaign_groups: cleanText(req.body?.campaign_groups, 5000),
+  };
+  if (payload.extension_group_id.length < 2 || payload.extension.length < 2) return badRequest(res, 'invalid_extension_group');
+  try {
+    if (mode === 'create') {
+      const exists = await scalar(
+        'SELECT COUNT(*) AS value FROM vicidial_extension_groups WHERE extension_group_id = ? AND extension = ?',
+        [payload.extension_group_id, payload.extension],
+        0,
+      );
+      if (Number(exists) > 0) return res.status(409).json({ ok: false, error: 'extension_group_entry_exists' });
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`INSERT INTO vicidial_extension_groups SET ${assignments}`, values);
+      await adminLog(req, 'EXTENGROUP', 'ADD', String(result.insertId || ''), 'GENX ADD EXTENSION GROUP', 'INSERT INTO vicidial_extension_groups', `${payload.extension_group_id} ${payload.extension}`);
+    } else {
+      const id = cleanId(req.params.id, 12);
+      if (!id) return badRequest(res, 'invalid_extension_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_extension_groups SET ${assignments} WHERE extension_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'extension_group_entry_not_found' });
+      await adminLog(req, 'EXTENGROUP', 'MODIFY', id, 'GENX MODIFY EXTENSION GROUP', 'UPDATE vicidial_extension_groups', `${payload.extension_group_id} ${payload.extension}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'extension_group_save_failed' });
+  }
+}
+
+async function deleteExtensionGroup(req, res) {
+  if (!requireModify(req, res, 'deleteRemoteAgents')) return;
+  const id = cleanId(req.params.id, 12);
+  if (!id) return badRequest(res, 'invalid_extension_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_extension_groups WHERE extension_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'extension_group_entry_not_found' });
+    await adminLog(req, 'EXTENGROUP', 'DELETE', id, 'GENX DELETE EXTENSION GROUP', 'DELETE FROM vicidial_extension_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'extension_group_delete_failed' });
+  }
+}
+
+// Legacy conf templates (add near admin.php:15394 / update :20512 / delete
+// :24942): delete clears template_id off phones + server carriers and flags a
+// conf rebuild on active asterisk servers before removing the template row.
+async function saveConfTemplate(req, res, mode) {
+  if (!requireModify(req, res, 'modifyServers')) return;
+  const payload = {
+    template_name: cleanText(req.body?.template_name, 50),
+    template_contents: String(req.body?.template_contents || '').slice(0, 60000),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.template_id, 15);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_template_id');
+      const exists = await scalar('SELECT COUNT(*) AS value FROM vicidial_conf_templates WHERE template_id = ?', [id], 0);
+      if (Number(exists) > 0) return res.status(409).json({ ok: false, error: 'conf_template_exists' });
+      const { assignments, values } = dynamicAssignments({ template_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_conf_templates SET ${assignments}`, values);
+      await adminLog(req, 'CONFTEMPLATES', 'ADD', id, 'GENX ADD CONF TEMPLATE', 'INSERT INTO vicidial_conf_templates', payload.template_name);
+    } else {
+      const id = cleanId(req.params.id, 15);
+      if (!id) return badRequest(res, 'invalid_template_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_conf_templates SET ${assignments} WHERE template_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conf_template_not_found' });
+      await adminLog(req, 'CONFTEMPLATES', 'MODIFY', id, 'GENX MODIFY CONF TEMPLATE', 'UPDATE vicidial_conf_templates', payload.template_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'conf_template_save_failed' });
+  }
+}
+
+async function deleteConfTemplate(req, res) {
+  if (!requireModify(req, res, 'modifyServers')) return;
+  const id = cleanId(req.params.id, 15);
+  if (!id) return badRequest(res, 'invalid_template_id');
+  try {
+    await execute("UPDATE phones SET template_id = '' WHERE template_id = ?", [id]).catch(() => {});
+    await execute("UPDATE vicidial_server_carriers SET template_id = '' WHERE template_id = ?", [id]).catch(() => {});
+    await execute("UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y'").catch(() => {});
+    const result = await execute('DELETE FROM vicidial_conf_templates WHERE template_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conf_template_not_found' });
+    await adminLog(req, 'CONFTEMPLATES', 'DELETE', id, 'GENX DELETE CONF TEMPLATE', 'UPDATE phones + vicidial_server_carriers template_id blank | DELETE FROM vicidial_conf_templates', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'conf_template_delete_failed' });
   }
 }
 
@@ -12562,6 +12868,10 @@ app.post('/api/agent/preview-skip', requireAgentAccess, agentPreviewSkip);
 app.get('/api/agent/custom-fields', requireAgentAccess, agentCustomFields);
 app.put('/api/agent/custom-fields', requireAgentAccess, agentCustomFieldsSave);
 app.post('/api/agent/recording', requireAgentAccess, agentRecording);
+app.get('/api/agent/alt-phones', requireAgentAccess, agentAltPhones);
+app.post('/api/agent/alt-phone-status', requireAgentAccess, agentAltPhoneChange);
+app.post('/api/agent/alert-control', requireAgentAccess, agentAlertControl);
+app.post('/api/agent/timeclock', requireAgentAccess, agentTimeclock);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
@@ -12653,6 +12963,15 @@ app.delete('/api/admin/holidays/:id', requireAccess, deleteHoliday);
 app.post('/api/admin/status-groups', requireAccess, (req, res) => saveStatusGroup(req, res, 'create'));
 app.put('/api/admin/status-groups/:id', requireAccess, (req, res) => saveStatusGroup(req, res, 'update'));
 app.delete('/api/admin/status-groups/:id', requireAccess, deleteStatusGroup);
+app.post('/api/admin/status-categories', requireAccess, (req, res) => saveStatusCategory(req, res, 'create'));
+app.put('/api/admin/status-categories/:id', requireAccess, (req, res) => saveStatusCategory(req, res, 'update'));
+app.delete('/api/admin/status-categories/:id', requireAccess, deleteStatusCategory);
+app.post('/api/admin/extension-groups', requireAccess, (req, res) => saveExtensionGroup(req, res, 'create'));
+app.put('/api/admin/extension-groups/:id', requireAccess, (req, res) => saveExtensionGroup(req, res, 'update'));
+app.delete('/api/admin/extension-groups/:id', requireAccess, deleteExtensionGroup);
+app.post('/api/admin/conf-templates', requireAccess, (req, res) => saveConfTemplate(req, res, 'create'));
+app.put('/api/admin/conf-templates/:id', requireAccess, (req, res) => saveConfTemplate(req, res, 'update'));
+app.delete('/api/admin/conf-templates/:id', requireAccess, deleteConfTemplate);
 app.post('/api/admin/screen-labels', requireAccess, (req, res) => saveScreenLabel(req, res, 'create'));
 app.put('/api/admin/screen-labels/:id', requireAccess, (req, res) => saveScreenLabel(req, res, 'update'));
 app.delete('/api/admin/screen-labels/:id', requireAccess, deleteScreenLabel);
