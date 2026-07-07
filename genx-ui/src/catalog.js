@@ -96,7 +96,7 @@ export const REPORT_GROUPS = [
     title: 'Inbound',
     items: [
       { label: 'Inbound Report', href: '/vicidial/AST_CLOSERstats.php' },
-      { label: 'Inbound v2', href: '/vicidial/AST_CLOSERstats_v2.php' },
+      { label: 'Inbound v2', href: '/vicidial/AST_CLOSERstats_v2.php', view: 'reportInboundSummary' },
       { label: 'Service Level', href: '/vicidial/AST_CLOSER_service_level.php' },
       { label: 'Hourly Summary', href: '/vicidial/AST_CLOSERsummary_hourly.php' },
       { label: 'Daily Summary', href: '/vicidial/AST_inbound_daily_report.php' },
@@ -113,7 +113,7 @@ export const REPORT_GROUPS = [
       { label: 'Outbound Calling', href: '/vicidial/AST_VDADstats.php', view: 'reportOutboundCalling' },
       { label: 'Outbound Interval', href: '/vicidial/AST_OUTBOUNDsummary_interval.php', view: 'reportOutboundInterval' },
       { label: 'Outbound IVR', href: '/vicidial/AST_IVRstats.php?type=outbound' },
-      { label: 'Lead Source', href: '/vicidial/AST_source_vlc_status_report.php' },
+      { label: 'Lead Source', href: '/vicidial/AST_source_vlc_status_report.php', view: 'reportLeadSource' },
       { label: 'Hopper List', href: '/vicidial/AST_VICIDIAL_hopperlist.php', view: 'reportHopperList' },
       { label: 'List Statuses', href: '/vicidial/AST_LISTS_stats.php', view: 'reportListStatuses' },
       { label: 'List Campaign Statuses', href: '/vicidial/AST_LISTS_campaign_stats.php', view: 'reportListCampaignStatuses' },

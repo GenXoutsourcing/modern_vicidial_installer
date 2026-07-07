@@ -4612,6 +4612,132 @@ async function outboundIntervalReport(req, res) {
   return res.json({ ok: true, campaigns, results, range: { beginDate, endDate }, intervalSec });
 }
 
+// Native port of AST_source_vlc_status_report.php: leads entered in the date
+// range grouped by vendor_lead_code or source_id crossed with status.
+const LEAD_SOURCE_GROUP_COLUMNS = ['vendor_lead_code', 'source_id'];
+
+async function leadSourceReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const groupBy = cleanChoice(req.query?.group_by, LEAD_SOURCE_GROUP_COLUMNS, 'vendor_lead_code');
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 20);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  if (!campaignIdsRaw.length) return res.json({ ok: true, campaigns, results: null, range: { beginDate, endDate }, groupBy });
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+
+  const results = [];
+  for (const campaignId of campaignIds) {
+    const lists = await rows('SELECT list_id FROM vicidial_lists WHERE campaign_id = ? LIMIT 500', [campaignId], []);
+    const listIds = lists.map((row) => String(row.list_id));
+    const entries = listIds.length
+      ? await rows(
+        `SELECT ${groupBy} AS source, status, COUNT(*) AS leads
+         FROM vicidial_list
+         WHERE list_id IN (${listIds.map(() => '?').join(',')}) AND entry_date >= ? AND entry_date <= ?
+         GROUP BY source, status ORDER BY source ASC, leads DESC LIMIT 5000`,
+        [...listIds, begin, end],
+        [],
+      )
+      : [];
+    const statuses = await rows(
+      `SELECT status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
+       UNION SELECT status, status_name FROM vicidial_statuses LIMIT 500`,
+      [campaignId],
+      [],
+    );
+    results.push({ campaign_id: campaignId, entries, statuses });
+  }
+  return res.json({ ok: true, campaigns, results, range: { beginDate, endDate }, groupBy });
+}
+
+// Native port of AST_CLOSERstats_v2.php (PHONE in-group mode): per-group inbound
+// answer/drop stats, status breakdown and hourly distribution from the closer
+// log. DID/CHAT/EMAIL modes and the shift filter are not ported.
+const CLOSER_V2_UNANSWERED = ['DROP', 'XDROP', 'HXFER', 'QVMAIL', 'HOLDTO', 'LIVE', 'QUEUE', 'TIMEOT', 'AFTHRS', 'NANQUE', 'IQNANQ', 'INBND', 'MAXCAL'];
+
+async function inboundSummaryReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const groupIdsRaw = String(req.query?.groups || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+
+  const pickerParams = [];
+  const pickerWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'group_id', pickerParams);
+  const groups = await rows(
+    `SELECT group_id, group_name FROM vicidial_inbound_groups
+     WHERE group_handling = 'PHONE' AND ${pickerWhere} ORDER BY group_id ASC LIMIT 500`,
+    pickerParams,
+    [],
+  );
+  if (!groupIdsRaw.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+  const allowedIds = new Set(groups.map((row) => String(row.group_id)));
+  const groupIds = groupIdsRaw.filter((id) => allowedIds.has(id));
+  if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+
+  const ph = groupIds.map(() => '?').join(',');
+  const unansweredIn = sqlStatusList(CLOSER_V2_UNANSWERED);
+  const answeredExpr = `status NOT IN (${unansweredIn})`;
+  const dropExpr = "status IN ('DROP','XDROP') AND (length_in_sec <= 49999 OR length_in_sec IS NULL)";
+  const statParams = [begin, end, ...groupIds];
+
+  const [perGroup, statusBreakdown, hourly, offeredRow] = await Promise.all([
+    rows(
+      `SELECT campaign_id AS group_id, COUNT(*) AS calls,
+              COALESCE(SUM(length_in_sec),0) AS seconds,
+              COALESCE(SUM(${answeredExpr}),0) AS answered,
+              COALESCE(SUM(CASE WHEN ${answeredExpr} THEN queue_seconds ELSE 0 END),0) AS answered_queue_seconds,
+              COALESCE(SUM(${dropExpr}),0) AS drops,
+              COALESCE(SUM(status IN ('DROP','XDROP') AND ((length_in_sec <= 49999 AND length_in_sec >= 5) OR length_in_sec IS NULL)),0) AS drops_5s,
+              COALESCE(SUM(status IN ('DROP','XDROP') AND ((length_in_sec <= 49999 AND length_in_sec >= 10) OR length_in_sec IS NULL)),0) AS drops_10s
+       FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY campaign_id ORDER BY campaign_id ASC LIMIT 200`,
+      statParams,
+      [],
+    ),
+    rows(
+      `SELECT status, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
+       FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY status ORDER BY calls DESC LIMIT 200`,
+      statParams,
+      [],
+    ),
+    rows(
+      `SELECT DATE_FORMAT(call_date, '%Y-%m-%d %H:00') AS hour_slot, COUNT(*) AS calls,
+              COALESCE(SUM(${answeredExpr}),0) AS answered,
+              COALESCE(SUM(${dropExpr}),0) AS drops
+       FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY hour_slot ORDER BY hour_slot ASC LIMIT 1000`,
+      statParams,
+      [],
+    ),
+    rows(
+      `SELECT COUNT(*) AS calls FROM live_inbound_log
+       WHERE start_time >= ? AND start_time <= ? AND comment_a IN (${ph}) AND comment_b = 'START'`,
+      statParams,
+      [],
+    ).then((result) => result[0] || { calls: 0 }),
+  ]);
+
+  return res.json({
+    ok: true,
+    groups,
+    range: { beginDate, endDate },
+    sections: { perGroup, statusBreakdown, hourly, offered: Number(offeredRow.calls || 0) },
+  });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -8300,6 +8426,8 @@ app.get('/api/reports/campaign-status-list', requireAccess, campaignStatusListRe
 app.get('/api/reports/dialer-inventory', requireAccess, dialerInventoryReport);
 app.get('/api/reports/outbound-calling', requireAccess, outboundCallingReport);
 app.get('/api/reports/outbound-interval', requireAccess, outboundIntervalReport);
+app.get('/api/reports/lead-source', requireAccess, leadSourceReport);
+app.get('/api/reports/inbound-summary', requireAccess, inboundSummaryReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

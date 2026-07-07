@@ -8567,6 +8567,260 @@ function OutboundIntervalReportView({ token, onLogout }) {
   );
 }
 
+// Native AST_source_vlc_status_report.php: leads by vendor_lead_code/source_id
+// crossed with disposition for the selected campaigns and entry-date range.
+function LeadSourceReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [groupBy, setGroupBy] = useState('vendor_lead_code');
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaignIds, begin, end, groupColumn) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end, group_by: groupColumn });
+      if (campaignIds.length) params.set('campaigns', campaignIds.join(','));
+      const payload = await apiFetch(`/reports/lead-source?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today, 'vendor_lead_code');
+  }, [load, today]);
+
+  const campaigns = data?.campaigns || [];
+  const results = data?.results;
+  const groupLabel = (data?.groupBy || groupBy).replace(/_/g, ' ').toUpperCase();
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>Lead Source</h2>
+          <p className="action-copy">Lead dispositions grouped by vendor lead code or source ID for leads entered in the date range.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaigns, Dates and Grouping" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate, groupBy);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Group By</span>
+              <select value={groupBy} onChange={(event) => setGroupBy(event.target.value)}>
+                <option value="vendor_lead_code">Vendor Lead Code</option>
+                <option value="source_id">Source ID</option>
+              </select>
+            </label>
+          </div>
+          <CampaignTogglePicker campaigns={campaigns} selected={selected} onChange={setSelected} />
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {results && results.map((campaign) => {
+        const nameMap = new Map((campaign.statuses || []).map((row) => [String(row.status), row.status_name]));
+        const perSource = new Map();
+        for (const row of campaign.entries) {
+          const key = String(row.source ?? '') || '(NONE)';
+          if (!perSource.has(key)) perSource.set(key, { rows: [], total: 0 });
+          const bucket = perSource.get(key);
+          bucket.rows.push(row);
+          bucket.total += Number(row.leads || 0);
+        }
+        return (
+          <section className="admin-grid media-tools-grid" key={campaign.campaign_id}>
+            {[...perSource.entries()].map(([source, bucket]) => (
+              <Panel
+                key={`${campaign.campaign_id}-${source}`}
+                eyebrow={`Campaign ${campaign.campaign_id}`}
+                title={`${groupLabel}: ${source} (${formatNumber(bucket.total)} leads)`}
+                icon={Database}
+              >
+                <DataTable
+                  emptyLabel="No leads"
+                  rows={bucket.rows.map((row) => ({ ...row, id: `${source}-${row.status}` }))}
+                  columns={[
+                    { key: 'status', label: 'Disposition', render: (row) => nameMap.get(String(row.status)) || row.status },
+                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? ((Number(row.leads) / bucket.total) * 100).toFixed(2) : '0.00'}%` },
+                  ]}
+                />
+              </Panel>
+            ))}
+            {!perSource.size && (
+              <Panel eyebrow={`Campaign ${campaign.campaign_id}`} title="No leads entered in the date range" icon={Database}>
+                <p className="connection-summary">No leads with an entry date in the selected range.</p>
+              </Panel>
+            )}
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+// Native AST_CLOSERstats_v2.php (PHONE in-groups): per-group inbound stats,
+// status breakdown and hourly distribution.
+function InboundSummaryReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (groupIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (groupIds.length) params.set('groups', groupIds.join(','));
+      const payload = await apiFetch(`/reports/inbound-summary?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const groups = (data?.groups || []).map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }));
+  const s = data?.sections;
+  const totals = (s?.perGroup || []).reduce((sum, row) => ({
+    calls: sum.calls + Number(row.calls || 0),
+    seconds: sum.seconds + Number(row.seconds || 0),
+    answered: sum.answered + Number(row.answered || 0),
+    answered_queue_seconds: sum.answered_queue_seconds + Number(row.answered_queue_seconds || 0),
+    drops: sum.drops + Number(row.drops || 0),
+    drops_5s: sum.drops_5s + Number(row.drops_5s || 0),
+    drops_10s: sum.drops_10s + Number(row.drops_10s || 0),
+  }), { calls: 0, seconds: 0, answered: 0, answered_queue_seconds: 0, drops: 0, drops_5s: 0, drops_10s: 0 });
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>Inbound Summary (v2)</h2>
+          <p className="action-copy">Answer and drop statistics for the selected inbound groups.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Groups and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <CampaignTogglePicker campaigns={groups} selected={selected} onChange={setSelected} emptyLabel="No inbound groups available" />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title="Inbound Totals" icon={PhoneCall} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">Offered (IVR starts): {formatNumber(s.offered)}</span>
+              <span className="connection-status">Calls in queue log: {formatNumber(totals.calls)}</span>
+              <span className="connection-status">Answered: {formatNumber(totals.answered)} ({totals.calls ? ((totals.answered / totals.calls) * 100).toFixed(2) : '0.00'}%)</span>
+              <span className="connection-status">Avg answer queue: {totals.answered ? Math.round(totals.answered_queue_seconds / totals.answered) : 0}s</span>
+              <span className="connection-status">Drops: {formatNumber(totals.drops)} ({totals.calls ? ((totals.drops / totals.calls) * 100).toFixed(2) : '0.00'}%)</span>
+              <span className="connection-status">Drops ≥5s: {formatNumber(totals.drops_5s)}</span>
+              <span className="connection-status">Drops ≥10s: {formatNumber(totals.drops_10s)}</span>
+              <span className="connection-status">Avg call length: {totals.calls ? Math.round(totals.seconds / totals.calls) : 0}s</span>
+            </div>
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={(s.perGroup || []).map((row) => ({ ...row, id: row.group_id }))}
+              columns={[
+                { key: 'group_id', label: 'In-Group' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
+                { key: 'answer_pct', label: 'Answer %', render: (row) => `${row.calls ? ((row.answered / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'avg_queue', label: 'Avg Queue', render: (row) => `${row.answered ? Math.round(row.answered_queue_seconds / row.answered) : 0}s` },
+                { key: 'drops', label: 'Drops', render: (row) => formatNumber(row.drops) },
+                { key: 'drop_pct', label: 'Drop %', render: (row) => `${row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'avg_len', label: 'Avg Length', render: (row) => `${row.calls ? Math.round(row.seconds / row.calls) : 0}s` },
+              ]}
+            />
+          </Panel>
+          <section className="admin-grid media-tools-grid">
+            <Panel eyebrow="Breakdown" title="Inbound Statuses" icon={Activity}>
+              <DataTable
+                emptyLabel="No inbound calls in the date range"
+                rows={(s.statusBreakdown || []).map((row) => ({ ...row, id: row.status }))}
+                columns={[
+                  { key: 'status', label: 'Status' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                  { key: 'seconds', label: 'Time', render: (row) => formatSeconds(row.seconds) },
+                ]}
+              />
+            </Panel>
+            <Panel eyebrow="Breakdown" title="Hourly Distribution" icon={Activity}>
+              <DataTable
+                emptyLabel="No inbound calls in the date range"
+                rows={(s.hourly || []).map((row) => ({ ...row, id: row.hour_slot }))}
+                columns={[
+                  { key: 'hour_slot', label: 'Hour' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                  { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
+                  { key: 'drops', label: 'Drops', render: (row) => formatNumber(row.drops) },
+                ]}
+              />
+            </Panel>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -8787,6 +9041,8 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportDialerInventory') return <DialerInventoryReportView token={token} />;
   if (activeView === 'reportOutboundCalling') return <OutboundCallingReportView token={token} />;
   if (activeView === 'reportOutboundInterval') return <OutboundIntervalReportView token={token} />;
+  if (activeView === 'reportLeadSource') return <LeadSourceReportView token={token} />;
+  if (activeView === 'reportInboundSummary') return <InboundSummaryReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
