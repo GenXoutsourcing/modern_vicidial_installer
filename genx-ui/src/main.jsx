@@ -5903,7 +5903,12 @@ function AdminShell({ token, user, onLogout }) {
     return () => window.clearInterval(timer);
   }, [refreshAll]);
 
-  const activeMeta = NAV_ITEMS.find((item) => item.key === activeView) || NAV_ITEMS[0];
+  // Report views (reportHopperList etc.) live under the Reports nav entry:
+  // highlight Reports in the sidebar and show its heading for all of them.
+  const navView = activeView.startsWith('report') && activeView !== 'reports' ? 'reports' : activeView;
+  const activeMeta = NAV_ITEMS.find((item) => item.key === activeView)
+    || NAV_ITEMS.find((item) => item.key === navView)
+    || NAV_ITEMS[0];
   const system = dashboardState.data?.system || {};
   const updatedAt = activeView === 'command' ? dashboardState.data?.generatedAt : adminState.data?.generatedAt;
   const isLoading = dashboardState.loading || adminState.loading;
@@ -5952,7 +5957,7 @@ function AdminShell({ token, user, onLogout }) {
                   <button
                     type="button"
                     key={key}
-                    className={key === activeView ? 'active' : ''}
+                    className={key === navView ? 'active' : ''}
                     onClick={() => navigateTo(key)}
                   >
                     <Icon size={16} aria-hidden="true" />
