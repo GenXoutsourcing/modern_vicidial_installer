@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -451,6 +451,7 @@ function userCanDelete(user, entity) {
   if (entity === 'campaigns') return Boolean(user?.deleteCampaigns);
   if (entity === 'users') return Boolean(user?.deleteUsers);
   if (entity === 'lists') return Boolean(user?.deleteLists);
+  if (entity === 'scripts') return Boolean(user?.deleteScripts);
   return false;
 }
 
@@ -3806,6 +3807,80 @@ function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwit
   );
 }
 
+// Mirrors legacy script modify (ADD=3111111): preview plus campaigns /
+// in-groups / list overrides / user-group overrides using the script.
+function ScriptConnections({ scriptId, scriptText, token, onLogout }) {
+  const script = String(scriptId || '');
+  const [data, setData] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    if (!script) return undefined;
+    apiFetch(`/admin/scripts/${encodeURIComponent(script)}/connections`, token)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [script, token, onLogout]);
+
+  if (!script || !data || data.error) return null;
+
+  const referenceLists = [
+    ['Campaigns using this script', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+    ['In-groups using this script', data.ingroups || [], (row) => `${row.group_id} - ${row.group_name || ''}`],
+    ['List overrides using this script', data.lists || [], (row) => `${row.list_id} - ${row.list_name || ''}`],
+    ['User group overrides using this script', data.userGroups || [], (row) => `${row.user_group} - ${row.group_name || ''}`],
+  ];
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>Where this script is used</h3>
+        </div>
+        <FileText size={20} aria-hidden="true" />
+      </div>
+      <div className="rank-grids">
+        {referenceLists.map(([title, items, label]) => (
+          <div className="connection-lists" key={title}>
+            <p className="connection-summary">{title}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            {items.slice(0, 8).map((row, index) => (
+              <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="connection-actions">
+        <button type="button" className="row-action" onClick={() => setPreviewOpen((open) => !open)}>
+          <Search size={15} aria-hidden="true" />
+          {previewOpen ? 'Hide Preview' : 'Preview Script'}
+        </button>
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=SCRIPTS&stage=${encodeURIComponent(script)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+      </div>
+      {previewOpen && (
+        <iframe
+          className="script-preview-frame"
+          title="Script preview"
+          sandbox=""
+          srcDoc={`<body style="font-family:sans-serif;background:#fff;color:#111;padding:12px">${scriptText || ''}</body>`}
+        />
+      )}
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -3903,6 +3978,15 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'scripts' && (
+          <ScriptConnections
+            scriptId={form.script_id}
+            scriptText={form.script_text}
+            token={token}
+            onLogout={onLogout}
           />
         )}
 

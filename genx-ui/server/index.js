@@ -3822,6 +3822,58 @@ async function saveInboundGroupAgentRanks(req, res) {
   }
 }
 
+// Cross-references from legacy script modify (ADD=3111111): campaigns,
+// in-groups, list overrides and user-group overrides using the script.
+async function scriptConnections(req, res) {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_script_id');
+
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns
+     WHERE campaign_script = ? OR campaign_script_two = ?
+     ORDER BY campaign_id ASC LIMIT 200`,
+    [id, id],
+    [],
+  );
+  const ingroups = await rows(
+    `SELECT group_id, group_name FROM vicidial_inbound_groups
+     WHERE ingroup_script = ? OR ingroup_script_two = ?
+     ORDER BY group_id ASC LIMIT 200`,
+    [id, id],
+    [],
+  );
+  const lists = await rows(
+    `SELECT list_id, list_name FROM vicidial_lists
+     WHERE agent_script_override = ? OR inbound_list_script_override = ?
+     ORDER BY list_id ASC LIMIT 200`,
+    [id, id],
+    [],
+  );
+  const userGroups = await rows(
+    'SELECT user_group, group_name FROM vicidial_user_groups WHERE script_id = ? ORDER BY user_group ASC LIMIT 200',
+    [id],
+    [],
+  );
+
+  return res.json({ ok: true, campaigns, ingroups, lists, userGroups });
+}
+
+// Legacy ADD=6111111: delete the script record.
+async function deleteScript(req, res) {
+  if (!requireModify(req, res, 'deleteScripts')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_script_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_scripts WHERE script_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'script_not_found' });
+    await adminLog(req, 'SCRIPTS', 'DELETE', id, 'GENX DELETE SCRIPT', 'DELETE FROM vicidial_scripts', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'script_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -5927,6 +5979,8 @@ app.post('/api/admin/carriers', requireAccess, (req, res) => saveCarrier(req, re
 app.put('/api/admin/carriers/:id', requireAccess, (req, res) => saveCarrier(req, res, 'update'));
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
+app.delete('/api/admin/scripts/:id', requireAccess, deleteScript);
+app.get('/api/admin/scripts/:id/connections', requireAccess, scriptConnections);
 app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(req, res, 'create'));
 app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
 app.post('/api/admin/filter-phone-groups', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'create'));

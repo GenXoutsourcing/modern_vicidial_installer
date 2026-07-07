@@ -780,6 +780,14 @@ h2 {
   width: 90px;
 }
 
+.script-preview-frame {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .campaign-tool-head h3 {
   margin: 2px 0 0;
   color: var(--text);
