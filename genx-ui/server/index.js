@@ -3556,6 +3556,44 @@ async function campaignSummaryReport(req, res) {
   return res.json({ ok: true, campaigns, generatedAt: new Date().toISOString() });
 }
 
+const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
+
+async function whiteboardReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const reportType = cleanChoice(req.query?.report_type, WHITEBOARD_REPORT_TYPES, 'DISPOSITION_TOTALS');
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', params);
+
+  if (reportType === 'AGENT_PERFORMANCE_TOTALS') {
+    const items = await rows(
+      `SELECT user, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
+       FROM vicidial_log
+       WHERE call_date BETWEEN ? AND ?
+         AND ${campaignWhere}
+       GROUP BY user
+       ORDER BY calls DESC
+       LIMIT 30`,
+      params,
+      [],
+    );
+    return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+  }
+
+  const items = await rows(
+    `SELECT status, COUNT(*) AS calls
+     FROM vicidial_log
+     WHERE call_date BETWEEN ? AND ?
+       AND ${campaignWhere}
+     GROUP BY status
+     ORDER BY calls DESC
+     LIMIT 30`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+}
+
 function inboundPayload(body) {
   const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
   const longText = (value) => cleanText(value, 12000);
@@ -5204,6 +5242,7 @@ app.get('/api/admin/dnc/search', requireAccess, dncSearch);
 app.get('/api/reports/agent-monitor-log', requireAccess, agentMonitorLogReport);
 app.get('/api/reports/realtime-main', requireAccess, realtimeMainReport);
 app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);
+app.get('/api/reports/whiteboard', requireAccess, whiteboardReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

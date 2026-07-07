@@ -5303,6 +5303,79 @@ function CampaignSummaryReportView({ token }) {
   );
 }
 
+const WHITEBOARD_REPORT_TYPES = [
+  { value: 'DISPOSITION_TOTALS', label: 'Disposition Totals' },
+  { value: 'AGENT_PERFORMANCE_TOTALS', label: 'Agent Performance Totals' },
+];
+
+function WhiteboardReportView({ token }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [reportType, setReportType] = useState('DISPOSITION_TOTALS');
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function runReport(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiFetch(`/reports/whiteboard?begin_date=${beginDate}&end_date=${endDate}&report_type=${reportType}`, token);
+      setItems(payload.items || []);
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isAgentReport = reportType === 'AGENT_PERFORMANCE_TOTALS';
+  const breakdownItems = (items || []).map((row) => ({
+    ...row,
+    label: isAgentReport ? row.user : row.status,
+    calls: Number(row.calls || 0),
+  }));
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Real-Time</p>
+          <h2>Whiteboard</h2>
+          <p className="action-copy">Ranked leaderboard reports. Two of the eleven legacy report types are natively built so far - Disposition Totals and Agent Performance Totals.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Report Range and Type" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar beginDate={beginDate} endDate={endDate} onBeginDate={setBeginDate} onEndDate={setEndDate} onSubmit={runReport} loading={loading}>
+          <label>
+            <span>Report Type</span>
+            <select value={reportType} onChange={(event) => setReportType(event.target.value)}>
+              {WHITEBOARD_REPORT_TYPES.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </ReportFilterBar>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {items && (
+        <BreakdownPanel
+          eyebrow="Results"
+          title={isAgentReport ? 'Agent Performance Totals' : 'Disposition Totals'}
+          icon={BarChart3}
+          items={breakdownItems}
+          valueKey="calls"
+          labelKey="label"
+          emptyLabel="No results for that range"
+        />
+      )}
+    </>
+  );
+}
+
 function AgentMonitorLogReportView({ token }) {
   const today = new Date().toISOString().slice(0, 10);
   const [beginDate, setBeginDate] = useState(today);
@@ -5543,6 +5616,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'reportAgentMonitorLog') return <AgentMonitorLogReportView admin={admin} user={user} token={token} />;
   if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} />;
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
+  if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
