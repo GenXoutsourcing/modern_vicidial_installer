@@ -5479,6 +5479,209 @@ async function agentDispositionReport(req, res) {
   return res.json({ ok: true, campaigns, range: { beginDate, endDate }, sections: { agents, statuses } });
 }
 
+// Native port of AST_team_performance_detail.php (core): per user-group and
+// per-agent totals from the agent log with sale counts from the sale-flag set.
+async function teamPerformanceReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const filters = agentLogFilters(req, params);
+  if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const campaigns = await agentReportPickers(req);
+  const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+  const saleRows = await rows(
+    `SELECT status FROM vicidial_statuses WHERE sale = 'Y'
+     UNION SELECT status FROM vicidial_campaign_statuses WHERE sale = 'Y' LIMIT 500`,
+    [],
+    [],
+  );
+  const saleIn = sqlStatusList(saleRows.map((row) => row.status));
+
+  const agents = await rows(
+    `SELECT al.user_group, al.user, u.full_name, COUNT(al.lead_id) AS calls,
+            COALESCE(SUM(al.status IN (${saleIn})),0) AS sales,
+            ${cap('al.pause_sec')} AS pause_sec, ${cap('al.wait_sec')} AS wait_sec,
+            ${cap('al.talk_sec')} AS talk_sec, ${cap('al.dispo_sec')} AS dispo_sec,
+            ${cap('al.dead_sec')} AS dead_sec
+     FROM vicidial_agent_log al
+     LEFT JOIN vicidial_users u ON u.user = al.user
+     WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+     GROUP BY al.user_group, al.user ORDER BY al.user_group ASC, al.user ASC LIMIT 3000`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, campaigns, range: { beginDate, endDate }, agents });
+}
+
+// Native merge of AST_agent_days_detail.php + AST_agent_days_time.php: one
+// agent, per-day time/call/status rollups, optional per-event drilldown day.
+async function agentDaysReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+
+  const userParams = [];
+  const userScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', userParams);
+  const users = await rows(
+    `SELECT user, full_name FROM vicidial_users WHERE ${userScope} ORDER BY user ASC LIMIT 2000`,
+    userParams,
+    [],
+  );
+  const userId = cleanId(req.query?.user, 20);
+  if (!userId) return res.json({ ok: true, users, sections: null, range: { beginDate, endDate } });
+  if (!users.some((row) => String(row.user) === userId)) {
+    return res.status(403).json({ ok: false, error: 'user_not_allowed' });
+  }
+  const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+
+  const [days, dayStatuses, haRows] = await Promise.all([
+    rows(
+      `SELECT DATE_FORMAT(event_time, '%Y-%m-%d') AS day, COUNT(lead_id) AS calls,
+              ${cap('pause_sec')} AS pause_sec, ${cap('wait_sec')} AS wait_sec,
+              ${cap('talk_sec')} AS talk_sec, ${cap('dispo_sec')} AS dispo_sec,
+              ${cap('dead_sec')} AS dead_sec
+       FROM vicidial_agent_log WHERE user = ? AND event_time >= ? AND event_time <= ?
+       GROUP BY day ORDER BY day ASC LIMIT 400`,
+      [userId, begin, end],
+      [],
+    ),
+    rows(
+      `SELECT DATE_FORMAT(event_time, '%Y-%m-%d') AS day, status, COUNT(*) AS calls
+       FROM vicidial_agent_log
+       WHERE user = ? AND event_time >= ? AND event_time <= ? AND status IS NOT NULL AND status != ''
+       GROUP BY day, status ORDER BY day ASC LIMIT 5000`,
+      [userId, begin, end],
+      [],
+    ),
+    rows(
+      `SELECT status FROM vicidial_statuses WHERE human_answered = 'Y'
+       UNION SELECT status FROM vicidial_campaign_statuses WHERE human_answered = 'Y' LIMIT 500`,
+      [],
+      [],
+    ),
+  ]);
+
+  // Optional legacy days_time drilldown: raw agent_log events for one day.
+  let events = null;
+  const detailDay = cleanReportDate(req.query?.day, '');
+  if (detailDay) {
+    events = await rows(
+      `SELECT event_time, lead_id, campaign_id, pause_sec, wait_sec, talk_sec, dispo_sec, dead_sec,
+              status, sub_status, user_group
+       FROM vicidial_agent_log
+       WHERE user = ? AND event_time >= ? AND event_time <= ?
+         AND (pause_sec > 0 OR wait_sec > 0 OR talk_sec > 0 OR dispo_sec > 0)
+       ORDER BY event_time DESC LIMIT 1000`,
+      [userId, `${detailDay} 00:00:00`, `${detailDay} 23:59:59`],
+      [],
+    );
+  }
+  return res.json({
+    ok: true,
+    users,
+    range: { beginDate, endDate },
+    sections: { userId, days, dayStatuses, humanAnswered: haRows.map((row) => row.status), events, detailDay: detailDay || null },
+  });
+}
+
+// Native port of AST_usergroup_login_report.php: last LOGIN details per user
+// in the selected user group.
+async function userGroupLoginReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const groupParams = [];
+  const groupScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', groupParams);
+  const userGroups = await rows(
+    `SELECT user_group, group_name FROM vicidial_user_groups WHERE ${groupScope} ORDER BY user_group ASC LIMIT 500`,
+    groupParams,
+    [],
+  );
+  const groupId = cleanId(req.query?.user_group, 20);
+  if (!groupId) return res.json({ ok: true, userGroups, entries: null });
+  if (!userGroups.some((row) => String(row.user_group) === groupId)) {
+    return res.status(403).json({ ok: false, error: 'group_not_allowed' });
+  }
+
+  const users = await rows(
+    'SELECT user, full_name FROM vicidial_users WHERE user_group = ? ORDER BY user ASC LIMIT 1000',
+    [groupId],
+    [],
+  );
+  if (!users.length) return res.json({ ok: true, userGroups, entries: [] });
+  const userIds = users.map((row) => String(row.user));
+  const ph = userIds.map(() => '?').join(',');
+  const lastLogins = await rows(
+    `SELECT user, MIN(event_date) AS first_login, MAX(event_date) AS last_login
+     FROM vicidial_user_log WHERE event = 'LOGIN' AND user IN (${ph}) GROUP BY user LIMIT 1000`,
+    userIds,
+    [],
+  );
+  const loginMap = new Map(lastLogins.map((row) => [String(row.user), row]));
+  const details = await rows(
+    `SELECT ul.user, ul.event_date, ul.campaign_id, ul.server_ip, ul.computer_ip, ul.user_group,
+            SUBSTRING(ul.extension, 1, 20) AS extension, ul.browser, ul.phone_login
+     FROM vicidial_user_log ul
+     JOIN (SELECT user, MAX(event_date) AS max_date FROM vicidial_user_log
+           WHERE event = 'LOGIN' AND user IN (${ph}) GROUP BY user) latest
+       ON latest.user = ul.user AND latest.max_date = ul.event_date
+     WHERE ul.event = 'LOGIN' LIMIT 1000`,
+    userIds,
+    [],
+  );
+  const detailMap = new Map(details.map((row) => [String(row.user), row]));
+  const entries = users.map((row) => ({
+    user: row.user,
+    full_name: row.full_name,
+    first_login: loginMap.get(String(row.user))?.first_login || null,
+    last_login: loginMap.get(String(row.user))?.last_login || null,
+    ...(detailMap.get(String(row.user)) || {}),
+  }));
+  return res.json({ ok: true, userGroups, entries });
+}
+
+// Native port of user_logins_report.php: daily login/failed-login history.
+async function userLoginsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const userParams = [];
+  const userScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'vm.user_group', userParams);
+  const userId = cleanId(req.query?.user, 20);
+
+  const pickerParams = [];
+  const pickerScope = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', pickerParams);
+  const users = await rows(
+    `SELECT user, full_name FROM vicidial_users WHERE ${pickerScope} ORDER BY user ASC LIMIT 2000`,
+    pickerParams,
+    [],
+  );
+
+  const userSql = userId ? ' AND vuld.user = ?' : '';
+  const historyParams = [...userParams, ...(userId ? [userId] : [])];
+  const [history, today] = await Promise.all([
+    rows(
+      `SELECT vuld.user, vm.full_name, vuld.login_day, vuld.last_login_date, vuld.last_ip,
+              vuld.failed_login_attempts_today, vuld.failed_login_count_today,
+              vuld.failed_last_ip_today, vuld.failed_last_type_today
+       FROM vicidial_user_logins_daily vuld
+       JOIN vicidial_users vm ON vm.user = vuld.user
+       WHERE ${userScope}${userSql}
+       ORDER BY vuld.login_day DESC, vuld.last_login_date DESC LIMIT 1000`,
+      historyParams,
+      [],
+    ),
+    rows(
+      `SELECT vm.user, vm.full_name, 'TODAY' AS login_day, vm.last_login_date, vm.last_ip,
+              vm.failed_login_attempts_today, vm.failed_login_count_today,
+              vm.failed_last_ip_today, vm.failed_last_type_today
+       FROM vicidial_users vm
+       WHERE vm.last_login_date >= CURDATE() AND ${userScope}${userId ? ' AND vm.user = ?' : ''}
+       ORDER BY vm.last_login_date DESC LIMIT 1000`,
+      historyParams,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, users, entries: [...today, ...history] });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9180,6 +9383,10 @@ app.get('/api/reports/agent-time-detail', requireAccess, agentTimeDetailReport);
 app.get('/api/reports/agent-status-detail', requireAccess, agentStatusDetailReport);
 app.get('/api/reports/agent-performance', requireAccess, agentPerformanceReport);
 app.get('/api/reports/agent-disposition', requireAccess, agentDispositionReport);
+app.get('/api/reports/team-performance', requireAccess, teamPerformanceReport);
+app.get('/api/reports/agent-days', requireAccess, agentDaysReport);
+app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
+app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

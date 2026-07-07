@@ -10132,6 +10132,440 @@ function AgentDispositionReportView({ token, onLogout }) {
   );
 }
 
+// Native AST_team_performance_detail.php: per user-group and per-agent totals.
+function TeamPerformanceReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignId, setCampaignId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaign, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (campaign) params.set('campaign', campaign);
+      const payload = await apiFetch(`/reports/team-performance?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or campaign' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const teams = new Map();
+  for (const row of data?.agents || []) {
+    const key = String(row.user_group || '(none)');
+    if (!teams.has(key)) teams.set(key, []);
+    teams.get(key).push(row);
+  }
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Team Performance</h2>
+          <p className="action-copy">Per user-group agent totals with sales and time breakdown.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Dates" icon={Search} className="admin-wide-panel">
+        <AgentReportFilterBar
+          beginDate={beginDate} endDate={endDate} setBeginDate={setBeginDate} setEndDate={setEndDate}
+          campaignId={campaignId} setCampaignId={setCampaignId} campaigns={data?.campaigns || []}
+          campaignLabel="All campaigns" loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(campaignId, beginDate, endDate);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {data && ![...teams.keys()].length && (
+        <Panel eyebrow="Teams" title="No agent activity" icon={Users} className="admin-wide-panel">
+          <p className="connection-summary">No agent activity in the date range.</p>
+        </Panel>
+      )}
+      {[...teams.entries()].map(([team, agents]) => {
+        const totals = agents.reduce((sum, row) => ({
+          calls: sum.calls + Number(row.calls || 0),
+          sales: sum.sales + Number(row.sales || 0),
+          talk_sec: sum.talk_sec + Number(row.talk_sec || 0),
+          pause_sec: sum.pause_sec + Number(row.pause_sec || 0),
+        }), { calls: 0, sales: 0, talk_sec: 0, pause_sec: 0 });
+        return (
+          <Panel
+            key={team}
+            eyebrow={`Team ${team}`}
+            title={`${team} — ${agents.length} agents, ${formatNumber(totals.calls)} calls, ${formatNumber(totals.sales)} sales`}
+            icon={Users}
+            className="admin-wide-panel"
+          >
+            <DataTable
+              emptyLabel="No agents"
+              rows={agents.map((row) => ({ ...row, id: row.user }))}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
+                { key: 'conv', label: 'Conv %', render: (row) => `${row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'pause_sec', label: 'Pause', render: (row) => formatSeconds(row.pause_sec) },
+                { key: 'wait_sec', label: 'Wait', render: (row) => formatSeconds(row.wait_sec) },
+                { key: 'talk_sec', label: 'Talk', render: (row) => formatSeconds(row.talk_sec) },
+                { key: 'dispo_sec', label: 'Wrapup', render: (row) => formatSeconds(row.dispo_sec) },
+                { key: 'dead_sec', label: 'Dead', render: (row) => formatSeconds(row.dead_sec) },
+              ]}
+            />
+          </Panel>
+        );
+      })}
+    </>
+  );
+}
+
+// Native merge of AST_agent_days_detail.php + AST_agent_days_time.php: one
+// agent per-day rollups with a per-day event drilldown.
+function AgentDaysReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(monthAgo);
+  const [endDate, setEndDate] = useState(today);
+  const [userId, setUserId] = useState('');
+  const [detailDay, setDetailDay] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (user, begin, end, day) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (user) params.set('user', user);
+      if (day) params.set('day', day);
+      const payload = await apiFetch(`/reports/agent-days?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this agent' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', monthAgo, today, '');
+  }, [load, monthAgo, today]);
+
+  const users = data?.users || [];
+  const s = data?.sections;
+  const statusByDay = new Map();
+  for (const row of s?.dayStatuses || []) {
+    const key = String(row.day);
+    if (!statusByDay.has(key)) statusByDay.set(key, []);
+    statusByDay.get(key).push(row);
+  }
+  const haSet = new Set(s?.humanAnswered || []);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Single Agent Daily</h2>
+          <p className="action-copy">Per-day activity for one agent, with a per-day event drilldown.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Agent and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setDetailDay('');
+            load(userId, beginDate, endDate, '');
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Agent</span>
+              <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+                <option value="">Select an agent</option>
+                {users.map((row) => (
+                  <option key={row.user} value={row.user}>{row.user} - {row.full_name || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <Panel eyebrow={`Agent ${s.userId}`} title="Daily Totals" icon={Users} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No activity for this agent in the date range"
+            rows={(s.days || []).map((row) => ({ ...row, id: row.day }))}
+            columns={[
+              { key: 'day', label: 'Date' },
+              { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+              { key: 'ha', label: 'HA', render: (row) => formatNumber((statusByDay.get(String(row.day)) || []).reduce((sum, entry) => sum + (haSet.has(String(entry.status)) ? Number(entry.calls) : 0), 0)) },
+              { key: 'pause_sec', label: 'Pause', render: (row) => formatSeconds(row.pause_sec) },
+              { key: 'wait_sec', label: 'Wait', render: (row) => formatSeconds(row.wait_sec) },
+              { key: 'talk_sec', label: 'Talk', render: (row) => formatSeconds(row.talk_sec) },
+              { key: 'dispo_sec', label: 'Wrapup', render: (row) => formatSeconds(row.dispo_sec) },
+              { key: 'dead_sec', label: 'Dead', render: (row) => formatSeconds(row.dead_sec) },
+              { key: 'statuses', label: 'Statuses', render: (row) => (statusByDay.get(String(row.day)) || []).map((entry) => `${entry.status}:${entry.calls}`).join(' ') },
+              { key: 'drill', label: '', render: (row) => (
+                <button
+                  type="button"
+                  className="row-action"
+                  onClick={() => {
+                    setDetailDay(row.day);
+                    load(s.userId, beginDate, endDate, row.day);
+                  }}
+                >
+                  Events
+                </button>
+              ) },
+            ]}
+          />
+        </Panel>
+      )}
+      {s?.events && (
+        <Panel eyebrow={`Agent ${s.userId}`} title={`Events on ${s.detailDay}`} icon={Activity} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No events on this day"
+            rows={s.events.map((row, index) => ({ ...row, id: `${row.event_time}-${index}` }))}
+            columns={[
+              { key: 'event_time', label: 'Time' },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'lead_id', label: 'Lead' },
+              { key: 'status', label: 'Status' },
+              { key: 'sub_status', label: 'Pause Code' },
+              { key: 'pause_sec', label: 'Pause', render: (row) => `${row.pause_sec}s` },
+              { key: 'wait_sec', label: 'Wait', render: (row) => `${row.wait_sec}s` },
+              { key: 'talk_sec', label: 'Talk', render: (row) => `${row.talk_sec}s` },
+              { key: 'dispo_sec', label: 'Wrapup', render: (row) => `${row.dispo_sec}s` },
+              { key: 'dead_sec', label: 'Dead', render: (row) => `${row.dead_sec}s` },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native AST_usergroup_login_report.php: last login details per user in group.
+function UserGroupLoginReportView({ token, onLogout }) {
+  const [groupId, setGroupId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (group) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = group ? `?user_group=${encodeURIComponent(group)}` : '';
+      const payload = await apiFetch(`/reports/usergroup-login${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this user group' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('');
+  }, [load]);
+
+  const userGroups = data?.userGroups || [];
+  const entries = data?.entries;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>User Group Login Report</h2>
+          <p className="action-copy">First/last agent-screen logins and last login details per user.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="User Group" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(groupId);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>User Group</span>
+              <select value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+                <option value="">Select a user group</option>
+                {userGroups.map((row) => (
+                  <option key={row.user_group} value={row.user_group}>{row.user_group} - {row.group_name || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel eyebrow="Logins" title={`Users in ${groupId}`} icon={Users} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No users in this group"
+            rows={entries.map((row) => ({ ...row, id: row.user }))}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'full_name', label: 'Name' },
+              { key: 'first_login', label: 'First Login', render: (row) => row.first_login || 'never' },
+              { key: 'last_login', label: 'Last Login', render: (row) => row.last_login || 'never' },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'phone_login', label: 'Phone' },
+              { key: 'extension', label: 'Extension' },
+              { key: 'computer_ip', label: 'Computer IP' },
+              { key: 'server_ip', label: 'Server' },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native user_logins_report.php: daily login and failed-login history.
+function UserLoginsReportView({ token, onLogout }) {
+  const [userId, setUserId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (user) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = user ? `?user=${encodeURIComponent(user)}` : '';
+      const payload = await apiFetch(`/reports/user-logins${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('');
+  }, [load]);
+
+  const users = data?.users || [];
+  const entries = data?.entries || [];
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>User Logins</h2>
+          <p className="action-copy">Daily login and failed-login history per user.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="User" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(userId);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>User</span>
+              <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+                <option value="">All users</option>
+                {users.map((row) => (
+                  <option key={row.user} value={row.user}>{row.user} - {row.full_name || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="History" title="Login Days" icon={ShieldCheck} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No login history"
+          rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.login_day}-${index}` }))}
+          columns={[
+            { key: 'user', label: 'User' },
+            { key: 'full_name', label: 'Name' },
+            { key: 'login_day', label: 'Day' },
+            { key: 'last_login_date', label: 'Last Login' },
+            { key: 'last_ip', label: 'Last IP' },
+            { key: 'failed_login_attempts_today', label: 'Failed (day)' },
+            { key: 'failed_login_count_today', label: 'Failed Total' },
+            { key: 'failed_last_ip_today', label: 'Failed IP' },
+            { key: 'failed_last_type_today', label: 'Failed Type' },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -10365,6 +10799,10 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportAgentStatusDetail') return <AgentStatusDetailReportView token={token} />;
   if (activeView === 'reportAgentPerformance') return <AgentPerformanceReportView token={token} />;
   if (activeView === 'reportAgentDisposition') return <AgentDispositionReportView token={token} />;
+  if (activeView === 'reportTeamPerformance') return <TeamPerformanceReportView token={token} />;
+  if (activeView === 'reportAgentDays') return <AgentDaysReportView token={token} />;
+  if (activeView === 'reportUserGroupLogin') return <UserGroupLoginReportView token={token} />;
+  if (activeView === 'reportUserLogins') return <UserLoginsReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
