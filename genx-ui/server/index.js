@@ -8028,10 +8028,91 @@ async function agentThreewayDial(req, res) {
       "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'XFER', notes = ?",
       [queryCID, user, `3way ${dialStr} ${context}`],
     ).catch(() => {});
+    // user_call_log 3WAY row — customer_3way_hangup_process tags it later.
+    await execute(
+      "INSERT INTO user_call_log SET user = ?, call_date = NOW(), call_type = '3WAY', server_ip = ?, phone_number = ?, number_dialed = ?, lead_id = ?, callerid = ?, campaign_id = ?",
+      [user, live.server_ip, number, dialStr, Number(live.lead_id) || 0, queryCID, live.campaign_id],
+    ).catch(() => {});
     return res.json({ ok: true, threewayChannelPrefix: `Local/${dialStr}@${context}` });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'threeway_dial_failed' });
   }
+}
+
+// Conference mute controls: CONFBRIDGE has no volume CLI, but mute/unmute of
+// a participant works via an AMI Command row (legacy meetme volume trick's
+// dialplan is absent on this installer).
+async function agentConfControl(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const action = req.body?.action === 'unmute' ? 'unmute' : 'mute';
+  const target = req.body?.target === 'customer' ? 'customer' : 'agent';
+
+  let channel = null;
+  if (target === 'agent') {
+    const bareExt = String(live.extension || '').split('/').pop();
+    const [chan] = await rows(
+      'SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ? ORDER BY channel LIMIT 1',
+      [live.server_ip, `${String(live.extension).includes('/') ? live.extension : `SIP/${bareExt}`}-%`],
+      [],
+    );
+    channel = chan?.channel || null;
+  } else {
+    channel = await agentCustomerChannel(live);
+    // The conference-side leg (;2) is the one inside the bridge.
+    if (channel && channel.endsWith(';1')) channel = `${channel.slice(0, -2)};2`;
+  }
+  if (!channel) return res.status(404).json({ ok: false, error: 'channel_not_found' });
+
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Command', ?, ?)`,
+    [live.server_ip, `CMvdcW${Math.floor(Date.now() / 1000)}`.slice(0, 20),
+      `Command: confbridge ${action} ${live.conf_exten} ${channel}`],
+  );
+  return res.json({ ok: true, action, target });
+}
+
+// MuteRecording port: AMI MuteAudio on the customer channel (card-capture
+// style recording mute) + vicidial_agent_function_log entry.
+async function agentMuteRecording(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const state = req.body?.mute === false ? 'unmute' : 'mute';
+  const channel = await agentCustomerChannel(live);
+  if (!channel) return res.status(404).json({ ok: false, error: 'customer_channel_not_found' });
+  const queryCID = `MRvdcW${Math.floor(Date.now() / 1000)}`.slice(0, 20);
+  await execute(
+    "INSERT INTO vicidial_agent_function_log SET agent_log_id = ?, user = ?, `function` = 'mute_rec', event_time = NOW(), campaign_id = ?, user_group = ?, lead_id = ?, uniqueid = ?, caller_code = ?, stage = ?, comments = ?",
+    [Number(live.agent_log_id) || 0, user, live.campaign_id, req.genxUser.userGroup || '',
+      Number(live.lead_id) || 0, live.uniqueid || '', queryCID, state, channel],
+  ).catch(() => {});
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'MuteAudio', ?, ?, 'Direction: all', ?)`,
+    [live.server_ip, queryCID, `Channel: ${channel}`, `State: ${state}`],
+  );
+  return res.json({ ok: true, muted: state === 'mute' });
+}
+
+// customer_3way_hangup_process port: tag the latest 3WAY user_call_log row
+// when the customer drops during a 3-way.
+async function agentThreewayCustomerHungup(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const seconds = Math.max(0, Number(req.body?.seconds || 0));
+  await execute(
+    "UPDATE user_call_log SET customer_hungup = 'DURING_CALL', customer_hungup_seconds = ? WHERE lead_id = ? AND user = ? AND call_type LIKE '%3WAY%' ORDER BY user_call_log_id DESC LIMIT 1",
+    [seconds, Number(live.lead_id) || 0, req.genxUser.user],
+  );
+  return res.json({ ok: true });
 }
 
 // HangupConfDial port: find the live 3-way Local leg by prefix and hang it up.
@@ -13835,6 +13916,9 @@ app.get('/api/agent/alt-phones', requireAgentAccess, agentAltPhones);
 app.post('/api/agent/alt-phone-status', requireAgentAccess, agentAltPhoneChange);
 app.post('/api/agent/alert-control', requireAgentAccess, agentAlertControl);
 app.post('/api/agent/timeclock', requireAgentAccess, agentTimeclock);
+app.post('/api/agent/conf-control', requireAgentAccess, agentConfControl);
+app.post('/api/agent/mute-recording', requireAgentAccess, agentMuteRecording);
+app.post('/api/agent/threeway-customer-hungup', requireAgentAccess, agentThreewayCustomerHungup);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));

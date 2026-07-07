@@ -13952,6 +13952,10 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [isRecording, setIsRecording] = useState(false);
   const [altPhones, setAltPhones] = useState(null);
   const [showAltPhones, setShowAltPhones] = useState(false);
+  const [agentMuted, setAgentMuted] = useState(false);
+  const [custMuted, setCustMuted] = useState(false);
+  const [recMuted, setRecMuted] = useState(false);
+  const threewayHungupRef = useRef(false);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -13994,6 +13998,12 @@ function AgentConsole({ token, authInfo, onExit }) {
       setDialFail(payload.dialFail || null);
       if (!payload.live || !Number(payload.live.preview_lead_id)) setPreviewInfo(null);
       setIsRecording(Boolean(payload.recording));
+      if (!payload.live || payload.live.status !== 'INCALL') {
+        setAgentMuted(false);
+        setCustMuted(false);
+        setRecMuted(false);
+        threewayHungupRef.current = false;
+      }
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
@@ -14098,6 +14108,17 @@ function AgentConsole({ token, authInfo, onExit }) {
       setBusy(false);
     }
   };
+
+  // customer_3way_hangup detection: customer channel gone while the 3-way leg
+  // is up — tag the user_call_log row once (legacy customer_3way_hangup_process).
+  useEffect(() => {
+    if (!threewayChannel || customerGone < 2 || threewayHungupRef.current) return;
+    threewayHungupRef.current = true;
+    apiFetch('/agent/threeway-customer-hungup', token, {
+      method: 'POST',
+      body: JSON.stringify({ seconds: live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0 }),
+    }).then(() => setMessage('Customer left during the 3-way call (logged)')).catch(() => {});
+  }, [threewayChannel, customerGone, token]);
 
   // Transfer options load once per call (user-group agent_xfer flags + groups).
   useEffect(() => {
@@ -14254,6 +14275,48 @@ function AgentConsole({ token, authInfo, onExit }) {
                 >
                   {isRecording ? 'Stop Recording' : 'Record Call'}
                 </button>
+              )}
+              {live.status === 'INCALL' && (
+                <>
+                  <button
+                    type="button"
+                    className={agentMuted ? 'danger-action' : 'row-action'}
+                    disabled={busy}
+                    onClick={async () => {
+                      const payload = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' });
+                      if (payload) setAgentMuted(!agentMuted);
+                    }}
+                  >
+                    {agentMuted ? 'Unmute Me' : 'Mute Me'}
+                  </button>
+                  <button
+                    type="button"
+                    className={custMuted ? 'danger-action' : 'row-action'}
+                    disabled={busy}
+                    onClick={async () => {
+                      const payload = await act('/agent/conf-control', { action: custMuted ? 'unmute' : 'mute', target: 'customer' });
+                      if (payload) setCustMuted(!custMuted);
+                    }}
+                  >
+                    {custMuted ? 'Unmute Customer' : 'Mute Customer'}
+                  </button>
+                  {isRecording && (
+                    <button
+                      type="button"
+                      className={recMuted ? 'danger-action' : 'row-action'}
+                      disabled={busy}
+                      onClick={async () => {
+                        const payload = await act('/agent/mute-recording', { mute: !recMuted });
+                        if (payload) {
+                          setRecMuted(!recMuted);
+                          setMessage(recMuted ? 'Recording audio resumed' : 'Recording audio muted');
+                        }
+                      }}
+                    >
+                      {recMuted ? 'Resume Rec Audio' : 'Mute Rec Audio'}
+                    </button>
+                  )}
+                </>
               )}
               <button
                 type="button"
