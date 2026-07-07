@@ -13956,6 +13956,16 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [custMuted, setCustMuted] = useState(false);
   const [recMuted, setRecMuted] = useState(false);
   const threewayHungupRef = useRef(false);
+  // Legacy screen chrome: MAIN/SCRIPT/FORM tabs, header clock, DTMF box.
+  const [mainTab, setMainTab] = useState('main');
+  const [dtmfDigits, setDtmfDigits] = useState('');
+  const [xferOpen, setXferOpen] = useState(false);
+  const [queueCalls, setQueueCalls] = useState(0);
+  const [clock, setClock] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setClock(new Date()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -13998,6 +14008,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       setDialFail(payload.dialFail || null);
       if (!payload.live || !Number(payload.live.preview_lead_id)) setPreviewInfo(null);
       setIsRecording(Boolean(payload.recording));
+      if (payload.queueCalls !== undefined) setQueueCalls(Number(payload.queueCalls || 0));
       if (!payload.live || payload.live.status !== 'INCALL') {
         setAgentMuted(false);
         setCustMuted(false);
@@ -14125,16 +14136,16 @@ function AgentConsole({ token, authInfo, onExit }) {
     if (!live || live.status !== 'INCALL') {
       setThreewayChannel('');
       setParked(false);
-      return;
     }
-    if (xferOptions) return;
+    if (!live || xferOptions) return;
+    if (live.status !== 'INCALL' && !xferOpen) return;
     apiFetch('/agent/xfer-options', token)
       .then((p) => {
         setXferOptions(p);
         if (p.defaultGroup) setXferGroup(p.defaultGroup);
       })
       .catch(() => {});
-  }, [live && live.status === 'INCALL' ? 1 : 0, token]);
+  }, [live && live.status === 'INCALL' ? 1 : 0, xferOpen, token]);
 
   // One-shot loads for the in-groups chooser and script tab.
   useEffect(() => {
@@ -14149,9 +14160,29 @@ function AgentConsole({ token, authInfo, onExit }) {
   }, [live ? 1 : 0, sidePanel === 'ingroups' ? 1 : 0, token]);
 
   useEffect(() => {
-    if (!live || sidePanel !== 'script' || scriptData) return;
+    if (!live || mainTab !== 'script' || scriptData) return;
     apiFetch('/agent/script', token).then(setScriptData).catch(() => {});
-  }, [live ? 1 : 0, sidePanel === 'script' ? 1 : 0, token]);
+  }, [live ? 1 : 0, mainTab === 'script' ? 1 : 0, token]);
+
+  // FORM tab: load custom fields whenever the tab opens on a lead.
+  useEffect(() => {
+    if (!live || mainTab !== 'form' || !lead) return;
+    apiFetch(`/agent/custom-fields?lead_id=${lead.lead_id}`, token).then(setCustomFields).catch(() => {});
+  }, [live ? 1 : 0, mainTab === 'form' ? 1 : 0, lead ? lead.lead_id : 0, token]);
+
+  // MAIN tab: the customer form is always visible and editable (legacy).
+  useEffect(() => {
+    if (!lead) { setEditLead(null); return; }
+    setEditLead({
+      title: lead.title || '', first_name: lead.first_name || '', middle_initial: lead.middle_initial || '',
+      last_name: lead.last_name || '', address1: lead.address1 || '', address2: lead.address2 || '',
+      address3: lead.address3 || '', city: lead.city || '', state: lead.state || '',
+      postal_code: lead.postal_code || '', province: lead.province || '', vendor_lead_code: lead.vendor_lead_code || '',
+      gender: lead.gender || 'U', phone_number: lead.phone_number || '', phone_code: lead.phone_code || '',
+      alt_phone: lead.alt_phone || '', security_phrase: lead.security_phrase || '', email: lead.email || '',
+      comments: lead.comments || '',
+    });
+  }, [lead ? lead.lead_id : 0]);
 
   // Side panels (legacy AGENTSview / CALLSINQUEUEview / CalLBacKLisT): poll
   // the open panel every 4s while the agent is logged in.
@@ -14177,23 +14208,216 @@ function AgentConsole({ token, authInfo, onExit }) {
 
   return (
     <main className="app-shell agent-shell">
-      <header className="topbar">
-        <div className="brand-lock">
-          <div className="brand-mark">GX</div>
-          <div>
-            <p className="eyebrow">GenX Agent</p>
-            <h1>{authInfo?.user?.fullName || authInfo?.user?.user || 'Agent'}</h1>
-          </div>
+      {/* Legacy agc top line: logged-in summary + LOGOUT */}
+      <div className="agc-topline">
+        <span>
+          Logged in as User: {authInfo?.user?.user || ''} on Phone: {live?.extension || authInfo?.phone?.login || ''}
+          {live ? ` to campaign: ${live.campaign_id}` : ''}
+        </span>
+        <button
+          type="button"
+          className="agc-link"
+          disabled={busy || live?.status === 'INCALL'}
+          onClick={async () => {
+            if (live) {
+              const payload = await act('/agent/logout');
+              if (payload) onExit();
+            } else {
+              onExit();
+            }
+          }}
+        >
+          LOGOUT
+        </button>
+      </div>
+      {/* Legacy header: brand + MAIN/SCRIPT/FORM tabs + session info + live-call flag */}
+      <header className="agc-header">
+        <div className="brand-mark">GX</div>
+        <div className="agc-tabs">
+          {[['main', 'MAIN'], ['script', 'SCRIPT'], ['form', 'FORM']].map(([key, label]) => (
+            <button
+              type="button"
+              key={key}
+              className={mainTab === key ? 'agc-tab active' : 'agc-tab'}
+              onClick={() => setMainTab(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        <div className="connection-actions">
-          <span className="connection-status">Phone {authInfo?.phone?.login} ({authInfo?.phone?.extension})</span>
-          <button type="button" className="row-action" onClick={onExit}>
-            <LogOut size={15} aria-hidden="true" />
-            Exit
-          </button>
+        <div className="agc-session">
+          {clock.toLocaleString()} {live ? ` | Session ID: ${live.conf_exten}` : ''} | Calls in Queue: {queueCalls}
+        </div>
+        <div className={live?.status === 'INCALL' ? 'agc-livecall active' : 'agc-livecall'}>
+          {live?.status === 'INCALL' ? `LIVE CALL ${formatSeconds(stateSeconds)}` : 'NO LIVE CALL'}
         </div>
       </header>
       <div className="agent-layout">
+      {live && (
+        <aside className="agc-left">
+          <button
+            type="button"
+            className={live.status === 'PAUSED' ? 'agc-btn agc-status paused' : live.status === 'INCALL' ? 'agc-btn agc-status incall' : 'agc-btn agc-status ready'}
+            disabled={busy || live.status === 'INCALL'}
+            onClick={() => act(live.status === 'PAUSED' ? '/agent/ready' : '/agent/pause')}
+          >
+            {live.status === 'PAUSED' ? `YOU ARE PAUSED${live.pause_code ? ` (${live.pause_code})` : ''}` : live.status === 'READY' ? 'YOU ARE ACTIVE' : 'LIVE CALL'}
+            <span className="agc-timer">{formatSeconds(stateSeconds)}</span>
+          </button>
+          {live.status === 'PAUSED' && pauseCodes.length > 0 && (
+            <select
+              className="agc-select"
+              value={live.pause_code || ''}
+              onChange={(event) => act('/agent/pause-code', { pause_code: event.target.value })}
+            >
+              <option value="">PAUSE CODE</option>
+              {pauseCodes.map((row) => (
+                <option key={row.pause_code} value={row.pause_code}>{row.pause_code}{row.pause_code_name ? ` - ${row.pause_code_name}` : ''}</option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            className={isRecording ? 'agc-btn recording' : 'agc-btn record'}
+            disabled={busy || live.status !== 'INCALL'}
+            onClick={async () => {
+              const payload = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' });
+              if (payload) setMessage(isRecording ? 'Recording stopped' : `Recording: ${payload.filename || ''}`);
+            }}
+          >
+            {isRecording ? 'STOP RECORDING' : 'START RECORDING'}
+          </button>
+          {(webForms?.forms || []).map((f, i) => (
+            <button
+              type="button"
+              key={f.label}
+              className="agc-btn"
+              disabled={!lead}
+              onClick={() => window.open(mergeFields(f.url), webForms.target || 'vdcwebform')}
+            >
+              WEB FORM{i > 0 ? ` ${i + 1}` : ''}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="agc-btn"
+            disabled={busy || live.status !== 'INCALL'}
+            onClick={async () => {
+              const payload = await act('/agent/park', { grab: parked });
+              if (payload) setParked(!parked);
+            }}
+          >
+            {parked ? 'GRAB PARKED CALL' : 'PARK CALL'}
+          </button>
+          <button
+            type="button"
+            className={xferOpen ? 'agc-btn active' : 'agc-btn'}
+            onClick={() => setXferOpen((v) => !v)}
+          >
+            TRANSFER - CONF
+          </button>
+          <button
+            type="button"
+            className="agc-btn danger"
+            disabled={busy || live.status !== 'INCALL'}
+            onClick={() => act('/agent/hangup')}
+          >
+            HANGUP CUSTOMER
+          </button>
+          <div className="agc-dtmf">
+            <button
+              type="button"
+              className="agc-btn"
+              disabled={busy || live.status !== 'INCALL' || !dtmfDigits}
+              onClick={async () => {
+                const payload = await act('/agent/send-dtmf', { digits: dtmfDigits });
+                if (payload) {
+                  setMessage(`DTMF sent: ${dtmfDigits}`);
+                  setDtmfDigits('');
+                }
+              }}
+            >
+              SEND DTMF
+            </button>
+            <input
+              type="text"
+              value={dtmfDigits}
+              maxLength={20}
+              onChange={(event) => setDtmfDigits(event.target.value.replace(/[^0-9*#]/g, ''))}
+            />
+          </div>
+          {live.status === 'INCALL' && (
+            <>
+              <button type="button" className={agentMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
+                {agentMuted ? 'UNMUTE ME' : 'MUTE ME'}
+              </button>
+              <button type="button" className={custMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: custMuted ? 'unmute' : 'mute', target: 'customer' }); if (p) setCustMuted(!custMuted); }}>
+                {custMuted ? 'UNMUTE CUSTOMER' : 'MUTE CUSTOMER'}
+              </button>
+              {isRecording && (
+                <button type="button" className={recMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/mute-recording', { mute: !recMuted }); if (p) setRecMuted(!recMuted); }}>
+                  {recMuted ? 'RESUME REC AUDIO' : 'MUTE REC AUDIO'}
+                </button>
+              )}
+            </>
+          )}
+          {live.status !== 'INCALL' && !Number(live.lead_id) && (
+            <>
+              <button
+                type="button"
+                className="agc-btn dial"
+                disabled={busy}
+                onClick={async () => {
+                  const payload = await act('/agent/dial-next', {});
+                  if (payload?.preview) {
+                    setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
+                    setMessage('Previewing lead — Dial This Lead or Skip');
+                  } else if (payload) setMessage('Dialing next lead');
+                }}
+              >
+                DIAL NEXT NUMBER
+              </button>
+              <div className="agc-dtmf">
+                <input
+                  type="tel"
+                  value={manualNumber}
+                  placeholder="Manual #"
+                  onChange={(event) => setManualNumber(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="agc-btn"
+                  disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
+                  onClick={async () => {
+                    const digits = manualNumber.replace(/[^0-9]/g, '');
+                    const payload = await act('/agent/manual-dial', { phone_number: digits });
+                    if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
+                  }}
+                >
+                  DIAL
+                </button>
+              </div>
+            </>
+          )}
+          {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && lead && (
+            <>
+              <button type="button" className="agc-btn dial" disabled={busy} onClick={async () => { const p = await act('/agent/manual-dial', { lead_id: lead.lead_id }); if (p) { setPreviewInfo(null); setMessage('Dialing previewed lead'); } }}>
+                DIAL THIS LEAD
+              </button>
+              {(previewInfo?.allowSkip ?? true) && (
+                <button type="button" className="agc-btn" disabled={busy} onClick={async () => { const p = await act('/agent/preview-skip', { prev_status: previewInfo?.prevStatus || 'NEW' }); if (p) { setPreviewInfo(null); setLead(null); setMessage('Lead skipped'); } }}>
+                  SKIP LEAD
+                </button>
+              )}
+            </>
+          )}
+          {lead && (
+            <button type="button" className="agc-btn dispo" disabled={busy} onClick={() => setShowDispo(true)}>
+              DISPOSITION CALL
+            </button>
+          )}
+        </aside>
+      )}
       <div className="agent-body">
         {!live && (
           <Panel eyebrow="Campaign" title="Select a Campaign" icon={Headphones} className="admin-wide-panel">
@@ -14244,160 +14468,8 @@ function AgentConsole({ token, authInfo, onExit }) {
               {dialableLeads != null && <span className="connection-status">Dialable leads: {formatNumber(dialableLeads)}</span>}
               {Number(live.lead_id) > 0 && <span className="connection-status">On lead: {live.lead_id} ({live.callerid})</span>}
             </div>
-            <div className="modal-actions">
-              {live.status === 'PAUSED' && (
-                <button type="button" className="primary-action" disabled={busy} onClick={() => act('/agent/ready')}>
-                  <Radio size={16} aria-hidden="true" />
-                  Go Ready
-                </button>
-              )}
-              {live.status === 'READY' && (
-                <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/pause')}>
-                  <Clock3 size={16} aria-hidden="true" />
-                  Pause
-                </button>
-              )}
-              {live.status === 'INCALL' && (
-                <button type="button" className="danger-action" disabled={busy} onClick={() => act('/agent/hangup')}>
-                  <PhoneCall size={16} aria-hidden="true" />
-                  Hangup Customer
-                </button>
-              )}
-              {live.status === 'INCALL' && (
-                <button
-                  type="button"
-                  className={isRecording ? 'danger-action' : 'secondary-action'}
-                  disabled={busy}
-                  onClick={async () => {
-                    const payload = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' });
-                    if (payload) setMessage(isRecording ? 'Recording stopped' : `Recording started${payload.filename ? `: ${payload.filename}` : ''}`);
-                  }}
-                >
-                  {isRecording ? 'Stop Recording' : 'Record Call'}
-                </button>
-              )}
-              {live.status === 'INCALL' && (
-                <>
-                  <button
-                    type="button"
-                    className={agentMuted ? 'danger-action' : 'row-action'}
-                    disabled={busy}
-                    onClick={async () => {
-                      const payload = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' });
-                      if (payload) setAgentMuted(!agentMuted);
-                    }}
-                  >
-                    {agentMuted ? 'Unmute Me' : 'Mute Me'}
-                  </button>
-                  <button
-                    type="button"
-                    className={custMuted ? 'danger-action' : 'row-action'}
-                    disabled={busy}
-                    onClick={async () => {
-                      const payload = await act('/agent/conf-control', { action: custMuted ? 'unmute' : 'mute', target: 'customer' });
-                      if (payload) setCustMuted(!custMuted);
-                    }}
-                  >
-                    {custMuted ? 'Unmute Customer' : 'Mute Customer'}
-                  </button>
-                  {isRecording && (
-                    <button
-                      type="button"
-                      className={recMuted ? 'danger-action' : 'row-action'}
-                      disabled={busy}
-                      onClick={async () => {
-                        const payload = await act('/agent/mute-recording', { mute: !recMuted });
-                        if (payload) {
-                          setRecMuted(!recMuted);
-                          setMessage(recMuted ? 'Recording audio resumed' : 'Recording audio muted');
-                        }
-                      }}
-                    >
-                      {recMuted ? 'Resume Rec Audio' : 'Mute Rec Audio'}
-                    </button>
-                  )}
-                </>
-              )}
-              <button
-                type="button"
-                className="secondary-action"
-                disabled={busy || live.status === 'INCALL'}
-                onClick={async () => {
-                  const payload = await act('/agent/logout');
-                  if (payload) onExit();
-                }}
-              >
-                <LogOut size={16} aria-hidden="true" />
-                Logout Agent
-              </button>
-            </div>
-            {live.status !== 'INCALL' && !Number(live.lead_id) && (
-              <form
-                className="entity-form report-filter-bar"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  const digits = manualNumber.replace(/[^0-9]/g, '');
-                  if (digits.length < 5) return;
-                  const payload = await act('/agent/manual-dial', { phone_number: digits });
-                  if (payload) {
-                    setManualNumber('');
-                    setMessage(`Dialing ${digits} into your conference`);
-                  }
-                }}
-              >
-                <div className="field-grid">
-                  <label>
-                    <span>Manual Dial</span>
-                    <input
-                      type="tel"
-                      value={manualNumber}
-                      placeholder="Phone number"
-                      onChange={(event) => setManualNumber(event.target.value)}
-                    />
-                  </label>
-                </div>
-                <div className="modal-actions">
-                  <button type="submit" className="secondary-action" disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}>
-                    <PhoneCall size={16} aria-hidden="true" />
-                    Dial
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-action"
-                    disabled={busy}
-                    onClick={async () => {
-                      const payload = await act('/agent/dial-next', {});
-                      if (payload?.preview) {
-                        setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
-                        setMessage('Previewing lead — Dial This Lead or Skip');
-                      } else if (payload) {
-                        setMessage('Dialing next lead from the hopper');
-                      }
-                    }}
-                  >
-                    <PhoneCall size={16} aria-hidden="true" />
-                    Dial Next Number
-                  </button>
-                </div>
-              </form>
-            )}
-            {live.status === 'PAUSED' && pauseCodes.length > 0 && (
-              <div className="connection-actions">
-                {pauseCodes.map((row) => (
-                  <button
-                    type="button"
-                    key={row.pause_code}
-                    className={live.pause_code === row.pause_code ? 'row-action tool-picker-item selected' : 'row-action'}
-                    disabled={busy}
-                    onClick={() => act('/agent/pause-code', { pause_code: row.pause_code })}
-                  >
-                    {row.pause_code}{row.pause_code_name ? ` - ${row.pause_code_name}` : ''}
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="connection-actions">
-              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log'], ['ingroups', 'In-Groups'], ['script', 'Script']].map(([key, label]) => (
+              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log'], ['ingroups', 'In-Groups']].map(([key, label]) => (
                 <button
                   type="button"
                   key={key}
@@ -14598,7 +14670,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             )}
           </Panel>
         )}
-        {live && sidePanel === 'script' && (
+        {live && mainTab === 'script' && (
           <Panel eyebrow="Campaign" title={scriptData?.script?.script_name || 'Script'} icon={Activity} className="admin-wide-panel">
             {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
             {scriptData?.script && (
@@ -14622,12 +14694,13 @@ function AgentConsole({ token, authInfo, onExit }) {
               <span className="connection-status">List: {lead.list_id}</span>
               <span className="connection-status">Status: {lead.status}</span>
               <span className="connection-status">Called: {lead.called_count}x</span>
-              {lead.city && <span className="connection-status">{lead.city}, {lead.state} {lead.postal_code}</span>}
-              {lead.email && <span className="connection-status">{lead.email}</span>}
-              {lead.alt_phone && <span className="connection-status">Alt: {lead.alt_phone}</span>}
+              {lead.gmt_offset_now != null && (
+                <span className="connection-status">
+                  Customer Time: {new Date(Date.now() + new Date().getTimezoneOffset() * 60000 + Number(lead.gmt_offset_now) * 3600000).toLocaleTimeString()}
+                </span>
+              )}
+              {Number(live.lead_id) > 0 && <span className="connection-status">Channel: {live.callerid || ''}</span>}
             </div>
-            {lead.address1 && <p className="connection-summary">{lead.address1} {lead.address2 || ''} {lead.address3 || ''}</p>}
-            {lead.comments && <p className="connection-summary">Comments: {lead.comments}</p>}
             {dialFail && (
               <p className="form-error">
                 Call failed: {dialFail.dialstatus}{dialFail.sip_hangup_reason ? ` — ${dialFail.sip_hangup_reason}` : ''} — hang up and disposition
@@ -14635,42 +14708,6 @@ function AgentConsole({ token, authInfo, onExit }) {
             )}
             {!dialFail && customerGone >= 2 && live.status === 'INCALL' && (
               <p className="form-error">No customer channel in your session — the caller may have hung up</p>
-            )}
-            {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && (
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="primary-action"
-                  disabled={busy}
-                  onClick={async () => {
-                    const payload = await act('/agent/manual-dial', { lead_id: lead.lead_id });
-                    if (payload) {
-                      setPreviewInfo(null);
-                      setMessage(`Dialing previewed lead ${lead.lead_id}`);
-                    }
-                  }}
-                >
-                  <PhoneCall size={16} aria-hidden="true" />
-                  Dial This Lead
-                </button>
-                {(previewInfo?.allowSkip ?? true) && (
-                  <button
-                    type="button"
-                    className="secondary-action"
-                    disabled={busy}
-                    onClick={async () => {
-                      const payload = await act('/agent/preview-skip', { prev_status: previewInfo?.prevStatus || 'NEW' });
-                      if (payload) {
-                        setPreviewInfo(null);
-                        setLead(null);
-                        setMessage('Lead skipped and reverted');
-                      }
-                    }}
-                  >
-                    Skip Lead
-                  </button>
-                )}
-              </div>
             )}
             {showAltPhones && altPhones && (
               <table className="data-table">
@@ -14718,7 +14755,7 @@ function AgentConsole({ token, authInfo, onExit }) {
                 </tbody>
               </table>
             )}
-            {showForm && customFields && (
+            {mainTab === 'form' && customFields && (
               <div className="entity-form">
                 {!customFields.fields?.length && <p className="connection-summary">No custom fields defined for list {customFields.listId}</p>}
                 {Boolean(customFields.fields?.length) && (
@@ -14790,12 +14827,16 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
               </div>
             )}
-            {editLead ? (
-              <div className="entity-form">
+            {mainTab === 'main' && editLead && (
+              <div className="entity-form agc-custform">
+                <p className="connection-summary">Customer Information:</p>
                 <div className="field-grid">
-                  {[['first_name', 'First Name'], ['last_name', 'Last Name'], ['address1', 'Address 1'], ['city', 'City'],
-                    ['state', 'State'], ['postal_code', 'Postal Code'], ['alt_phone', 'Alt Phone'], ['email', 'Email'],
-                    ['comments', 'Comments']].map(([key, label]) => (
+                  {[['title', 'Title'], ['first_name', 'First'], ['middle_initial', 'MI'], ['last_name', 'Last'],
+                    ['address1', 'Address1'], ['address2', 'Address2'], ['address3', 'Address3'],
+                    ['city', 'City'], ['state', 'State'], ['postal_code', 'PostCode'],
+                    ['province', 'Province'], ['vendor_lead_code', 'Vendor ID'],
+                    ['phone_number', 'Phone'], ['phone_code', 'DialCode'], ['alt_phone', 'Alt. Phone'],
+                    ['security_phrase', 'Show'], ['email', 'Email']].map(([key, label]) => (
                       <label key={key}>
                         <span>{label}</span>
                         <input
@@ -14805,84 +14846,56 @@ function AgentConsole({ token, authInfo, onExit }) {
                         />
                       </label>
                   ))}
+                  <label>
+                    <span>Gender</span>
+                    <select value={editLead.gender || 'U'} onChange={(event) => setEditLead((cur) => ({ ...cur, gender: event.target.value }))}>
+                      <option value="U">U - Undefined</option>
+                      <option value="M">M - Male</option>
+                      <option value="F">F - Female</option>
+                    </select>
+                  </label>
                 </div>
+                <label className="agc-comments">
+                  <span>Comments</span>
+                  <textarea
+                    rows={2}
+                    value={editLead.comments ?? ''}
+                    onChange={(event) => setEditLead((cur) => ({ ...cur, comments: event.target.value }))}
+                  />
+                </label>
                 <div className="modal-actions">
                   <button
                     type="button"
-                    className="primary-action"
+                    className="secondary-action compact-action"
                     disabled={busy}
                     onClick={async () => {
                       try {
                         await apiFetch('/agent/lead', token, { method: 'PUT', body: JSON.stringify(editLead) });
-                        setEditLead(null);
-                        setMessage('Lead updated');
+                        setMessage('Customer information saved');
                         refresh();
                       } catch { setMessage('Lead update failed'); }
                     }}
                   >
-                    Save Lead
+                    Save Customer Info
                   </button>
-                  <button type="button" className="secondary-action" onClick={() => setEditLead(null)}>Cancel</button>
+                  <button type="button" className="row-action" onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}>
+                    Lead Info
+                  </button>
+                  <button
+                    type="button"
+                    className="row-action"
+                    onClick={() => {
+                      const next = !showAltPhones;
+                      setShowAltPhones(next);
+                      if (next) apiFetch(`/agent/alt-phones?lead_id=${lead.lead_id}`, token).then(setAltPhones).catch(() => {});
+                    }}
+                  >
+                    Alt Phones
+                  </button>
                 </div>
-              </div>
-            ) : (
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="row-action"
-                  onClick={() => setEditLead({
-                    first_name: lead.first_name || '', last_name: lead.last_name || '',
-                    address1: lead.address1 || '', city: lead.city || '', state: lead.state || '',
-                    postal_code: lead.postal_code || '', alt_phone: lead.alt_phone || '',
-                    email: lead.email || '', comments: lead.comments || '',
-                  })}
-                >
-                  Edit Lead
-                </button>
               </div>
             )}
             <div className="modal-actions">
-              <button type="button" className="primary-action" disabled={busy} onClick={() => setShowDispo(true)}>
-                <Activity size={16} aria-hidden="true" />
-                Disposition Call
-              </button>
-              <button type="button" className="row-action" onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}>
-                Lead Info
-              </button>
-              <button
-                type="button"
-                className="row-action"
-                onClick={() => {
-                  const next = !showForm;
-                  setShowForm(next);
-                  if (next) {
-                    apiFetch(`/agent/custom-fields?lead_id=${lead.lead_id}`, token).then(setCustomFields).catch(() => {});
-                  }
-                }}
-              >
-                Form
-              </button>
-              <button
-                type="button"
-                className="row-action"
-                onClick={() => {
-                  const next = !showAltPhones;
-                  setShowAltPhones(next);
-                  if (next) apiFetch(`/agent/alt-phones?lead_id=${lead.lead_id}`, token).then(setAltPhones).catch(() => {});
-                }}
-              >
-                Alt Phones
-              </button>
-              {(webForms?.forms || []).map((f) => (
-                <button
-                  type="button"
-                  key={f.label}
-                  className="row-action"
-                  onClick={() => window.open(mergeFields(f.url), webForms.target || 'vdcwebform')}
-                >
-                  {f.label}
-                </button>
-              ))}
               {lead.alt_phone && (
                 <button
                   type="button"
@@ -14910,7 +14923,7 @@ function AgentConsole({ token, authInfo, onExit }) {
                 </button>
               )}
             </div>
-            {live.status === 'INCALL' && xferOptions && (
+            {xferOpen && xferOptions && (
               <div className="entity-form">
                 <div className="field-grid">
                   {xferOptions.flags?.blind && (

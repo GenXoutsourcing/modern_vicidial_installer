@@ -6899,7 +6899,7 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
   phone_ring_timeout, on_hook_agent, is_webphone, conf_secret, use_external_server_ip, codecs_list,
   outbound_cid, webphone_dialpad, webphone_auto_answer, webphone_dialbox, webphone_mute,
   webphone_volume, webphone_debug, webphone_layout, webphone_settings,
-  VICIDIAL_park_on_extension, VICIDIAL_park_on_filename, voicemail_dump_exten, voicemail_id`;
+  VICIDIAL_park_on_extension, VICIDIAL_park_on_filename, voicemail_dump_exten, voicemail_id, dtmf_send_extension`;
 
 // CONFBRIDGE servers keep agent rooms in vicidial_confbridges and agents join
 // with a '2'-prefixed exten (legacy $conf_table / $session_prepend logic);
@@ -7341,7 +7341,7 @@ async function agentStatus(req, res) {
       `SELECT lead_id, list_id, status, phone_code, phone_number, title, first_name, middle_initial,
               last_name, address1, address2, address3, city, state, postal_code, province, country_code,
               gender, date_of_birth, alt_phone, email, security_phrase, comments, called_count,
-              vendor_lead_code, source_id
+              vendor_lead_code, source_id, gmt_offset_now
        FROM vicidial_list WHERE lead_id = ? LIMIT 1`,
       [live.lead_id],
       [],
@@ -7415,6 +7415,12 @@ async function agentStatus(req, res) {
     [live.campaign_id],
     [],
   );
+  // Header "Calls in Queue" count (legacy keepalive field).
+  const [queueCnt] = await rows(
+    "SELECT COUNT(*) AS n FROM vicidial_auto_calls WHERE status IN ('LIVE') AND campaign_id = ?",
+    [live.campaign_id],
+    [],
+  );
   return res.json({
     ok: true, live, lead,
     pauseCodes: await agentPauseCodes(live.campaign_id),
@@ -7424,6 +7430,7 @@ async function agentStatus(req, res) {
     dialableLeads: stats ? Number(stats.dialable_leads || 0) : null,
     inbound,
     recording: Boolean(await agentRecordingChannel(live)),
+    queueCalls: Number(queueCnt?.n || 0),
   });
 }
 
@@ -8037,6 +8044,34 @@ async function agentThreewayDial(req, res) {
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'threeway_dial_failed' });
   }
+}
+
+// SEND DTMF port (SysCIDdtmfOriginate): originate the dtmf_send_extension
+// channel into the conf as a silent 7-prefix DTMF user; the CID carries the
+// digits (dialplan 8500998 agi-dtmf.agi plays them).
+async function agentSendDtmf(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const digits = String(req.body?.digits || '').replace(/[^0-9*#]/g, '').slice(0, 20);
+  if (!digits) return badRequest(res, 'digits_required');
+  const channel = req.agentPhone?.dtmf_send_extension || 'local/8500998@default';
+  const context = req.agentPhone?.ext_context || 'default';
+  await execute('UPDATE vicidial_live_agents SET external_dtmf = ? WHERE user = ?', ['', user]).catch(() => {});
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
+    [live.server_ip, digits, `Channel: ${channel}`, `Context: ${context}`,
+      `Exten: 7${live.conf_exten}`, `Callerid: ${digits}`],
+  );
+  await execute(
+    "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'SYS', notes = ?",
+    [digits, user, `7${live.conf_exten} ${context} ${channel}`],
+  ).catch(() => {});
+  return res.json({ ok: true });
 }
 
 // Conference mute controls: CONFBRIDGE has no volume CLI, but mute/unmute of
@@ -13919,6 +13954,7 @@ app.post('/api/agent/timeclock', requireAgentAccess, agentTimeclock);
 app.post('/api/agent/conf-control', requireAgentAccess, agentConfControl);
 app.post('/api/agent/mute-recording', requireAgentAccess, agentMuteRecording);
 app.post('/api/agent/threeway-customer-hungup', requireAgentAccess, agentThreewayCustomerHungup);
+app.post('/api/agent/send-dtmf', requireAgentAccess, agentSendDtmf);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
