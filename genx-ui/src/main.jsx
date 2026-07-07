@@ -448,10 +448,12 @@ function userCan(user, entity) {
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
+  if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
+  if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -478,6 +480,8 @@ function userCanDelete(user, entity) {
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
+  if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
+  if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   return false;
 }
 
@@ -1605,6 +1609,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'queueGroups') {
     return { queue_group: '', queue_group_name: '', included_campaigns: '', included_inbound_groups: '', user_group: '---ALL---', active: 'N' };
+  }
+
+  if (entity === 'voicemailBoxes') {
+    return { voicemail_id: '', pass: '', fullname: '', email: '', active: 'Y', delete_vm_after_email: 'N', voicemail_timezone: 'eastern', user_group: '---ALL---', on_login_report: 'N' };
+  }
+
+  if (entity === 'vmMessageGroups') {
+    return { leave_vm_message_group_id: '', leave_vm_message_group_notes: '', active: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'automatedReports') {
+    return { report_id: '', report_name: '', report_server: '', report_times: '0700', report_weekdays: '12345', report_monthdays: '', report_destination: 'EMAIL', email_from: '', email_to: '', email_subject: '', ftp_server: '', ftp_user: '', ftp_pass: '', ftp_directory: '', report_url: '', run_now_trigger: 'N', active: 'N', user_group: '---ALL---', filename_override: '' };
   }
 
   if (entity === 'contacts') {
@@ -2936,6 +2952,53 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'voicemailBoxes') {
+    return [
+      { key: 'voicemail_id', label: 'Voicemail ID (digits)', disabled: mode === 'edit' },
+      { key: 'pass', label: mode === 'edit' ? 'New Password (blank keeps current)' : 'Password', type: 'password' },
+      { key: 'fullname', label: 'Full Name' },
+      { key: 'email', label: 'Email' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'delete_vm_after_email', label: 'Delete VM After Email', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'voicemail_timezone', label: 'Timezone' },
+      { key: 'on_login_report', label: 'On-Login Report', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'vmMessageGroups') {
+    return [
+      { key: 'leave_vm_message_group_id', label: 'Group ID', disabled: mode === 'edit' },
+      { key: 'leave_vm_message_group_notes', label: 'Notes' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'automatedReports') {
+    return [
+      { key: 'report_id', label: 'Report ID', disabled: mode === 'edit' },
+      { key: 'report_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'report_server', label: 'Report Server' },
+      { key: 'report_times', label: 'Run Times (HHMM, space-separated)' },
+      { key: 'report_weekdays', label: 'Weekdays (0-6)' },
+      { key: 'report_monthdays', label: 'Month Days' },
+      { key: 'report_destination', label: 'Destination', type: 'select', options: enumOptions(['EMAIL', 'FTP']) },
+      { key: 'email_from', label: 'Email From' },
+      { key: 'email_to', label: 'Email To' },
+      { key: 'email_subject', label: 'Email Subject' },
+      { key: 'ftp_server', label: 'FTP Server' },
+      { key: 'ftp_user', label: 'FTP User' },
+      { key: 'ftp_pass', label: 'FTP Pass', type: 'password' },
+      { key: 'ftp_directory', label: 'FTP Directory' },
+      { key: 'filename_override', label: 'Filename Override' },
+      { key: 'report_url', label: 'Report URL', type: 'textarea', wide: true },
+      { key: 'run_now_trigger', label: 'Run Now Trigger', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
   if (entity === 'queueGroups') {
     return [
       { key: 'queue_group', label: 'Queue Group ID', disabled: mode === 'edit' },
@@ -3331,6 +3394,9 @@ function entityLabel(entity) {
     queueGroups: 'Queue Group',
     contacts: 'Contact',
     languages: 'Language',
+    voicemailBoxes: 'Voicemail Box',
+    vmMessageGroups: 'VM Message Group',
+    automatedReports: 'Automated Report',
   }[entity] || 'Record';
 }
 
@@ -3370,6 +3436,9 @@ function entityId(entity, row) {
     queueGroups: row.queue_group,
     contacts: row.contact_id,
     languages: row.language_id,
+    voicemailBoxes: row.voicemail_id,
+    vmMessageGroups: row.leave_vm_message_group_id,
+    automatedReports: row.report_id,
   }[entity];
 }
 
@@ -3395,6 +3464,9 @@ function entityPath(entity) {
     ipLists: 'ip-lists',
     cidGroups: 'cid-groups',
     queueGroups: 'queue-groups',
+    voicemailBoxes: 'voicemail-boxes',
+    vmMessageGroups: 'vm-message-groups',
+    automatedReports: 'automated-reports',
   }[entity] || entity;
 }
 
@@ -7017,6 +7089,75 @@ function MediaToolsView({ admin, user, onAction }) {
               { key: 'language_code', label: 'Code' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(userCan(user, 'languages') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('languages', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Voicemail"
+          title={`Voicemail Boxes (${formatNumber((admin?.voicemailFull || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'voicemailBoxes') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('voicemailBoxes', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No voicemail boxes"
+            rows={(admin?.voicemailFull || []).map((row) => ({ ...row, id: row.voicemail_id }))}
+            columns={[
+              { key: 'voicemail_id', label: 'Box' },
+              { key: 'fullname', label: 'Name' },
+              { key: 'messages', label: 'New', render: (row) => formatNumber(row.messages) },
+              { key: 'old_messages', label: 'Old', render: (row) => formatNumber(row.old_messages) },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'voicemailBoxes') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('voicemailBoxes', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Voicemail"
+          title={`VM Message Groups (${formatNumber((admin?.vmMessageGroups || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'vmMessageGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('vmMessageGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No VM message groups (rotating pre-recorded VM drops)"
+            rows={(admin?.vmMessageGroups || []).map((row) => ({ ...row, id: row.leave_vm_message_group_id }))}
+            columns={[
+              { key: 'leave_vm_message_group_id', label: 'ID' },
+              { key: 'leave_vm_message_group_notes', label: 'Notes' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'vmMessageGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('vmMessageGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Reporting"
+          title={`Automated Reports (${formatNumber((admin?.automatedReports || []).length)})`}
+          icon={FileText}
+          className="admin-wide-panel"
+          headerActions={userCan(user, 'automatedReports') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('automatedReports', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No automated reports (scheduled email/FTP report jobs)"
+            rows={(admin?.automatedReports || []).map((row) => ({ ...row, id: row.report_id }))}
+            columns={[
+              { key: 'report_id', label: 'ID' },
+              { key: 'report_name', label: 'Name' },
+              { key: 'report_destination', label: 'Destination' },
+              { key: 'report_times', label: 'Times' },
+              { key: 'report_last_run', label: 'Last Run', render: (row) => formatDateTime(row.report_last_run) },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'automatedReports') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('automatedReports', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>

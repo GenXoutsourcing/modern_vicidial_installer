@@ -210,6 +210,8 @@ function publicUser(row) {
     modifyIpLists: row.modify_ip_lists === '1',
     modifyContacts: row.modify_contacts === '1',
     modifyLanguages: row.modify_languages === '1',
+    modifyVoicemail: row.modify_voicemail === '1',
+    modifyAutoReports: row.modify_auto_reports === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -302,6 +304,8 @@ async function authenticateVicidialUser(username, password) {
             u.modify_ip_lists,
             u.modify_contacts,
             u.modify_languages,
+            u.modify_voicemail,
+            u.modify_auto_reports,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -930,6 +934,9 @@ async function adminData(user) {
     queueGroups,
     contacts,
     languages,
+    voicemailFull,
+    vmMessageGroups,
+    automatedReports,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2220,6 +2227,26 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT voicemail_id, active, fullname, messages, old_messages, email, delete_vm_after_email,
+              voicemail_timezone, user_group, on_login_report
+       FROM vicidial_voicemail ORDER BY voicemail_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT leave_vm_message_group_id, leave_vm_message_group_notes, active, user_group
+       FROM leave_vm_message_groups ORDER BY leave_vm_message_group_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT report_id, report_name, report_last_run, report_server, report_times, report_weekdays,
+              report_destination, email_to, report_url, run_now_trigger, active, user_group
+       FROM vicidial_automated_reports ORDER BY report_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2313,6 +2340,9 @@ async function adminData(user) {
     queueGroups,
     contacts,
     languages,
+    voicemailFull,
+    vmMessageGroups,
+    automatedReports,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4710,6 +4740,164 @@ async function deleteLanguage(req, res) {
   }
 }
 
+async function saveVoicemailBox(req, res, mode) {
+  if (!requireModify(req, res, 'modifyVoicemail')) return;
+  const payload = {
+    active: ynFlag(req.body?.active, 'Y'),
+    pass: cleanText(req.body?.pass, 10).replace(/[^0-9a-zA-Z]/g, ''),
+    fullname: cleanText(req.body?.fullname, 100),
+    email: cleanText(req.body?.email, 100),
+    delete_vm_after_email: ynFlag(req.body?.delete_vm_after_email, 'N'),
+    voicemail_timezone: cleanText(req.body?.voicemail_timezone, 30) || 'eastern',
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+    on_login_report: ynFlag(req.body?.on_login_report, 'N'),
+  };
+  if (mode !== 'create' || payload.pass) {
+    if (!payload.pass && mode === 'create') return badRequest(res, 'missing_pass');
+  }
+  if (mode !== 'create' && !payload.pass) delete payload.pass;
+  try {
+    if (mode === 'create') {
+      const id = cleanDigits(req.body?.voicemail_id, 10);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_voicemail_id');
+      const { assignments, values } = dynamicAssignments({ voicemail_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_voicemail SET ${assignments}`, values);
+      await adminLog(req, 'VOICEMAIL', 'ADD', id, 'GENX ADD VOICEMAIL BOX', 'INSERT INTO vicidial_voicemail', payload.fullname);
+      await execute("UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y'").catch(() => {});
+    } else {
+      const id = cleanDigits(req.params.id, 10);
+      if (!id) return badRequest(res, 'invalid_voicemail_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_voicemail SET ${assignments} WHERE voicemail_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'voicemail_not_found' });
+      await adminLog(req, 'VOICEMAIL', 'MODIFY', id, 'GENX MODIFY VOICEMAIL BOX', 'UPDATE vicidial_voicemail', payload.fullname);
+      await execute("UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y'").catch(() => {});
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'voicemail_save_failed' });
+  }
+}
+
+async function deleteVoicemailBox(req, res) {
+  if (!requireModify(req, res, 'modifyVoicemail')) return;
+  const id = cleanDigits(req.params.id, 10);
+  if (!id) return badRequest(res, 'invalid_voicemail_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_voicemail WHERE voicemail_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'voicemail_not_found' });
+    await execute("UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y'").catch(() => {});
+    await adminLog(req, 'VOICEMAIL', 'DELETE', id, 'GENX DELETE VOICEMAIL BOX', 'DELETE FROM vicidial_voicemail', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'voicemail_delete_failed' });
+  }
+}
+
+async function saveVmMessageGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyVoicemail')) return;
+  const payload = {
+    leave_vm_message_group_notes: cleanText(req.body?.leave_vm_message_group_notes, 255),
+    active: ynFlag(req.body?.active, 'N'),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.leave_vm_message_group_id, 40);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_vm_group_id');
+      const { assignments, values } = dynamicAssignments({ leave_vm_message_group_id: id, ...payload });
+      await execute(`INSERT INTO leave_vm_message_groups SET ${assignments}`, values);
+      await adminLog(req, 'VOICEMAIL', 'ADD', id, 'GENX ADD VM MESSAGE GROUP', 'INSERT INTO leave_vm_message_groups', payload.leave_vm_message_group_notes);
+    } else {
+      const id = cleanId(req.params.id, 40);
+      if (!id) return badRequest(res, 'invalid_vm_group_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE leave_vm_message_groups SET ${assignments} WHERE leave_vm_message_group_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'vm_group_not_found' });
+      await adminLog(req, 'VOICEMAIL', 'MODIFY', id, 'GENX MODIFY VM MESSAGE GROUP', 'UPDATE leave_vm_message_groups', payload.leave_vm_message_group_notes);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'vm_group_save_failed' });
+  }
+}
+
+async function deleteVmMessageGroup(req, res) {
+  if (!requireModify(req, res, 'modifyVoicemail')) return;
+  const id = cleanId(req.params.id, 40);
+  if (!id) return badRequest(res, 'invalid_vm_group_id');
+  try {
+    const result = await execute('DELETE FROM leave_vm_message_groups WHERE leave_vm_message_group_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'vm_group_not_found' });
+    await execute('DELETE FROM leave_vm_message_groups_entries WHERE leave_vm_message_group_id = ?', [id]).catch(() => {});
+    await adminLog(req, 'VOICEMAIL', 'DELETE', id, 'GENX DELETE VM MESSAGE GROUP', 'DELETE FROM leave_vm_message_groups + entries', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'vm_group_delete_failed' });
+  }
+}
+
+function automatedReportPayload(body) {
+  return {
+    report_name: cleanText(body.report_name, 100) || 'New Automated Report',
+    report_server: cleanText(body.report_server, 30),
+    report_times: cleanText(body.report_times, 255),
+    report_weekdays: cleanText(body.report_weekdays, 7).replace(/[^0-6]/g, ''),
+    report_monthdays: cleanText(body.report_monthdays, 100).replace(/[^-0-9,]/g, ''),
+    report_destination: cleanChoice(body.report_destination, ['EMAIL', 'FTP'], 'EMAIL'),
+    email_from: cleanText(body.email_from, 255),
+    email_to: cleanText(body.email_to, 255),
+    email_subject: cleanText(body.email_subject, 255),
+    ftp_server: cleanText(body.ftp_server, 255),
+    ftp_user: cleanText(body.ftp_user, 255),
+    ftp_pass: cleanText(body.ftp_pass, 255),
+    ftp_directory: cleanText(body.ftp_directory, 255),
+    report_url: cleanText(body.report_url, 12000),
+    run_now_trigger: ynFlag(body.run_now_trigger, 'N'),
+    active: ynFlag(body.active, 'N'),
+    user_group: cleanId(body.user_group, 20) || '---ALL---',
+    filename_override: cleanText(body.filename_override, 255),
+  };
+}
+
+async function saveAutomatedReport(req, res, mode) {
+  if (!requireModify(req, res, 'modifyAutoReports')) return;
+  const payload = automatedReportPayload(req.body || {});
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.report_id, 30);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_report_id');
+      const { assignments, values } = dynamicAssignments({ report_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_automated_reports SET ${assignments}`, values);
+      await adminLog(req, 'REPORTS', 'ADD', id, 'GENX ADD AUTOMATED REPORT', 'INSERT INTO vicidial_automated_reports', payload.report_name);
+    } else {
+      const id = cleanId(req.params.id, 30);
+      if (!id) return badRequest(res, 'invalid_report_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_automated_reports SET ${assignments} WHERE report_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'report_not_found' });
+      await adminLog(req, 'REPORTS', 'MODIFY', id, 'GENX MODIFY AUTOMATED REPORT', 'UPDATE vicidial_automated_reports', payload.report_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'automated_report_save_failed' });
+  }
+}
+
+async function deleteAutomatedReport(req, res) {
+  if (!requireModify(req, res, 'modifyAutoReports')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_report_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_automated_reports WHERE report_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'report_not_found' });
+    await adminLog(req, 'REPORTS', 'DELETE', id, 'GENX DELETE AUTOMATED REPORT', 'DELETE FROM vicidial_automated_reports', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'automated_report_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6852,6 +7040,15 @@ app.delete('/api/admin/contacts/:id', requireAccess, deleteContact);
 app.post('/api/admin/languages', requireAccess, (req, res) => saveLanguage(req, res, 'create'));
 app.put('/api/admin/languages/:id', requireAccess, (req, res) => saveLanguage(req, res, 'update'));
 app.delete('/api/admin/languages/:id', requireAccess, deleteLanguage);
+app.post('/api/admin/voicemail-boxes', requireAccess, (req, res) => saveVoicemailBox(req, res, 'create'));
+app.put('/api/admin/voicemail-boxes/:id', requireAccess, (req, res) => saveVoicemailBox(req, res, 'update'));
+app.delete('/api/admin/voicemail-boxes/:id', requireAccess, deleteVoicemailBox);
+app.post('/api/admin/vm-message-groups', requireAccess, (req, res) => saveVmMessageGroup(req, res, 'create'));
+app.put('/api/admin/vm-message-groups/:id', requireAccess, (req, res) => saveVmMessageGroup(req, res, 'update'));
+app.delete('/api/admin/vm-message-groups/:id', requireAccess, deleteVmMessageGroup);
+app.post('/api/admin/automated-reports', requireAccess, (req, res) => saveAutomatedReport(req, res, 'create'));
+app.put('/api/admin/automated-reports/:id', requireAccess, (req, res) => saveAutomatedReport(req, res, 'update'));
+app.delete('/api/admin/automated-reports/:id', requireAccess, deleteAutomatedReport);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
