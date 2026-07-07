@@ -3908,6 +3908,39 @@ async function deleteLeadFilter(req, res) {
   }
 }
 
+// Users belonging to a user group, from legacy user-group modify (ADD=311111).
+async function userGroupConnections(req, res) {
+  if (!requireModify(req, res, 'modifyUsergroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_user_group');
+  const users = await rows(
+    `SELECT user, full_name, user_level, active FROM vicidial_users
+     WHERE user_group = ? ORDER BY user ASC LIMIT 500`,
+    [id],
+    [],
+  );
+  return res.json({ ok: true, users });
+}
+
+// Legacy ADD=611111: delete the user group (own group blocked).
+async function deleteUserGroup(req, res) {
+  if (!requireModify(req, res, 'deleteUserGroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_user_group');
+  if (id === req.genxUser.userGroup) return res.status(403).json({ ok: false, error: 'cannot_delete_own_group' });
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'group_not_allowed' });
+  }
+  try {
+    const result = await execute('DELETE FROM vicidial_user_groups WHERE user_group = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'group_not_found' });
+    await adminLog(req, 'USERGROUPS', 'DELETE', id, 'GENX DELETE USER GROUP', 'DELETE FROM vicidial_user_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'group_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6002,6 +6035,8 @@ app.get('/api/admin/inbound/:id/connections', requireAccess, inboundGroupConnect
 app.post('/api/admin/inbound/:id/agent-ranks', requireAccess, saveInboundGroupAgentRanks);
 app.post('/api/admin/user-groups', requireAccess, (req, res) => saveUserGroup(req, res, 'create'));
 app.put('/api/admin/user-groups/:id', requireAccess, (req, res) => saveUserGroup(req, res, 'update'));
+app.delete('/api/admin/user-groups/:id', requireAccess, deleteUserGroup);
+app.get('/api/admin/user-groups/:id/connections', requireAccess, userGroupConnections);
 app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'create'));
 app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'update'));
 app.delete('/api/admin/dids/:id', requireAccess, deleteDid);

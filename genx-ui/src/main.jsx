@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -453,6 +453,7 @@ function userCanDelete(user, entity) {
   if (entity === 'lists') return Boolean(user?.deleteLists);
   if (entity === 'scripts') return Boolean(user?.deleteScripts);
   if (entity === 'leadFilters') return Boolean(user?.deleteFilters);
+  if (entity === 'userGroups') return Boolean(user?.deleteUserGroups);
   return false;
 }
 
@@ -3955,6 +3956,67 @@ function LeadFilterConnections({ filterId, token, onLogout }) {
   );
 }
 
+function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, admin }) {
+  const group = String(groupId || '');
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    if (!group) return undefined;
+    apiFetch(`/admin/user-groups/${encodeURIComponent(group)}/connections`, token)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [group, token, onLogout]);
+
+  if (!group || !data || data.error) return null;
+
+  const users = data.users || [];
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>Users in this group</h3>
+        </div>
+        <Users size={20} aria-hidden="true" />
+      </div>
+      <div className="connection-lists">
+        <p className="connection-summary">{users.length ? `${formatNumber(users.length)} user${users.length === 1 ? '' : 's'}` : 'No users in this group'}</p>
+        {users.slice(0, 12).map((row) => {
+          const userRow = (admin?.users || []).find((item) => item.user === row.user);
+          return (
+            <button
+              type="button"
+              className="tool-picker-item"
+              key={row.user}
+              disabled={!userCan(user, 'users') || !userRow}
+              onClick={() => userRow && onSwitchAction('users', 'edit', userRow)}
+            >
+              {row.user} - {row.full_name || ''} (L{row.user_level}{row.active === 'Y' ? '' : ', inactive'})
+            </button>
+          );
+        })}
+      </div>
+      <div className="connection-actions">
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=USERGROUPS&stage=${encodeURIComponent(group)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -4031,7 +4093,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   }
 
   const isOwnUser = action.entity === 'users' && String(form.user || '') === String(user?.user || '');
-  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser;
+  const isOwnGroup = action.entity === 'userGroups' && String(form.user_group || '') === String(user?.userGroup || '');
+  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -4052,6 +4115,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'userGroups' && (
+          <UserGroupConnections
+            groupId={form.user_group}
+            token={token}
+            user={user}
+            admin={admin}
+            onLogout={onLogout}
+            onSwitchAction={onSwitchAction}
           />
         )}
 
