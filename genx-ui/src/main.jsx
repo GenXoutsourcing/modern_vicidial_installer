@@ -13927,6 +13927,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [pauseCodes, setPauseCodes] = useState(authInfo?.pauseCodes || []);
   const [dispoStatuses, setDispoStatuses] = useState([]);
   const [showDispo, setShowDispo] = useState(false);
+  const [dispoPick, setDispoPick] = useState('');
   const [callbackTime, setCallbackTime] = useState('');
   const [dispoComments, setDispoComments] = useState('');
   const [manualNumber, setManualNumber] = useState('');
@@ -14057,7 +14058,7 @@ function AgentConsole({ token, authInfo, onExit }) {
 
   // Dispo hotkeys: with the dispo grid open, pressing a mapped key submits.
   useEffect(() => {
-    if (!showDispo || !dispoHotkeys.length || !lead) return undefined;
+    if (!dispoHotkeys.length || !lead || live?.status === 'INCALL') return undefined;
     const onKey = (event) => {
       if (/input|textarea|select/i.test(event.target?.tagName || '')) return;
       const hit = dispoHotkeys.find((h) => String(h.hotkey) === event.key);
@@ -14065,15 +14066,15 @@ function AgentConsole({ token, authInfo, onExit }) {
       event.preventDefault();
       act('/agent/dispo', { status: hit.status, lead_id: lead.lead_id, comments: dispoComments }).then((payload) => {
         if (payload) {
-          setShowDispo(false);
           setLead(null);
+          setDispoPick('');
           setMessage(`Dispositioned ${hit.status} (hotkey ${hit.hotkey}) — paused`);
         }
       });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showDispo, dispoHotkeys, lead ? lead.lead_id : 0, dispoComments]);
+  }, [dispoHotkeys, lead ? lead.lead_id : 0, live?.status, dispoComments]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -14209,215 +14210,149 @@ function AgentConsole({ token, authInfo, onExit }) {
   return (
     <main className="app-shell agent-shell">
       {/* Legacy agc top line: logged-in summary + LOGOUT */}
-      <div className="agc-topline">
-        <span>
-          Logged in as User: {authInfo?.user?.user || live?.user || ''} on Phone: {live?.extension || authInfo?.phone?.login || ''}
-          {live ? ` to campaign: ${live.campaign_id}` : ''}
-        </span>
-        <button
-          type="button"
-          className="agc-link"
-          disabled={busy || live?.status === 'INCALL'}
-          onClick={async () => {
-            if (live) {
-              const payload = await act('/agent/logout');
-              if (payload) onExit();
-            } else {
-              onExit();
-            }
-          }}
-        >
-          LOGOUT
-        </button>
-      </div>
-      {/* Legacy header: brand + MAIN/SCRIPT/FORM tabs + session info + live-call flag */}
-      <header className="agc-header">
-        <div className="brand-mark">GX</div>
-        <div className="agc-tabs">
-          {[['main', 'MAIN'], ['script', 'SCRIPT'], ['form', 'FORM']].map(([key, label]) => (
-            <button
-              type="button"
-              key={key}
-              className={mainTab === key ? 'agc-tab active' : 'agc-tab'}
-              onClick={() => setMainTab(key)}
-            >
-              {label}
-            </button>
-          ))}
+      {/* Agent status bar: identity + registered/status + session info + logout */}
+      <header className="agb-topbar">
+        <div className="brand-lock">
+          <div className="brand-mark">GX</div>
+          <div>
+            <p className="eyebrow">GenX Agent</p>
+            <h1>{authInfo?.user?.fullName || authInfo?.user?.user || live?.user || 'Agent'}</h1>
+          </div>
         </div>
-        <div className="agc-session">
-          {clock.toLocaleString()} {live ? ` | Session ID: ${live.conf_exten}` : ''} | Calls in Queue: {queueCalls}
-        </div>
-        <div className={live?.status === 'INCALL' ? 'agc-livecall active' : 'agc-livecall'}>
-          {live?.status === 'INCALL' ? `LIVE CALL ${formatSeconds(stateSeconds)}` : 'NO LIVE CALL'}
-        </div>
-      </header>
-      <div className="agent-layout">
-      {live && (
-        <aside className="agc-left">
-          <button
-            type="button"
-            className={live.status === 'PAUSED' ? 'agc-btn agc-status paused' : live.status === 'INCALL' ? 'agc-btn agc-status incall' : 'agc-btn agc-status ready'}
-            disabled={busy || live.status === 'INCALL'}
-            onClick={() => act(live.status === 'PAUSED' ? '/agent/ready' : '/agent/pause')}
-          >
-            {live.status === 'PAUSED' ? `YOU ARE PAUSED${live.pause_code ? ` (${live.pause_code})` : ''}` : live.status === 'READY' ? 'YOU ARE ACTIVE' : 'LIVE CALL'}
-            <span className="agc-timer">{formatSeconds(stateSeconds)}</span>
-          </button>
-          {live.status === 'PAUSED' && pauseCodes.length > 0 && (
+        <div className="agb-status-group">
+          <span className="agb-reg">
+            <span className={live ? 'agb-dot on' : 'agb-dot'} /> {live ? 'Registered' : 'Off Session'}
+          </span>
+          {live && (
+            <span className={`agb-badge ${live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused'}`}>
+              {live.status === 'INCALL' ? `On Call ${formatSeconds(stateSeconds)}` : live.status === 'READY' ? 'Available' : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''} ${formatSeconds(stateSeconds)}`}
+            </span>
+          )}
+          {live && live.status !== 'INCALL' && (
             <select
-              className="agc-select"
-              value={live.pause_code || ''}
-              onChange={(event) => act('/agent/pause-code', { pause_code: event.target.value })}
+              className="agb-select"
+              value={live.status === 'READY' ? 'READY' : (live.pause_code || 'PAUSED')}
+              onChange={(event) => {
+                const v = event.target.value;
+                if (v === 'READY') act('/agent/ready');
+                else if (v === 'PAUSED') act('/agent/pause');
+                else act(live.status === 'PAUSED' ? '/agent/pause-code' : '/agent/pause', { pause_code: v }).then(() => {
+                  if (live.status !== 'PAUSED') act('/agent/pause-code', { pause_code: v });
+                });
+              }}
             >
-              <option value="">PAUSE CODE</option>
+              <option value="READY">Available</option>
+              <option value="PAUSED">Paused</option>
               {pauseCodes.map((row) => (
-                <option key={row.pause_code} value={row.pause_code}>{row.pause_code}{row.pause_code_name ? ` - ${row.pause_code_name}` : ''}</option>
+                <option key={row.pause_code} value={row.pause_code}>Paused · {row.pause_code_name || row.pause_code}</option>
               ))}
             </select>
           )}
+          <span className="agb-session">
+            {live ? `Session ${live.conf_exten} · Queue ${queueCalls} · Phone ${String(live.extension).split('/').pop()}` : clock.toLocaleTimeString()}
+          </span>
           <button
             type="button"
-            className={isRecording ? 'agc-btn recording' : 'agc-btn record'}
-            disabled={busy || live.status !== 'INCALL'}
+            className="row-action"
+            disabled={busy || live?.status === 'INCALL'}
             onClick={async () => {
-              const payload = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' });
-              if (payload) setMessage(isRecording ? 'Recording stopped' : `Recording: ${payload.filename || ''}`);
+              if (live) {
+                const payload = await act('/agent/logout');
+                if (payload) onExit();
+              } else onExit();
             }}
           >
-            {isRecording ? 'STOP RECORDING' : 'START RECORDING'}
+            <LogOut size={14} aria-hidden="true" /> Logout
           </button>
-          {(webForms?.forms || []).map((f, i) => (
-            <button
-              type="button"
-              key={f.label}
-              className="agc-btn"
-              disabled={!lead}
-              onClick={() => window.open(mergeFields(f.url), webForms.target || 'vdcwebform')}
-            >
-              WEB FORM{i > 0 ? ` ${i + 1}` : ''}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="agc-btn"
-            disabled={busy || live.status !== 'INCALL'}
-            onClick={async () => {
-              const payload = await act('/agent/park', { grab: parked });
-              if (payload) setParked(!parked);
-            }}
-          >
-            {parked ? 'GRAB PARKED CALL' : 'PARK CALL'}
-          </button>
-          <button
-            type="button"
-            className={xferOpen ? 'agc-btn active' : 'agc-btn'}
-            onClick={() => setXferOpen((v) => !v)}
-          >
-            TRANSFER - CONF
-          </button>
-          <button
-            type="button"
-            className="agc-btn danger"
-            disabled={busy || live.status !== 'INCALL'}
-            onClick={() => act('/agent/hangup')}
-          >
-            HANGUP CUSTOMER
-          </button>
-          <div className="agc-dtmf">
-            <button
-              type="button"
-              className="agc-btn"
-              disabled={busy || live.status !== 'INCALL' || !dtmfDigits}
-              onClick={async () => {
-                const payload = await act('/agent/send-dtmf', { digits: dtmfDigits });
-                if (payload) {
-                  setMessage(`DTMF sent: ${dtmfDigits}`);
-                  setDtmfDigits('');
-                }
-              }}
-            >
-              SEND DTMF
-            </button>
-            <input
-              type="text"
-              value={dtmfDigits}
-              maxLength={20}
-              onChange={(event) => setDtmfDigits(event.target.value.replace(/[^0-9*#]/g, ''))}
-            />
+        </div>
+      </header>
+      {/* Call action bar: state chips + primary call controls in one row */}
+      {live && (
+        <div className="agb-callbar">
+          <div className="agb-chips">
+            <span className="agb-chip">callStatus/{live.status}</span>
+            {Number(live.lead_id) > 0 && <span className="agb-chip">lead/{live.lead_id}</span>}
+            {isRecording && <span className="agb-chip rec">REC</span>}
           </div>
-          {live.status === 'INCALL' && (
-            <>
-              <button type="button" className={agentMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
-                {agentMuted ? 'UNMUTE ME' : 'MUTE ME'}
-              </button>
-              <button type="button" className={custMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: custMuted ? 'unmute' : 'mute', target: 'customer' }); if (p) setCustMuted(!custMuted); }}>
-                {custMuted ? 'UNMUTE CUSTOMER' : 'MUTE CUSTOMER'}
-              </button>
-              {isRecording && (
-                <button type="button" className={recMuted ? 'agc-btn danger' : 'agc-btn'} disabled={busy} onClick={async () => { const p = await act('/agent/mute-recording', { mute: !recMuted }); if (p) setRecMuted(!recMuted); }}>
-                  {recMuted ? 'RESUME REC AUDIO' : 'MUTE REC AUDIO'}
-                </button>
-              )}
-            </>
-          )}
           {live.status !== 'INCALL' && !Number(live.lead_id) && (
             <>
+              <input
+                type="tel"
+                className="agb-dialinput"
+                placeholder="Dial a number"
+                value={manualNumber}
+                onChange={(event) => setManualNumber(event.target.value)}
+              />
               <button
                 type="button"
-                className="agc-btn dial"
+                className="agb-act call"
+                disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
+                onClick={async () => {
+                  const digits = manualNumber.replace(/[^0-9]/g, '');
+                  const payload = await act('/agent/manual-dial', { phone_number: digits });
+                  if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
+                }}
+              >
+                Dial
+              </button>
+              <button
+                type="button"
+                className="agb-act call"
                 disabled={busy}
                 onClick={async () => {
                   const payload = await act('/agent/dial-next', {});
                   if (payload?.preview) {
                     setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
-                    setMessage('Previewing lead — Dial This Lead or Skip');
+                    setMessage('Previewing lead — Dial or Skip');
                   } else if (payload) setMessage('Dialing next lead');
                 }}
               >
-                DIAL NEXT NUMBER
+                Dial Next
               </button>
-              <div className="agc-dtmf">
-                <input
-                  type="tel"
-                  value={manualNumber}
-                  placeholder="Manual #"
-                  onChange={(event) => setManualNumber(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="agc-btn"
-                  disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
-                  onClick={async () => {
-                    const digits = manualNumber.replace(/[^0-9]/g, '');
-                    const payload = await act('/agent/manual-dial', { phone_number: digits });
-                    if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
-                  }}
-                >
-                  DIAL
-                </button>
-              </div>
             </>
           )}
           {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && lead && (
             <>
-              <button type="button" className="agc-btn dial" disabled={busy} onClick={async () => { const p = await act('/agent/manual-dial', { lead_id: lead.lead_id }); if (p) { setPreviewInfo(null); setMessage('Dialing previewed lead'); } }}>
-                DIAL THIS LEAD
+              <button type="button" className="agb-act call" disabled={busy} onClick={async () => { const p = await act('/agent/manual-dial', { lead_id: lead.lead_id }); if (p) { setPreviewInfo(null); setMessage('Dialing previewed lead'); } }}>
+                Dial Lead
               </button>
               {(previewInfo?.allowSkip ?? true) && (
-                <button type="button" className="agc-btn" disabled={busy} onClick={async () => { const p = await act('/agent/preview-skip', { prev_status: previewInfo?.prevStatus || 'NEW' }); if (p) { setPreviewInfo(null); setLead(null); setMessage('Lead skipped'); } }}>
-                  SKIP LEAD
+                <button type="button" className="agb-act" disabled={busy} onClick={async () => { const p = await act('/agent/preview-skip', { prev_status: previewInfo?.prevStatus || 'NEW' }); if (p) { setPreviewInfo(null); setLead(null); setMessage('Lead skipped'); } }}>
+                  Skip
                 </button>
               )}
             </>
           )}
-          {lead && (
-            <button type="button" className="agc-btn dispo" disabled={busy} onClick={() => setShowDispo(true)}>
-              DISPOSITION CALL
-            </button>
+          {live.status === 'INCALL' && (
+            <>
+              <button type="button" className="agb-act hangup" disabled={busy} onClick={() => act('/agent/hangup')}>Hangup</button>
+              <button type="button" className={parked ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/park', { grab: parked }); if (p) setParked(!parked); }}>
+                {parked ? 'Unpark' : 'Hold'}
+              </button>
+              <button type="button" className={xferOpen ? 'agb-act xfer on' : 'agb-act xfer'} onClick={() => setXferOpen((v) => !v)}>Transfer</button>
+              <button type="button" className={agentMuted ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
+                {agentMuted ? 'Unmute' : 'Mute'}
+              </button>
+              <button type="button" className={isRecording ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' }); if (p) setMessage(isRecording ? 'Recording stopped' : 'Recording started'); }}>
+                {isRecording ? 'Stop Rec' : 'Record'}
+              </button>
+              <span className="agb-dtmf">
+                <input
+                  type="text"
+                  placeholder="DTMF"
+                  value={dtmfDigits}
+                  maxLength={20}
+                  onChange={(event) => setDtmfDigits(event.target.value.replace(/[^0-9*#]/g, ''))}
+                />
+                <button type="button" className="agb-act" disabled={busy || !dtmfDigits} onClick={async () => { const p = await act('/agent/send-dtmf', { digits: dtmfDigits }); if (p) setDtmfDigits(''); }}>
+                  Send
+                </button>
+              </span>
+            </>
           )}
-        </aside>
+        </div>
       )}
+      <div className="agent-layout">
       <div className="agent-body">
         {!live && (
           <Panel eyebrow="Campaign" title="Select a Campaign" icon={Headphones} className="admin-wide-panel">
@@ -14827,6 +14762,25 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
               </div>
             )}
+            <div className="agc-tabs">
+              {[['main', 'Contact'], ['script', 'Script'], ['form', 'Form']].map(([key, label]) => (
+                <button
+                  type="button"
+                  key={key}
+                  className={mainTab === key ? 'agc-tab active' : 'agc-tab'}
+                  onClick={() => setMainTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={sidePanel === 'leadinfo' ? 'agc-tab active' : 'agc-tab'}
+                onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}
+              >
+                History
+              </button>
+            </div>
             {mainTab === 'main' && editLead && (
               <div className="entity-form agc-custform">
                 <p className="connection-summary">Customer Information:</p>
@@ -15037,54 +14991,65 @@ function AgentConsole({ token, authInfo, onExit }) {
                 </div>
               </div>
             )}
-            {showDispo && (
-              <>
-                <div className="connection-actions">
-                  {dispoStatuses.map((row) => (
-                    <button
-                      type="button"
-                      key={row.status}
-                      className="row-action"
-                      disabled={busy || (row.status === 'CALLBK' && !callbackTime)}
-                      onClick={async () => {
-                        const payload = await act('/agent/dispo', {
-                          status: row.status,
-                          lead_id: lead.lead_id,
-                          callback_datetime: callbackTime,
-                          comments: dispoComments,
-                        });
-                        if (payload) {
-                          setShowDispo(false);
-                          setLead(null);
-                          setCallbackTime('');
-                          setDispoComments('');
-                          setMessage(`Dispositioned ${row.status} — paused`);
-                        }
-                      }}
-                    >
-                      {(() => {
-                        const hk = dispoHotkeys.find((h) => h.status === row.status);
-                        return `${hk ? `[${hk.hotkey}] ` : ''}${row.status}${row.status_name ? ` - ${row.status_name}` : ''}`;
-                      })()}
-                    </button>
-                  ))}
-                  {!dispoStatuses.length && <span className="connection-summary">No selectable statuses for this campaign</span>}
-                </div>
-                <div className="field-grid">
-                  <label>
-                    <span>Callback Date/Time (for CALLBK)</span>
-                    <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
-                  </label>
-                  <label>
-                    <span>Comments</span>
-                    <input type="text" value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} />
-                  </label>
-                </div>
-              </>
-            )}
           </Panel>
         )}
       </div>
+      {/* Right rail: disposition radios + note, then the webphone */}
+      <div className="agent-right">
+      {live && lead && (
+        <div className="agr-card">
+          <p className="agr-title">Update Disposition:</p>
+          <div className="agr-radios">
+            {dispoStatuses.map((row) => {
+              const hk = dispoHotkeys.find((h) => h.status === row.status);
+              return (
+                <label key={row.status} className="agr-radio">
+                  <input
+                    type="radio"
+                    name="agent-dispo"
+                    checked={dispoPick === row.status}
+                    onChange={() => setDispoPick(row.status)}
+                  />
+                  <span>{row.status_name || row.status}{hk ? ` [${hk.hotkey}]` : ''}</span>
+                </label>
+              );
+            })}
+            {!dispoStatuses.length && <span className="connection-summary">No selectable statuses</span>}
+          </div>
+          {dispoPick === 'CALLBK' && (
+            <label className="agr-note">
+              <span>Callback Date/Time</span>
+              <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
+            </label>
+          )}
+          <label className="agr-note">
+            <span>Add a note:</span>
+            <textarea rows={2} value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} placeholder="Enter a note..." />
+          </label>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={busy || !dispoPick || (dispoPick === 'CALLBK' && !callbackTime)}
+            onClick={async () => {
+              const payload = await act('/agent/dispo', {
+                status: dispoPick,
+                lead_id: lead.lead_id,
+                callback_datetime: callbackTime,
+                comments: dispoComments,
+              });
+              if (payload) {
+                setLead(null);
+                setDispoPick('');
+                setCallbackTime('');
+                setDispoComments('');
+                setMessage(`Dispositioned ${dispoPick} — paused`);
+              }
+            }}
+          >
+            Save Disposition
+          </button>
+        </div>
+      )}
       {live && webphoneUrl && (
         <div className={showPhone ? 'agent-webphone' : 'agent-webphone webphone-hidden'}>
           <div className="webphone-toolbar">
@@ -15115,6 +15080,7 @@ function AgentConsole({ token, authInfo, onExit }) {
           />
         </div>
       )}
+      </div>
       </div>
     </main>
   );
