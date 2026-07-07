@@ -110,8 +110,8 @@ export const REPORT_GROUPS = [
   {
     title: 'Outbound and Lists',
     items: [
-      { label: 'Outbound Calling', href: '/vicidial/AST_VDADstats.php' },
-      { label: 'Outbound Interval', href: '/vicidial/AST_OUTBOUNDsummary_interval.php' },
+      { label: 'Outbound Calling', href: '/vicidial/AST_VDADstats.php', view: 'reportOutboundCalling' },
+      { label: 'Outbound Interval', href: '/vicidial/AST_OUTBOUNDsummary_interval.php', view: 'reportOutboundInterval' },
       { label: 'Outbound IVR', href: '/vicidial/AST_IVRstats.php?type=outbound' },
       { label: 'Lead Source', href: '/vicidial/AST_source_vlc_status_report.php' },
       { label: 'Hopper List', href: '/vicidial/AST_VICIDIAL_hopperlist.php', view: 'reportHopperList' },

@@ -4310,6 +4310,308 @@ async function dialerInventoryReport(req, res) {
   return res.json({ ok: true, ...picker, reportType, entries });
 }
 
+// --- Outbound Calling report (native port of AST_VDADstats.php) ---
+// Legacy fixed status sets used by the quick dial-stat sections.
+const VDAD_NA_STATUSES = ['NA', 'ADC', 'AB', 'CPDB', 'CPDUK', 'CPDATB', 'CPDNA', 'CPDREJ', 'CPDINV', 'CPDSUA', 'CPDSI', 'CPDSNC', 'CPDSR', 'CPDSUK', 'CPDSV', 'CPDERR'];
+const VDAD_BDN_STATUSES = ['B', 'DC', 'N'];
+// Statuses the legacy interval report counts as system (non-agent) releases.
+const SYSTEM_RELEASE_STATUSES = ['NA', 'NEW', 'QUEUE', 'INCALL', 'DROP', 'XDROP', 'AA', 'AM', 'AL', 'AFAX', 'AB', 'ADC', 'DNCL', 'DNCC', 'PU', 'PM', 'SVYEXT', 'SVYHU', 'SVYVM', 'SVYREC', 'QVMAIL'];
+const CLOSER_UNANSWERED_STATUSES = ['DROP', 'XDROP', 'HXFER', 'QVMAIL', 'HOLDTO', 'LIVE', 'QUEUE'];
+
+function sqlStatusList(statuses) {
+  const cleaned = statuses.map((status) => String(status).replace(/[^-_0-9A-Za-z]/g, '')).filter(Boolean);
+  return cleaned.length ? cleaned.map((status) => `'${status}'`).join(',') : "''";
+}
+
+// Reads the campaigns' status-flag sets (human answered / answering machine /
+// sale / dnc) from system plus per-campaign statuses, like every legacy report.
+async function campaignStatusSets(campaignIds) {
+  const ph = campaignIds.map(() => '?').join(',');
+  const flagRows = await rows(
+    `SELECT status, human_answered, answering_machine, sale, dnc FROM vicidial_statuses
+     UNION
+     SELECT status, human_answered, answering_machine, sale, dnc
+     FROM vicidial_campaign_statuses WHERE campaign_id IN (${ph}) LIMIT 1000`,
+    campaignIds,
+    [],
+  );
+  const pick = (flag) => flagRows.filter((row) => row[flag] === 'Y').map((row) => row.status);
+  return {
+    humanAnswered: pick('human_answered'),
+    answeringMachine: pick('answering_machine'),
+    sale: pick('sale'),
+    dnc: pick('dnc'),
+  };
+}
+
+async function campaignInboundGroups(campaignIds) {
+  const ph = campaignIds.map(() => '?').join(',');
+  const camps = await rows(
+    `SELECT campaign_id, drop_inbound_group, closer_campaigns FROM vicidial_campaigns WHERE campaign_id IN (${ph})`,
+    campaignIds,
+    [],
+  );
+  const dropGroups = [...new Set(camps
+    .map((row) => String(row.drop_inbound_group || '').trim())
+    .filter((group) => group && group !== 'NONE'))];
+  const closerGroups = [...new Set(camps
+    .flatMap((row) => String(row.closer_campaigns || '').trim().replace(/ -$/, '').split(/\s+/))
+    .filter(Boolean))];
+  return { dropGroups, closerGroups };
+}
+
+async function outboundCallingReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  if (!campaignIdsRaw.length) return res.json({ ok: true, campaigns, sections: null, range: { beginDate, endDate } });
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+  if (!campaignIds.length) return res.json({ ok: true, campaigns, sections: null, range: { beginDate, endDate } });
+
+  const ph = campaignIds.map(() => '?').join(',');
+  const logWhere = `call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})`;
+  const logParams = [begin, end, ...campaignIds];
+  const sets = await campaignStatusSets(campaignIds);
+  const { dropGroups, closerGroups } = await campaignInboundGroups(campaignIds);
+  const haIn = sqlStatusList(sets.humanAnswered);
+  const amIn = sqlStatusList(sets.answeringMachine);
+
+  const one = async (sql, params) => (await rows(sql, params, []))[0] || {};
+  const [
+    totals, haAgent, haAll, ansAgent, amCalls, drops, naStats, bdnStats,
+    termReasons, agentTime, statusBreakdown, listBreakdown, carrierBreakdown,
+  ] = await Promise.all([
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere}`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${amIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status = 'DROP' AND (length_in_sec <= 6000 OR length_in_sec IS NULL)`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_NA_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_BDN_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
+    rows(`SELECT term_reason, COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} GROUP BY term_reason ORDER BY calls DESC LIMIT 50`, logParams, []),
+    one(
+      `SELECT COALESCE(SUM(pause_sec + wait_sec + talk_sec + dispo_sec),0) AS seconds
+       FROM vicidial_agent_log WHERE event_time >= ? AND event_time <= ? AND campaign_id IN (${ph})
+         AND pause_sec < 65000 AND wait_sec < 65000 AND talk_sec < 65000 AND dispo_sec < 65000`,
+      logParams,
+    ),
+    rows(
+      `SELECT vl.status, COUNT(*) AS calls, COALESCE(SUM(vl.length_in_sec),0) AS seconds, s.status_name, s.category
+       FROM vicidial_log vl
+       LEFT JOIN (SELECT status, status_name, category FROM vicidial_statuses
+                  UNION SELECT status, status_name, category FROM vicidial_campaign_statuses WHERE campaign_id IN (${ph})) s
+         ON s.status = vl.status
+       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+       GROUP BY vl.status ORDER BY vl.status ASC LIMIT 200`,
+      [...campaignIds, begin, end, ...campaignIds],
+      [],
+    ),
+    rows(
+      `SELECT vl.list_id, COUNT(*) AS calls, l.list_name
+       FROM vicidial_log vl LEFT JOIN vicidial_lists l ON l.list_id = vl.list_id
+       WHERE ${logWhere.replace(/call_date/g, 'vl.call_date').replace('campaign_id', 'vl.campaign_id')}
+       GROUP BY vl.list_id ORDER BY calls DESC LIMIT 200`,
+      logParams,
+      [],
+    ),
+    rows(
+      `SELECT vcl.dialstatus, COUNT(*) AS calls
+       FROM vicidial_carrier_log vcl, vicidial_log vl
+       WHERE vcl.uniqueid = vl.uniqueid AND vcl.call_date > ? AND vcl.call_date < ?
+         AND vl.call_date > ? AND vl.call_date < ? AND vl.campaign_id IN (${ph})
+       GROUP BY vcl.dialstatus ORDER BY vcl.dialstatus ASC LIMIT 50`,
+      [begin, end, begin, end, ...campaignIds],
+      [],
+    ),
+  ]);
+
+  // Rollover in-group sections only exist when campaigns route drops inbound.
+  let inbound = null;
+  if (dropGroups.length) {
+    const dropIn = sqlStatusList(dropGroups);
+    const [inboundTotals, inboundBreakdown] = await Promise.all([
+      one(
+        `SELECT COUNT(*) AS calls, COALESCE(SUM(cl.length_in_sec),0) AS seconds,
+                COALESCE(SUM(cl.queue_seconds),0) AS queue_seconds,
+                COALESCE(SUM(GREATEST(cl.length_in_sec - cl.queue_seconds - ROUND(COALESCE(ig.agent_alert_delay,0) / 1000), 0)),0) AS talk_seconds
+         FROM vicidial_closer_log cl
+         LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
+         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${dropIn})`,
+        [begin, end],
+      ),
+      rows(
+        `SELECT status, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
+         FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${dropIn})
+         GROUP BY status ORDER BY status ASC LIMIT 200`,
+        [begin, end],
+        [],
+      ),
+    ]);
+    inbound = { groups: dropGroups, totals: inboundTotals, breakdown: inboundBreakdown };
+  }
+  let inboundAnswered = null;
+  if (closerGroups.length) {
+    inboundAnswered = await one(
+      `SELECT COUNT(*) AS calls FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${sqlStatusList(closerGroups)})
+         AND status NOT IN (${sqlStatusList(CLOSER_UNANSWERED_STATUSES)})`,
+      [begin, end],
+    );
+  }
+
+  return res.json({
+    ok: true,
+    campaigns,
+    range: { beginDate, endDate },
+    sections: {
+      totals, haAgent, haAll, ansAgent, amCalls, drops, naStats, bdnStats,
+      termReasons, agentSeconds: Number(agentTime.seconds || 0), statusBreakdown,
+      listBreakdown, carrierBreakdown, inbound, inboundAnswered,
+    },
+  });
+}
+
+// --- Outbound Interval summary (native port of AST_OUTBOUNDsummary_interval.php) ---
+// The legacy per-call PHP loop becomes per-bucket SUM(CASE) aggregation; the
+// system/agent release split and sale/dnc sets follow the legacy rules exactly.
+async function outboundIntervalReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const intervalSec = Number(cleanChoice(req.query?.interval, ['900', '1800', '3600'], '1800'));
+  const includeRollover = String(req.query?.include_rollover || '') === '1';
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 20);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  if (!campaignIdsRaw.length) return res.json({ ok: true, campaigns, results: null, range: { beginDate, endDate }, intervalSec });
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+
+  const results = [];
+  for (const campaignId of campaignIds) {
+    const sets = await campaignStatusSets([campaignId]);
+    const { dropGroups } = await campaignInboundGroups([campaignId]);
+    const saleIn = sqlStatusList(sets.sale);
+    const dncIn = sqlStatusList(sets.dnc);
+    const systemIn = sqlStatusList(SYSTEM_RELEASE_STATUSES);
+    const bucketExpr = `FLOOR(UNIX_TIMESTAMP(call_date) / ${intervalSec}) * ${intervalSec}`;
+
+    const outbound = await rows(
+      `SELECT ${bucketExpr} AS bucket, COUNT(*) AS calls,
+              COALESCE(SUM(GREATEST(length_in_sec,0)),0) AS talk_seconds,
+              COALESCE(SUM(status LIKE '%DROP%'),0) AS drops,
+              COALESCE(SUM(status IN (${systemIn})),0) AS system_release,
+              COALESCE(SUM(status = 'NA'),0) AS na_calls,
+              COALESCE(SUM(status IN (${saleIn})),0) AS sale_calls,
+              COALESCE(SUM(status IN (${dncIn})),0) AS dnc_calls
+       FROM vicidial_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
+      [begin, end, campaignId],
+      [],
+    );
+
+    let inboundBuckets = [];
+    if (includeRollover && dropGroups.length) {
+      inboundBuckets = await rows(
+        `SELECT ${bucketExpr.replace(/call_date/g, 'cl.call_date')} AS bucket, COUNT(*) AS calls_in,
+                COALESCE(SUM(cl.status LIKE '%DROP%'),0) AS drops_in,
+                COALESCE(SUM(GREATEST(cl.length_in_sec - cl.queue_seconds - ROUND(COALESCE(ig.agent_alert_delay,0) / 1000), 0)),0) AS talk_seconds,
+                COALESCE(SUM(cl.status IN (${saleIn})),0) AS sale_calls,
+                COALESCE(SUM(cl.status IN (${dncIn})),0) AS dnc_calls,
+                COALESCE(SUM(cl.status IN (${systemIn})),0) AS system_release,
+                COALESCE(SUM(cl.status = 'NA'),0) AS na_calls
+         FROM vicidial_closer_log cl
+         LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
+         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${sqlStatusList(dropGroups)})
+         GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
+        [begin, end],
+        [],
+      );
+    }
+
+    const agentCampaigns = [campaignId, ...(includeRollover ? dropGroups : [])];
+    const agentBuckets = await rows(
+      `SELECT FLOOR(UNIX_TIMESTAMP(event_time) / ${intervalSec}) * ${intervalSec} AS bucket,
+              COALESCE(SUM(pause_sec + wait_sec + talk_sec + dispo_sec),0) AS login_seconds,
+              COALESCE(SUM(pause_sec),0) AS pause_seconds
+       FROM vicidial_agent_log
+       WHERE event_time >= ? AND event_time <= ? AND campaign_id IN (${agentCampaigns.map(() => '?').join(',')})
+         AND pause_sec < 65000 AND wait_sec < 65000 AND talk_sec < 65000 AND dispo_sec < 65000
+       GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
+      [begin, end, ...agentCampaigns],
+      [],
+    );
+
+    const buckets = new Map();
+    const ensure = (bucket) => {
+      const key = Number(bucket);
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          bucket: key, calls: 0, calls_in: 0, drops: 0, system_release: 0, na_calls: 0,
+          sale_calls: 0, dnc_calls: 0, talk_seconds: 0, login_seconds: 0, pause_seconds: 0,
+        });
+      }
+      return buckets.get(key);
+    };
+    for (const row of outbound) {
+      const bucket = ensure(row.bucket);
+      bucket.calls += Number(row.calls || 0);
+      bucket.drops += Number(row.drops || 0);
+      bucket.system_release += Number(row.system_release || 0);
+      bucket.na_calls += Number(row.na_calls || 0);
+      bucket.sale_calls += Number(row.sale_calls || 0);
+      bucket.dnc_calls += Number(row.dnc_calls || 0);
+      bucket.talk_seconds += Number(row.talk_seconds || 0);
+    }
+    for (const row of inboundBuckets) {
+      const bucket = ensure(row.bucket);
+      bucket.calls += Number(row.calls_in || 0);
+      bucket.calls_in += Number(row.calls_in || 0);
+      bucket.drops += Number(row.drops_in || 0);
+      bucket.system_release += Number(row.system_release || 0);
+      bucket.na_calls += Number(row.na_calls || 0);
+      bucket.sale_calls += Number(row.sale_calls || 0);
+      bucket.dnc_calls += Number(row.dnc_calls || 0);
+      bucket.talk_seconds += Number(row.talk_seconds || 0);
+    }
+    for (const row of agentBuckets) {
+      const bucket = ensure(row.bucket);
+      bucket.login_seconds += Number(row.login_seconds || 0);
+      bucket.pause_seconds += Number(row.pause_seconds || 0);
+    }
+
+    const meta = campaigns.find((row) => String(row.campaign_id) === campaignId);
+    results.push({
+      campaign_id: campaignId,
+      campaign_name: meta?.campaign_name || '',
+      drop_groups: dropGroups,
+      buckets: [...buckets.values()].sort((a, b) => a.bucket - b.bucket),
+    });
+  }
+
+  return res.json({ ok: true, campaigns, results, range: { beginDate, endDate }, intervalSec });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -7996,6 +8298,8 @@ app.get('/api/reports/list-statuses', requireAccess, listStatusesReport);
 app.get('/api/reports/list-campaign-statuses', requireAccess, listCampaignStatusesReport);
 app.get('/api/reports/campaign-status-list', requireAccess, campaignStatusListReport);
 app.get('/api/reports/dialer-inventory', requireAccess, dialerInventoryReport);
+app.get('/api/reports/outbound-calling', requireAccess, outboundCallingReport);
+app.get('/api/reports/outbound-interval', requireAccess, outboundIntervalReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
