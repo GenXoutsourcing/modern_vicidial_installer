@@ -203,6 +203,34 @@ h2 {
   color: var(--teal, #73fbd3);
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 217, 255, 0.35) rgba(4, 12, 23, 0.9);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(4, 12, 23, 0.9);
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(4, 12, 23, 0.9);
+  border-radius: 999px;
+  background: rgba(0, 217, 255, 0.35);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 217, 255, 0.6);
+}
+
+::-webkit-scrollbar-corner {
+  background: rgba(4, 12, 23, 0.9);
+}
+
 .app-shell {
   width: min(2200px, calc(100% - 48px));
   margin: 0 auto;
