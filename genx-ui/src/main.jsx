@@ -441,10 +441,11 @@ function userCan(user, entity) {
   if (entity === 'dropLists') return Boolean(user?.modifyLists);
   if (entity === 'phoneAliases') return Boolean(user?.modifyPhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
+  if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.modifyServers);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -465,6 +466,7 @@ function userCanDelete(user, entity) {
   if (entity === 'dropLists') return Boolean(user?.deleteLists);
   if (entity === 'phoneAliases') return Boolean(user?.astDeletePhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
+  if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.astDeletePhones);
   return false;
 }
 
@@ -1580,6 +1582,10 @@ function actionDefaults(entity, admin) {
       user_group: group,
       report_rank: '1',
     };
+  }
+
+  if (entity === 'conferences' || entity === 'agentConferences') {
+    return { conf_exten: '', server_ip: admin?.servers?.[0]?.server_ip || '', extension: '' };
   }
 
   if (entity === 'phoneAliases') {
@@ -2899,6 +2905,15 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'conferences' || entity === 'agentConferences') {
+    const serverOptions = (admin?.servers || []).map((row) => ({ value: row.server_ip, label: `${row.server_id || row.server_ip} - ${row.server_ip}` }));
+    return [
+      { key: 'conf_exten', label: 'Conference Extension', disabled: mode === 'edit' },
+      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions, disabled: mode === 'edit' },
+      { key: 'extension', label: 'Current Channel/Extension' },
+    ];
+  }
+
   if (entity === 'phoneAliases') {
     return [
       { key: 'alias_id', label: 'Alias ID', disabled: mode === 'edit' },
@@ -3220,6 +3235,8 @@ function entityLabel(entity) {
     dropLists: 'Drop List',
     phoneAliases: 'Phone Alias',
     groupAliases: 'Group Alias',
+    conferences: 'Conference',
+    agentConferences: 'Agent Conference',
   }[entity] || 'Record';
 }
 
@@ -3252,6 +3269,8 @@ function entityId(entity, row) {
     dropLists: row.dl_id,
     phoneAliases: row.alias_id,
     groupAliases: row.group_alias_id,
+    conferences: `${row.conf_exten}__${row.server_ip}`,
+    agentConferences: `${row.conf_exten}__${row.server_ip}`,
   }[entity];
 }
 
@@ -3272,6 +3291,8 @@ function entityPath(entity) {
     dropLists: 'drop-lists',
     phoneAliases: 'phone-aliases',
     groupAliases: 'group-aliases',
+    conferences: 'conferences',
+    agentConferences: 'agent-conferences',
   }[entity] || entity;
 }
 
@@ -6947,6 +6968,49 @@ function SystemView({ admin, user, onAction }) {
               { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(canManageCarriers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('carriers', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Telephony"
+          title={`Conferences (${formatNumber((admin?.conferences || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'conferences') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('conferences', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No monitoring/admin conferences"
+            rows={(admin?.conferences || []).map((row) => ({ ...row, id: `${row.conf_exten}-${row.server_ip}` }))}
+            columns={[
+              { key: 'conf_exten', label: 'Extension' },
+              { key: 'server_ip', label: 'Server' },
+              { key: 'extension', label: 'In Use By', render: (row) => row.extension || 'Empty' },
+              ...(userCan(user, 'conferences') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('conferences', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Telephony"
+          title={`Agent Conferences (${formatNumber((admin?.agentConferences || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'agentConferences') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('agentConferences', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No agent conferences"
+            rows={(admin?.agentConferences || []).map((row) => ({ ...row, id: `${row.conf_exten}-${row.server_ip}` }))}
+            columns={[
+              { key: 'conf_exten', label: 'Extension' },
+              { key: 'server_ip', label: 'Server' },
+              { key: 'extension', label: 'In Use By', render: (row) => row.extension || 'Empty' },
+              { key: 'leave_3way', label: '3-Way Left', render: (row) => (row.leave_3way === '1' ? 'Yes' : 'No') },
+              ...(userCan(user, 'agentConferences') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('agentConferences', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>

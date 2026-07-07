@@ -919,6 +919,8 @@ async function adminData(user) {
     dropLists,
     phoneAliases,
     groupAliases,
+    conferences,
+    agentConferences,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2169,6 +2171,17 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      'SELECT conf_exten, server_ip, extension FROM conferences ORDER BY server_ip ASC, conf_exten ASC LIMIT 1000',
+      [],
+      [],
+    ),
+    rows(
+      `SELECT conf_exten, server_ip, extension, leave_3way FROM vicidial_conferences
+       ORDER BY server_ip ASC, conf_exten ASC LIMIT 1000`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2257,6 +2270,8 @@ async function adminData(user) {
     dropLists,
     phoneAliases,
     groupAliases,
+    conferences,
+    agentConferences,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4370,6 +4385,60 @@ async function deleteGroupAlias(req, res) {
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'group_alias_delete_failed' });
+  }
+}
+
+function conferenceKey(raw) {
+  const [confExten = '', serverIp = ''] = String(raw || '').split('__');
+  return { conf_exten: cleanDigits(confExten, 7), server_ip: cleanIp(serverIp) };
+}
+
+// conferences (admin/monitoring) and vicidial_conferences (agent sessions)
+// share the same composite key and legacy gating (ast_delete_phones for
+// deletes, modify_servers for adds like legacy's conference pages).
+async function saveConference(req, res, table, mode) {
+  if (!requireModify(req, res, 'modifyServers')) return;
+  const key = mode === 'create'
+    ? { conf_exten: cleanDigits(req.body?.conf_exten, 7), server_ip: cleanIp(req.body?.server_ip) }
+    : conferenceKey(req.params.id);
+  if (!key.conf_exten || !key.server_ip) return badRequest(res, 'invalid_conference_key');
+  const extension = cleanText(req.body?.extension, 100);
+  const section = table === 'conferences' ? 'CONFERENCES' : 'AGENT CONFERENCES';
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO ${quoteId(table)} (conf_exten, server_ip, extension) VALUES (?, ?, ?)`,
+        [key.conf_exten, key.server_ip, extension],
+      );
+      await adminLog(req, 'SERVERS', 'ADD', key.conf_exten, `GENX ADD ${section}`, `INSERT INTO ${table}`, `${key.conf_exten}@${key.server_ip}`);
+    } else {
+      const result = await execute(
+        `UPDATE ${quoteId(table)} SET extension = ? WHERE conf_exten = ? AND server_ip = ? LIMIT 1`,
+        [extension, key.conf_exten, key.server_ip],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conference_not_found' });
+      await adminLog(req, 'SERVERS', 'MODIFY', key.conf_exten, `GENX MODIFY ${section}`, `UPDATE ${table}`, `${key.conf_exten}@${key.server_ip}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'conference_save_failed' });
+  }
+}
+
+async function deleteConference(req, res, table) {
+  if (!requireModify(req, res, 'astDeletePhones')) return;
+  const key = conferenceKey(req.params.id);
+  if (!key.conf_exten || !key.server_ip) return badRequest(res, 'invalid_conference_key');
+  try {
+    const result = await execute(
+      `DELETE FROM ${quoteId(table)} WHERE conf_exten = ? AND server_ip = ? LIMIT 1`,
+      [key.conf_exten, key.server_ip],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conference_not_found' });
+    await adminLog(req, 'SERVERS', 'DELETE', key.conf_exten, `GENX DELETE ${table === 'conferences' ? 'CONFERENCE' : 'AGENT CONFERENCE'}`, `DELETE FROM ${table}`, `${key.conf_exten}@${key.server_ip}`);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'conference_delete_failed' });
   }
 }
 
@@ -6494,6 +6563,12 @@ app.delete('/api/admin/phone-aliases/:id', requireAccess, deletePhoneAlias);
 app.post('/api/admin/group-aliases', requireAccess, (req, res) => saveGroupAlias(req, res, 'create'));
 app.put('/api/admin/group-aliases/:id', requireAccess, (req, res) => saveGroupAlias(req, res, 'update'));
 app.delete('/api/admin/group-aliases/:id', requireAccess, deleteGroupAlias);
+app.post('/api/admin/conferences', requireAccess, (req, res) => saveConference(req, res, 'conferences', 'create'));
+app.put('/api/admin/conferences/:id', requireAccess, (req, res) => saveConference(req, res, 'conferences', 'update'));
+app.delete('/api/admin/conferences/:id', requireAccess, (req, res) => deleteConference(req, res, 'conferences'));
+app.post('/api/admin/agent-conferences', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'create'));
+app.put('/api/admin/agent-conferences/:id', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'update'));
+app.delete('/api/admin/agent-conferences/:id', requireAccess, (req, res) => deleteConference(req, res, 'vicidial_conferences'));
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
