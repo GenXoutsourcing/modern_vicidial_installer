@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity,
@@ -12227,6 +12227,13 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [message, setMessage] = useState('');
   const [webphoneUrl, setWebphoneUrl] = useState(null);
   const [showPhone, setShowPhone] = useState(true);
+  // Legacy webphone_call_seconds: after the webphone iframe loads and
+  // registers, ring it into the conference once (auto-answer picks up).
+  const webphoneCalledRef = useRef(false);
+
+  const callWebphone = useCallback(() => {
+    apiFetch('/agent/webphone-call', token, { method: 'POST', body: '{}' }).catch(() => {});
+  }, [token]);
 
   const refresh = useCallback(async () => {
     try {
@@ -12264,8 +12271,10 @@ function AgentConsole({ token, authInfo, onExit }) {
       const payload = await apiFetch(path, token, { method: 'POST', body: JSON.stringify(body || {}) });
       setLive(payload.live);
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
-      if (!payload.live) setWebphoneUrl(null);
-      else if (payload.webphoneUrl) setWebphoneUrl(payload.webphoneUrl);
+      if (!payload.live) {
+        setWebphoneUrl(null);
+        webphoneCalledRef.current = false;
+      } else if (payload.webphoneUrl) setWebphoneUrl(payload.webphoneUrl);
       return payload;
     } catch (requestError) {
       if (requestError.status === 401) {
@@ -12497,9 +12506,14 @@ function AgentConsole({ token, authInfo, onExit }) {
         <div className={showPhone ? 'agent-webphone' : 'agent-webphone webphone-hidden'}>
           <div className="webphone-toolbar">
             <span className="connection-status">Webphone</span>
-            <button type="button" className="row-action" onClick={() => setShowPhone((v) => !v)}>
-              {showPhone ? 'Hide' : 'Show'}
-            </button>
+            <div className="connection-actions">
+              <button type="button" className="row-action" onClick={callWebphone}>
+                Call Phone
+              </button>
+              <button type="button" className="row-action" onClick={() => setShowPhone((v) => !v)}>
+                {showPhone ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </div>
           <iframe
             src={webphoneUrl}
@@ -12508,6 +12522,13 @@ function AgentConsole({ token, authInfo, onExit }) {
             title="Webphone"
             scrolling="auto"
             allow="microphone *; speaker-selection *; autoplay *;"
+            onLoad={() => {
+              if (!webphoneCalledRef.current) {
+                webphoneCalledRef.current = true;
+                // Give the webphone a moment to register before ringing it.
+                window.setTimeout(callWebphone, 2000);
+              }
+            }}
           />
         </div>
       )}

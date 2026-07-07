@@ -6915,6 +6915,39 @@ async function agentLogin(req, res) {
   }
 }
 
+// Port of legacy OriginateVDRelogin (manager_send.php), triggered by the
+// client webphone_call_seconds after login: rings the agent's (web)phone into
+// its reserved conference; webphone auto-answer picks up -> agent is live.
+async function agentWebphoneCall(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const phone = req.agentPhone || (await rows(
+    `SELECT ${AGENT_PHONE_COLUMNS} FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1`,
+    [live.extension, live.server_ip],
+    [],
+  ))[0];
+  if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
+  const [campaign] = await rows(
+    'SELECT campaign_cid FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const protodial = (phone.protocol === 'EXTERNAL' || phone.protocol === 'Local') ? 'Local' : (phone.protocol || 'SIP');
+  const queryCID = `ACagcW${Math.floor(Date.now() / 1000)}${String(user).slice(0, 8)}`.slice(0, 20);
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
+    [live.server_ip, queryCID, `Channel: ${protodial}/${phone.extension}`,
+      `Context: ${phone.ext_context || 'default'}`, `Exten: ${live.conf_exten}`,
+      `Callerid: "${queryCID}" <${campaign?.campaign_cid || ''}>`],
+  );
+  return res.json({ ok: true, live });
+}
+
 async function agentStatus(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
   const live = await agentLiveRow(req.genxUser.user);
@@ -11159,6 +11192,7 @@ app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
 app.post('/api/agent/auth', agentAuth);
 app.get('/api/agent/setup', requireAgentAccess, agentSetup);
 app.post('/api/agent/login', requireAgentAccess, agentLogin);
+app.post('/api/agent/webphone-call', requireAgentAccess, agentWebphoneCall);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
