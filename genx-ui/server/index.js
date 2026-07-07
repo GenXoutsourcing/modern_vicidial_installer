@@ -7503,9 +7503,11 @@ async function agentThreewayDial(req, res) {
     [live.campaign_id],
     [],
   );
-  const prefix = camp?.dial_prefix && camp.dial_prefix !== 'X' ? camp.dial_prefix : '';
+  // Short numbers are internal dialplan extens — no campaign dial prefix.
+  const prefix = number.length >= 8 && camp?.dial_prefix && camp.dial_prefix !== 'X' ? camp.dial_prefix : '';
+  const phoneCode = number.length >= 10 && camp?.omit_phone_code !== 'Y' ? '1' : '';
   const context = req.agentPhone?.ext_context || 'default';
-  const dialStr = `${prefix}${number}`;
+  const dialStr = `${prefix}${phoneCode}${number}`;
   const queryCID = `DXvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
 
   try {
