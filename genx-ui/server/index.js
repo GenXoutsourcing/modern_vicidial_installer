@@ -6530,6 +6530,306 @@ async function urlLogReport(req, res) {
   return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
 }
 
+// ============================================================================
+// Agent screen phase 1 (native port of the agc/vicidial.php login loop for
+// external SIP phones): login reserves a meetme conference and rings the
+// agent's phone into it via a vicidial_manager Originate; READY/PAUSE keep the
+// legacy vicidial_agent_log segment accounting; logout mirrors userLOGout.
+// ============================================================================
+async function agentLiveRow(user) {
+  const [row] = await rows(
+    `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid,
+            calls_today, pause_code, agent_log_id, UNIX_TIMESTAMP(last_state_change) AS state_epoch
+     FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
+    [user],
+    [],
+  );
+  return row || null;
+}
+
+async function agentSetup(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const phones = await rows(
+    "SELECT login, extension, server_ip, fullname, protocol FROM phones WHERE active = 'Y' ORDER BY login ASC LIMIT 200",
+    [],
+    [],
+  );
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name, dial_method FROM vicidial_campaigns
+     WHERE active = 'Y' AND ${campaignWhere} ORDER BY campaign_id ASC LIMIT 200`,
+    campaignParams,
+    [],
+  );
+  return res.json({ ok: true, phones, campaigns, live: await agentLiveRow(req.genxUser.user) });
+}
+
+async function agentPauseCodes(campaignId) {
+  return rows(
+    'SELECT pause_code, pause_code_name FROM vicidial_pause_codes WHERE campaign_id = ? ORDER BY pause_code ASC LIMIT 100',
+    [campaignId],
+    [],
+  );
+}
+
+async function agentLogin(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const phoneLogin = cleanId(req.body?.phone_login, 20);
+  const campaignId = cleanId(req.body?.campaign_id, 20);
+  if (!phoneLogin || !campaignId) return badRequest(res, 'phone_and_campaign_required');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  if (await agentLiveRow(user)) return res.status(409).json({ ok: false, error: 'already_logged_in' });
+
+  const [phone] = await rows(
+    `SELECT login, extension, server_ip, protocol, ext_context, phone_ring_timeout, on_hook_agent
+     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
+    [phoneLogin],
+    [],
+  );
+  if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
+  const [campaign] = await rows(
+    `SELECT campaign_id, campaign_name, dial_method, campaign_cid, closer_campaigns
+     FROM vicidial_campaigns WHERE campaign_id = ? AND active = 'Y' LIMIT 1`,
+    [campaignId],
+    [],
+  );
+  if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const rand = Math.floor(Math.random() * 90000000) + 10000000;
+  const sessionName = `${nowEpoch}__${phone.extension}${String(rand).slice(0, 4)}`.slice(0, 40);
+
+  try {
+    // Conference: reuse a previously reserved room for this phone, else grab a
+    // blank one (legacy UPDATE-where-blank LIMIT 1 pattern).
+    let confExten = null;
+    const [prev] = await rows(
+      'SELECT conf_exten FROM vicidial_conferences WHERE extension = ? AND server_ip = ? LIMIT 1',
+      [phone.extension, phone.server_ip],
+      [],
+    );
+    if (prev) {
+      confExten = prev.conf_exten;
+    } else {
+      await execute(
+        "UPDATE vicidial_conferences SET extension = ?, leave_3way = '0' WHERE server_ip = ? AND (extension = '' OR extension IS NULL) LIMIT 1",
+        [phone.extension, phone.server_ip],
+      );
+      const [reserved] = await rows(
+        'SELECT conf_exten FROM vicidial_conferences WHERE server_ip = ? AND (extension = ? OR extension = ?) LIMIT 1',
+        [phone.server_ip, phone.extension, user],
+        [],
+      );
+      confExten = reserved?.conf_exten || null;
+    }
+    if (!confExten) return res.status(503).json({ ok: false, error: 'no_conference_available' });
+
+    await execute(
+      "DELETE FROM web_client_sessions WHERE extension = ? AND server_ip = ? AND program = 'vicidial'",
+      [phone.extension, phone.server_ip],
+    );
+    await execute(
+      "INSERT INTO web_client_sessions VALUES (?, ?, 'vicidial', NOW(), ?)",
+      [phone.extension, phone.server_ip, sessionName],
+    );
+
+    const [callsRow] = await rows(
+      'SELECT COUNT(lead_id) AS calls FROM vicidial_agent_log WHERE user = ? AND event_time >= CURDATE() AND lead_id IS NOT NULL',
+      [user],
+      [],
+    );
+    const callsToday = Number(callsRow?.calls || 0);
+    const autodial = campaign.dial_method === 'MANUAL' ? 'N' : 'Y';
+    const closerCampaigns = String(campaign.closer_campaigns || '').trim();
+
+    await execute(
+      `INSERT INTO vicidial_live_agents
+         (user, server_ip, conf_exten, extension, status, lead_id, campaign_id, uniqueid, callerid,
+          channel, random_id, last_call_time, last_update_time, last_call_finish, closer_campaigns,
+          user_level, campaign_weight, calls_today, last_state_change, outbound_autodial,
+          manager_ingroup_set, on_hook_ring_time, on_hook_agent, campaign_grade, pause_code,
+          last_inbound_call_time, last_inbound_call_finish, last_inbound_call_time_filtered, last_inbound_call_finish_filtered)
+       VALUES (?, ?, ?, ?, 'PAUSED', '', ?, '', '', '', ?, NOW(), NOW(), NOW(), ?, ?, 0, ?, NOW(), ?,
+               'N', ?, ?, 1, 'LOGIN', NOW(), NOW(), NOW(), NOW())`,
+      [user, phone.server_ip, confExten, phone.extension, campaignId, rand, closerCampaigns,
+        Number(req.genxUser.userLevel || 1), callsToday, autodial,
+        Number(phone.phone_ring_timeout || 60), phone.on_hook_agent === 'Y' ? 'Y' : 'N'],
+    );
+    await execute(
+      'INSERT INTO vicidial_session_data SET session_name = ?, user = ?, campaign_id = ?, server_ip = ?, conf_exten = ?, extension = ?, login_time = NOW(), webphone_url = ?, agent_login_call = ?',
+      [sessionName, user, campaignId, phone.server_ip, confExten, phone.extension, '', ''],
+    );
+
+    const logResult = await execute(
+      `INSERT INTO vicidial_agent_log
+         (user, server_ip, event_time, campaign_id, pause_epoch, pause_sec, wait_epoch, user_group, sub_status, pause_type)
+       VALUES (?, ?, NOW(), ?, ?, 0, ?, ?, 'LOGIN', 'AGENT')`,
+      [user, phone.server_ip, campaignId, nowEpoch, nowEpoch, req.genxUser.userGroup || ''],
+    );
+    await execute('UPDATE vicidial_live_agents SET agent_log_id = ? WHERE user = ?', [logResult.insertId, user]);
+
+    // Ring the agent's phone into the conference.
+    const callerCode = `S${nowEpoch}${String(rand).slice(0, 4)}`.slice(0, 20);
+    const dialString = `${phone.protocol || 'SIP'}/${phone.extension}`;
+    const context = phone.ext_context || 'default';
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?)`,
+      [phone.server_ip, callerCode, `Channel: ${dialString}`, `Context: ${context}`, `Exten: ${confExten}`,
+        `Callerid: "${callerCode}" <${campaign.campaign_cid || ''}>`],
+    );
+    await execute(
+      "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'APL', notes = ?",
+      [callerCode, user, `${confExten} ${context} ${dialString}`],
+    ).catch(() => {});
+    await execute(
+      `INSERT INTO vicidial_user_log (user, event, campaign_id, event_date, event_epoch, user_group, extension)
+       VALUES (?, 'LOGIN', ?, NOW(), ?, ?, ?)`,
+      [user, campaignId, nowEpoch, req.genxUser.userGroup || '', phone.extension],
+    ).catch(() => {});
+
+    return res.json({ ok: true, live: await agentLiveRow(user), pauseCodes: await agentPauseCodes(campaignId) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'agent_login_failed' });
+  }
+}
+
+async function agentStatus(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.json({ ok: true, live: null });
+  await execute('UPDATE vicidial_live_agents SET last_update_time = NOW() WHERE user = ?', [req.genxUser.user]).catch(() => {});
+  return res.json({ ok: true, live, pauseCodes: await agentPauseCodes(live.campaign_id) });
+}
+
+// Legacy VDADready/VDADpause: close the open agent_log segment, flip status;
+// PAUSE opens a fresh agent_log row that becomes the live agent_log_id.
+async function agentSetStatus(req, res, target) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  try {
+    const [log] = await rows(
+      'SELECT agent_log_id, pause_epoch, pause_sec, wait_epoch, wait_sec, dispo_epoch FROM vicidial_agent_log WHERE agent_log_id = ? LIMIT 1',
+      [live.agent_log_id],
+      [],
+    );
+    if (target === 'READY') {
+      if (log && (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch))) {
+        const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
+        await execute('UPDATE vicidial_agent_log SET pause_sec = ?, wait_epoch = ? WHERE agent_log_id = ?', [Math.max(pauseSec, 0), nowEpoch, log.agent_log_id]);
+      }
+      await execute(
+        "UPDATE vicidial_live_agents SET status = 'READY', uniqueid = 0, callerid = '', channel = '', comments = '', pause_code = '', external_pause_code = '', last_state_change = NOW() WHERE user = ?",
+        [user],
+      );
+      return res.json({ ok: true, live: await agentLiveRow(user) });
+    }
+
+    // PAUSE
+    if (log && Number(log.wait_epoch) && !Number(log.wait_sec)) {
+      const waitSec = nowEpoch - Number(log.wait_epoch || nowEpoch);
+      await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(waitSec, 0), log.agent_log_id]);
+    }
+    const inserted = await execute(
+      `INSERT INTO vicidial_agent_log
+         (user, server_ip, event_time, campaign_id, pause_epoch, pause_sec, wait_epoch, user_group, pause_type)
+       VALUES (?, ?, NOW(), ?, ?, 0, ?, ?, 'AGENT')`,
+      [user, live.server_ip, live.campaign_id, nowEpoch, nowEpoch, req.genxUser.userGroup || ''],
+    );
+    await execute(
+      "UPDATE vicidial_live_agents SET status = 'PAUSED', agent_log_id = ?, last_state_change = NOW() WHERE user = ?",
+      [inserted.insertId, user],
+    );
+    return res.json({ ok: true, live: await agentLiveRow(user) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'agent_status_failed' });
+  }
+}
+
+// Legacy PauseCodeSubmit: tag the live agent + open agent_log rows.
+async function agentPauseCode(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const code = cleanId(req.body?.pause_code, 6);
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  try {
+    await execute("UPDATE vicidial_live_agents SET pause_code = ?, external_pause_code = '' WHERE user = ?", [code, user]);
+    await execute(
+      "UPDATE vicidial_agent_log SET sub_status = ?, pause_type = 'AGENT' WHERE agent_log_id >= ? AND user = ? AND (sub_status IS NULL OR sub_status = '') ORDER BY agent_log_id LIMIT 2",
+      [code, live.agent_log_id, user],
+    );
+    return res.json({ ok: true, live: await agentLiveRow(user) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'pause_code_failed' });
+  }
+}
+
+// Legacy userLOGout: close timing, remove live rows, kick + release the
+// conference, log the LOGOUT.
+async function agentLogout(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.json({ ok: true, live: null });
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  try {
+    const [log] = await rows(
+      'SELECT agent_log_id, pause_epoch, pause_sec, wait_epoch, wait_sec, dispo_epoch FROM vicidial_agent_log WHERE agent_log_id = ? LIMIT 1',
+      [live.agent_log_id],
+      [],
+    );
+    if (log) {
+      if (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch)) {
+        const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
+        await execute("UPDATE vicidial_agent_log SET wait_epoch = ?, pause_sec = ?, sub_status = IF(sub_status = '' OR sub_status IS NULL, 'LOGOUT', sub_status) WHERE agent_log_id = ?", [nowEpoch, Math.max(pauseSec, 0), log.agent_log_id]);
+      } else if (!Number(log.wait_sec)) {
+        await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(nowEpoch - Number(log.wait_epoch), 0), log.agent_log_id]);
+      }
+    }
+
+    await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [user]);
+    await execute('DELETE FROM vicidial_session_data WHERE user = ? AND conf_exten = ?', [user, live.conf_exten]).catch(() => {});
+    await execute(
+      "DELETE FROM web_client_sessions WHERE extension = ? AND server_ip = ? AND program = 'vicidial'",
+      [live.extension, live.server_ip],
+    ).catch(() => {});
+    await execute(
+      "UPDATE vicidial_conferences SET extension = '' WHERE server_ip = ? AND extension = ?",
+      [live.server_ip, live.extension],
+    ).catch(() => {});
+
+    const queryCID = `ULGH3457${nowEpoch}`;
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, 'Context: default', 'Exten: 8300', 'Priority: 1', ?)`,
+      [live.server_ip, queryCID, `Channel: Local/5555${live.conf_exten}@default`, `Callerid: ${queryCID}`],
+    ).catch(() => {});
+    await execute(
+      `INSERT INTO vicidial_user_log (user, event, campaign_id, event_date, event_epoch, user_group, extension)
+       VALUES (?, 'LOGOUT', ?, NOW(), ?, ?, ?)`,
+      [user, live.campaign_id, nowEpoch, req.genxUser.userGroup || '', live.extension],
+    ).catch(() => {});
+
+    return res.json({ ok: true, live: null });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'agent_logout_failed' });
+  }
+}
+
 // Native port of admin.php ADD=999992/999993: maximum system stats (current
 // OPEN period + closed history from vicidial_daily_max_stats).
 async function maxStatsReport(req, res) {
@@ -10350,6 +10650,13 @@ app.get('/api/reports/sph', requireAccess, sphReport);
 app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
 app.get('/api/reports/url-log', requireAccess, urlLogReport);
 app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
+app.get('/api/agent/setup', requireAccess, agentSetup);
+app.post('/api/agent/login', requireAccess, agentLogin);
+app.get('/api/agent/status', requireAccess, agentStatus);
+app.post('/api/agent/ready', requireAccess, (req, res) => agentSetStatus(req, res, 'READY'));
+app.post('/api/agent/pause', requireAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
+app.post('/api/agent/pause-code', requireAccess, agentPauseCode);
+app.post('/api/agent/logout', requireAccess, agentLogout);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

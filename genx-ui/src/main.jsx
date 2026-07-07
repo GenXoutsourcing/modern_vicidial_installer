@@ -213,13 +213,14 @@ const NAV_ITEMS = [
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
   { key: 'display', label: 'Display', eyebrow: 'Platform', title: 'Screen Labels, Colors and Containers', icon: LayoutDashboard },
   { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
+  { key: 'agentScreen', label: 'Agent Screen', eyebrow: 'Agent', title: 'Agent Screen', icon: Headphones },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
 // muscle-memory transfers: Users | Campaigns | Lists | Scripts | Filters |
 // Inbound | User Groups | Admin | Reports.
 const NAV_GROUPS = [
-  { title: '', keys: ['command'] },
+  { title: '', keys: ['command', 'agentScreen'] },
   { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
   { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
@@ -12131,6 +12132,179 @@ function MaxStatsReportView({ token, onLogout }) {
   );
 }
 
+// Agent screen phase 1: phone+campaign login, live status with 2s polling,
+// READY/PAUSE with pause codes, logout. Mirrors the agc/vicidial.php loop for
+// external SIP phones — logging in rings the selected phone into a conference.
+function AgentScreenView({ token, onLogout }) {
+  const [setup, setSetup] = useState(null);
+  const [phoneLogin, setPhoneLogin] = useState('');
+  const [campaignId, setCampaignId] = useState('');
+  const [live, setLive] = useState(null);
+  const [pauseCodes, setPauseCodes] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const refresh = useCallback(async () => {
+    try {
+      const payload = await apiFetch('/agent/status', token);
+      setLive(payload.live);
+      if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
+    } catch (requestError) {
+      if (requestError.status === 401) onLogout?.();
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const payload = await apiFetch('/agent/setup', token);
+        setSetup(payload);
+        setLive(payload.live);
+      } catch (requestError) {
+        if (requestError.status === 401) onLogout?.();
+      }
+    })();
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    if (!live) return undefined;
+    const timer = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(timer);
+  }, [live ? 1 : 0, refresh]);
+
+  const act = async (path, body) => {
+    setBusy(true);
+    setMessage('');
+    try {
+      const payload = await apiFetch(path, token, { method: 'POST', body: JSON.stringify(body || {}) });
+      setLive(payload.live);
+      if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
+      return payload;
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return null;
+      }
+      const map = {
+        already_logged_in: 'This user already has a live agent session',
+        no_conference_available: 'No free conference on that phone server',
+        campaign_not_allowed: 'Campaign not allowed for your user group',
+        phone_not_found: 'Phone not found or inactive',
+      };
+      setMessage(map[requestError.message] || 'Action failed');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agent</p>
+          <h2>Agent Screen</h2>
+          <p className="action-copy">Log a phone into a campaign. Your phone rings and joins the agent conference; keep it off-hook while logged in.</p>
+        </div>
+      </section>
+      {!live && (
+        <Panel eyebrow="Login" title="Phone and Campaign" icon={Headphones} className="admin-wide-panel">
+          <form
+            className="entity-form report-filter-bar"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const payload = await act('/agent/login', { phone_login: phoneLogin, campaign_id: campaignId });
+              if (payload) setMessage('Logged in — your phone should be ringing');
+            }}
+          >
+            <div className="field-grid">
+              <label>
+                <span>Phone</span>
+                <select value={phoneLogin} onChange={(event) => setPhoneLogin(event.target.value)}>
+                  <option value="">Select a phone</option>
+                  {(setup?.phones || []).map((row) => (
+                    <option key={row.login} value={row.login}>{row.login} ({row.extension} @ {row.server_ip}){row.fullname ? ` - ${row.fullname}` : ''}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Campaign</span>
+                <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+                  <option value="">Select a campaign</option>
+                  {(setup?.campaigns || []).map((row) => (
+                    <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || ''} ({row.dial_method})</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button type="submit" className="primary-action" disabled={busy || !phoneLogin || !campaignId}>
+                <Headphones size={16} aria-hidden="true" />
+                {busy ? 'Logging in' : 'Login to Campaign'}
+              </button>
+            </div>
+          </form>
+          {message && <p className="connection-summary">{message}</p>}
+        </Panel>
+      )}
+      {live && (
+        <>
+          <Panel
+            eyebrow={`Campaign ${live.campaign_id}`}
+            title={`${live.status}${live.pause_code ? ` (${live.pause_code})` : ''} — ${formatSeconds(stateSeconds)} in state`}
+            icon={live.status === 'READY' ? Radio : Clock3}
+            className="admin-wide-panel"
+          >
+            <div className="connection-actions">
+              <span className="connection-status">Phone: {live.extension} @ {live.server_ip}</span>
+              <span className="connection-status">Conference: {live.conf_exten}</span>
+              <span className="connection-status">Calls today: {formatNumber(live.calls_today)}</span>
+              {Number(live.lead_id) > 0 && <span className="connection-status">On lead: {live.lead_id} ({live.callerid})</span>}
+            </div>
+            <div className="modal-actions">
+              {live.status === 'PAUSED'
+                ? (
+                  <button type="button" className="primary-action" disabled={busy} onClick={() => act('/agent/ready')}>
+                    <Radio size={16} aria-hidden="true" />
+                    Go Ready
+                  </button>
+                )
+                : (
+                  <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/pause')}>
+                    <Clock3 size={16} aria-hidden="true" />
+                    Pause
+                  </button>
+                )}
+              <button type="button" className="secondary-action" disabled={busy} onClick={() => act('/agent/logout')}>
+                <LogOut size={16} aria-hidden="true" />
+                Logout Agent
+              </button>
+            </div>
+            {live.status === 'PAUSED' && pauseCodes.length > 0 && (
+              <div className="connection-actions">
+                {pauseCodes.map((row) => (
+                  <button
+                    type="button"
+                    key={row.pause_code}
+                    className={live.pause_code === row.pause_code ? 'row-action tool-picker-item selected' : 'row-action'}
+                    disabled={busy}
+                    onClick={() => act('/agent/pause-code', { pause_code: row.pause_code })}
+                  >
+                    {row.pause_code}{row.pause_code_name ? ` - ${row.pause_code_name}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+            {message && <p className="connection-summary">{message}</p>}
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -12380,6 +12554,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
   if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
+  if (activeView === 'agentScreen') return <AgentScreenView token={token} onLogout={onNavigate ? () => onNavigate('command') : undefined} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
