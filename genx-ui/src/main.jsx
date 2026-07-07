@@ -4992,15 +4992,18 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         )}
 
         {isEdit && action.entity === 'lists' && (
-          <ListConnections
-            admin={admin}
-            listId={form.list_id}
-            user={user}
-            token={token}
-            onLogout={onLogout}
-            onSaved={onSaved}
-            onNavigate={onNavigate}
-          />
+          <>
+            <ListConnections
+              admin={admin}
+              listId={form.list_id}
+              user={user}
+              token={token}
+              onLogout={onLogout}
+              onSaved={onSaved}
+              onNavigate={onNavigate}
+            />
+            <ListCustomFieldsPanel listId={form.list_id} token={token} onLogout={onLogout} />
+          </>
         )}
 
         {isEdit && action.entity === 'users' && (
@@ -5966,6 +5969,289 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   );
 }
 
+// Per-list custom fields (admin_lists_custom.php port). Field defs live in
+// vicidial_lists_fields; data in custom_<list_id> keyed by lead_id.
+const CUSTOM_FIELD_TYPE_OPTIONS = ['TEXT', 'AREA', 'SELECT', 'MULTI', 'RADIO', 'CHECKBOX', 'DATE', 'TIME',
+  'DISPLAY', 'HIDDEN', 'READONLY', 'HIDEBLOB', 'SOURCESELECT'];
+
+const CUSTOM_FIELD_FORM_DEFAULTS = {
+  field_label: '', field_name: '', field_description: '', field_type: 'TEXT', field_options: '',
+  field_rank: '1', field_order: '0', field_size: '20', field_max: '30', field_default: '',
+  field_required: 'N', name_position: 'LEFT', multi_position: 'HORIZONTAL', field_help: '', field_duplicate: 'N',
+};
+
+function parseCustomOptions(def) {
+  return String(def.field_options || '').split('\n').map((line) => {
+    if (!line.trim()) return null;
+    if (def.field_type === 'SOURCESELECT') {
+      const parts = line.split('|');
+      const value = (parts[0] || '').replace(/^option=>/i, '').trim();
+      return value ? { value, label: (parts[1] || value).trim() } : null;
+    }
+    const parts = line.split(',');
+    if (parts.length < 2) return null;
+    return { value: parts[0].trim(), label: parts.slice(1).join(',').trim() || parts[0].trim() };
+  }).filter(Boolean);
+}
+
+function CustomFieldInput({ def, value, onChange, disabled }) {
+  const type = def.field_type;
+  if (type === 'AREA') {
+    return <textarea rows={3} value={value ?? ''} disabled={disabled} onChange={(event) => onChange(event.target.value)} />;
+  }
+  if (['SELECT', 'SOURCESELECT', 'RADIO'].includes(type)) {
+    const options = parseCustomOptions(def);
+    return (
+      <select value={value ?? ''} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+        <option value="">— none —</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    );
+  }
+  if (['MULTI', 'CHECKBOX'].includes(type)) {
+    // Stored comma-joined, matching legacy vdc_form_display.php.
+    const options = parseCustomOptions(def);
+    const selected = new Set(String(value || '').split(',').map((item) => item.trim()).filter(Boolean));
+    return (
+      <div className="status-chip-list">
+        {options.map((option) => {
+          const on = selected.has(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              className={`check-option ${on ? 'selected' : ''}`}
+              disabled={disabled}
+              onClick={() => {
+                const next = new Set(selected);
+                if (on) next.delete(option.value);
+                else next.add(option.value);
+                onChange([...next].join(','));
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+        {!options.length && <em>No options defined</em>}
+      </div>
+    );
+  }
+  if (type === 'DATE') {
+    return <input type="date" value={String(value ?? '').slice(0, 10)} disabled={disabled} onChange={(event) => onChange(event.target.value)} />;
+  }
+  if (type === 'TIME') {
+    return <input type="time" value={String(value ?? '').slice(0, 8)} disabled={disabled} onChange={(event) => onChange(event.target.value)} />;
+  }
+  if (['DISPLAY', 'READONLY', 'SCRIPT', 'BUTTON', 'SWITCH'].includes(type)) {
+    return <input value={value ?? ''} disabled />;
+  }
+  return <input value={value ?? ''} maxLength={Number(def.field_max) > 0 ? Number(def.field_max) : undefined} disabled={disabled} onChange={(event) => onChange(event.target.value)} />;
+}
+
+// Custom-field definition editor shown in the list modal (legacy list FIELDS
+// page). Adding/modifying/deleting a DB-backed field runs the same CREATE /
+// ALTER / DROP on custom_<list_id> that legacy does.
+function ListCustomFieldsPanel({ listId, token, onLogout }) {
+  const list = String(listId || '');
+  const [data, setData] = useState(null);
+  const [editing, setEditing] = useState(null); // null | 'new' | field_id
+  const [form, setForm] = useState(CUSTOM_FIELD_FORM_DEFAULTS);
+  const [state, setState] = useState('');
+  const [confirming, setConfirming] = useState(0);
+
+  const load = useCallback(() => {
+    if (!list) return;
+    apiFetch(`/admin/lists/${encodeURIComponent(list)}/custom-fields`, token)
+      .then(setData)
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        setData({ error: true });
+      });
+  }, [list, token, onLogout]);
+
+  useEffect(() => {
+    setData(null);
+    setEditing(null);
+    setState('');
+    setConfirming(0);
+    load();
+  }, [load]);
+
+  if (!list || !data || data.error) return null;
+
+  const fields = data.fields || [];
+  const needsOptions = ['SELECT', 'MULTI', 'RADIO', 'CHECKBOX', 'SOURCESELECT'].includes(form.field_type);
+
+  function startEdit(row) {
+    setEditing(row ? row.field_id : 'new');
+    setState('');
+    setForm(row ? {
+      ...CUSTOM_FIELD_FORM_DEFAULTS,
+      ...Object.fromEntries(Object.keys(CUSTOM_FIELD_FORM_DEFAULTS).map((key) => [key, String(row[key] ?? CUSTOM_FIELD_FORM_DEFAULTS[key])])),
+    } : CUSTOM_FIELD_FORM_DEFAULTS);
+  }
+
+  async function saveField(event) {
+    event.preventDefault();
+    setState('working');
+    try {
+      const isNew = editing === 'new';
+      const path = isNew
+        ? `/admin/lists/${encodeURIComponent(list)}/custom-fields`
+        : `/admin/lists/${encodeURIComponent(list)}/custom-fields/${encodeURIComponent(editing)}`;
+      const payload = await apiFetch(path, token, { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(form) });
+      setData(payload);
+      setEditing(null);
+      setState('Field saved');
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setState(requestError.status === 403 ? 'Not permitted (custom_fields_modify + level 8 required)'
+        : requestError.status === 409 ? 'A field with that label already exists'
+          : 'Save failed - check the label and options');
+    }
+  }
+
+  async function deleteField(row) {
+    if (confirming !== row.field_id) {
+      setConfirming(row.field_id);
+      return;
+    }
+    setConfirming(0);
+    setState('working');
+    try {
+      const payload = await apiFetch(`/admin/lists/${encodeURIComponent(list)}/custom-fields/${encodeURIComponent(row.field_id)}`, token, { method: 'DELETE' });
+      setData(payload);
+      setState(`Field ${row.field_label} deleted (column dropped)`);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setState(requestError.status === 403 ? 'Not permitted' : 'Delete failed');
+    }
+  }
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Custom Fields</p>
+          <h3>{fields.length ? `${formatNumber(fields.length)} field${fields.length === 1 ? '' : 's'} on custom_${list}` : 'No custom fields on this list yet'}</h3>
+        </div>
+        <SlidersHorizontal size={20} aria-hidden="true" />
+      </div>
+      {!data.customFieldsEnabled && (
+        <p className="connection-summary">Custom Fields are disabled in System Settings (custom_fields_enabled) - agents will not see these until enabled.</p>
+      )}
+      <div className="connection-lists">
+        {fields.map((row) => (
+          <div className="rank-row" key={row.field_id}>
+            <span>{row.field_rank}. <strong>{row.field_label}</strong> ({row.field_type}{row.field_required === 'Y' ? ', required' : ''}) {row.field_name || ''}</span>
+            {data.canModify && (
+              <>
+                <button type="button" className="row-action" onClick={() => startEdit(row)}>
+                  <Pencil size={14} aria-hidden="true" /> Edit
+                </button>
+                <button
+                  type="button"
+                  className={confirming === row.field_id ? 'danger-action confirming compact-action' : 'row-action'}
+                  onClick={() => deleteField(row)}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                  {confirming === row.field_id ? 'Confirm Delete Field + Data?' : 'Delete'}
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="connection-actions">
+        {data.canModify && editing === null && (
+          <button type="button" className="row-action" onClick={() => startEdit(null)}>
+            <Plus size={15} aria-hidden="true" /> Add Custom Field
+          </button>
+        )}
+        {state && state !== 'working' && <span className="connection-status">{state}</span>}
+      </div>
+      {editing !== null && (
+        <form className="entity-form" onSubmit={saveField}>
+          <div className="field-grid">
+            <label>
+              <span>Field Label (column name)</span>
+              <input value={form.field_label} disabled={editing !== 'new'} placeholder="letters, digits, underscore" onChange={(event) => setForm((c) => ({ ...c, field_label: event.target.value }))} />
+            </label>
+            <label>
+              <span>Field Name (display)</span>
+              <input value={form.field_name} onChange={(event) => setForm((c) => ({ ...c, field_name: event.target.value }))} />
+            </label>
+            <label>
+              <span>Type</span>
+              <select value={form.field_type} onChange={(event) => setForm((c) => ({ ...c, field_type: event.target.value }))}>
+                {CUSTOM_FIELD_TYPE_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Rank</span>
+              <input type="number" value={form.field_rank} onChange={(event) => setForm((c) => ({ ...c, field_rank: event.target.value }))} />
+            </label>
+            <label>
+              <span>Order</span>
+              <input type="number" value={form.field_order} onChange={(event) => setForm((c) => ({ ...c, field_order: event.target.value }))} />
+            </label>
+            <label>
+              <span>Required</span>
+              <select value={form.field_required} onChange={(event) => setForm((c) => ({ ...c, field_required: event.target.value }))}>
+                <option value="N">No</option>
+                <option value="Y">Yes</option>
+                <option value="INBOUND_ONLY">Inbound Only</option>
+              </select>
+            </label>
+            <label>
+              <span>Size (display)</span>
+              <input type="number" value={form.field_size} onChange={(event) => setForm((c) => ({ ...c, field_size: event.target.value }))} />
+            </label>
+            <label>
+              <span>Max (storage)</span>
+              <input type="number" value={form.field_max} onChange={(event) => setForm((c) => ({ ...c, field_max: event.target.value }))} />
+            </label>
+            <label>
+              <span>Default</span>
+              <input value={form.field_default} onChange={(event) => setForm((c) => ({ ...c, field_default: event.target.value }))} />
+            </label>
+            <label>
+              <span>Description</span>
+              <input value={form.field_description} onChange={(event) => setForm((c) => ({ ...c, field_description: event.target.value }))} />
+            </label>
+            {needsOptions && (
+              <label className="wide-field">
+                <span>Options (one per line: value,label{form.field_type === 'SOURCESELECT' ? ' - or option=>value|label' : ''})</span>
+                <textarea rows={4} value={form.field_options} onChange={(event) => setForm((c) => ({ ...c, field_options: event.target.value }))} />
+              </label>
+            )}
+            <label className="wide-field">
+              <span>Help Text</span>
+              <input value={form.field_help} onChange={(event) => setForm((c) => ({ ...c, field_help: event.target.value }))} />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={state === 'working'}>
+              <Save size={16} aria-hidden="true" />
+              {state === 'working' ? 'Saving' : editing === 'new' ? 'Add Field' : 'Save Field'}
+            </button>
+            <button type="button" className="secondary-action" onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 // Legacy admin_search_lead.php + admin_modify_lead.php: search leads by
 // phone / lead id / vendor code / name / email, then view and edit the full
 // lead record with per-lead call history, callbacks and recordings.
@@ -5999,6 +6285,9 @@ function LeadSearchView({ admin, user, token, viewParams }) {
   const [modifyCloserLogs, setModifyCloserLogs] = useState(false);
   const [saveState, setSaveState] = useState('');
   const [error, setError] = useState('');
+  const [custom, setCustom] = useState(null);
+  const [customForm, setCustomForm] = useState({});
+  const [customSaveState, setCustomSaveState] = useState('');
 
   const modifyLeads = Number(user?.modifyLeads || 0);
   const canEdit = Number(user?.userLevel || 0) >= 9 || (modifyLeads >= 1 && modifyLeads !== 5);
@@ -6007,12 +6296,21 @@ function LeadSearchView({ admin, user, token, viewParams }) {
   const loadDetail = useCallback(async (leadId) => {
     setError('');
     setSaveState('');
+    setCustom(null);
+    setCustomForm({});
+    setCustomSaveState('');
     try {
       const payload = await apiFetch(`/admin/leads/${encodeURIComponent(leadId)}`, token);
       setDetail(payload);
       setForm({ ...payload.lead });
       setModifyLogs(false);
       setModifyCloserLogs(false);
+      apiFetch(`/admin/leads/${encodeURIComponent(leadId)}/custom`, token)
+        .then((customPayload) => {
+          setCustom(customPayload);
+          setCustomForm({ ...(customPayload.values || {}) });
+        })
+        .catch(() => setCustom(null));
     } catch (requestError) {
       setError(requestError.status === 404 ? 'Lead not found or not in your allowed lists' : 'The lead failed to load');
     }
@@ -6186,6 +6484,51 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               {!canEdit && <p className="connection-summary">Your VICIdial user cannot modify leads (modify_leads setting).</p>}
             </form>
           </Panel>
+          {custom && (custom.fields || []).length > 0 && (
+            <Panel eyebrow={`custom_${custom.listId}`} title={`Custom Fields (${formatNumber(custom.fields.length)})`} icon={SlidersHorizontal} className="admin-wide-panel">
+              <form
+                className="entity-form"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  setCustomSaveState('working');
+                  try {
+                    const payload = await apiFetch(`/admin/leads/${encodeURIComponent(lead.lead_id)}/custom`, token, {
+                      method: 'PUT',
+                      body: JSON.stringify(customForm),
+                    });
+                    setCustom(payload);
+                    setCustomForm({ ...(payload.values || {}) });
+                    setCustomSaveState('Custom fields saved');
+                  } catch (requestError) {
+                    setCustomSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+                  }
+                }}
+              >
+                <div className="field-grid">
+                  {custom.fields.map((def) => (
+                    <label key={def.field_id} className={['AREA', 'MULTI', 'CHECKBOX'].includes(def.field_type) ? 'wide-field' : ''}>
+                      <span>{def.field_name || def.field_label}{def.field_required === 'Y' ? ' *' : ''}</span>
+                      <CustomFieldInput
+                        def={def}
+                        value={customForm[def.field_label]}
+                        disabled={!canEdit}
+                        onChange={(value) => setCustomForm((current) => ({ ...current, [def.field_label]: value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                {canEdit && (
+                  <div className="modal-actions">
+                    <button type="submit" className="primary-action" disabled={customSaveState === 'working'}>
+                      <Save size={16} aria-hidden="true" />
+                      {customSaveState === 'working' ? 'Saving' : 'Save Custom Fields'}
+                    </button>
+                    {customSaveState && customSaveState !== 'working' && <span className="connection-status">{customSaveState}</span>}
+                  </div>
+                )}
+              </form>
+            </Panel>
+          )}
           <Panel eyebrow="History" title={`Calls (${formatNumber((detail.calls || []).length)})`} icon={PhoneCall} className="admin-wide-panel">
             <DataTable
               emptyLabel="No calls logged for this lead"

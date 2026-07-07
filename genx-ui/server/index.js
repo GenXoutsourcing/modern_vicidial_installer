@@ -206,6 +206,7 @@ function publicUser(row) {
     deleteCallTimes: row.delete_call_times === '1',
     downloadLists: row.download_lists === '1',
     modifyLeads: Number(row.modify_leads || 0),
+    customFieldsModify: row.custom_fields_modify === '1',
     astDeletePhones: row.ast_delete_phones === '1',
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
@@ -372,6 +373,7 @@ async function authenticateVicidialUser(username, password) {
             u.delete_call_times,
             u.download_lists,
             u.modify_leads,
+            u.custom_fields_modify,
             u.ast_delete_phones,
             u.modify_remoteagents,
             u.delete_remote_agents,
@@ -10601,6 +10603,271 @@ async function adminLeadUpdate(req, res) {
   }
 }
 
+// ---- Per-list custom fields (admin_lists_custom.php port) ----
+// Field definitions live in vicidial_lists_fields; the data lives in a
+// per-list MyISAM table custom_<list_id> keyed by lead_id. DISPLAY / SCRIPT /
+// SWITCH / BUTTON types, duplicate fields, and labels that collide with
+// standard vicidial_list columns get a definition row but NO data column,
+// exactly like legacy.
+const CUSTOM_FIELD_TYPES = ['TEXT', 'AREA', 'SELECT', 'MULTI', 'RADIO', 'CHECKBOX', 'DATE', 'TIME',
+  'DISPLAY', 'SCRIPT', 'HIDDEN', 'READONLY', 'HIDEBLOB', 'SWITCH', 'SOURCESELECT', 'BUTTON'];
+const CUSTOM_NON_DB_TYPES = new Set(['DISPLAY', 'SCRIPT', 'SWITCH', 'BUTTON']);
+const VICIDIAL_LIST_COLUMNS = new Set(['lead_id', 'entry_date', 'modify_date', 'status', 'user',
+  'vendor_lead_code', 'source_id', 'list_id', 'gmt_offset_now', 'called_since_last_reset', 'phone_code',
+  'phone_number', 'title', 'first_name', 'middle_initial', 'last_name', 'address1', 'address2', 'address3',
+  'city', 'state', 'province', 'postal_code', 'country_code', 'gender', 'date_of_birth', 'alt_phone',
+  'email', 'security_phrase', 'comments', 'called_count', 'last_local_call_time', 'rank', 'owner',
+  'entry_list_id']);
+// Legacy blocks MySQL reserved words as column labels; cover the common ones
+// plus everything MariaDB actually reserves (identifiers are also backtick
+// quoted everywhere, so this is defense in depth, not the only guard).
+const MYSQL_RESERVED_WORDS = new Set(('accessible|add|all|alter|analyze|and|as|asc|asensitive|before|between|bigint|binary|blob|both|by|call|cascade|case|change|char|character|check|collate|column|condition|constraint|continue|convert|create|cross|current_date|current_time|current_timestamp|current_user|cursor|database|databases|date|datetime|day_hour|day_microsecond|day_minute|day_second|dec|decimal|declare|default|delayed|delete|desc|describe|deterministic|distinct|distinctrow|div|double|drop|dual|each|else|elseif|enclosed|enum|escaped|exists|exit|explain|false|fetch|float|float4|float8|for|force|foreign|from|fulltext|grant|group|having|high_priority|hour_microsecond|hour_minute|hour_second|if|ignore|in|index|infile|inner|inout|insensitive|insert|int|int1|int2|int3|int4|int8|integer|interval|into|is|iterate|join|key|keys|kill|leading|leave|left|like|limit|linear|lines|load|localtime|localtimestamp|lock|long|longblob|longtext|loop|low_priority|match|maxvalue|mediumblob|mediumint|mediumtext|middleint|minute_microsecond|minute_second|mod|modifies|natural|not|no_write_to_binlog|null|numeric|on|optimize|option|optionally|or|order|out|outer|outfile|precision|primary|procedure|purge|range|read|reads|read_write|real|references|regexp|release|rename|repeat|replace|require|resignal|restrict|return|revoke|right|rlike|schema|schemas|second_microsecond|select|sensitive|separator|set|show|signal|smallint|spatial|specific|sql|sqlexception|sqlstate|sqlwarning|sql_big_result|sql_calc_found_rows|sql_small_result|ssl|starting|straight_join|table|terminated|text|then|time|timestamp|tinyblob|tinyint|tinytext|to|trailing|trigger|true|undo|union|unique|unlock|unsigned|update|usage|use|using|utc_date|utc_time|utc_timestamp|values|varbinary|varchar|varcharacter|varying|when|where|while|window|with|write|xor|year_month|zerofill|lead_id|user').split('|'));
+
+function canModifyCustomFields(req, res) {
+  const u = req.genxUser;
+  const allowed = Number(u?.userLevel || 0) >= 9
+    || (Number(u?.userLevel || 0) >= 8 && Boolean(u?.customFieldsModify));
+  if (allowed) return true;
+  res.status(403).json({ ok: false, error: 'permission_denied' });
+  return false;
+}
+
+function customTable(listId) {
+  return `custom_${Number(listId)}`;
+}
+
+async function customTableExists(listId) {
+  const found = await rows('SHOW TABLES LIKE ?', [customTable(listId)], []);
+  return found.length > 0;
+}
+
+function customFieldIsDbBacked(def) {
+  return !CUSTOM_NON_DB_TYPES.has(def.field_type)
+    && def.field_duplicate !== 'Y'
+    && !VICIDIAL_LIST_COLUMNS.has(String(def.field_label).toLowerCase());
+}
+
+function customEnumOptions(def) {
+  const values = [];
+  for (const line of String(def.field_options || '').split('\n')) {
+    if (!/[,|]/.test(line)) continue;
+    let value;
+    if (def.field_type === 'SOURCESELECT') value = line.split('|')[0].replace(/^option=>/i, '');
+    else value = line.split(',')[0];
+    value = value.replace(/['"\\]/g, '').trim();
+    if (value !== '') values.push(value);
+  }
+  return values;
+}
+
+// Builds the column type DDL fragment + legacy field_cost. Encryption is not
+// supported in genx (field_encrypt always saved as N), so those branches are
+// intentionally omitted.
+function customColumnDdl(def) {
+  const type = def.field_type;
+  if (['SELECT', 'SOURCESELECT', 'RADIO'].includes(type)) {
+    const options = customEnumOptions(def);
+    if (!options.length) return { error: 'options_required' };
+    const list = options.map((value) => `'${value}'`).join(',');
+    return { sql: `ENUM(${list})`, cost: list.length * 3 };
+  }
+  if (['MULTI', 'CHECKBOX'].includes(type)) {
+    const options = customEnumOptions(def);
+    const list = options.map((value) => `'${value}'`).join(',');
+    const width = Math.max(1, list.length);
+    return { sql: `VARCHAR(${width})`, cost: width * 3 };
+  }
+  if (['TEXT', 'HIDDEN', 'READONLY'].includes(type)) {
+    const max = Math.max(1, Math.trunc(Number(def.field_max) || 0));
+    return { sql: `VARCHAR(${max})`, cost: (max + 1) * 3 };
+  }
+  if (type === 'HIDEBLOB') return { sql: 'BLOB', cost: 45 };
+  if (type === 'AREA') return { sql: 'TEXT', cost: 45 };
+  if (type === 'DATE') return { sql: 'DATE', cost: 30 };
+  if (type === 'TIME') return { sql: 'TIME', cost: 24 };
+  return { error: 'bad_field_type' };
+}
+
+function customDefaultClause(def) {
+  const value = String(def.field_default ?? '');
+  if (value === '' || value === 'NULL') return '';
+  if (['AREA', 'DATE', 'TIME', 'HIDEBLOB'].includes(def.field_type)) return '';
+  return ` DEFAULT '${value.replace(/['"\\]/g, '')}'`;
+}
+
+async function getListCustomFields(req, res) {
+  const listId = Number(req.params.id) || 0;
+  if (!listId) return badRequest(res, 'invalid_list_id');
+  const [defs, tableExists, [settings]] = await Promise.all([
+    rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? ORDER BY field_rank, field_order, field_id LIMIT 200', [listId], []),
+    customTableExists(listId),
+    rows('SELECT custom_fields_enabled FROM system_settings LIMIT 1', [], []),
+  ]);
+  return res.json({
+    ok: true,
+    fields: defs,
+    tableExists,
+    customFieldsEnabled: Number(settings?.custom_fields_enabled || 0) > 0,
+    canModify: Number(req.genxUser?.userLevel || 0) >= 9
+      || (Number(req.genxUser?.userLevel || 0) >= 8 && Boolean(req.genxUser?.customFieldsModify)),
+  });
+}
+
+function cleanCustomFieldPayload(body) {
+  return {
+    field_name: cleanText(body?.field_name, 100),
+    field_description: cleanText(body?.field_description, 100),
+    field_rank: Math.max(0, Math.trunc(Number(body?.field_rank) || 0)),
+    field_help: cleanText(body?.field_help, 1000),
+    field_type: CUSTOM_FIELD_TYPES.includes(body?.field_type) ? body.field_type : 'TEXT',
+    field_options: String(body?.field_options || '').slice(0, 5000),
+    field_size: Math.max(0, Math.trunc(Number(body?.field_size) || 20)),
+    field_max: Math.max(1, Math.trunc(Number(body?.field_max) || 30)),
+    field_default: cleanText(body?.field_default, 255),
+    field_required: ['Y', 'N', 'INBOUND_ONLY'].includes(body?.field_required) ? body.field_required : 'N',
+    name_position: ['LEFT', 'TOP'].includes(body?.name_position) ? body.name_position : 'LEFT',
+    multi_position: ['HORIZONTAL', 'VERTICAL'].includes(body?.multi_position) ? body.multi_position : 'HORIZONTAL',
+    field_order: Math.max(0, Math.trunc(Number(body?.field_order) || 0)),
+    field_encrypt: 'N',
+    field_show_hide: 'DISABLED',
+    field_duplicate: body?.field_duplicate === 'Y' ? 'Y' : 'N',
+  };
+}
+
+async function saveListCustomField(req, res, mode) {
+  if (!canModifyCustomFields(req, res)) return;
+  const listId = Number(req.params.id) || 0;
+  if (!listId) return badRequest(res, 'invalid_list_id');
+  const payload = cleanCustomFieldPayload(req.body || {});
+  try {
+    let label;
+    let fieldId = 0;
+    if (mode === 'create') {
+      label = String(req.body?.field_label || '').replace(/[^_0-9a-zA-Z]/g, '');
+      if (label.length < 2 || label.length > 50) return badRequest(res, 'invalid_field_label');
+      if (MYSQL_RESERVED_WORDS.has(label.toLowerCase())) return badRequest(res, 'reserved_field_label');
+      const dup = await scalar('SELECT COUNT(*) AS value FROM vicidial_lists_fields WHERE list_id = ? AND field_label = ?', [listId, label], 0);
+      if (Number(dup) > 0) return res.status(409).json({ ok: false, error: 'field_label_exists' });
+    } else {
+      fieldId = Number(req.params.fieldId) || 0;
+      const [existing] = await rows('SELECT field_id, field_label FROM vicidial_lists_fields WHERE field_id = ? AND list_id = ? LIMIT 1', [fieldId, listId], []);
+      if (!existing) return res.status(404).json({ ok: false, error: 'field_not_found' });
+      label = existing.field_label;
+    }
+    const def = { ...payload, field_label: label };
+    const dbBacked = customFieldIsDbBacked(def);
+    let ddl = { sql: '', cost: 3 };
+    if (dbBacked) {
+      ddl = customColumnDdl(def);
+      if (ddl.error) return badRequest(res, ddl.error);
+    }
+    const tableExists = await customTableExists(listId);
+    const table = quoteId(customTable(listId));
+    const columnSql = dbBacked ? `${quoteId(label)} ${ddl.sql}${customDefaultClause(def)}` : '';
+    const ddlRan = [];
+    if (!tableExists) {
+      const createSql = dbBacked
+        ? `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL, ${columnSql}) ENGINE=MyISAM`
+        : `CREATE TABLE ${table} (lead_id INT(9) UNSIGNED PRIMARY KEY NOT NULL) ENGINE=MyISAM`;
+      await pool.query(createSql);
+      ddlRan.push(createSql);
+    } else if (dbBacked) {
+      const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [label], []);
+      const alterSql = `ALTER TABLE ${table} ${columnRow ? 'MODIFY' : 'ADD'} ${columnSql}`;
+      await pool.query(alterSql);
+      ddlRan.push(alterSql);
+    }
+    if (mode === 'create') {
+      const { assignments, values } = dynamicAssignments({ ...def, list_id: listId, field_cost: ddl.cost });
+      const result = await execute(`INSERT INTO vicidial_lists_fields SET ${assignments}`, values);
+      fieldId = Number(result.insertId || 0);
+      await adminLog(req, 'CUSTOM_FIELDS', 'ADD', String(listId), 'ADMIN ADD CUSTOM LIST FIELD', `${ddlRan.join(' | ')} | INSERT vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
+    } else {
+      const { assignments, values } = dynamicAssignments({ ...payload, field_cost: ddl.cost });
+      await execute(`UPDATE vicidial_lists_fields SET ${assignments} WHERE field_id = ? AND list_id = ?`, [...values, fieldId, listId]);
+      await adminLog(req, 'CUSTOM_FIELDS', 'MODIFY', String(listId), 'ADMIN MODIFY CUSTOM LIST FIELD', `${ddlRan.join(' | ')} | UPDATE vicidial_lists_fields ${label}`, `field_id ${fieldId}`);
+    }
+    return getListCustomFields(req, res);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'custom_field_save_failed' });
+  }
+}
+
+async function deleteListCustomField(req, res) {
+  if (!canModifyCustomFields(req, res)) return;
+  const listId = Number(req.params.id) || 0;
+  const fieldId = Number(req.params.fieldId) || 0;
+  if (!listId || !fieldId) return badRequest(res, 'invalid_ids');
+  try {
+    const [def] = await rows('SELECT * FROM vicidial_lists_fields WHERE field_id = ? AND list_id = ? LIMIT 1', [fieldId, listId], []);
+    if (!def) return res.status(404).json({ ok: false, error: 'field_not_found' });
+    let ddlRan = '';
+    if (customFieldIsDbBacked(def) && await customTableExists(listId)) {
+      const table = quoteId(customTable(listId));
+      const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
+      if (columnRow) {
+        ddlRan = `ALTER TABLE ${table} DROP ${quoteId(def.field_label)}`;
+        await pool.query(ddlRan);
+      }
+    }
+    await execute('DELETE FROM vicidial_lists_fields WHERE field_id = ? AND list_id = ? LIMIT 1', [fieldId, listId]);
+    await adminLog(req, 'CUSTOM_FIELDS', 'DELETE', String(listId), 'ADMIN DELETE CUSTOM LIST FIELD', `${ddlRan} | DELETE vicidial_lists_fields ${def.field_label}`, `field_id ${fieldId}`);
+    return getListCustomFields(req, res);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'custom_field_delete_failed' });
+  }
+}
+
+// Per-lead custom data: read and write the lead's row in custom_<list_id>.
+async function getLeadCustomData(req, res) {
+  const id = Number(req.params.id) || 0;
+  if (!id) return badRequest(res, 'invalid_lead_id');
+  const [lead] = await rows('SELECT lead_id, list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [id], []);
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const defs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? ORDER BY field_rank, field_order, field_id LIMIT 200', [lead.list_id], []);
+  let values = null;
+  if (defs.length && await customTableExists(lead.list_id)) {
+    const [row] = await rows(`SELECT * FROM ${quoteId(customTable(lead.list_id))} WHERE lead_id = ? LIMIT 1`, [id], []);
+    values = row || {};
+  }
+  return res.json({ ok: true, listId: lead.list_id, fields: defs, values });
+}
+
+async function putLeadCustomData(req, res) {
+  const modifyLeads = Number(req.genxUser?.modifyLeads || 0);
+  const isLevel9 = Number(req.genxUser?.userLevel || 0) >= 9;
+  if (!isLevel9 && (modifyLeads < 1 || modifyLeads === 5)) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = Number(req.params.id) || 0;
+  if (!id) return badRequest(res, 'invalid_lead_id');
+  const [lead] = await rows('SELECT lead_id, list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [id], []);
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const defs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? LIMIT 200', [lead.list_id], []);
+  if (!defs.length || !(await customTableExists(lead.list_id))) {
+    return badRequest(res, 'no_custom_fields');
+  }
+  const editable = new Map(defs.filter((def) => customFieldIsDbBacked(def) && !['READONLY', 'DISPLAY'].includes(def.field_type)).map((def) => [def.field_label, def]));
+  const body = req.body || {};
+  const updates = [];
+  const params = [];
+  for (const [label] of editable) {
+    if (body[label] === undefined) continue;
+    updates.push(`${quoteId(label)} = ?`);
+    params.push(String(body[label]).slice(0, 10000));
+  }
+  if (!updates.length) return badRequest(res, 'no_fields');
+  try {
+    const table = quoteId(customTable(lead.list_id));
+    await execute(`INSERT IGNORE INTO ${table} (lead_id) VALUES (?)`, [id]);
+    await execute(`UPDATE ${table} SET ${updates.join(', ')} WHERE lead_id = ?`, [...params, id]);
+    await adminLog(req, 'LEADS', 'MODIFY', String(id), 'GENX ADMIN MODIFY LEAD CUSTOM FIELDS', `UPDATE ${customTable(lead.list_id)} (${updates.length} fields)`, '');
+    return getLeadCustomData(req, res);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'custom_data_save_failed' });
+  }
+}
+
 const SCREEN_LABEL_FIELDS = ['label_hide_field_logs', 'label_title', 'label_first_name', 'label_middle_initial',
   'label_last_name', 'label_address1', 'label_address2', 'label_address3', 'label_city', 'label_state',
   'label_province', 'label_postal_code', 'label_vendor_lead_code', 'label_gender', 'label_phone_number',
@@ -13188,6 +13455,12 @@ app.delete('/api/admin/extension-groups/:id', requireAccess, deleteExtensionGrou
 app.get('/api/admin/leads/search', requireAccess, adminLeadSearch);
 app.get('/api/admin/leads/:id', requireAccess, adminLeadDetail);
 app.put('/api/admin/leads/:id', requireAccess, adminLeadUpdate);
+app.get('/api/admin/leads/:id/custom', requireAccess, getLeadCustomData);
+app.put('/api/admin/leads/:id/custom', requireAccess, putLeadCustomData);
+app.get('/api/admin/lists/:id/custom-fields', requireAccess, getListCustomFields);
+app.post('/api/admin/lists/:id/custom-fields', requireAccess, (req, res) => saveListCustomField(req, res, 'create'));
+app.put('/api/admin/lists/:id/custom-fields/:fieldId', requireAccess, (req, res) => saveListCustomField(req, res, 'update'));
+app.delete('/api/admin/lists/:id/custom-fields/:fieldId', requireAccess, deleteListCustomField);
 app.post('/api/admin/conf-templates', requireAccess, (req, res) => saveConfTemplate(req, res, 'create'));
 app.put('/api/admin/conf-templates/:id', requireAccess, (req, res) => saveConfTemplate(req, res, 'update'));
 app.delete('/api/admin/conf-templates/:id', requireAccess, deleteConfTemplate);
