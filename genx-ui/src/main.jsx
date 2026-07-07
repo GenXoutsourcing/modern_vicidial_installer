@@ -14211,7 +14211,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       {/* Legacy agc top line: logged-in summary + LOGOUT */}
       <div className="agc-topline">
         <span>
-          Logged in as User: {authInfo?.user?.user || ''} on Phone: {live?.extension || authInfo?.phone?.login || ''}
+          Logged in as User: {authInfo?.user?.user || live?.user || ''} on Phone: {live?.extension || authInfo?.phone?.login || ''}
           {live ? ` to campaign: ${live.campaign_id}` : ''}
         </span>
         <button
