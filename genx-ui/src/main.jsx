@@ -7690,6 +7690,129 @@ function RemoteAgentsView({ admin, user, onAction }) {
   );
 }
 
+const LIST_STATUS_ROLLUPS = [
+  ['human_answered', 'Human Answered'],
+  ['sale', 'Sales'],
+  ['dnc', 'DNC'],
+  ['customer_contact', 'Customer Contact'],
+  ['not_interested', 'Not Interested'],
+  ['unworkable', 'Unworkable'],
+  ['scheduled_callback', 'Scheduled Callbacks'],
+  ['completed', 'Completed'],
+];
+
+function ListStatusesReportView({ token, onLogout }) {
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (listIds) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = listIds.length ? `?list_ids=${encodeURIComponent(listIds.join(','))}` : '';
+      const payload = await apiFetch(`/reports/list-statuses${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([]);
+  }, [load]);
+
+  const lists = data?.lists || [];
+  const entries = data?.entries;
+  const flagMap = new Map((data?.statusFlags || []).map((row) => [String(row.status), row]));
+
+  const perList = new Map();
+  for (const row of entries || []) {
+    const key = String(row.list_id);
+    if (!perList.has(key)) perList.set(key, { statuses: [], total: 0, rollups: Object.fromEntries(LIST_STATUS_ROLLUPS.map(([flag]) => [flag, 0])) });
+    const bucket = perList.get(key);
+    bucket.statuses.push(row);
+    bucket.total += Number(row.leads || 0);
+    const flags = flagMap.get(String(row.status));
+    if (flags) {
+      for (const [flag] of LIST_STATUS_ROLLUPS) {
+        if (flags[flag] === 'Y') bucket.rollups[flag] += Number(row.leads || 0);
+      }
+    }
+  }
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>List Statuses</h2>
+          <p className="action-copy">Status breakdown and outcome rollups for selected lists.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Lists" icon={Search} className="admin-wide-panel">
+        <div className="connection-actions">
+          {lists.map((row) => {
+            const id = String(row.list_id);
+            const isSelected = selected.includes(id);
+            return (
+              <button
+                type="button"
+                key={id}
+                className={isSelected ? 'row-action tool-picker-item selected' : 'row-action'}
+                onClick={() => {
+                  const next = isSelected ? selected.filter((item) => item !== id) : [...selected, id];
+                  setSelected(next);
+                  load(next);
+                }}
+              >
+                {row.list_id} - {row.list_name || ''}{isSelected ? ' ✓' : ''}
+              </button>
+            );
+          })}
+          {!lists.length && <span className="connection-summary">No lists available</span>}
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        {loading && <p className="connection-summary">Loading...</p>}
+      </Panel>
+      {entries && selected.length > 0 && (
+        <section className="admin-grid media-tools-grid">
+          {selected.map((listId) => {
+            const bucket = perList.get(listId) || { statuses: [], total: 0, rollups: {} };
+            const listMeta = lists.find((row) => String(row.list_id) === listId);
+            return (
+              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId} (${formatNumber(bucket.total)} leads)`} icon={Database}>
+                <div className="connection-actions">
+                  {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
+                    <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
+                  ))}
+                </div>
+                <DataTable
+                  emptyLabel="No leads in this list"
+                  rows={bucket.statuses.map((row) => ({ ...row, id: `${row.list_id}-${row.status}` }))}
+                  columns={[
+                    { key: 'status', label: 'Status' },
+                    { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '' },
+                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%` },
+                  ]}
+                />
+              </Panel>
+            );
+          })}
+        </section>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -7904,6 +8027,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
   if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
+  if (activeView === 'reportListStatuses') return <ListStatusesReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

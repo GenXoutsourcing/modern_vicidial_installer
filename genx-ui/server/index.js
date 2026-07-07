@@ -3812,6 +3812,49 @@ async function campaignSummaryReport(req, res) {
   return res.json({ ok: true, campaigns, generatedAt: new Date().toISOString() });
 }
 
+// Native port of AST_LISTS_stats.php: per-list status breakdown with the
+// status-flag rollups computed client-side from the flag map.
+async function listStatusesReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const listIdsRaw = String(req.query?.list_ids || '').split(',').map((item) => cleanId(item, 30)).filter(Boolean).slice(0, 100);
+
+  const listParams = [];
+  const listWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', listParams);
+  const lists = await rows(
+    `SELECT list_id, list_name, campaign_id, active FROM vicidial_lists WHERE ${listWhere} ORDER BY list_id ASC LIMIT 500`,
+    listParams,
+    [],
+  );
+
+  if (!listIdsRaw.length) return res.json({ ok: true, lists, entries: null, statusFlags: [] });
+
+  const allowedListIds = new Set(lists.map((row) => String(row.list_id)));
+  const listIds = listIdsRaw.filter((id) => allowedListIds.has(id));
+  if (!listIds.length) return res.json({ ok: true, lists, entries: [], statusFlags: [] });
+
+  const placeholders = listIds.map(() => '?').join(',');
+  const entries = await rows(
+    `SELECT list_id, status, COUNT(*) AS leads
+     FROM vicidial_list WHERE list_id IN (${placeholders})
+     GROUP BY list_id, status ORDER BY list_id ASC, status ASC LIMIT 2000`,
+    listIds,
+    [],
+  );
+  const statusFlags = await rows(
+    `SELECT status, status_name, human_answered, sale, dnc, customer_contact, not_interested,
+            unworkable, scheduled_callback, completed
+     FROM vicidial_statuses
+     UNION
+     SELECT status, status_name, human_answered, sale, dnc, customer_contact, not_interested,
+            unworkable, scheduled_callback, completed
+     FROM vicidial_campaign_statuses LIMIT 1000`,
+    [],
+    [],
+  );
+
+  return res.json({ ok: true, lists, entries, statusFlags });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -7494,6 +7537,7 @@ app.get('/api/reports/realtime-main', requireAccess, realtimeMainReport);
 app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);
 app.get('/api/reports/whiteboard', requireAccess, whiteboardReport);
 app.get('/api/reports/hopper-list', requireAccess, hopperListReport);
+app.get('/api/reports/list-statuses', requireAccess, listStatusesReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

@@ -115,7 +115,7 @@ export const REPORT_GROUPS = [
       { label: 'Outbound IVR', href: '/vicidial/AST_IVRstats.php?type=outbound' },
       { label: 'Lead Source', href: '/vicidial/AST_source_vlc_status_report.php' },
       { label: 'Hopper List', href: '/vicidial/AST_VICIDIAL_hopperlist.php', view: 'reportHopperList' },
-      { label: 'List Statuses', href: '/vicidial/AST_LISTS_stats.php' },
+      { label: 'List Statuses', href: '/vicidial/AST_LISTS_stats.php', view: 'reportListStatuses' },
       { label: 'List Campaign Statuses', href: '/vicidial/AST_LISTS_campaign_stats.php' },
       { label: 'Campaign Status List', href: '/vicidial/AST_campaign_status_list_report.php' },
       { label: 'Dialer Inventory', href: '/vicidial/AST_dialer_inventory_report.php' },
