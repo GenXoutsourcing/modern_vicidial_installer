@@ -7022,7 +7022,7 @@ function MediaToolsView({ admin, user, onAction }) {
 
   return (
     <>
-      <section className="admin-grid">
+      <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Security"
           title={`IP Lists (${formatNumber(ipLists.length)})`}
