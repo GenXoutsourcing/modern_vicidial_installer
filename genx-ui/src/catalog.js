@@ -141,10 +141,10 @@ export const REPORT_GROUPS = [
   {
     title: 'Exports',
     items: [
-      { label: 'Export Calls', href: '/vicidial/call_report_export.php' },
+      { label: 'Export Calls', href: '/vicidial/call_report_export.php', view: 'reportExports' },
       { label: 'Export Calls by Carrier', href: '/vicidial/call_report_export_carrier.php' },
-      { label: 'Export Leads', href: '/vicidial/lead_report_export.php' },
-      { label: 'Callbacks Export', href: '/vicidial/callbacks_export.php' },
+      { label: 'Export Leads', href: '/vicidial/lead_report_export.php', view: 'reportExports' },
+      { label: 'Callbacks Export', href: '/vicidial/callbacks_export.php', view: 'reportExports' },
       { label: 'CallCard Export', href: '/vicidial/callcard_report_export.php' },
       { label: 'Called Counts List IDs', href: '/vicidial/called_counts_multilist_report.php' },
     ],

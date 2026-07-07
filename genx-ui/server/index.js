@@ -5763,6 +5763,171 @@ async function userGroupHourlyReport(req, res) {
   return res.json({ ok: true, campaigns, date: day, sections: { hourly, totals, grand } });
 }
 
+// --- Export reports (native ports of call_report_export.php,
+// lead_report_export.php, callbacks_export.php) ---
+// All three emit CSV downloads with the same lead/phone masking rules as
+// downloadList.
+function csvExportSender(req, res, filename, columns, dataRows) {
+  const hideLead = Boolean(req.genxUser?.adminHideLeadData);
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  const escapeCell = (value) => {
+    const text = value == null ? '' : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = [columns.join(',')];
+  for (const row of dataRows) {
+    lines.push(columns.map((column) => {
+      let value = row[column];
+      if (column === 'phone_number' || column === 'alt_phone') {
+        if (phoneMode !== '0') value = maskPhoneNumber(value, phoneMode);
+      } else if (hideLead && ['vendor_lead_code', 'security_phrase', 'comments'].includes(column)) {
+        value = maskText(value);
+      }
+      return escapeCell(value);
+    }).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(lines.join('\r\n'));
+}
+
+const EXPORT_CALL_COLUMNS = [
+  'call_date', 'phone_number', 'status', 'user', 'full_name', 'campaign_id', 'vendor_lead_code',
+  'source_id', 'list_id', 'gmt_offset_now', 'phone_code', 'title', 'first_name', 'middle_initial',
+  'last_name', 'address1', 'address2', 'address3', 'city', 'state', 'province', 'postal_code',
+  'country_code', 'gender', 'date_of_birth', 'alt_phone', 'email', 'security_phrase', 'comments',
+  'length_in_sec', 'user_group', 'alt_dial', 'rank', 'owner', 'lead_id', 'uniqueid',
+];
+
+async function exportCallsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const source = cleanChoice(req.query?.source, ['OUTBOUND', 'INBOUND', 'BOTH'], 'BOTH');
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+  const wantList = String(req.query?.picker || '') === '1';
+  if (wantList) {
+    const { groups } = await inboundGroupSelection(req);
+    return res.json({ ok: true, campaigns, groups });
+  }
+
+  const leadCols = 'vi.vendor_lead_code, vi.source_id, vi.gmt_offset_now, vi.phone_code, vi.title, vi.first_name, vi.middle_initial, vi.last_name, vi.address1, vi.address2, vi.address3, vi.city, vi.state, vi.province, vi.postal_code, vi.country_code, vi.gender, vi.date_of_birth, vi.alt_phone, vi.email, vi.security_phrase, vi.comments, vi.rank, vi.owner';
+  const results = [];
+  if (source !== 'INBOUND' && campaignIds.length) {
+    const ph = campaignIds.map(() => '?').join(',');
+    results.push(...await rows(
+      `SELECT vl.call_date, vl.phone_number, vl.status, vl.user, vu.full_name, vl.campaign_id,
+              vl.list_id, ${leadCols}, vl.length_in_sec, vl.user_group, vl.alt_dial,
+              vl.lead_id, vl.uniqueid
+       FROM vicidial_log vl
+       JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
+       LEFT JOIN vicidial_users vu ON vu.user = vl.user
+       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+       ORDER BY vl.call_date ASC LIMIT 100000`,
+      [begin, end, ...campaignIds],
+      [],
+    ));
+  }
+  const groupIdsRaw = String(req.query?.groups || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  if (source !== 'OUTBOUND' && groupIdsRaw.length) {
+    const { groups } = await inboundGroupSelection(req);
+    const allowedGroups = new Set(groups.map((row) => String(row.group_id)));
+    const groupIds = groupIdsRaw.filter((id) => allowedGroups.has(id));
+    if (groupIds.length) {
+      const ph = groupIds.map(() => '?').join(',');
+      results.push(...await rows(
+        `SELECT cl.call_date, cl.phone_number, cl.status, cl.user, vu.full_name, cl.campaign_id,
+                cl.list_id, ${leadCols}, cl.length_in_sec, cl.user_group, '' AS alt_dial,
+                cl.lead_id, cl.uniqueid
+         FROM vicidial_closer_log cl
+         JOIN vicidial_list vi ON vi.lead_id = cl.lead_id
+         LEFT JOIN vicidial_users vu ON vu.user = cl.user
+         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${ph})
+         ORDER BY cl.call_date ASC LIMIT 100000`,
+        [begin, end, ...groupIds],
+        [],
+      ));
+    }
+  }
+  await adminLog(req, 'REPORTS', 'EXPORT', '', 'GENX EXPORT CALLS', 'SELECT FROM call logs', `${results.length} rows`);
+  return csvExportSender(req, res, `calls_export_${beginDate}_${endDate}.csv`, EXPORT_CALL_COLUMNS, results);
+}
+
+async function exportLeadsReport(req, res) {
+  if (!requireModify(req, res, 'downloadLists')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const statusesRaw = String(req.query?.statuses || '').split(',').map((item) => cleanId(item, 10)).filter(Boolean).slice(0, 100);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  if (String(req.query?.picker || '') === '1') return res.json({ ok: true, campaigns });
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+  if (!campaignIds.length) return badRequest(res, 'campaign_required');
+
+  const listRows = await rows(
+    `SELECT list_id FROM vicidial_lists WHERE campaign_id IN (${campaignIds.map(() => '?').join(',')}) LIMIT 1000`,
+    campaignIds,
+    [],
+  );
+  const listIds = listRows.map((row) => String(row.list_id));
+  if (!listIds.length) return csvExportSender(req, res, `leads_export_${beginDate}_${endDate}.csv`, LIST_DOWNLOAD_COLUMNS, []);
+
+  let statusSql = '';
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`, ...listIds];
+  if (statusesRaw.length) {
+    statusSql = ` AND status IN (${statusesRaw.map(() => '?').join(',')})`;
+    params.push(...statusesRaw);
+  }
+  const leads = await rows(
+    `SELECT ${LIST_DOWNLOAD_COLUMNS.join(', ')} FROM vicidial_list
+     WHERE entry_date >= ? AND entry_date <= ? AND list_id IN (${listIds.map(() => '?').join(',')})${statusSql}
+     ORDER BY lead_id ASC LIMIT 500000`,
+    params,
+    [],
+  );
+  await adminLog(req, 'REPORTS', 'EXPORT', '', 'GENX EXPORT LEADS', 'SELECT FROM vicidial_list', `${leads.length} leads`);
+  return csvExportSender(req, res, `leads_export_${beginDate}_${endDate}.csv`, LIST_DOWNLOAD_COLUMNS, leads);
+}
+
+const EXPORT_CALLBACK_COLUMNS = ['callback_time', 'entry_time', 'lead_id', 'phone_number', 'status', 'campaign_id', 'user', 'recipient', 'comments'];
+
+async function exportCallbacksReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const campaignScope = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'cb.campaign_id', params);
+  const callbacks = await rows(
+    `SELECT cb.callback_time, cb.entry_time, cb.lead_id, vi.phone_number, cb.status, cb.campaign_id,
+            cb.user, cb.recipient, cb.comments
+     FROM vicidial_callbacks cb
+     LEFT JOIN vicidial_list vi ON vi.lead_id = cb.lead_id
+     WHERE cb.callback_time >= ? AND cb.callback_time <= ? AND ${campaignScope}
+     ORDER BY cb.callback_time ASC LIMIT 100000`,
+    params,
+    [],
+  );
+  await adminLog(req, 'CALLBACKS', 'EXPORT', '', 'GENX EXPORT CALLBACKS', 'SELECT FROM vicidial_callbacks', `${callbacks.length} rows`);
+  return csvExportSender(req, res, `callbacks_export_${beginDate}_${endDate}.csv`, EXPORT_CALLBACK_COLUMNS, callbacks);
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9470,6 +9635,9 @@ app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
 app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
 app.get('/api/reports/performance-comparison', requireAccess, performanceComparisonReport);
 app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
+app.get('/api/reports/export-calls', requireAccess, exportCallsReport);
+app.get('/api/reports/export-leads', requireAccess, exportLeadsReport);
+app.get('/api/reports/export-callbacks', requireAccess, exportCallbacksReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

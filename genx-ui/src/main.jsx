@@ -10775,6 +10775,137 @@ function UserGroupHourlyReportView({ token, onLogout }) {
   );
 }
 
+// Native exports hub: Export Calls, Export Leads, Callbacks Export as CSV
+// downloads (ports of call_report_export.php, lead_report_export.php,
+// callbacks_export.php).
+function ExportsReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignsSel, setCampaignsSel] = useState([]);
+  const [groupsSel, setGroupsSel] = useState([]);
+  const [pickers, setPickers] = useState({ campaigns: [], groups: [] });
+  const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const payload = await apiFetch('/reports/export-calls?picker=1', token);
+        setPickers({ campaigns: payload.campaigns || [], groups: payload.groups || [] });
+      } catch (requestError) {
+        if (requestError.status === 401) onLogout?.();
+      }
+    })();
+  }, [token, onLogout]);
+
+  const download = async (path, filename) => {
+    setStatus('working');
+    try {
+      const response = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw Object.assign(new Error('download_failed'), { status: response.status });
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus('Download started');
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setStatus(requestError.status === 403 ? 'Not permitted' : requestError.status === 400 ? 'Select at least one campaign' : 'Download failed');
+    }
+  };
+
+  const dateQuery = `begin_date=${beginDate}&end_date=${endDate}`;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Exports</p>
+          <h2>Data Exports</h2>
+          <p className="action-copy">CSV exports of calls, leads and callbacks. Lead and phone fields follow your data-visibility permissions.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Date Range and Scope" icon={Search} className="admin-wide-panel">
+        <div className="field-grid">
+          <label>
+            <span>Begin Date</span>
+            <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+          </label>
+          <label>
+            <span>End Date</span>
+            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+          </label>
+        </div>
+        <p className="connection-summary">Campaigns (used by call + lead exports):</p>
+        <CampaignTogglePicker campaigns={pickers.campaigns} selected={campaignsSel} onChange={setCampaignsSel} />
+        <p className="connection-summary">In-groups (adds inbound calls to the call export):</p>
+        <CampaignTogglePicker
+          campaigns={pickers.groups.map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }))}
+          selected={groupsSel}
+          onChange={setGroupsSel}
+          emptyLabel="No inbound groups available"
+        />
+        {status && <p className="connection-summary">{status}</p>}
+      </Panel>
+      <section className="admin-grid media-tools-grid">
+        <Panel eyebrow="Export" title="Export Calls" icon={PhoneCall}>
+          <p className="connection-summary">Outbound log calls for the selected campaigns plus inbound calls for the selected in-groups, with full lead details per row.</p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => download(
+                `/reports/export-calls?${dateQuery}&campaigns=${encodeURIComponent(campaignsSel.join(','))}&groups=${encodeURIComponent(groupsSel.join(','))}`,
+                `calls_export_${beginDate}_${endDate}.csv`,
+              )}
+            >
+              Download Calls CSV
+            </button>
+          </div>
+        </Panel>
+        <Panel eyebrow="Export" title="Export Leads" icon={Database}>
+          <p className="connection-summary">Leads entered in the date range for the selected campaigns' lists. Requires the list-download permission.</p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => download(
+                `/reports/export-leads?${dateQuery}&campaigns=${encodeURIComponent(campaignsSel.join(','))}`,
+                `leads_export_${beginDate}_${endDate}.csv`,
+              )}
+            >
+              Download Leads CSV
+            </button>
+          </div>
+        </Panel>
+        <Panel eyebrow="Export" title="Callbacks Export" icon={Activity}>
+          <p className="connection-summary">Scheduled callbacks with callback time in the date range for your allowed campaigns.</p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => download(
+                `/reports/export-callbacks?${dateQuery}`,
+                `callbacks_export_${beginDate}_${endDate}.csv`,
+              )}
+            >
+              Download Callbacks CSV
+            </button>
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -11014,6 +11145,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportUserLogins') return <UserLoginsReportView token={token} />;
   if (activeView === 'reportPerformanceComparison') return <PerformanceComparisonReportView token={token} />;
   if (activeView === 'reportUserGroupHourly') return <UserGroupHourlyReportView token={token} />;
+  if (activeView === 'reportExports') return <ExportsReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
