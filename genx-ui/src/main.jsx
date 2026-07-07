@@ -3678,6 +3678,134 @@ function ListConnections({ admin, listId, user, token, onLogout, onSaved }) {
   );
 }
 
+// Mirrors legacy in-group modify (ADD=3111) cross-references: agent rank
+// grid, DIDs / call menus / campaigns pointing at this group.
+function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwitchAction }) {
+  const group = String(groupId || '');
+  const [data, setData] = useState(null);
+  const [saveState, setSaveState] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setSaveState('');
+    if (!group) return undefined;
+    apiFetch(`/admin/inbound/${encodeURIComponent(group)}/connections`, token)
+      .then((payload) => {
+        if (!cancelled) setData(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [group, token, onLogout]);
+
+  function setAgent(agentUser, key, value) {
+    setData((current) => ({
+      ...current,
+      agents: current.agents.map((row) => (row.user === agentUser ? { ...row, [key]: value } : row)),
+    }));
+  }
+
+  async function saveRanks() {
+    setSaveState('working');
+    try {
+      await apiFetch(`/admin/inbound/${encodeURIComponent(group)}/agent-ranks`, token, {
+        method: 'POST',
+        body: JSON.stringify({ agents: data.agents }),
+      });
+      setSaveState('Ranks saved');
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+    }
+  }
+
+  if (!group || !data || data.error) return null;
+
+  const referenceLists = [
+    ['DIDs routing here', data.dids || [], (row) => `${row.did_pattern}${row.did_description ? ` - ${row.did_description}` : ''}${row.did_active === 'Y' ? '' : ' (inactive)'}`],
+    ['Call menus routing here', data.callMenus || [], (row) => `${row.menu_id} (option ${row.option_value})`],
+    ['Campaigns using this group', data.campaignsUsing || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+    ['Campaigns allowing this group', data.campaignsAllowing || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+  ];
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>{formatNumber(data.liveAgents)} agent{data.liveAgents === 1 ? '' : 's'} live in this group right now</h3>
+        </div>
+        <Headphones size={20} aria-hidden="true" />
+      </div>
+      {!(data.campaignsAllowing || []).length && (
+        <p className="connection-summary">Warning: not set as allowed in any campaign's closer/blended in-groups - agents cannot take calls from it.</p>
+      )}
+      {(data.agents || []).length > 0 && (
+        <div className="rank-grid">
+          <p className="connection-summary">Agent ranks for this in-group</p>
+          {data.agents.slice(0, 30).map((row) => (
+            <div className="rank-row" key={row.user}>
+              <span>{row.user}{row.full_name ? ` - ${row.full_name}` : ''}</span>
+              <label>
+                Rank
+                <select value={String(row.group_rank ?? '0')} onChange={(event) => setAgent(row.user, 'group_rank', event.target.value)}>
+                  {ensureOption(RANK_OPTIONS, row.group_rank).map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label>
+                Grade
+                <select value={String(row.group_grade ?? '1')} onChange={(event) => setAgent(row.user, 'group_grade', event.target.value)}>
+                  {ensureOption(GRADE_OPTIONS, row.group_grade).map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label>
+                Daily Limit
+                <input type="number" min="-1" value={row.daily_limit ?? -1} onChange={(event) => setAgent(row.user, 'daily_limit', event.target.value)} />
+              </label>
+              <label>Calls Today {formatNumber(row.calls_today)}</label>
+            </div>
+          ))}
+          <div className="connection-actions">
+            <button type="button" className="row-action" disabled={saveState === 'working'} onClick={saveRanks}>
+              <Save size={15} aria-hidden="true" />
+              {saveState === 'working' ? 'Saving' : 'Save Agent Ranks'}
+            </button>
+            {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
+          </div>
+        </div>
+      )}
+      <div className="rank-grids">
+        {referenceLists.map(([title, items, label]) => (
+          <div className="connection-lists" key={title}>
+            <p className="connection-summary">{title}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            {items.slice(0, 8).map((row, index) => (
+              <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="connection-actions">
+        <a className="row-action" href={`/vicidial/AST_CLOSERstats_v2.php?group=${encodeURIComponent(group)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          In-Group Report
+        </a>
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=INGROUPS&stage=${encodeURIComponent(group)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -3775,6 +3903,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'inbound' && (
+          <InboundGroupConnections
+            admin={admin}
+            groupId={form.group_id}
+            user={user}
+            token={token}
+            onLogout={onLogout}
+            onSwitchAction={onSwitchAction}
           />
         )}
 

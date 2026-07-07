@@ -3725,6 +3725,103 @@ async function saveUserRanks(req, res) {
   }
 }
 
+// The cross-references at the bottom of legacy in-group modify (ADD=3111):
+// agent rank rows, DIDs / call menus / campaigns pointing at this group.
+async function inboundGroupConnections(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_group_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedQueueGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'ingroup_not_allowed' });
+  }
+
+  const agents = await rows(
+    `SELECT iga.user, u.full_name, u.user_group, iga.group_rank, iga.group_grade, iga.daily_limit, iga.calls_today
+     FROM vicidial_inbound_group_agents iga
+     LEFT JOIN vicidial_users u ON u.user = iga.user
+     WHERE iga.group_id = ?
+     ORDER BY iga.user ASC LIMIT 500`,
+    [id],
+    [],
+  );
+  const dids = await rows(
+    `SELECT did_pattern, did_description, did_active
+     FROM vicidial_inbound_dids WHERE did_route = 'IN_GROUP' AND group_id = ?
+     ORDER BY did_pattern ASC LIMIT 200`,
+    [id],
+    [],
+  );
+  const callMenus = await rows(
+    `SELECT DISTINCT menu_id, option_value
+     FROM vicidial_call_menu_options WHERE option_route = 'INGROUP' AND option_route_value = ?
+     ORDER BY menu_id ASC LIMIT 200`,
+    [id],
+    [],
+  );
+  const campaignsUsing = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns
+     WHERE drop_inbound_group = ? OR amd_inbound_group = ?
+     ORDER BY campaign_id ASC LIMIT 200`,
+    [id, id],
+    [],
+  );
+  const campaignsAllowing = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns
+     WHERE closer_campaigns LIKE ?
+     ORDER BY campaign_id ASC LIMIT 200`,
+    [`% ${id} %`],
+    [],
+  );
+  const [liveAgents] = await rows(
+    'SELECT COUNT(*) AS live FROM vicidial_live_inbound_agents WHERE group_id = ?',
+    [id],
+    [{ live: 0 }],
+  );
+
+  return res.json({
+    ok: true,
+    agents,
+    dids,
+    callMenus,
+    campaignsUsing,
+    campaignsAllowing,
+    liveAgents: Number(liveAgents?.live || 0),
+  });
+}
+
+// Inverse of saveUserRanks: set rank/grade/daily-limit for the agents of one
+// in-group, as on the legacy in-group modify AGENT RANKS grid.
+async function saveInboundGroupAgentRanks(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_group_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedQueueGroups, id)) {
+    return res.status(403).json({ ok: false, error: 'ingroup_not_allowed' });
+  }
+  const agents = Array.isArray(req.body?.agents) ? req.body.agents.slice(0, 500) : [];
+  try {
+    for (const entry of agents) {
+      const agentUser = cleanId(entry.user, 20);
+      if (!agentUser) continue;
+      const rank = cleanInt(entry.group_rank, 0, -9, 9);
+      const grade = cleanInt(entry.group_grade, 1, 1, 10);
+      const dailyLimit = cleanInt(entry.daily_limit, -1, -1, 99999);
+      await execute(
+        'UPDATE vicidial_inbound_group_agents SET group_rank = ?, group_grade = ?, daily_limit = ? WHERE user = ? AND group_id = ?',
+        [rank, grade, dailyLimit, agentUser, id],
+      );
+      await execute(
+        'UPDATE vicidial_live_inbound_agents SET group_weight = ?, group_grade = ? WHERE user = ? AND group_id = ?',
+        [rank, grade, agentUser, id],
+      ).catch(() => {});
+    }
+    await adminLog(req, 'INGROUPS', 'MODIFY', id, 'GENX MODIFY INGROUP AGENT RANKS', 'UPDATE vicidial_inbound_group_agents', `${agents.length} agents`);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'ingroup_ranks_save_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -5815,6 +5912,8 @@ app.get('/api/reports/hopper-list', requireAccess, hopperListReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
+app.get('/api/admin/inbound/:id/connections', requireAccess, inboundGroupConnections);
+app.post('/api/admin/inbound/:id/agent-ranks', requireAccess, saveInboundGroupAgentRanks);
 app.post('/api/admin/user-groups', requireAccess, (req, res) => saveUserGroup(req, res, 'create'));
 app.put('/api/admin/user-groups/:id', requireAccess, (req, res) => saveUserGroup(req, res, 'update'));
 app.post('/api/admin/dids', requireAccess, (req, res) => saveDid(req, res, 'create'));
