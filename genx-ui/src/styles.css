@@ -1647,3 +1647,17 @@ td span {
   height: 16px;
   accent-color: #00d9ff;
 }
+
+/* Native dropdown option lists follow the theme instead of the OS grey. */
+select,
+select option,
+select optgroup {
+  background-color: #071528;
+  color: #e6f7ff;
+}
+
+select option:checked,
+select option:hover {
+  background-color: rgba(0, 217, 255, 0.25);
+  color: #ffffff;
+}
