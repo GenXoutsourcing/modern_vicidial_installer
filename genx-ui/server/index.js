@@ -6806,10 +6806,12 @@ async function agentLogin(req, res) {
     // blank one (legacy UPDATE-where-blank LIMIT 1 pattern) — from the table
     // matching the server's conf engine.
     const confInfo = await serverConfInfo(phone.server_ip);
+    // Legacy $SIP_user: rooms and live_agents.extension carry protocol/extension.
+    const sipUser = `${phone.protocol || 'SIP'}/${phone.extension}`;
     let confExten = null;
     const [prev] = await rows(
       `SELECT conf_exten FROM ${confInfo.confTable} WHERE extension = ? AND server_ip = ? LIMIT 1`,
-      [phone.extension, phone.server_ip],
+      [sipUser, phone.server_ip],
       [],
     );
     if (prev) {
@@ -6817,11 +6819,11 @@ async function agentLogin(req, res) {
     } else {
       await execute(
         `UPDATE ${confInfo.confTable} SET extension = ?, leave_3way = '0' WHERE server_ip = ? AND (extension = '' OR extension IS NULL) LIMIT 1`,
-        [phone.extension, phone.server_ip],
+        [sipUser, phone.server_ip],
       );
       const [reserved] = await rows(
         `SELECT conf_exten FROM ${confInfo.confTable} WHERE server_ip = ? AND (extension = ? OR extension = ?) LIMIT 1`,
-        [phone.server_ip, phone.extension, user],
+        [phone.server_ip, sipUser, user],
         [],
       );
       confExten = reserved?.conf_exten || null;
@@ -6875,7 +6877,7 @@ async function agentLogin(req, res) {
           last_inbound_call_time, last_inbound_call_finish, last_inbound_call_time_filtered, last_inbound_call_finish_filtered)
        VALUES (?, ?, ?, ?, 'PAUSED', '', ?, '', '', '', ?, NOW(), NOW(), NOW(), ?, ?, ?, ?, NOW(), ?,
                'N', ?, ?, ?, 'LOGIN', NOW(), NOW(), NOW(), NOW())`,
-      [user, phone.server_ip, confExten, phone.extension, campaignId, rand, closerCampaigns,
+      [user, phone.server_ip, confExten, sipUser, campaignId, rand, closerCampaigns,
         Number(req.genxUser.userLevel || 1), campaignWeight, callsToday, autodial,
         Number(phone.phone_ring_timeout || 60), phone.on_hook_agent === 'Y' ? 'Y' : 'N', campaignGrade],
     );
@@ -6944,7 +6946,7 @@ async function agentWebphoneCall(req, res) {
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
   const phone = req.agentPhone || (await rows(
     `SELECT ${AGENT_PHONE_COLUMNS} FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1`,
-    [live.extension, live.server_ip],
+    [String(live.extension || '').split('/').pop(), live.server_ip],
     [],
   ))[0];
   if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
@@ -7208,9 +7210,10 @@ async function agentLogout(req, res) {
 
     await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [user]);
     await execute('DELETE FROM vicidial_session_data WHERE user = ? AND conf_exten = ?', [user, live.conf_exten]).catch(() => {});
+    // live.extension carries protocol/extension; web_client_sessions stores the bare extension.
     await execute(
       "DELETE FROM web_client_sessions WHERE extension = ? AND server_ip = ? AND program = 'vicidial'",
-      [live.extension, live.server_ip],
+      [String(live.extension || '').split('/').pop(), live.server_ip],
     ).catch(() => {});
     const confInfo = await serverConfInfo(live.server_ip);
     await execute(
