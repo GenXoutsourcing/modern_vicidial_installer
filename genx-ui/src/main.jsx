@@ -11228,6 +11228,276 @@ function DialLogReportView({ token, onLogout }) {
   );
 }
 
+// Generic Logs-and-QA raw-log viewer: date range + optional text filter,
+// summary panels and a capped detail table, driven by a config object.
+function LogReportView({ token, onLogout, config }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [filterValue, setFilterValue] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (begin, end, filter) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (config.filter && filter) params.set(config.filter.param, filter);
+      const payload = await apiFetch(`${config.endpoint}?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout, config]);
+
+  useEffect(() => {
+    load(today, today, '');
+  }, [load, today]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Logs and QA</p>
+          <h2>{config.title}</h2>
+          <p className="action-copy">{config.description}</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Date Range" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(beginDate, endDate, filterValue);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            {config.filter && (
+              <label>
+                <span>{config.filter.label}</span>
+                <input type="text" value={filterValue} onChange={(event) => setFilterValue(event.target.value)} placeholder="optional" />
+              </label>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {data && (config.summaries || []).length > 0 && (
+        <section className="admin-grid media-tools-grid">
+          {config.summaries.map((summary) => (
+            <Panel key={summary.key} eyebrow="Summary" title={summary.title} icon={Activity}>
+              <DataTable
+                emptyLabel="No entries in the date range"
+                rows={(data[summary.key] || []).map((row, index) => ({ ...row, id: `${summary.key}-${index}` }))}
+                columns={summary.columns}
+              />
+            </Panel>
+          ))}
+        </section>
+      )}
+      {data && config.entriesKey && (
+        <Panel
+          eyebrow="Log"
+          title={`${config.title} (${formatNumber((data[config.entriesKey] || []).length)} rows${(data[config.entriesKey] || []).length === 2000 ? ', capped' : ''})`}
+          icon={Database}
+          className="admin-wide-panel"
+        >
+          <DataTable
+            emptyLabel="No entries in the date range"
+            rows={(data[config.entriesKey] || []).map((row, index) => ({ ...row, id: `row-${index}` }))}
+            columns={config.columns}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+const LOG_REPORT_CONFIGS = {
+  reportCarrierLog: {
+    title: 'Carrier Log',
+    description: 'Raw carrier-log entries with dialstatus and hangup causes.',
+    endpoint: '/reports/carrier-log',
+    filter: { param: 'dialstatus', label: 'Dialstatus' },
+    entriesKey: 'entries',
+    summaries: [{
+      key: 'summary',
+      title: 'Dialstatus Summary',
+      columns: [
+        { key: 'dialstatus', label: 'Dialstatus', render: (row) => row.dialstatus || 'NONE' },
+        { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+      ],
+    }],
+    columns: [
+      { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
+      { key: 'lead_id', label: 'Lead' },
+      { key: 'dialstatus', label: 'Dialstatus' },
+      { key: 'hangup_cause', label: 'Hangup' },
+      { key: 'sip_hangup_cause', label: 'SIP Cause' },
+      { key: 'sip_hangup_reason', label: 'SIP Reason' },
+      { key: 'server_ip', label: 'Server' },
+      { key: 'caller_code', label: 'Caller Code' },
+    ],
+  },
+  reportHangupCause: {
+    title: 'Hangup Cause',
+    description: 'Hangup cause and SIP cause distribution from the carrier log.',
+    endpoint: '/reports/hangup-cause',
+    entriesKey: null,
+    summaries: [
+      {
+        key: 'causes',
+        title: 'Hangup Causes',
+        columns: [
+          { key: 'hangup_cause', label: 'Cause', render: (row) => String(row.hangup_cause ?? 'NONE') },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+      {
+        key: 'sipCauses',
+        title: 'SIP Causes',
+        columns: [
+          { key: 'sip_hangup_cause', label: 'SIP Cause', render: (row) => String(row.sip_hangup_cause ?? 'NONE') },
+          { key: 'sip_hangup_reason', label: 'Reason' },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+      {
+        key: 'statuses',
+        title: 'Dialstatus x Cause',
+        columns: [
+          { key: 'dialstatus', label: 'Dialstatus', render: (row) => row.dialstatus || 'NONE' },
+          { key: 'hangup_cause', label: 'Cause', render: (row) => String(row.hangup_cause ?? 'NONE') },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+    ],
+    columns: [],
+  },
+  reportSipEvent: {
+    title: 'SIP Event Log',
+    description: 'SIP signaling events recorded per call.',
+    endpoint: '/reports/sip-event',
+    filter: { param: 'sip_event', label: 'SIP Event' },
+    entriesKey: 'entries',
+    summaries: [{
+      key: 'summary',
+      title: 'Event Summary',
+      columns: [
+        { key: 'sip_event', label: 'Event' },
+        { key: 'events', label: 'Count', render: (row) => formatNumber(row.events) },
+      ],
+    }],
+    columns: [
+      { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+      { key: 'sip_event', label: 'Event' },
+      { key: 'caller_code', label: 'Caller Code' },
+      { key: 'server_ip', label: 'Server' },
+      { key: 'channel', label: 'Channel' },
+      { key: 'sip_call_id', label: 'SIP Call ID' },
+    ],
+  },
+  reportAmdLog: {
+    title: 'AMD Log',
+    description: 'Answering machine detection results per call.',
+    endpoint: '/reports/amd-log',
+    entriesKey: 'entries',
+    summaries: [
+      {
+        key: 'statusSummary',
+        title: 'AMD Status Summary',
+        columns: [
+          { key: 'amd_status', label: 'Status', render: (row) => row.amd_status || 'NONE' },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+      {
+        key: 'causeSummary',
+        title: 'AMD Cause Summary',
+        columns: [
+          { key: 'amd_cause', label: 'Cause', render: (row) => row.amd_cause || 'NONE' },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+    ],
+    columns: [
+      { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
+      { key: 'lead_id', label: 'Lead' },
+      { key: 'amd_status', label: 'Status' },
+      { key: 'amd_cause', label: 'Cause' },
+      { key: 'amd_response', label: 'Response' },
+      { key: 'server_ip', label: 'Server' },
+    ],
+  },
+  reportRecordingAccess: {
+    title: 'Recording Access Log',
+    description: 'Who listened to or downloaded recordings.',
+    endpoint: '/reports/recording-access',
+    filter: { param: 'user', label: 'User' },
+    entriesKey: 'entries',
+    summaries: [],
+    columns: [
+      { key: 'access_datetime', label: 'Accessed', render: (row) => formatDateTime(row.access_datetime) },
+      { key: 'user', label: 'User' },
+      { key: 'full_name', label: 'Name' },
+      { key: 'user_group', label: 'Group' },
+      { key: 'recording_id', label: 'Recording' },
+      { key: 'lead_id', label: 'Lead' },
+      { key: 'start_time', label: 'Recorded', render: (row) => formatDateTime(row.start_time) },
+      { key: 'access_result', label: 'Result' },
+      { key: 'ip', label: 'IP' },
+    ],
+  },
+  reportApiLog: {
+    title: 'API Log',
+    description: 'API calls made against this system.',
+    endpoint: '/reports/api-log',
+    filter: { param: 'function', label: 'Function' },
+    entriesKey: 'entries',
+    summaries: [{
+      key: 'summary',
+      title: 'Function / Result Summary',
+      columns: [
+        { key: 'api_function', label: 'Function' },
+        { key: 'result', label: 'Result' },
+        { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+      ],
+    }],
+    columns: [
+      { key: 'api_date', label: 'Date', render: (row) => formatDateTime(row.api_date) },
+      { key: 'user', label: 'User' },
+      { key: 'api_function', label: 'Function' },
+      { key: 'value', label: 'Value' },
+      { key: 'result', label: 'Result' },
+      { key: 'result_reason', label: 'Reason' },
+      { key: 'source', label: 'Source' },
+      { key: 'run_time', label: 'Run Time' },
+    ],
+  },
+};
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -11471,6 +11741,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportCalledCounts') return <CalledCountsReportView token={token} />;
   if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} />;
   if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
+  if (LOG_REPORT_CONFIGS[activeView]) return <LogReportView token={token} config={LOG_REPORT_CONFIGS[activeView]} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

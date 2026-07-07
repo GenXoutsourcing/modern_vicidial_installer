@@ -6112,6 +6112,177 @@ async function dialLogReport(req, res) {
   return res.json({ ok: true, entries, servers, range: { beginDate, endDate } });
 }
 
+// --- Logs & QA raw-log viewers (native ports of the AST_*_log_report.php
+// family): date range + optional filters, capped rows, GROUP BY summaries. ---
+async function carrierLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const dialstatus = cleanId(req.query?.dialstatus, 20);
+  let filterSql = '';
+  if (dialstatus) {
+    filterSql = ' AND dialstatus = ?';
+    params.push(dialstatus);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT uniqueid, call_date, server_ip, lead_id, hangup_cause, dialstatus, channel,
+              dial_time, answered_time, sip_hangup_cause, sip_hangup_reason, caller_code
+       FROM vicidial_carrier_log WHERE call_date >= ? AND call_date <= ?${filterSql}
+       ORDER BY call_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT dialstatus, COUNT(*) AS calls FROM vicidial_carrier_log
+       WHERE call_date >= ? AND call_date <= ?${filterSql} GROUP BY dialstatus ORDER BY calls DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
+async function hangupCauseReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const [causes, sipCauses, statuses] = await Promise.all([
+    rows(
+      `SELECT hangup_cause, COUNT(*) AS calls FROM vicidial_carrier_log
+       WHERE call_date >= ? AND call_date <= ? GROUP BY hangup_cause ORDER BY calls DESC LIMIT 100`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT sip_hangup_cause, sip_hangup_reason, COUNT(*) AS calls FROM vicidial_carrier_log
+       WHERE call_date >= ? AND call_date <= ? GROUP BY sip_hangup_cause, sip_hangup_reason
+       ORDER BY calls DESC LIMIT 100`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT dialstatus, hangup_cause, COUNT(*) AS calls FROM vicidial_carrier_log
+       WHERE call_date >= ? AND call_date <= ? GROUP BY dialstatus, hangup_cause
+       ORDER BY calls DESC LIMIT 200`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, causes, sipCauses, statuses, range: { beginDate, endDate } });
+}
+
+async function sipEventReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const sipEvent = cleanId(req.query?.sip_event, 20);
+  let filterSql = '';
+  if (sipEvent) {
+    filterSql = ' AND sip_event = ?';
+    params.push(sipEvent);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT sip_event_id, event_date, sip_event, uniqueid, server_ip, channel, caller_code, sip_call_id
+       FROM vicidial_sip_event_log WHERE event_date >= ? AND event_date <= ?${filterSql}
+       ORDER BY event_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT sip_event, COUNT(*) AS events FROM vicidial_sip_event_log
+       WHERE event_date >= ? AND event_date <= ?${filterSql} GROUP BY sip_event ORDER BY events DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
+async function amdLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const [entries, statusSummary, causeSummary] = await Promise.all([
+    rows(
+      `SELECT call_date, lead_id, caller_code, server_ip, channel, uniqueid,
+              AMDSTATUS AS amd_status, AMDCAUSE AS amd_cause, AMDRESPONSE AS amd_response, AMDSTATS AS amd_stats
+       FROM vicidial_amd_log WHERE call_date >= ? AND call_date <= ?
+       ORDER BY call_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT AMDSTATUS AS amd_status, COUNT(*) AS calls FROM vicidial_amd_log
+       WHERE call_date >= ? AND call_date <= ? GROUP BY AMDSTATUS ORDER BY calls DESC LIMIT 50`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT AMDCAUSE AS amd_cause, COUNT(*) AS calls FROM vicidial_amd_log
+       WHERE call_date >= ? AND call_date <= ? GROUP BY AMDCAUSE ORDER BY calls DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, statusSummary, causeSummary, range: { beginDate, endDate } });
+}
+
+async function recordingAccessReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const userId = cleanId(req.query?.user, 20);
+  let filterSql = '';
+  if (userId) {
+    filterSql = ' AND vra.user = ?';
+    params.push(userId);
+  }
+  const entries = await rows(
+    `SELECT vra.recording_access_log_id, vra.recording_id, vra.lead_id, vra.user, vra.access_datetime,
+            vra.access_result, vra.ip, vu.full_name, vu.user_group, r.start_time
+     FROM vicidial_recording_access_log vra
+     LEFT JOIN vicidial_users vu ON vu.user = vra.user
+     LEFT JOIN recording_log r ON r.recording_id = vra.recording_id
+     WHERE vra.access_datetime >= ? AND vra.access_datetime <= ?${filterSql}
+     ORDER BY vra.access_datetime ASC LIMIT 2000`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, entries, range: { beginDate, endDate } });
+}
+
+async function apiLogReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const funcName = cleanText(req.query?.function, 40).replace(/[^-_A-Za-z0-9]/g, '');
+  let filterSql = '';
+  if (funcName) {
+    filterSql = ' AND `function` = ?';
+    params.push(funcName);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT api_id, api_date, user, agent_user, \`function\` AS api_function, value, result, result_reason,
+              source, SUBSTRING(data, 1, 200) AS data, api_script, run_time
+       FROM vicidial_api_log WHERE api_date >= ? AND api_date <= ?${filterSql}
+       ORDER BY api_date DESC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT \`function\` AS api_function, result, COUNT(*) AS calls FROM vicidial_api_log
+       WHERE api_date >= ? AND api_date <= ?${filterSql} GROUP BY \`function\`, result
+       ORDER BY calls DESC LIMIT 100`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -9826,6 +9997,12 @@ app.get('/api/reports/export-calls-carrier', requireAccess, exportCallsCarrierRe
 app.get('/api/reports/called-counts', requireAccess, calledCountsReport);
 app.get('/api/reports/admin-log', requireAccess, adminChangeLogReport);
 app.get('/api/reports/dial-log', requireAccess, dialLogReport);
+app.get('/api/reports/carrier-log', requireAccess, carrierLogReport);
+app.get('/api/reports/hangup-cause', requireAccess, hangupCauseReport);
+app.get('/api/reports/sip-event', requireAccess, sipEventReport);
+app.get('/api/reports/amd-log', requireAccess, amdLogReport);
+app.get('/api/reports/recording-access', requireAccess, recordingAccessReport);
+app.get('/api/reports/api-log', requireAccess, apiLogReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
