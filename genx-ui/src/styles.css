@@ -208,6 +208,11 @@ h2 {
   scrollbar-color: rgba(0, 217, 255, 0.35) rgba(4, 12, 23, 0.9);
 }
 
+html,
+body {
+  overflow-x: hidden;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -1287,25 +1292,22 @@ h2 {
   font-weight: 700;
 }
 
+/* Rule: no horizontal scrollbars anywhere - tables shrink and wrap instead. */
 .table-wrap {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: visible;
 }
 
 table {
   width: 100%;
-  min-width: 760px;
   border-collapse: collapse;
-}
-
-.performance-panel table {
-  min-width: 620px;
 }
 
 th,
 td {
   padding: 12px 10px;
   border-bottom: 1px solid rgba(138, 167, 187, 0.16);
+  overflow-wrap: anywhere;
   text-align: left;
   vertical-align: middle;
 }
