@@ -202,6 +202,8 @@ function publicUser(row) {
     deleteScripts: row.delete_scripts === '1',
     deleteUserGroups: row.delete_user_groups === '1',
     deleteCallTimes: row.delete_call_times === '1',
+    downloadLists: row.download_lists === '1',
+    modifyLeads: Number(row.modify_leads || 0),
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -286,6 +288,8 @@ async function authenticateVicidialUser(username, password) {
             u.delete_scripts,
             u.delete_user_groups,
             u.delete_call_times,
+            u.download_lists,
+            u.modify_leads,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -3721,6 +3725,180 @@ async function saveUserRanks(req, res) {
   }
 }
 
+async function listWithScope(req, listId) {
+  const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
+  if (!list) return { error: 404 };
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, list.campaign_id)) return { error: 403 };
+  return { list };
+}
+
+// The five breakdowns at the bottom of legacy list modify (ADD=311):
+// statuses, timezones, owners, ranks and called-counts within the list.
+async function listStats(req, res) {
+  if (!requireModify(req, res, 'modifyLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+
+  const statuses = await rows(
+    `SELECT status, SUM(called_since_last_reset = 'Y') AS called, SUM(called_since_last_reset != 'Y') AS not_called, COUNT(*) AS total
+     FROM vicidial_list WHERE list_id = ? GROUP BY status ORDER BY status ASC LIMIT 200`,
+    [id],
+    [],
+  );
+  const timezones = await rows(
+    `SELECT gmt_offset_now, SUM(called_since_last_reset = 'Y') AS called, SUM(called_since_last_reset != 'Y') AS not_called
+     FROM vicidial_list WHERE list_id = ? GROUP BY gmt_offset_now ORDER BY gmt_offset_now ASC LIMIT 60`,
+    [id],
+    [],
+  );
+  const owners = await rows(
+    `SELECT owner, SUM(called_since_last_reset = 'Y') AS called, SUM(called_since_last_reset != 'Y') AS not_called
+     FROM vicidial_list WHERE list_id = ? GROUP BY owner ORDER BY owner ASC LIMIT 200`,
+    [id],
+    [],
+  );
+  const ranks = await rows(
+    `SELECT rank, SUM(called_since_last_reset = 'Y') AS called, SUM(called_since_last_reset != 'Y') AS not_called
+     FROM vicidial_list WHERE list_id = ? GROUP BY rank ORDER BY rank DESC LIMIT 200`,
+    [id],
+    [],
+  );
+  const calledCounts = await rows(
+    `SELECT status, called_count, COUNT(*) AS leads
+     FROM vicidial_list WHERE list_id = ? GROUP BY status, called_count ORDER BY status ASC, called_count ASC LIMIT 500`,
+    [id],
+    [],
+  );
+
+  return res.json({ ok: true, statuses, timezones, owners, ranks, calledCounts });
+}
+
+// Legacy ADD=611: delete the list record, its hopper rows and all its leads.
+async function deleteList(req, res) {
+  if (!requireModify(req, res, 'deleteLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+  try {
+    await execute('DELETE FROM vicidial_lists WHERE list_id = ? LIMIT 1', [id]);
+    await execute('DELETE FROM vicidial_hopper WHERE list_id = ?', [id]).catch(() => {});
+    await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
+    await adminLog(req, 'LISTS', 'DELETE', id, 'GENX DELETE LIST', 'DELETE FROM vicidial_lists/vicidial_hopper/vicidial_list', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'list_delete_failed' });
+  }
+}
+
+// Legacy ADD=612: remove all leads from the list but keep the list record.
+// Legacy gates this on level 9 plus delete/modify lists and modify leads.
+async function clearList(req, res) {
+  const user = req.genxUser;
+  if (Number(user?.userLevel || 0) < 9 || !user?.deleteLists || !user?.modifyLists || Number(user?.modifyLeads || 0) < 1) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = cleanId(req.params.id, 30);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+  try {
+    await execute('DELETE FROM vicidial_hopper WHERE list_id = ?', [id]).catch(() => {});
+
+    const [settings] = await rows('SELECT custom_fields_enabled FROM system_settings LIMIT 1', [], []);
+    if (Number(settings?.custom_fields_enabled || 0) > 0) {
+      const entryLists = await rows(
+        'SELECT DISTINCT entry_list_id FROM vicidial_list WHERE list_id = ? AND entry_list_id > 0 LIMIT 200',
+        [id],
+        [],
+      );
+      for (const entry of entryLists) {
+        const entryListId = String(entry.entry_list_id || '').replace(/[^0-9]/g, '');
+        if (!entryListId) continue;
+        const tables = await rows('SHOW TABLES LIKE ?', [`custom_${entryListId}`], []);
+        if (!tables.length) continue;
+        await execute(
+          `DELETE cf FROM ${quoteId(`custom_${entryListId}`)} cf
+           JOIN vicidial_list l ON l.lead_id = cf.lead_id
+           WHERE l.list_id = ?`,
+          [id],
+        ).catch(() => {});
+      }
+    }
+
+    const result = await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
+    await adminLog(req, 'LISTS', 'DELETE', id, 'GENX CLEAR LIST', 'DELETE FROM vicidial_list WHERE list_id', `${result.affectedRows} leads`);
+    return res.json({ ok: true, cleared: result.affectedRows, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'list_clear_failed' });
+  }
+}
+
+// The "Reset Lead-Called-Status" flag on legacy list modify.
+async function resetList(req, res) {
+  if (!requireModify(req, res, 'modifyLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+  try {
+    const result = await execute("UPDATE vicidial_list SET called_since_last_reset = 'N' WHERE list_id = ?", [id]);
+    await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX RESET LIST', 'UPDATE vicidial_list SET called_since_last_reset=N', `${result.affectedRows} leads`);
+    return res.json({ ok: true, reset: result.affectedRows });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'list_reset_failed' });
+  }
+}
+
+const LIST_DOWNLOAD_COLUMNS = [
+  'lead_id', 'entry_date', 'status', 'user', 'vendor_lead_code', 'source_id', 'list_id',
+  'phone_code', 'phone_number', 'title', 'first_name', 'middle_initial', 'last_name',
+  'address1', 'address2', 'address3', 'city', 'state', 'province', 'postal_code',
+  'country_code', 'gender', 'date_of_birth', 'alt_phone', 'email', 'security_phrase',
+  'comments', 'called_count', 'last_local_call_time', 'rank', 'owner',
+];
+
+// Legacy list_download.php equivalent, gated on the download_lists user flag.
+async function downloadList(req, res) {
+  if (!requireModify(req, res, 'downloadLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+
+  const leads = await rows(
+    `SELECT ${LIST_DOWNLOAD_COLUMNS.join(', ')} FROM vicidial_list WHERE list_id = ? ORDER BY lead_id ASC LIMIT 500000`,
+    [id],
+    [],
+  );
+
+  const hideLead = Boolean(req.genxUser?.adminHideLeadData);
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  const escapeCell = (value) => {
+    const text = value == null ? '' : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = [LIST_DOWNLOAD_COLUMNS.join(',')];
+  for (const lead of leads) {
+    lines.push(LIST_DOWNLOAD_COLUMNS.map((column) => {
+      let value = lead[column];
+      if (column === 'phone_number' || column === 'alt_phone') {
+        if (phoneMode !== '0') value = maskPhoneNumber(value, phoneMode);
+      } else if (hideLead && ['vendor_lead_code', 'security_phrase', 'comments'].includes(column)) {
+        value = maskText(value);
+      }
+      return escapeCell(value);
+    }).join(','));
+  }
+
+  await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX DOWNLOAD LIST', 'SELECT FROM vicidial_list', `${leads.length} leads`);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="list_${id}.csv"`);
+  return res.send(lines.join('\r\n'));
+}
+
 // Cascade mirrors legacy admin.php ADD=61 (campaign delete): callbacks are
 // archived before deletion, and every campaign-scoped config/stats table is
 // purged so no orphan rows remain.
@@ -5621,6 +5799,11 @@ app.get('/api/admin/users/:id/ranks', requireAccess, getUserRanks);
 app.post('/api/admin/users/:id/ranks', requireAccess, saveUserRanks);
 app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
+app.delete('/api/admin/lists/:id', requireAccess, deleteList);
+app.get('/api/admin/lists/:id/stats', requireAccess, listStats);
+app.post('/api/admin/lists/:id/clear', requireAccess, clearList);
+app.post('/api/admin/lists/:id/reset', requireAccess, resetList);
+app.get('/api/admin/lists/:id/download', requireAccess, downloadList);
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/dnc', requireAccess, bulkDnc);
 app.get('/api/admin/dnc/search', requireAccess, dncSearch);

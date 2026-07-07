@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -450,6 +450,7 @@ function userCanDelete(user, entity) {
   if (entity === 'filterPhoneGroups') return Boolean(user?.deleteFilters);
   if (entity === 'campaigns') return Boolean(user?.deleteCampaigns);
   if (entity === 'users') return Boolean(user?.deleteUsers);
+  if (entity === 'lists') return Boolean(user?.deleteLists);
   return false;
 }
 
@@ -3527,6 +3528,156 @@ function UserConnections({ admin, userId, token, onLogout }) {
   );
 }
 
+// Mirrors legacy list modify (ADD=311) connections: status/timezone/owner/rank
+// breakdowns, list download, reset of called-status, and clear-list. Delete
+// uses the modal's standard delete button.
+function ListConnections({ admin, listId, user, token, onLogout, onSaved }) {
+  const list = String(listId || '');
+  const [stats, setStats] = useState(null);
+  const [actionState, setActionState] = useState('');
+  const [confirming, setConfirming] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setStats(null);
+    setActionState('');
+    setConfirming('');
+    if (!list) return undefined;
+    apiFetch(`/admin/lists/${encodeURIComponent(list)}/stats`, token)
+      .then((payload) => {
+        if (!cancelled) setStats(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setStats({ error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [list, token, onLogout]);
+
+  async function runAction(kind) {
+    if (confirming !== kind) {
+      setConfirming(kind);
+      return;
+    }
+    setConfirming('');
+    setActionState('working');
+    try {
+      const payload = await apiFetch(`/admin/lists/${encodeURIComponent(list)}/${kind}`, token, { method: 'POST' });
+      if (payload.data) onSaved(payload.data);
+      setActionState(kind === 'clear' ? `Cleared ${formatNumber(payload.cleared)} leads` : `Reset ${formatNumber(payload.reset)} leads`);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setActionState(requestError.status === 403 ? 'Not permitted' : 'Action failed');
+    }
+  }
+
+  async function download() {
+    setActionState('working');
+    try {
+      const response = await fetch(`${API_BASE}/admin/lists/${encodeURIComponent(list)}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw Object.assign(new Error('download_failed'), { status: response.status });
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `list_${list}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setActionState('Download started');
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setActionState(requestError.status === 403 ? 'Not permitted' : 'Download failed');
+    }
+  }
+
+  if (!list) return null;
+
+  const canClear = Number(user?.userLevel || 0) >= 9;
+  const statusTotal = (stats?.statuses || []).reduce((sum, row) => sum + Number(row.total || 0), 0);
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>List breakdowns and actions</h3>
+        </div>
+        <Database size={20} aria-hidden="true" />
+      </div>
+      {stats && !stats.error && (
+        <div className="rank-grids">
+          <div className="rank-grid">
+            <p className="connection-summary">Statuses in this list ({formatNumber(statusTotal)} leads)</p>
+            {(stats.statuses || []).slice(0, 12).map((row) => (
+              <div className="rank-row" key={row.status}>
+                <span>{row.status}</span>
+                <label>Called {formatNumber(row.called)}</label>
+                <label>Not Called {formatNumber(row.not_called)}</label>
+                <label>Penetration {statusTotal ? Math.round((Number(row.called) / Number(row.total || 1)) * 100) : 0}%</label>
+              </div>
+            ))}
+          </div>
+          <div className="rank-grid">
+            <p className="connection-summary">Time zones (GMT offset now: called / not called)</p>
+            <div className="connection-actions">
+              {(stats.timezones || []).slice(0, 14).map((row) => (
+                <span className="connection-status" key={String(row.gmt_offset_now)}>
+                  {row.gmt_offset_now}: {formatNumber(row.called)}/{formatNumber(row.not_called)}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="connection-actions">
+        {Boolean(user?.downloadLists || Number(user?.userLevel || 0) >= 9) && (
+          <button type="button" className="row-action" disabled={actionState === 'working'} onClick={download}>
+            <FileText size={15} aria-hidden="true" />
+            Download List CSV
+          </button>
+        )}
+        <button
+          type="button"
+          className={confirming === 'reset' ? 'danger-action confirming compact-action' : 'row-action'}
+          disabled={actionState === 'working'}
+          onClick={() => runAction('reset')}
+        >
+          <RefreshCcw size={15} aria-hidden="true" />
+          {confirming === 'reset' ? 'Confirm Reset Called-Status?' : 'Reset Called Status'}
+        </button>
+        {canClear && (
+          <button
+            type="button"
+            className={confirming === 'clear' ? 'danger-action confirming compact-action' : 'row-action'}
+            disabled={actionState === 'working'}
+            onClick={() => runAction('clear')}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+            {confirming === 'clear' ? 'Confirm Clear ALL Leads?' : 'Clear List'}
+          </button>
+        )}
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=LISTS&stage=${encodeURIComponent(list)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+        {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -3624,6 +3775,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'lists' && (
+          <ListConnections
+            admin={admin}
+            listId={form.list_id}
+            user={user}
+            token={token}
+            onLogout={onLogout}
+            onSaved={onSaved}
           />
         )}
 
