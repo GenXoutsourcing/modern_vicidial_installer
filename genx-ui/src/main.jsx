@@ -12308,7 +12308,7 @@ function AgentLoginPage({ onAuthed }) {
       window.localStorage.setItem(AGENT_TOKEN_KEY, payload.token);
       // Re-attach directly when a live session already exists.
       if (payload.live) {
-        onAuthed(payload);
+        onAuthed({ ...payload, userPass: form.pass });
         return;
       }
       if (!campaignId) {
@@ -12319,7 +12319,9 @@ function AgentLoginPage({ onAuthed }) {
         method: 'POST',
         body: JSON.stringify({ campaign_id: campaignId }),
       });
-      onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes });
+      // userPass rides along in memory only — legacy merges it into script
+      // iframe URLs (--A--pass--B--) for the life of the session.
+      onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes, userPass: form.pass });
     } catch (requestError) {
       if (requestError.message === 'phone_login_required') setNeedPhone(true);
       const map = {
@@ -12918,18 +12920,23 @@ function AgentConsole({ token, authInfo, onExit }) {
             {scriptData?.script && (
               <iframe
                 title="Campaign script"
-                sandbox=""
                 style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
                 srcDoc={String(scriptData.script.script_text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
-                  if (field === 'pass') return '';
                   const merge = {
                     ...lead,
                     user: authInfo?.user?.user || '',
+                    // Legacy merges the agent's password into script URLs;
+                    // it lives in memory for the session only.
+                    pass: authInfo?.userPass || '',
+                    phone_login: authInfo?.phone?.login || '',
                     campaign: live.campaign_id,
                     group: live.campaign_id,
+                    channel_group: live.campaign_id,
                     session_id: live.conf_exten,
                     server_ip: live.server_ip,
                     uniqueid: live.uniqueid || '',
+                    fronter: '',
+                    closer: authInfo?.user?.user || '',
                     script_width: '100%',
                     script_height: '400',
                   };
