@@ -204,6 +204,7 @@ function publicUser(row) {
     deleteCallTimes: row.delete_call_times === '1',
     downloadLists: row.download_lists === '1',
     modifyLeads: Number(row.modify_leads || 0),
+    astDeletePhones: row.ast_delete_phones === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -290,6 +291,7 @@ async function authenticateVicidialUser(username, password) {
             u.delete_call_times,
             u.download_lists,
             u.modify_leads,
+            u.ast_delete_phones,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -3941,6 +3943,44 @@ async function deleteUserGroup(req, res) {
   }
 }
 
+// Legacy ADD=61111111111: delete a phone (composite key extension+server_ip),
+// then flag conf-file rebuilds on its server and the voicemail server.
+async function deletePhone(req, res) {
+  if (!requireModify(req, res, 'astDeletePhones')) return;
+  const extension = cleanId(req.params.id, 100);
+  const serverIp = cleanIp(req.query?.server_ip);
+  if (!extension || extension.length < 2 || !serverIp || serverIp.length < 7) {
+    return badRequest(res, 'invalid_phone');
+  }
+  const [phone] = await rows(
+    'SELECT extension, server_ip, user_group FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1',
+    [extension, serverIp],
+    [],
+  );
+  if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, phone.user_group)) {
+    return res.status(403).json({ ok: false, error: 'phone_not_allowed' });
+  }
+  try {
+    await execute('DELETE FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1', [extension, serverIp]);
+    await execute(
+      "UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y' AND server_ip = ?",
+      [serverIp],
+    ).catch(() => {});
+    const [settings] = await rows('SELECT active_voicemail_server FROM system_settings LIMIT 1', [], []);
+    if (settings?.active_voicemail_server) {
+      await execute(
+        "UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y' AND server_ip = ?",
+        [settings.active_voicemail_server],
+      ).catch(() => {});
+    }
+    await adminLog(req, 'PHONES', 'DELETE', extension, 'GENX DELETE PHONE', 'DELETE FROM phones + rebuild_conf_files', `${extension}@${serverIp}`);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'phone_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6042,6 +6082,7 @@ app.put('/api/admin/dids/:id', requireAccess, (req, res) => saveDid(req, res, 'u
 app.delete('/api/admin/dids/:id', requireAccess, deleteDid);
 app.post('/api/admin/phones', requireAccess, (req, res) => savePhone(req, res, 'create'));
 app.put('/api/admin/phones/:id', requireAccess, (req, res) => savePhone(req, res, 'update'));
+app.delete('/api/admin/phones/:id', requireAccess, deletePhone);
 app.post('/api/admin/servers', requireAccess, (req, res) => saveServer(req, res, 'create'));
 app.put('/api/admin/servers/:id', requireAccess, (req, res) => saveServer(req, res, 'update'));
 app.post('/api/admin/carriers', requireAccess, (req, res) => saveCarrier(req, res, 'create'));

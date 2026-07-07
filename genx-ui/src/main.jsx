@@ -4017,6 +4017,61 @@ function UserGroupConnections({ groupId, token, user, onLogout, onSwitchAction, 
   );
 }
 
+// Phone delete needs the composite key (extension + server_ip), so it gets a
+// dedicated panel instead of the generic modal delete button.
+function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved, onClose }) {
+  const ext = String(extension || '');
+  const ip = String(serverIp || '');
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState('');
+
+  async function deletePhone() {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setState('working');
+    try {
+      const payload = await apiFetch(`/admin/phones/${encodeURIComponent(ext)}?server_ip=${encodeURIComponent(ip)}`, token, { method: 'DELETE' });
+      onSaved(payload.data);
+      onClose();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setState(requestError.status === 403 ? 'Not permitted' : 'Delete failed');
+      setConfirming(false);
+    }
+  }
+
+  const canDeletePhone = Number(user?.userLevel || 0) >= 9 || Boolean(user?.astDeletePhones);
+  if (!ext || !ip) return null;
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="connection-actions">
+        {canDeletePhone && (
+          <button
+            type="button"
+            className={confirming ? 'danger-action confirming compact-action' : 'row-action'}
+            disabled={state === 'working'}
+            onClick={deletePhone}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+            {state === 'working' ? 'Deleting' : confirming ? `Confirm Delete ${ext}@${ip}?` : 'Delete Phone'}
+          </button>
+        )}
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=PHONES&stage=${encodeURIComponent(ext)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+        {state && state !== 'working' && <span className="connection-status">{state}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -4115,6 +4170,18 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'phones' && (
+          <PhoneConnections
+            extension={form.extension}
+            serverIp={form.server_ip}
+            user={user}
+            token={token}
+            onLogout={onLogout}
+            onSaved={onSaved}
+            onClose={onClose}
           />
         )}
 
