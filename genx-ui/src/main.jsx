@@ -8821,6 +8821,377 @@ function InboundSummaryReportView({ token, onLogout }) {
   );
 }
 
+const SERVICE_LEVEL_BUCKETS = [
+  ['q0', 'Immediate'],
+  ['q20', '1-20s'],
+  ['q40', '21-40s'],
+  ['q60', '41-60s'],
+  ['q80', '61-80s'],
+  ['q100', '81-100s'],
+  ['q120', '101-120s'],
+  ['q121', '>120s'],
+];
+
+function slotLabel(slot) {
+  const minutes = Number(slot) * 15;
+  const hh = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const mm = String(minutes % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+// Native AST_CLOSER_service_level.php: queue-time histogram per quarter hour
+// plus per-day drop/hold/calltime totals for one in-group.
+function ServiceLevelReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [groupId, setGroupId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (group, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (group) params.set('group', group);
+      const payload = await apiFetch(`/reports/service-level?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or in-group' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const groups = data?.groups || [];
+  const s = data?.sections;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>Service Level</h2>
+          <p className="action-copy">Queue answer-speed histogram per quarter hour for one inbound group.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Group and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(groupId, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>In-Group</span>
+              <select value={groupId} onChange={(event) => setGroupId(event.target.value)}>
+                <option value="">Select an in-group</option>
+                {groups.map((row) => (
+                  <option key={row.group_id} value={row.group_id}>{row.group_id} - {row.group_name || ''}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Per Day" title={`Daily Totals — ${s.groupId}`} icon={PhoneCall} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={(s.days || []).map((row) => ({ ...row, id: String(row.day) }))}
+              columns={[
+                { key: 'day', label: 'Date', render: (row) => String(row.day).slice(0, 10) },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'drops', label: 'Drops', render: (row) => formatNumber(row.drops) },
+                { key: 'drop_pct', label: 'Drop %', render: (row) => `${row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'avg_drop', label: 'Avg Drop', render: (row) => `${row.drops ? Math.round(row.drops_sec / row.drops) : 0}s` },
+                { key: 'holds', label: 'Holds', render: (row) => formatNumber(row.holds) },
+                { key: 'hold_pct', label: 'Hold %', render: (row) => `${row.calls ? ((row.holds / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'avg_hold', label: 'Avg Hold', render: (row) => `${row.holds ? Math.round(row.hold_sec / row.holds) : 0}s` },
+                { key: 'total_calltime', label: 'Calltime', render: (row) => formatSeconds(row.calls_sec) },
+                { key: 'avg_calltime', label: 'Avg Call', render: (row) => `${row.calls ? Math.round(row.calls_sec / row.calls) : 0}s` },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Intervals" title="Answer Speed per Quarter Hour" icon={Activity} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={(s.slots || []).map((row) => ({ ...row, id: String(row.slot) }))}
+              columns={[
+                { key: 'slot', label: 'Time', render: (row) => slotLabel(row.slot) },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'drops', label: 'Drops', render: (row) => formatNumber(row.drops) },
+                ...SERVICE_LEVEL_BUCKETS.map(([key, label]) => ({ key, label, render: (row) => formatNumber(row[key]) })),
+                { key: 'queue_max', label: 'Max Queue', render: (row) => `${row.queue_max}s` },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
+// Native AST_CLOSERsummary_hourly.php: per in-group hour-of-day breakdown.
+function InboundHourlyReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (groupIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (groupIds.length) params.set('groups', groupIds.join(','));
+      const payload = await apiFetch(`/reports/inbound-hourly?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const groups = (data?.groups || []).map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }));
+  const results = data?.results;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>Hourly Summary</h2>
+          <p className="action-copy">Hour-of-day inbound answer, talk and queue stats per in-group.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Groups and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <CampaignTogglePicker campaigns={groups} selected={selected} onChange={setSelected} emptyLabel="No inbound groups available" />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {results && results.map((group) => {
+        const totals = group.hours.reduce((sum, row) => ({
+          calls: sum.calls + Number(row.calls || 0),
+          answered: sum.answered + Number(row.answered || 0),
+          drops: sum.drops + Number(row.drops || 0),
+          talk_sec: sum.talk_sec + Number(row.talk_sec || 0),
+          queue_sec: sum.queue_sec + Number(row.queue_sec || 0),
+          queue_max: Math.max(sum.queue_max, Number(row.queue_max || 0)),
+        }), { calls: 0, answered: 0, drops: 0, talk_sec: 0, queue_sec: 0, queue_max: 0 });
+        return (
+          <Panel
+            key={group.group_id}
+            eyebrow={`In-Group ${group.group_id}`}
+            title={`${group.group_name || group.group_id} — ${formatNumber(totals.calls)} calls`}
+            icon={PhoneCall}
+            className="admin-wide-panel"
+          >
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={group.hours.map((row) => ({ ...row, id: String(row.hour) }))}
+              columns={[
+                { key: 'hour', label: 'Hour', render: (row) => `${String(row.hour).padStart(2, '0')}:00` },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
+                { key: 'talk_sec', label: 'Total Talk', render: (row) => formatSeconds(row.talk_sec) },
+                { key: 'avg_talk', label: 'Avg Talk', render: (row) => `${row.answered ? Math.round(row.talk_sec / row.answered) : 0}s` },
+                { key: 'queue_sec', label: 'Queue Time', render: (row) => formatSeconds(row.queue_sec) },
+                { key: 'avg_queue', label: 'Avg Queue', render: (row) => `${row.calls ? Math.round(row.queue_sec / row.calls) : 0}s` },
+                { key: 'queue_max', label: 'Max Queue', render: (row) => `${row.queue_max}s` },
+                { key: 'drops', label: 'Abandon', render: (row) => formatNumber(row.drops) },
+              ]}
+            />
+            <p className="connection-summary">
+              Totals: {formatNumber(totals.calls)} calls, {formatNumber(totals.answered)} answered,
+              {' '}talk {formatSeconds(totals.talk_sec)}, queue {formatSeconds(totals.queue_sec)} (max {totals.queue_max}s),
+              {' '}{formatNumber(totals.drops)} abandoned
+            </p>
+          </Panel>
+        );
+      })}
+    </>
+  );
+}
+
+// Native AST_inbound_daily_report.php: per-day (or per-hour) inbound totals
+// for the selected in-groups with status and term-reason breakdowns.
+function InboundDailyReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [hourly, setHourly] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (groupIds, begin, end, byHour) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (byHour) params.set('hourly', '1');
+      if (groupIds.length) params.set('groups', groupIds.join(','));
+      const payload = await apiFetch(`/reports/inbound-daily?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today, false);
+  }, [load, today]);
+
+  const groups = (data?.groups || []).map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }));
+  const s = data?.sections;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>Daily Summary</h2>
+          <p className="action-copy">Per-day inbound totals for the selected in-groups.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Groups and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate, hourly);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label className="checkbox-field">
+              <input type="checkbox" checked={hourly} onChange={(event) => setHourly(event.target.checked)} />
+              <span>Hourly breakdown</span>
+            </label>
+          </div>
+          <CampaignTogglePicker campaigns={groups} selected={selected} onChange={setSelected} emptyLabel="No inbound groups available" />
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title={data?.hourly ? 'Hourly Totals' : 'Daily Totals'} icon={PhoneCall} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={(s.slots || []).map((row) => ({ ...row, id: String(row.slot) }))}
+              columns={[
+                { key: 'slot', label: data?.hourly ? 'Hour' : 'Date', render: (row) => String(row.slot).slice(0, data?.hourly ? 16 : 10) },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
+                { key: 'answer_pct', label: 'Answer %', render: (row) => `${row.calls ? ((row.answered / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'asa', label: 'Avg Speed Answer', render: (row) => `${row.answered ? Math.round(row.answer_queue_sec / row.answered) : 0}s` },
+                { key: 'drops', label: 'Drops', render: (row) => formatNumber(row.drops) },
+                { key: 'drop_pct', label: 'Drop %', render: (row) => `${row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00'}%` },
+                { key: 'agents', label: 'Agents', render: (row) => formatNumber(row.agents) },
+                { key: 'calls_sec', label: 'Calltime', render: (row) => formatSeconds(row.calls_sec) },
+                { key: 'queue_max', label: 'Max Queue', render: (row) => `${row.queue_max}s` },
+              ]}
+            />
+          </Panel>
+          <section className="admin-grid media-tools-grid">
+            <Panel eyebrow="Breakdown" title="Statuses" icon={Activity}>
+              <DataTable
+                emptyLabel="No inbound calls in the date range"
+                rows={(s.statusBreakdown || []).map((row) => ({ ...row, id: row.status }))}
+                columns={[
+                  { key: 'status', label: 'Status' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                ]}
+              />
+            </Panel>
+            <Panel eyebrow="Breakdown" title="Term Reasons" icon={Activity}>
+              <DataTable
+                emptyLabel="No inbound calls in the date range"
+                rows={(s.termReasons || []).map((row) => ({ ...row, id: row.term_reason || 'NONE' }))}
+                columns={[
+                  { key: 'term_reason', label: 'Term Reason', render: (row) => row.term_reason || 'NONE' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                ]}
+              />
+            </Panel>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -9043,6 +9414,9 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportOutboundInterval') return <OutboundIntervalReportView token={token} />;
   if (activeView === 'reportLeadSource') return <LeadSourceReportView token={token} />;
   if (activeView === 'reportInboundSummary') return <InboundSummaryReportView token={token} />;
+  if (activeView === 'reportServiceLevel') return <ServiceLevelReportView token={token} />;
+  if (activeView === 'reportInboundHourly') return <InboundHourlyReportView token={token} />;
+  if (activeView === 'reportInboundDaily') return <InboundDailyReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

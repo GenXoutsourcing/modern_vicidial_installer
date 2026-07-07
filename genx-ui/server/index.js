@@ -4738,6 +4738,159 @@ async function inboundSummaryReport(req, res) {
   });
 }
 
+// Resolves and validates the in-group picker + selection for the inbound
+// reports (scoped by allowed queue groups, PHONE handling like legacy).
+async function inboundGroupSelection(req) {
+  const pickerParams = [];
+  const pickerWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'group_id', pickerParams);
+  const groups = await rows(
+    `SELECT group_id, group_name FROM vicidial_inbound_groups
+     WHERE group_handling = 'PHONE' AND ${pickerWhere} ORDER BY group_id ASC LIMIT 500`,
+    pickerParams,
+    [],
+  );
+  const requested = String(req.query?.groups || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const allowed = new Set(groups.map((row) => String(row.group_id)));
+  return { groups, groupIds: requested.filter((id) => allowed.has(id)) };
+}
+
+// Native port of AST_CLOSER_service_level.php: one in-group, queue-time
+// histogram per quarter-hour of day plus per-day totals. The legacy per-call
+// PHP loop becomes two GROUP BY queries.
+async function serviceLevelReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const { groups } = await inboundGroupSelection(req);
+  const groupId = cleanId(req.query?.group, 20);
+  if (!groupId) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+  if (!groups.some((row) => String(row.group_id) === groupId)) {
+    return res.status(403).json({ ok: false, error: 'group_not_allowed' });
+  }
+
+  const params = [begin, end, groupId];
+  const [slots, days] = await Promise.all([
+    rows(
+      `SELECT FLOOR(TIME_TO_SEC(TIME(call_date)) / 900) AS slot, COUNT(*) AS calls,
+              COALESCE(SUM(length_in_sec),0) AS calls_sec, COALESCE(MAX(length_in_sec),0) AS calls_max,
+              COALESCE(SUM(status LIKE '%DROP%'),0) AS drops,
+              COALESCE(SUM(CASE WHEN status LIKE '%DROP%' THEN length_in_sec ELSE 0 END),0) AS drops_sec,
+              COALESCE(SUM(queue_seconds > 0),0) AS holds,
+              COALESCE(SUM(queue_seconds),0) AS queue_sec, COALESCE(MAX(queue_seconds),0) AS queue_max,
+              COALESCE(SUM(queue_seconds = 0),0) AS q0,
+              COALESCE(SUM(queue_seconds > 0 AND queue_seconds <= 20),0) AS q20,
+              COALESCE(SUM(queue_seconds > 20 AND queue_seconds <= 40),0) AS q40,
+              COALESCE(SUM(queue_seconds > 40 AND queue_seconds <= 60),0) AS q60,
+              COALESCE(SUM(queue_seconds > 60 AND queue_seconds <= 80),0) AS q80,
+              COALESCE(SUM(queue_seconds > 80 AND queue_seconds <= 100),0) AS q100,
+              COALESCE(SUM(queue_seconds > 100 AND queue_seconds <= 120),0) AS q120,
+              COALESCE(SUM(queue_seconds > 120),0) AS q121
+       FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       GROUP BY slot ORDER BY slot ASC LIMIT 100`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT DATE(call_date) AS day, COUNT(*) AS calls,
+              COALESCE(SUM(length_in_sec),0) AS calls_sec,
+              COALESCE(SUM(status LIKE '%DROP%'),0) AS drops,
+              COALESCE(SUM(CASE WHEN status LIKE '%DROP%' THEN length_in_sec ELSE 0 END),0) AS drops_sec,
+              COALESCE(SUM(queue_seconds > 0),0) AS holds,
+              COALESCE(SUM(CASE WHEN queue_seconds > 0 THEN queue_seconds ELSE 0 END),0) AS hold_sec
+       FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       GROUP BY day ORDER BY day ASC LIMIT 400`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, groups, range: { beginDate, endDate }, sections: { slots, days, groupId } });
+}
+
+// Native port of AST_CLOSERsummary_hourly.php: per-group totals plus an
+// hour-of-day breakdown; talk = length - queue - in-group alert delay.
+async function inboundHourlyReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const { groups, groupIds } = await inboundGroupSelection(req);
+  if (!groupIds.length) return res.json({ ok: true, groups, results: null, range: { beginDate, endDate } });
+
+  const results = [];
+  for (const groupId of groupIds) {
+    const hours = await rows(
+      `SELECT HOUR(cl.call_date) AS hour, COUNT(*) AS calls,
+              COALESCE(SUM(cl.status LIKE '%DROP%'),0) AS drops,
+              COALESCE(SUM(cl.status NOT LIKE '%DROP%'),0) AS answered,
+              COALESCE(SUM(GREATEST(cl.length_in_sec - cl.queue_seconds - ROUND(COALESCE(ig.agent_alert_delay,0) / 1000), 0)),0) AS talk_sec,
+              COALESCE(SUM(cl.queue_seconds),0) AS queue_sec,
+              COALESCE(MAX(cl.queue_seconds),0) AS queue_max
+       FROM vicidial_closer_log cl
+       LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
+       WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id = ?
+       GROUP BY hour ORDER BY hour ASC LIMIT 30`,
+      [begin, end, groupId],
+      [],
+    );
+    const meta = groups.find((row) => String(row.group_id) === groupId);
+    results.push({ group_id: groupId, group_name: meta?.group_name || '', hours });
+  }
+  return res.json({ ok: true, groups, results, range: { beginDate, endDate } });
+}
+
+// Native port of AST_inbound_daily_report.php: per-day (or per-hour) inbound
+// totals for the selected in-groups, plus status and term-reason breakdowns.
+async function inboundDailyReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const hourly = String(req.query?.hourly || '') === '1';
+  const { groups, groupIds } = await inboundGroupSelection(req);
+  if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+
+  const ph = groupIds.map(() => '?').join(',');
+  const params = [begin, end, ...groupIds];
+  const slotExpr = hourly ? "DATE_FORMAT(call_date, '%Y-%m-%d %H:00')" : 'DATE(call_date)';
+  const answeredExpr = `status NOT IN (${sqlStatusList(CLOSER_V2_UNANSWERED)})`;
+
+  const [slots, statusBreakdown, termReasons] = await Promise.all([
+    rows(
+      `SELECT ${slotExpr} AS slot, COUNT(*) AS calls,
+              COALESCE(SUM(length_in_sec),0) AS calls_sec, COALESCE(MAX(length_in_sec),0) AS calls_max,
+              COALESCE(SUM(status LIKE '%DROP%'),0) AS drops,
+              COALESCE(SUM(CASE WHEN status LIKE '%DROP%' THEN length_in_sec ELSE 0 END),0) AS drops_sec,
+              COALESCE(SUM(${answeredExpr}),0) AS answered,
+              COALESCE(SUM(CASE WHEN ${answeredExpr} THEN queue_seconds ELSE 0 END),0) AS answer_queue_sec,
+              COALESCE(SUM(queue_seconds),0) AS queue_sec, COALESCE(MAX(queue_seconds),0) AS queue_max,
+              COUNT(DISTINCT CASE WHEN user NOT IN ('', 'VDCL') THEN user END) AS agents
+       FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY slot ORDER BY slot ASC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT status, COUNT(*) AS calls FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY status ORDER BY calls DESC LIMIT 200`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT term_reason, COUNT(*) AS calls FROM vicidial_closer_log
+       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       GROUP BY term_reason ORDER BY calls DESC LIMIT 50`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, groups, range: { beginDate, endDate }, hourly, sections: { slots, statusBreakdown, termReasons } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -8428,6 +8581,9 @@ app.get('/api/reports/outbound-calling', requireAccess, outboundCallingReport);
 app.get('/api/reports/outbound-interval', requireAccess, outboundIntervalReport);
 app.get('/api/reports/lead-source', requireAccess, leadSourceReport);
 app.get('/api/reports/inbound-summary', requireAccess, inboundSummaryReport);
+app.get('/api/reports/service-level', requireAccess, serviceLevelReport);
+app.get('/api/reports/inbound-hourly', requireAccess, inboundHourlyReport);
+app.get('/api/reports/inbound-daily', requireAccess, inboundDailyReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

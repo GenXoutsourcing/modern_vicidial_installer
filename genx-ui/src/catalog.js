@@ -97,9 +97,9 @@ export const REPORT_GROUPS = [
     items: [
       { label: 'Inbound Report', href: '/vicidial/AST_CLOSERstats.php' },
       { label: 'Inbound v2', href: '/vicidial/AST_CLOSERstats_v2.php', view: 'reportInboundSummary' },
-      { label: 'Service Level', href: '/vicidial/AST_CLOSER_service_level.php' },
-      { label: 'Hourly Summary', href: '/vicidial/AST_CLOSERsummary_hourly.php' },
-      { label: 'Daily Summary', href: '/vicidial/AST_inbound_daily_report.php' },
+      { label: 'Service Level', href: '/vicidial/AST_CLOSER_service_level.php', view: 'reportServiceLevel' },
+      { label: 'Hourly Summary', href: '/vicidial/AST_CLOSERsummary_hourly.php', view: 'reportInboundHourly' },
+      { label: 'Daily Summary', href: '/vicidial/AST_inbound_daily_report.php', view: 'reportInboundDaily' },
       { label: 'DID Report', href: '/vicidial/AST_DIDstats.php' },
       { label: 'DID Summary', href: '/vicidial/AST_DIDstats_v2.php' },
       { label: 'DID Detail', href: '/vicidial/AST_DIDdetail.php' },
