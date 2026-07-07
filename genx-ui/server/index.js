@@ -207,6 +207,7 @@ function publicUser(row) {
     downloadLists: row.download_lists === '1',
     modifyLeads: Number(row.modify_leads || 0),
     customFieldsModify: row.custom_fields_modify === '1',
+    vdcAgentApiAccess: row.vdc_agent_api_access === '1',
     astDeletePhones: row.ast_delete_phones === '1',
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
@@ -374,6 +375,7 @@ async function authenticateVicidialUser(username, password) {
             u.download_lists,
             u.modify_leads,
             u.custom_fields_modify,
+            u.vdc_agent_api_access,
             u.ast_delete_phones,
             u.modify_remoteagents,
             u.delete_remote_agents,
@@ -3849,7 +3851,7 @@ async function realtimeMainReport(req, res) {
   const agentCampaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'la.campaign_id', agentParams);
   const agents = await rows(
     `SELECT la.user, u.full_name, la.status, la.campaign_id, la.server_ip, la.calls_today,
-            la.last_call_time, la.pause_code, la.callerid
+            la.last_call_time, la.pause_code, la.callerid, la.conf_exten, la.lead_id
      FROM vicidial_live_agents la
      LEFT JOIN vicidial_users u ON u.user = la.user
      WHERE ${agentCampaignWhere}
@@ -5776,6 +5778,67 @@ async function userLoginsReport(req, res) {
     ),
   ]);
   return res.json({ ok: true, users, entries: [...today, ...history] });
+}
+
+// Legacy non_agent_api.php blind_monitor port: dials the manager's phone and
+// drops it into an agent's conference. CONFBRIDGE prefixes: 4 = muted listen,
+// 6 = barge-in (meetme: 0 = listen, no prefix = barge). Cross-server routing
+// uses the zero-padded IP dialstring extensions from extensions-vicidial.conf.
+function monitorIpDialstring(serverIp) {
+  return serverIp.split('.').map((octet) => octet.padStart(3, '0')).join('*') + '*';
+}
+
+async function blindMonitor(req, res) {
+  // Legacy gate: user_level > 6 AND vdc_agent_api_access.
+  const u = req.genxUser;
+  const allowed = Number(u?.userLevel || 0) >= 9
+    || (Number(u?.userLevel || 0) > 6 && Boolean(u?.vdcAgentApiAccess));
+  if (!allowed) return res.status(403).json({ ok: false, error: 'permission_denied' });
+  const sessionId = cleanId(req.body?.session_id, 10);
+  const serverIp = cleanText(req.body?.server_ip, 15);
+  const phoneLogin = cleanId(req.body?.phone_login, 20);
+  const mode = req.body?.mode === 'BARGE' ? 'BARGE' : 'LISTEN';
+  if (!sessionId || !serverIp || !phoneLogin) return badRequest(res, 'missing_fields');
+  try {
+    const [server] = await rows('SELECT conf_engine FROM servers WHERE server_ip = ? LIMIT 1', [serverIp], []);
+    if (!server) return res.status(404).json({ ok: false, error: 'server_not_found' });
+    const confbridge = String(server.conf_engine || '') === 'CONFBRIDGE';
+    const confTable = confbridge ? 'vicidial_confbridges' : 'vicidial_conferences';
+    const prefix = mode === 'BARGE' ? (confbridge ? '6' : '') : (confbridge ? '4' : '0');
+    const sessionExists = await scalar(`SELECT COUNT(*) AS value FROM ${quoteId(confTable)} WHERE conf_exten = ? AND server_ip = ?`, [sessionId, serverIp], 0);
+    if (Number(sessionExists) < 1) return res.status(404).json({ ok: false, error: 'invalid_session_id' });
+    const [phone] = await rows('SELECT login, dialplan_number, server_ip, outbound_cid FROM phones WHERE login = ? LIMIT 1', [phoneLogin], []);
+    if (!phone) return res.status(404).json({ ok: false, error: 'invalid_phone_login' });
+
+    const dialstring = monitorIpDialstring(serverIp);
+    const cidPrefix = mode === 'BARGE' ? 'BB' : 'BM';
+    const padUser = String(u.user).padStart(8, '0').slice(0, 8);
+    const callerCode = `${cidPrefix}${Math.floor(Date.now() / 1000)}${padUser}`;
+    const [agentRow] = await rows('SELECT user, campaign_id, status, lead_id FROM vicidial_live_agents WHERE conf_exten = ? AND server_ip = ? LIMIT 1', [sessionId, serverIp], []);
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f, cmd_line_g)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1', ?, ?)`,
+      [phone.server_ip, callerCode,
+        `Channel: Local/${dialstring}${prefix}${sessionId}@default`,
+        'Context: default',
+        `Exten: ${phone.dialplan_number}`,
+        `Callerid: "${callerCode}" <${phone.outbound_cid || ''}>`,
+        `Variable: __monitorsession=${sessionId}`],
+    );
+    await execute(
+      `INSERT INTO vicidial_dial_log
+       SET caller_code = ?, lead_id = '0', server_ip = ?, call_date = NOW(), extension = ?,
+           channel = ?, timeout = '0', outbound_cid = ?, context = 'default'`,
+      [callerCode, phone.server_ip, phone.dialplan_number,
+        `Local/${dialstring}${prefix}${sessionId}@default`, `"${callerCode}" <${phone.outbound_cid || ''}>`],
+    ).catch(() => {});
+    await adminLog(req, 'USERS', 'OTHER', agentRow?.user || sessionId, `GENX BLIND ${mode}`, `session ${sessionId}@${serverIp} to phone ${phoneLogin}`, agentRow ? `agent ${agentRow.user} ${agentRow.status} ${agentRow.campaign_id}` : '');
+    return res.json({ ok: true, mode, session: sessionId, agent: agentRow || null, callerCode });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'blind_monitor_failed' });
+  }
 }
 
 // Native port of user_stats.php + user_status.php + AST_agent_time_sheet.php:
@@ -13426,6 +13489,7 @@ app.get('/api/reports/agent-days', requireAccess, agentDaysReport);
 app.get('/api/reports/usergroup-login', requireAccess, userGroupLoginReport);
 app.get('/api/reports/user-logins', requireAccess, userLoginsReport);
 app.get('/api/reports/user-stats', requireAccess, userStatsReport);
+app.post('/api/admin/blind-monitor', requireAccess, blindMonitor);
 app.get('/api/reports/performance-comparison', requireAccess, performanceComparisonReport);
 app.get('/api/reports/usergroup-hourly', requireAccess, userGroupHourlyReport);
 app.get('/api/reports/export-calls', requireAccess, exportCallsReport);

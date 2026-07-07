@@ -7728,10 +7728,35 @@ function useLiveReport(path, token, intervalMs = 5000) {
   return { data, error };
 }
 
-function RealtimeMainReportView({ token }) {
+function RealtimeMainReportView({ token, user }) {
   const { data, error } = useLiveReport('/reports/realtime-main', token, 5000);
   const agents = data?.agents || [];
   const campaigns = data?.campaigns || [];
+  // Legacy blind_monitor gate: level >6 with agent API access (level 9 always).
+  const canMonitor = Number(user?.userLevel || 0) >= 9
+    || (Number(user?.userLevel || 0) > 6 && Boolean(user?.vdcAgentApiAccess));
+  const [monitorPhone, setMonitorPhone] = useState(() => window.localStorage.getItem('genx-monitor-phone') || '');
+  const [monitorState, setMonitorState] = useState('');
+
+  function setPhone(value) {
+    setMonitorPhone(value);
+    window.localStorage.setItem('genx-monitor-phone', value);
+  }
+
+  async function monitor(row, mode) {
+    setMonitorState('working');
+    try {
+      const payload = await apiFetch('/admin/blind-monitor', token, {
+        method: 'POST',
+        body: JSON.stringify({ session_id: row.conf_exten, server_ip: row.server_ip, phone_login: monitorPhone, mode }),
+      });
+      setMonitorState(`${mode === 'BARGE' ? 'Barging into' : 'Listening to'} ${payload.agent?.user || row.user} - your phone (${monitorPhone}) is ringing`);
+    } catch (requestError) {
+      setMonitorState(requestError.status === 403 ? 'Not permitted (needs level 7+ with Agent API Access)'
+        : requestError.status === 404 ? 'Session or phone not found - check your phone login'
+          : 'Monitor request failed');
+    }
+  }
 
   return (
     <>
@@ -7745,6 +7770,20 @@ function RealtimeMainReportView({ token }) {
       {error && <p className="form-error">{error}</p>}
       <section className="admin-grid">
         <Panel eyebrow="Live" title={`Live Agents (${formatNumber(agents.length)})`} icon={Headphones} className="admin-wide-panel">
+          {canMonitor && (
+            <div className="connection-actions">
+              <label className="connection-summary" style={{ display: 'flex', alignItems: 'center', gap: '0.5em' }}>
+                Monitor with phone login
+                <input
+                  value={monitorPhone}
+                  placeholder="e.g. 9176"
+                  style={{ width: '8em' }}
+                  onChange={(event) => setPhone(event.target.value.trim())}
+                />
+              </label>
+              {monitorState && monitorState !== 'working' && <span className="connection-status">{monitorState}</span>}
+            </div>
+          )}
           <DataTable
             emptyLabel="No agents currently logged in"
             rows={agents.map((row, index) => ({ ...row, id: index }))}
@@ -7755,6 +7794,32 @@ function RealtimeMainReportView({ token }) {
               { key: 'pause_code', label: 'Pause Code', render: (row) => row.pause_code || 'None' },
               { key: 'calls_today', label: 'Calls Today', render: (row) => formatNumber(row.calls_today) },
               { key: 'server_ip', label: 'Server' },
+              ...(canMonitor ? [{
+                key: 'monitor',
+                label: 'Monitor',
+                render: (row) => (
+                  <span className="log-status-edit">
+                    <button
+                      type="button"
+                      className="row-action"
+                      disabled={!monitorPhone || monitorState === 'working'}
+                      title="Join the session muted"
+                      onClick={() => monitor(row, 'LISTEN')}
+                    >
+                      Listen
+                    </button>
+                    <button
+                      type="button"
+                      className="row-action"
+                      disabled={!monitorPhone || monitorState === 'working'}
+                      title="Join the session with audio (barge-in)"
+                      onClick={() => monitor(row, 'BARGE')}
+                    >
+                      Barge
+                    </button>
+                  </span>
+                ),
+              }] : []),
             ]}
           />
         </Panel>
@@ -15109,7 +15174,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'statuses') return <StatusesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} onNavigate={onNavigate} />;
   if (activeView === 'reportAgentMonitorLog') return <AgentMonitorLogReportView admin={admin} user={user} token={token} />;
-  if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} />;
+  if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} user={user} />;
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
   if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
