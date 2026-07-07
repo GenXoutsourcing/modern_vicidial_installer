@@ -192,6 +192,7 @@ const NAV_ITEMS = [
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
   { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
+  { key: 'leadSearch', label: 'Lead Search', eyebrow: 'Lists', title: 'Lead Search and Modify', icon: Search },
   { key: 'leadLoader', label: 'Lead Loader', eyebrow: 'Admin', title: 'Lead Loader', icon: FileText },
   { key: 'dnc', label: 'DNC', eyebrow: 'Compliance', title: 'Do Not Call Management', icon: ShieldCheck },
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
@@ -222,7 +223,7 @@ const NAV_GROUPS = [
   { title: '', keys: ['command'] },
   { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
   { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
-  { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
+  { title: 'Lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
   { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display', 'map'] },
@@ -5965,6 +5966,280 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   );
 }
 
+// Legacy admin_search_lead.php + admin_modify_lead.php: search leads by
+// phone / lead id / vendor code / name / email, then view and edit the full
+// lead record with per-lead call history, callbacks and recordings.
+const LEAD_SEARCH_TYPES = [
+  ['phone', 'Phone Number'],
+  ['lead_id', 'Lead ID'],
+  ['vendor', 'Vendor Lead Code'],
+  ['name', 'First / Last Name'],
+  ['email', 'Email'],
+];
+
+const LEAD_EDIT_FIELDS = [
+  ['status', 'Status'], ['vendor_lead_code', 'Vendor Lead Code'], ['source_id', 'Source ID'],
+  ['title', 'Title'], ['first_name', 'First Name'], ['middle_initial', 'MI'], ['last_name', 'Last Name'],
+  ['address1', 'Address 1'], ['address2', 'Address 2'], ['address3', 'Address 3'],
+  ['city', 'City'], ['state', 'State'], ['province', 'Province'], ['postal_code', 'Postal Code'],
+  ['country_code', 'Country'], ['gender', 'Gender'], ['date_of_birth', 'Date of Birth'],
+  ['phone_code', 'Phone Code'], ['phone_number', 'Phone Number'], ['alt_phone', 'Alt Phone'],
+  ['email', 'Email'], ['security_phrase', 'Security Phrase'], ['rank', 'Rank'], ['owner', 'Owner'],
+];
+
+function LeadSearchView({ admin, user, token, viewParams }) {
+  const [searchType, setSearchType] = useState('phone');
+  const [query, setQuery] = useState('');
+  const [listFilter, setListFilter] = useState('');
+  const [results, setResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [form, setForm] = useState(null);
+  const [modifyLogs, setModifyLogs] = useState(false);
+  const [modifyCloserLogs, setModifyCloserLogs] = useState(false);
+  const [saveState, setSaveState] = useState('');
+  const [error, setError] = useState('');
+
+  const modifyLeads = Number(user?.modifyLeads || 0);
+  const canEdit = Number(user?.userLevel || 0) >= 9 || (modifyLeads >= 1 && modifyLeads !== 5);
+  const statuses = admin?.statuses || [];
+
+  const loadDetail = useCallback(async (leadId) => {
+    setError('');
+    setSaveState('');
+    try {
+      const payload = await apiFetch(`/admin/leads/${encodeURIComponent(leadId)}`, token);
+      setDetail(payload);
+      setForm({ ...payload.lead });
+      setModifyLogs(false);
+      setModifyCloserLogs(false);
+    } catch (requestError) {
+      setError(requestError.status === 404 ? 'Lead not found or not in your allowed lists' : 'The lead failed to load');
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (viewParams?.leadId) loadDetail(viewParams.leadId);
+  }, [viewParams, loadDetail]);
+
+  async function runSearch(event) {
+    event.preventDefault();
+    setSearching(true);
+    setError('');
+    setDetail(null);
+    setForm(null);
+    try {
+      const params = new URLSearchParams({ type: searchType, q: query });
+      if (listFilter) params.set('list_id', listFilter);
+      const payload = await apiFetch(`/admin/leads/search?${params.toString()}`, token);
+      setResults(payload.leads || []);
+    } catch (requestError) {
+      setError('The lead search failed');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function saveLead() {
+    setSaveState('working');
+    try {
+      const body = {};
+      for (const [key] of LEAD_EDIT_FIELDS) body[key] = form[key] ?? '';
+      body.comments = form.comments ?? '';
+      if (modifyLogs) body.modify_logs = true;
+      if (modifyCloserLogs) body.modify_closer_logs = true;
+      const payload = await apiFetch(`/admin/leads/${encodeURIComponent(detail.lead.lead_id)}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      setSaveState(payload.notes?.length ? `Saved - ${payload.notes.join('; ')}` : 'Lead saved');
+      loadDetail(detail.lead.lead_id);
+    } catch (requestError) {
+      setSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+    }
+  }
+
+  const lead = detail?.lead;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Lists</p>
+          <h2>Lead Search and Modify</h2>
+          <p className="action-copy">Find any lead in your allowed lists, review its full call history and edit the record.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Search" title="Find a Lead" icon={Search} className="admin-wide-panel">
+        <form className="entity-form report-filter-bar" onSubmit={runSearch}>
+          <div className="field-grid">
+            <label>
+              <span>Search By</span>
+              <select value={searchType} onChange={(event) => setSearchType(event.target.value)}>
+                {LEAD_SEARCH_TYPES.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Search Value</span>
+              <input value={query} placeholder="Required" onChange={(event) => setQuery(event.target.value)} />
+            </label>
+            <label>
+              <span>List ID (optional)</span>
+              <input value={listFilter} placeholder="All lists" onChange={(event) => setListFilter(event.target.value)} />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={searching || !query}>
+              <Search size={16} aria-hidden="true" />
+              {searching ? 'Searching' : 'Search Leads'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {results && !detail && (
+        <Panel eyebrow="Results" title={`Leads Found (${formatNumber(results.length)})`} icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No leads matched the search in your allowed lists"
+            rows={results.map((row) => ({ ...row, id: row.lead_id }))}
+            columns={[
+              { key: 'lead_id', label: 'Lead' },
+              { key: 'name', label: 'Name', render: (row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
+              { key: 'phone_number', label: 'Phone', render: (row) => (row.phone_code ? `${row.phone_number} (${row.phone_code})` : row.phone_number) },
+              { key: 'list_id', label: 'List' },
+              { key: 'status', label: 'Status' },
+              { key: 'entry_date', label: 'Entered', render: (row) => formatDateTime(row.entry_date) },
+              { key: 'called_count', label: 'Calls' },
+              { key: 'last_local_call_time', label: 'Last Call', render: (row) => formatDateTime(row.last_local_call_time) },
+              { key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => loadDetail(row.lead_id)}>View</ManageButton> },
+            ]}
+          />
+        </Panel>
+      )}
+      {lead && form && (
+        <>
+          <Panel
+            eyebrow={`Lead ${lead.lead_id} - list ${lead.list_id}${detail.list ? ` (${detail.list.list_name || ''}, campaign ${detail.list.campaign_id || 'none'})` : ''}`}
+            title={`${lead.first_name || ''} ${lead.last_name || ''}`.trim() || `Lead ${lead.lead_id}`}
+            icon={Users}
+            className="admin-wide-panel"
+            headerActions={results ? (
+              <button type="button" className="secondary-action compact-action" onClick={() => { setDetail(null); setForm(null); }}>
+                Back to results
+              </button>
+            ) : null}
+          >
+            <p className="connection-summary">
+              Entered {formatDateTime(lead.entry_date)} | Modified {formatDateTime(lead.modify_date)} | Called {formatNumber(lead.called_count)} times
+              {lead.last_local_call_time ? ` | Last call ${formatDateTime(lead.last_local_call_time)}` : ''} | GMT {lead.gmt_offset_now} | Entry list {lead.entry_list_id}
+              {lead.user ? ` | Last agent ${lead.user}` : ''}
+            </p>
+            <form
+              className="entity-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveLead();
+              }}
+            >
+              <div className="field-grid">
+                {LEAD_EDIT_FIELDS.map(([key, label]) => (
+                  <label key={key}>
+                    <span>{label}</span>
+                    {key === 'status' ? (
+                      <>
+                        <input list="lead-status-options" value={form[key] ?? ''} disabled={!canEdit} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />
+                        <datalist id="lead-status-options">
+                          {statuses.map((row) => (
+                            <option key={row.status} value={row.status}>{row.status_name || row.status}</option>
+                          ))}
+                        </datalist>
+                      </>
+                    ) : (
+                      <input value={form[key] ?? ''} disabled={!canEdit} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />
+                    )}
+                  </label>
+                ))}
+                <label className="wide-field">
+                  <span>Comments</span>
+                  <textarea rows={3} value={form.comments ?? ''} disabled={!canEdit} onChange={(event) => setForm((current) => ({ ...current, comments: event.target.value }))} />
+                </label>
+              </div>
+              {canEdit && (
+                <div className="modal-actions">
+                  <label className="check-option">
+                    <input type="checkbox" checked={modifyLogs} onChange={(event) => setModifyLogs(event.target.checked)} />
+                    <span>Also set latest outbound call log status</span>
+                  </label>
+                  <label className="check-option">
+                    <input type="checkbox" checked={modifyCloserLogs} onChange={(event) => setModifyCloserLogs(event.target.checked)} />
+                    <span>Also set latest inbound call log status</span>
+                  </label>
+                  <button type="submit" className="primary-action" disabled={saveState === 'working'}>
+                    <Save size={16} aria-hidden="true" />
+                    {saveState === 'working' ? 'Saving' : 'Save Lead'}
+                  </button>
+                  {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
+                </div>
+              )}
+              {!canEdit && <p className="connection-summary">Your VICIdial user cannot modify leads (modify_leads setting).</p>}
+            </form>
+          </Panel>
+          <Panel eyebrow="History" title={`Calls (${formatNumber((detail.calls || []).length)})`} icon={PhoneCall} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No calls logged for this lead"
+              rows={(detail.calls || []).map((row, index) => ({ ...row, id: `${row.call_date}-${index}` }))}
+              columns={[
+                { key: 'direction', label: 'Dir' },
+                { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
+                { key: 'length_in_sec', label: 'Seconds' },
+                { key: 'status', label: 'Status' },
+                { key: 'user', label: 'User' },
+                { key: 'group_id', label: 'Campaign / Group' },
+                { key: 'phone_number', label: 'Phone' },
+                { key: 'term_reason', label: 'Hangup' },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="History" title={`Callbacks (${formatNumber((detail.callbacks || []).length)})`} icon={Clock3} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No callback records for this lead"
+              rows={(detail.callbacks || []).map((row) => ({ ...row, id: row.callback_id }))}
+              columns={[
+                { key: 'callback_time', label: 'Callback Time', render: (row) => formatDateTime(row.callback_time) },
+                { key: 'entry_time', label: 'Entered', render: (row) => formatDateTime(row.entry_time) },
+                { key: 'status', label: 'Status' },
+                { key: 'user', label: 'User' },
+                { key: 'recipient', label: 'Recipient' },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'comments', label: 'Comments' },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="History" title={`Recordings (${formatNumber((detail.recordings || []).length)})`} icon={Activity} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No recordings for this lead"
+              rows={(detail.recordings || []).map((row) => ({ ...row, id: row.recording_id }))}
+              columns={[
+                { key: 'start_time', label: 'Start', render: (row) => formatDateTime(row.start_time) },
+                { key: 'length_in_sec', label: 'Seconds' },
+                { key: 'filename', label: 'File' },
+                { key: 'user', label: 'User' },
+                {
+                  key: 'location',
+                  label: 'Listen',
+                  render: (row) => (row.location ? <a className="row-action" href={row.location} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> Open</a> : '—'),
+                },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
 const DNC_SYSTEM_SCOPE = 'SYSTEM_INTERNAL';
 
 function DncView({ admin, user, token }) {
@@ -11446,7 +11721,7 @@ const CALLBACK_HOLD_SCOPE_OPTIONS = [
   ['user_group', 'User Group'],
 ];
 
-function CallbackHoldsReportView({ token, onLogout, initialScope, initialId }) {
+function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onNavigate }) {
   const [scope, setScope] = useState(initialScope || 'campaign');
   const [holdId, setHoldId] = useState(initialId || '');
   const [data, setData] = useState(null);
@@ -11558,7 +11833,15 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId }) {
           emptyLabel={holdId ? 'No ACTIVE or LIVE callbacks for this selection' : 'Pick a scope and ID to list callbacks on hold'}
           rows={entries.map((row) => ({ ...row, id: row.callback_id }))}
           columns={[
-            { key: 'lead_id', label: 'Lead' },
+            {
+              key: 'lead_id',
+              label: 'Lead',
+              render: (row) => (
+                <button type="button" className="row-action" onClick={() => onNavigate?.('leadSearch', { leadId: row.lead_id })}>
+                  {row.lead_id}
+                </button>
+              ),
+            },
             { key: 'list_id', label: 'List' },
             { key: 'campaign_id', label: 'Campaign' },
             { key: 'entry_time', label: 'Entry Date', render: (row) => formatDateTime(row.entry_time) },
@@ -14131,6 +14414,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'display') return <DisplayView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'systemSettings') return <SystemSettingsView user={user} token={token} onLogout={() => onNavigate('command')} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'leadSearch') return <LeadSearchView admin={admin} user={user} token={token} viewParams={viewParams} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
@@ -14151,7 +14435,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
   if (activeView === 'reportListStatuses') return <ListStatusesReportView token={token} />;
   if (activeView === 'reportListCampaignStatuses') return <ListCampaignStatusesReportView token={token} initialCampaignId={viewParams?.campaignId} />;
-  if (activeView === 'reportCallbackHolds') return <CallbackHoldsReportView token={token} initialScope={viewParams?.scope} initialId={viewParams?.id} />;
+  if (activeView === 'reportCallbackHolds') return <CallbackHoldsReportView token={token} initialScope={viewParams?.scope} initialId={viewParams?.id} onNavigate={onNavigate} />;
   if (activeView === 'reportCampaignStatusList') return <CampaignStatusListReportView token={token} />;
   if (activeView === 'reportDialerInventory') return <DialerInventoryReportView token={token} />;
   if (activeView === 'reportOutboundCalling') return <OutboundCallingReportView token={token} />;

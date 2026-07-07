@@ -10385,6 +10385,222 @@ async function deleteConfTemplate(req, res) {
   }
 }
 
+// Legacy admin_search_lead.php + admin_modify_lead.php ports. Lead access is
+// scoped to lists in the user's allowed campaigns, exactly like legacy's
+// $LOGallowed_listsSQL clause; null return means unrestricted.
+async function allowedListIds(user) {
+  const scope = user?.permissions?.allowedCampaigns;
+  if (!scope || scope.all) return null;
+  const params = [];
+  const where = scopeWhere(scope, 'campaign_id', params);
+  const listRows = await rows(`SELECT list_id FROM vicidial_lists WHERE ${where} LIMIT 5000`, params, []);
+  return listRows.map((row) => String(row.list_id));
+}
+
+const LEAD_FIELDS = `lead_id, entry_date, modify_date, status, user, vendor_lead_code, source_id, list_id,
+  gmt_offset_now, called_since_last_reset, phone_code, phone_number, title, first_name, middle_initial,
+  last_name, address1, address2, address3, city, state, province, postal_code, country_code, gender,
+  date_of_birth, alt_phone, email, security_phrase, comments, called_count, last_local_call_time, rank,
+  owner, entry_list_id`;
+
+function maskLeadRow(req, row) {
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  const hideLead = Boolean(req.genxUser?.adminHideLeadData);
+  const lead = { ...row };
+  if (phoneMode !== '0') {
+    lead.phone_number = maskPhoneNumber(lead.phone_number, phoneMode);
+    lead.alt_phone = maskPhoneNumber(lead.alt_phone, phoneMode);
+  }
+  if (hideLead) {
+    lead.vendor_lead_code = maskText(lead.vendor_lead_code);
+    lead.security_phrase = maskText(lead.security_phrase);
+    lead.comments = maskText(lead.comments);
+  }
+  return lead;
+}
+
+async function adminLeadSearch(req, res) {
+  const type = String(req.query?.type || 'phone');
+  const q = cleanText(req.query?.q, 80);
+  const listId = cleanId(req.query?.list_id, 12);
+  if (!q) return badRequest(res, 'query_required');
+  const listIds = await allowedListIds(req.genxUser);
+  if (listIds && !listIds.length) return res.json({ ok: true, leads: [] });
+  const params = [];
+  let where = '';
+  if (type === 'phone') {
+    where = '(phone_number = ? OR alt_phone = ? OR address3 = ?)';
+    params.push(q, q, q);
+  } else if (type === 'lead_id') {
+    where = 'lead_id = ?';
+    params.push(Number(q) || 0);
+  } else if (type === 'vendor') {
+    where = 'vendor_lead_code = ?';
+    params.push(q);
+  } else if (type === 'name') {
+    where = '(first_name LIKE ? OR last_name LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`);
+  } else if (type === 'email') {
+    where = 'email = ?';
+    params.push(q);
+  } else {
+    return badRequest(res, 'bad_search_type');
+  }
+  if (listId) {
+    where += ' AND list_id = ?';
+    params.push(listId);
+  }
+  if (listIds) {
+    where += ` AND list_id IN (${listIds.map(() => '?').join(',')})`;
+    params.push(...listIds);
+  }
+  const leads = await rows(`SELECT ${LEAD_FIELDS} FROM vicidial_list WHERE ${where} ORDER BY lead_id DESC LIMIT 500`, params, []);
+  await adminLog(req, 'LEADS', 'SEARCH', q.slice(0, 20), 'GENX ADMIN SEARCH LEAD', `type=${type} q=${q}`, `${leads.length} results`);
+  return res.json({ ok: true, leads: leads.map((row) => maskLeadRow(req, row)) });
+}
+
+async function adminLeadDetail(req, res) {
+  const id = Number(req.params.id) || 0;
+  if (!id) return badRequest(res, 'invalid_lead_id');
+  const listIds = await allowedListIds(req.genxUser);
+  if (listIds && !listIds.length) return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  const params = [id];
+  let scopeSql = '';
+  if (listIds) {
+    scopeSql = ` AND list_id IN (${listIds.map(() => '?').join(',')})`;
+    params.push(...listIds);
+  }
+  const [lead] = await rows(`SELECT ${LEAD_FIELDS} FROM vicidial_list WHERE lead_id = ?${scopeSql} LIMIT 1`, params, []);
+  if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  const [listRow] = await rows('SELECT list_id, list_name, campaign_id, active FROM vicidial_lists WHERE list_id = ? LIMIT 1', [lead.list_id], []);
+  const calls = await rows(
+    `(SELECT 'OUT' AS direction, call_date, length_in_sec, status, user, campaign_id AS group_id, phone_number, term_reason
+      FROM vicidial_log WHERE lead_id = ?)
+     UNION ALL
+     (SELECT 'IN' AS direction, call_date, length_in_sec, status, user, campaign_id AS group_id, phone_number, term_reason
+      FROM vicidial_closer_log WHERE lead_id = ?)
+     ORDER BY call_date DESC LIMIT 500`,
+    [id, id],
+    [],
+  );
+  if (phoneMode !== '0') {
+    for (const call of calls) call.phone_number = maskPhoneNumber(call.phone_number, phoneMode);
+  }
+  const callbacks = await rows(
+    `SELECT callback_id, entry_time, callback_time, modify_date, status, user, recipient, campaign_id, comments
+     FROM vicidial_callbacks WHERE lead_id = ? ORDER BY callback_time DESC LIMIT 50`,
+    [id],
+    [],
+  );
+  const recordings = await rows(
+    `SELECT recording_id, start_time, length_in_sec, filename, location, user
+     FROM recording_log WHERE lead_id = ? ORDER BY start_time DESC LIMIT 50`,
+    [id],
+    [],
+  );
+  return res.json({ ok: true, lead: maskLeadRow(req, lead), list: listRow || null, calls, callbacks, recordings });
+}
+
+// Field set matches legacy admin_modify_lead's UPDATE exactly; phone_number is
+// skipped when admin_hide_phone_data is on, source_id always accepted (legacy
+// gates it on system_settings.source_id_display, a display-only concern here).
+const LEAD_UPDATE_FIELDS = ['status', 'title', 'first_name', 'middle_initial', 'last_name', 'address1',
+  'address2', 'address3', 'city', 'state', 'province', 'postal_code', 'country_code', 'alt_phone',
+  'phone_code', 'email', 'security_phrase', 'comments', 'rank', 'owner', 'vendor_lead_code',
+  'date_of_birth', 'source_id', 'phone_number'];
+
+function leadDiffText(row) {
+  return Object.entries(row).map(([key, value]) => `${key}=${value ?? ''}`).join('|');
+}
+
+async function adminLeadUpdate(req, res) {
+  const modifyLeads = Number(req.genxUser?.modifyLeads || 0);
+  const isLevel9 = Number(req.genxUser?.userLevel || 0) >= 9;
+  // Legacy: modify_leads 0 = no page access, 5 = view-only for the lead record.
+  if (!isLevel9 && (modifyLeads < 1 || modifyLeads === 5)) {
+    return res.status(403).json({ ok: false, error: 'permission_denied' });
+  }
+  const id = Number(req.params.id) || 0;
+  if (!id) return badRequest(res, 'invalid_lead_id');
+  const listIds = await allowedListIds(req.genxUser);
+  if (listIds && !listIds.length) return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  const scopeParams = [id];
+  let scopeSql = '';
+  if (listIds) {
+    scopeSql = ` AND list_id IN (${listIds.map(() => '?').join(',')})`;
+    scopeParams.push(...listIds);
+  }
+  const [orig] = await rows(`SELECT ${LEAD_FIELDS} FROM vicidial_list WHERE lead_id = ?${scopeSql} LIMIT 1`, scopeParams, []);
+  if (!orig) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  const body = req.body || {};
+  const payload = {};
+  for (const field of LEAD_UPDATE_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (field === 'phone_number' && (req.genxUser?.adminHidePhoneData || '0') !== '0') continue;
+    if (field === 'comments') {
+      payload[field] = cleanText(body[field], 255);
+    } else if (field === 'rank' || field === 'called_count') {
+      payload[field] = Math.trunc(Number(body[field]) || 0);
+    } else {
+      payload[field] = cleanText(body[field], field === 'email' || field === 'vendor_lead_code' ? 250 : 100);
+    }
+  }
+  if (!Object.keys(payload).length) return badRequest(res, 'no_fields');
+  try {
+    const { assignments, values } = dynamicAssignments(payload);
+    await execute(`UPDATE vicidial_list SET ${assignments} WHERE lead_id = ?`, [...values, id]);
+    const [next] = await rows(`SELECT ${LEAD_FIELDS} FROM vicidial_list WHERE lead_id = ? LIMIT 1`, [id], []);
+    const oldStatus = String(orig.status || '');
+    const newStatus = String(next?.status || '');
+    const statusChanged = payload.status !== undefined && oldStatus !== newStatus;
+    const notes = [];
+    if (statusChanged) {
+      if (oldStatus === 'CBHOLD') {
+        await execute("UPDATE vicidial_callbacks SET status = 'INACTIVE' WHERE lead_id = ? AND status = 'ACTIVE'", [id]);
+        notes.push('callbacks inactivated (was CBHOLD)');
+      }
+      if (oldStatus === 'CALLBK') {
+        await execute("UPDATE vicidial_callbacks SET status = 'INACTIVE' WHERE lead_id = ? AND status IN ('ACTIVE','LIVE')", [id]);
+        notes.push('callbacks inactivated (was CALLBK)');
+      }
+      if (newStatus === 'CBHOLD') {
+        const existing = await scalar("SELECT COUNT(*) AS value FROM vicidial_callbacks WHERE lead_id = ? AND status IN ('ACTIVE','LIVE')", [id], 0);
+        if (Number(existing) < 1) {
+          let campaignId = '';
+          const [campRow] = await rows('SELECT campaign_id FROM vicidial_lists WHERE list_id = ? LIMIT 1', [next.list_id], []);
+          if (campRow?.campaign_id) campaignId = campRow.campaign_id;
+          await execute(
+            `INSERT INTO vicidial_callbacks
+             SET lead_id = ?, recipient = 'ANYONE', status = 'ACTIVE', user = ?, user_group = 'ADMIN',
+                 list_id = ?, callback_time = TIMESTAMP(DATE_ADD(CURDATE(), INTERVAL 1 DAY), '12:00:00'),
+                 entry_time = NOW(), comments = '', campaign_id = ?`,
+            [id, req.genxUser.user, next.list_id, campaignId],
+          );
+          notes.push('CBHOLD callback scheduled tomorrow 12:00');
+        }
+      }
+      if (newStatus === 'DNC' && next.phone_number) {
+        await execute('INSERT INTO vicidial_dnc (phone_number) VALUES (?)', [next.phone_number]).catch(() => {});
+        notes.push('added to internal DNC');
+      }
+      // Legacy checkbox behavior: also tag the most recent call log rows.
+      if (body.modify_logs === true || body.modify_logs === 'Y') {
+        await execute('UPDATE vicidial_log SET status = ? WHERE lead_id = ? ORDER BY call_date DESC LIMIT 1', [newStatus, id]).catch(() => {});
+        notes.push('latest vicidial_log status updated');
+      }
+      if (body.modify_closer_logs === true || body.modify_closer_logs === 'Y') {
+        await execute('UPDATE vicidial_closer_log SET status = ? WHERE lead_id = ? ORDER BY closecallid DESC LIMIT 1', [newStatus, id]).catch(() => {});
+        notes.push('latest vicidial_closer_log status updated');
+      }
+    }
+    await adminLog(req, 'LEADS', 'MODIFY', String(id), 'GENX ADMIN MODIFY LEAD', `${leadDiffText(orig)}---ORIG---NEW---${leadDiffText(next || {})}`, notes.join('; '));
+    return res.json({ ok: true, lead: maskLeadRow(req, next || orig), notes });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'lead_update_failed' });
+  }
+}
+
 const SCREEN_LABEL_FIELDS = ['label_hide_field_logs', 'label_title', 'label_first_name', 'label_middle_initial',
   'label_last_name', 'label_address1', 'label_address2', 'label_address3', 'label_city', 'label_state',
   'label_province', 'label_postal_code', 'label_vendor_lead_code', 'label_gender', 'label_phone_number',
@@ -12969,6 +13185,9 @@ app.delete('/api/admin/status-categories/:id', requireAccess, deleteStatusCatego
 app.post('/api/admin/extension-groups', requireAccess, (req, res) => saveExtensionGroup(req, res, 'create'));
 app.put('/api/admin/extension-groups/:id', requireAccess, (req, res) => saveExtensionGroup(req, res, 'update'));
 app.delete('/api/admin/extension-groups/:id', requireAccess, deleteExtensionGroup);
+app.get('/api/admin/leads/search', requireAccess, adminLeadSearch);
+app.get('/api/admin/leads/:id', requireAccess, adminLeadDetail);
+app.put('/api/admin/leads/:id', requireAccess, adminLeadUpdate);
 app.post('/api/admin/conf-templates', requireAccess, (req, res) => saveConfTemplate(req, res, 'create'));
 app.put('/api/admin/conf-templates/:id', requireAccess, (req, res) => saveConfTemplate(req, res, 'update'));
 app.delete('/api/admin/conf-templates/:id', requireAccess, deleteConfTemplate);
