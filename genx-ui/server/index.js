@@ -212,6 +212,8 @@ function publicUser(row) {
     modifyLanguages: row.modify_languages === '1',
     modifyVoicemail: row.modify_voicemail === '1',
     modifyAutoReports: row.modify_auto_reports === '1',
+    modifyMoh: row.modify_moh === '1',
+    modifyTts: row.modify_tts === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -306,6 +308,8 @@ async function authenticateVicidialUser(username, password) {
             u.modify_languages,
             u.modify_voicemail,
             u.modify_auto_reports,
+            u.modify_moh,
+            u.modify_tts,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -937,6 +941,9 @@ async function adminData(user) {
     voicemailFull,
     vmMessageGroups,
     automatedReports,
+    mohFull,
+    ttsPrompts,
+    soundboards,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2247,6 +2254,28 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT m.moh_id, m.moh_name, m.active, m.random, m.user_group,
+              COALESCE(f.file_count, 0) AS file_count
+       FROM vicidial_music_on_hold m
+       LEFT JOIN (SELECT moh_id, COUNT(*) AS file_count FROM vicidial_music_on_hold_files GROUP BY moh_id) f
+         ON f.moh_id = m.moh_id
+       ORDER BY m.moh_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT tts_id, tts_name, active, tts_text, tts_voice, user_group
+       FROM vicidial_tts_prompts ORDER BY tts_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT avatar_id, avatar_name, avatar_notes, active, user_group, soundboard_layout, columns_limit
+       FROM vicidial_avatars ORDER BY avatar_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2343,6 +2372,9 @@ async function adminData(user) {
     voicemailFull,
     vmMessageGroups,
     automatedReports,
+    mohFull,
+    ttsPrompts,
+    soundboards,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4898,6 +4930,96 @@ async function deleteAutomatedReport(req, res) {
   }
 }
 
+// Generic save/delete for the simple single-key media entities. Audio file
+// management (MOH files, soundboard audio) is a follow-up; this is metadata.
+const SIMPLE_MEDIA_ENTITIES = {
+  moh: {
+    table: 'vicidial_music_on_hold',
+    idColumn: 'moh_id',
+    idMax: 100,
+    permission: 'modifyMoh',
+    section: 'MOH',
+    payload: (body) => ({
+      moh_name: cleanText(body.moh_name, 255) || 'New MOH Group',
+      active: ynFlag(body.active, 'N'),
+      random: ynFlag(body.random, 'N'),
+      user_group: cleanId(body.user_group, 20) || '---ALL---',
+    }),
+  },
+  tts: {
+    table: 'vicidial_tts_prompts',
+    idColumn: 'tts_id',
+    idMax: 50,
+    permission: 'modifyTts',
+    section: 'TTS',
+    payload: (body) => ({
+      tts_name: cleanText(body.tts_name, 100) || 'New TTS Prompt',
+      active: ynFlag(body.active, 'N'),
+      tts_text: cleanText(body.tts_text, 12000),
+      tts_voice: cleanText(body.tts_voice, 100),
+      user_group: cleanId(body.user_group, 20) || '---ALL---',
+    }),
+  },
+  soundboards: {
+    table: 'vicidial_avatars',
+    idColumn: 'avatar_id',
+    idMax: 100,
+    permission: 'modifyMoh',
+    section: 'SOUNDBOARDS',
+    payload: (body) => ({
+      avatar_name: cleanText(body.avatar_name, 100) || 'New Soundboard',
+      avatar_notes: cleanText(body.avatar_notes, 2000),
+      active: ynFlag(body.active, 'N'),
+      user_group: cleanId(body.user_group, 20) || '---ALL---',
+      soundboard_layout: cleanText(body.soundboard_layout, 40),
+      columns_limit: cleanInt(body.columns_limit, 0, 0, 99),
+    }),
+  },
+};
+
+async function saveSimpleMedia(req, res, kind, mode) {
+  const spec = SIMPLE_MEDIA_ENTITIES[kind];
+  if (!requireModify(req, res, spec.permission)) return;
+  const payload = spec.payload(req.body || {});
+  try {
+    if (mode === 'create') {
+      const id = cleanText(req.body?.[spec.idColumn], spec.idMax).replace(/[^-_ 0-9a-zA-Z]/g, '');
+      if (!id || id.length < 2) return badRequest(res, 'invalid_id');
+      const { assignments, values } = dynamicAssignments({ [spec.idColumn]: id, ...payload });
+      await execute(`INSERT INTO ${quoteId(spec.table)} SET ${assignments}`, values);
+      await adminLog(req, spec.section, 'ADD', id, `GENX ADD ${spec.section}`, `INSERT INTO ${spec.table}`, id);
+    } else {
+      const id = cleanText(req.params.id, spec.idMax).replace(/[^-_ 0-9a-zA-Z]/g, '');
+      if (!id) return badRequest(res, 'invalid_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE ${quoteId(spec.table)} SET ${assignments} WHERE ${quoteId(spec.idColumn)} = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'not_found' });
+      await adminLog(req, spec.section, 'MODIFY', id, `GENX MODIFY ${spec.section}`, `UPDATE ${spec.table}`, id);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'media_save_failed' });
+  }
+}
+
+async function deleteSimpleMedia(req, res, kind) {
+  const spec = SIMPLE_MEDIA_ENTITIES[kind];
+  if (!requireModify(req, res, spec.permission)) return;
+  const id = cleanText(req.params.id, spec.idMax).replace(/[^-_ 0-9a-zA-Z]/g, '');
+  if (!id) return badRequest(res, 'invalid_id');
+  try {
+    const result = await execute(`DELETE FROM ${quoteId(spec.table)} WHERE ${quoteId(spec.idColumn)} = ? LIMIT 1`, [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (kind === 'moh') {
+      await execute('DELETE FROM vicidial_music_on_hold_files WHERE moh_id = ?', [id]).catch(() => {});
+    }
+    await adminLog(req, spec.section, 'DELETE', id, `GENX DELETE ${spec.section}`, `DELETE FROM ${spec.table}`, id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'media_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -7049,6 +7171,15 @@ app.delete('/api/admin/vm-message-groups/:id', requireAccess, deleteVmMessageGro
 app.post('/api/admin/automated-reports', requireAccess, (req, res) => saveAutomatedReport(req, res, 'create'));
 app.put('/api/admin/automated-reports/:id', requireAccess, (req, res) => saveAutomatedReport(req, res, 'update'));
 app.delete('/api/admin/automated-reports/:id', requireAccess, deleteAutomatedReport);
+app.post('/api/admin/moh', requireAccess, (req, res) => saveSimpleMedia(req, res, 'moh', 'create'));
+app.put('/api/admin/moh/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'moh', 'update'));
+app.delete('/api/admin/moh/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'moh'));
+app.post('/api/admin/tts', requireAccess, (req, res) => saveSimpleMedia(req, res, 'tts', 'create'));
+app.put('/api/admin/tts/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'tts', 'update'));
+app.delete('/api/admin/tts/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'tts'));
+app.post('/api/admin/soundboards', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'create'));
+app.put('/api/admin/soundboards/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'update'));
+app.delete('/api/admin/soundboards/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'soundboards'));
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));

@@ -450,10 +450,12 @@ function userCan(user, entity) {
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
+  if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
+  if (entity === 'tts') return Boolean(user?.modifyTts);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -482,6 +484,8 @@ function userCanDelete(user, entity) {
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
+  if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
+  if (entity === 'tts') return Boolean(user?.modifyTts);
   return false;
 }
 
@@ -1613,6 +1617,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'voicemailBoxes') {
     return { voicemail_id: '', pass: '', fullname: '', email: '', active: 'Y', delete_vm_after_email: 'N', voicemail_timezone: 'eastern', user_group: '---ALL---', on_login_report: 'N' };
+  }
+
+  if (entity === 'moh') {
+    return { moh_id: '', moh_name: '', active: 'N', random: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'tts') {
+    return { tts_id: '', tts_name: '', active: 'N', tts_text: '', tts_voice: '', user_group: '---ALL---' };
+  }
+
+  if (entity === 'soundboards') {
+    return { avatar_id: '', avatar_name: '', avatar_notes: '', active: 'N', user_group: '---ALL---', soundboard_layout: '', columns_limit: '0' };
   }
 
   if (entity === 'vmMessageGroups') {
@@ -2952,6 +2968,39 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'moh') {
+    return [
+      { key: 'moh_id', label: 'MOH ID', disabled: mode === 'edit' },
+      { key: 'moh_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'random', label: 'Random Order', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'tts') {
+    return [
+      { key: 'tts_id', label: 'TTS ID', disabled: mode === 'edit' },
+      { key: 'tts_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'tts_voice', label: 'Voice' },
+      { key: 'tts_text', label: 'Prompt Text', type: 'textarea', wide: true },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'soundboards') {
+    return [
+      { key: 'avatar_id', label: 'Soundboard ID', disabled: mode === 'edit' },
+      { key: 'avatar_name', label: 'Name' },
+      { key: 'avatar_notes', label: 'Notes', type: 'textarea', wide: true },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'soundboard_layout', label: 'Layout' },
+      { key: 'columns_limit', label: 'Columns Limit', type: 'number' },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
   if (entity === 'voicemailBoxes') {
     return [
       { key: 'voicemail_id', label: 'Voicemail ID (digits)', disabled: mode === 'edit' },
@@ -3397,6 +3446,9 @@ function entityLabel(entity) {
     voicemailBoxes: 'Voicemail Box',
     vmMessageGroups: 'VM Message Group',
     automatedReports: 'Automated Report',
+    moh: 'Music On Hold Group',
+    tts: 'TTS Prompt',
+    soundboards: 'Soundboard',
   }[entity] || 'Record';
 }
 
@@ -3439,6 +3491,9 @@ function entityId(entity, row) {
     voicemailBoxes: row.voicemail_id,
     vmMessageGroups: row.leave_vm_message_group_id,
     automatedReports: row.report_id,
+    moh: row.moh_id,
+    tts: row.tts_id,
+    soundboards: row.avatar_id,
   }[entity];
 }
 
@@ -7117,6 +7172,72 @@ function MediaToolsView({ admin, user, onAction }) {
               { key: 'leave_vm_message_group_notes', label: 'Notes' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(userCan(user, 'vmMessageGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('vmMessageGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Audio"
+          title={`Music On Hold (${formatNumber((admin?.mohFull || []).length)})`}
+          icon={Radio}
+          headerActions={userCan(user, 'moh') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('moh', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No music-on-hold groups (audio file upload is a follow-up; this manages the groups)"
+            rows={(admin?.mohFull || []).map((row) => ({ ...row, id: row.moh_id }))}
+            columns={[
+              { key: 'moh_id', label: 'ID' },
+              { key: 'moh_name', label: 'Name' },
+              { key: 'file_count', label: 'Files', render: (row) => formatNumber(row.file_count) },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'moh') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('moh', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Audio"
+          title={`TTS Prompts (${formatNumber((admin?.ttsPrompts || []).length)})`}
+          icon={FileText}
+          headerActions={userCan(user, 'tts') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('tts', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No TTS prompts"
+            rows={(admin?.ttsPrompts || []).map((row) => ({ ...row, id: row.tts_id }))}
+            columns={[
+              { key: 'tts_id', label: 'ID' },
+              { key: 'tts_name', label: 'Name' },
+              { key: 'tts_voice', label: 'Voice' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'tts') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('tts', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Audio"
+          title={`Soundboards (${formatNumber((admin?.soundboards || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'soundboards') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('soundboards', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No soundboards (agent audio-drop boards; audio upload is a follow-up)"
+            rows={(admin?.soundboards || []).map((row) => ({ ...row, id: row.avatar_id }))}
+            columns={[
+              { key: 'avatar_id', label: 'ID' },
+              { key: 'avatar_name', label: 'Name' },
+              { key: 'soundboard_layout', label: 'Layout' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'soundboards') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('soundboards', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
