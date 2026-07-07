@@ -196,6 +196,12 @@ function publicUser(row) {
     modifySettingsContainers: ['1', '2', '3', '4', '5', '6'].includes(String(row.modify_settings_containers || '')),
     accessRecordings: row.access_recordings === '1',
     exportReports: row.export_reports === '1',
+    deleteCampaigns: row.delete_campaigns === '1',
+    deleteUsers: row.delete_users === '1',
+    deleteLists: row.delete_lists === '1',
+    deleteScripts: row.delete_scripts === '1',
+    deleteUserGroups: row.delete_user_groups === '1',
+    deleteCallTimes: row.delete_call_times === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -274,6 +280,12 @@ async function authenticateVicidialUser(username, password) {
             u.export_reports,
             u.access_recordings,
             u.modify_settings_containers,
+            u.delete_campaigns,
+            u.delete_users,
+            u.delete_lists,
+            u.delete_scripts,
+            u.delete_user_groups,
+            u.delete_call_times,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -3598,6 +3610,149 @@ async function whiteboardReport(req, res) {
   return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
 }
 
+// Cascade mirrors legacy admin.php ADD=61 (campaign delete): callbacks are
+// archived before deletion, and every campaign-scoped config/stats table is
+// purged so no orphan rows remain.
+const CAMPAIGN_DELETE_TABLES = [
+  'vicidial_campaign_agents',
+  'vicidial_live_agents',
+  'vicidial_campaign_statuses',
+  'vicidial_campaign_hotkeys',
+  'vicidial_campaign_stats',
+  'vicidial_campaign_stats_debug',
+  'vicidial_lead_recycle',
+  'vicidial_campaign_server_stats',
+  'vicidial_server_trunks',
+  'vicidial_pause_codes',
+  'vicidial_campaigns_list_mix',
+  'vicidial_xfer_presets',
+  'vicidial_xfer_stats',
+  'vicidial_campaign_cid_areacodes',
+  'vicidial_url_multi',
+  'vicidial_hopper',
+];
+
+async function deleteCampaign(req, res) {
+  if (!requireModify(req, res, 'deleteCampaigns')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_campaign_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  try {
+    const result = await execute('DELETE FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+    await execute('INSERT INTO vicidial_callbacks_archive SELECT * FROM vicidial_callbacks WHERE campaign_id = ?', [id]).catch(() => {});
+    await execute('DELETE FROM vicidial_callbacks WHERE campaign_id = ?', [id]).catch(() => {});
+    for (const table of CAMPAIGN_DELETE_TABLES) {
+      await execute(`DELETE FROM ${quoteId(table)} WHERE campaign_id = ?`, [id]).catch(() => {});
+    }
+    await adminLog(req, 'CAMPAIGNS', 'DELETE', id, 'GENX DELETE CAMPAIGN', 'DELETE FROM vicidial_campaigns + campaign-scoped tables', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'campaign_delete_failed' });
+  }
+}
+
+// Mirrors legacy admin.php ADD=62: reconcile the agent's open vicidial_agent_log
+// row, remove them from vicidial_live_agents, kick their conference channel via
+// vicidial_manager, and log the manager-forced logout in vicidial_user_log.
+async function logoutCampaignAgents(req, res) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_campaign_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const [campaign] = await rows('SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [id], []);
+  if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+
+  const agents = await rows(
+    `SELECT user, campaign_id, UNIX_TIMESTAMP(last_update_time) AS last_update_epoch, conf_exten, server_ip
+     FROM vicidial_live_agents WHERE campaign_id = ?`,
+    [id],
+    [],
+  );
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const inactiveEpoch = nowEpoch - 60;
+
+  try {
+    for (const agent of agents) {
+      let userGroup = '';
+      if (Number(agent.last_update_epoch || 0) > inactiveEpoch) {
+        const [log] = await rows(
+          `SELECT agent_log_id, lead_id, pause_epoch, pause_sec, wait_epoch, wait_sec,
+                  talk_epoch, talk_sec, dispo_epoch, dispo_sec, status, user_group
+           FROM vicidial_agent_log WHERE user = ? ORDER BY agent_log_id DESC LIMIT 1`,
+          [agent.user],
+          [],
+        );
+        if (log) {
+          userGroup = log.user_group || '';
+          const noStatus = !log.status || log.status === 'NULL';
+          if (!Number(log.wait_epoch) || (log.status === 'PAUSE' && !Number(log.dispo_epoch))) {
+            const pauseSec = (nowEpoch - Number(log.pause_epoch || 0)) + Number(log.pause_sec || 0);
+            await execute(
+              "UPDATE vicidial_agent_log SET wait_epoch = ?, pause_sec = ?, pause_type = 'ADMIN' WHERE agent_log_id = ?",
+              [nowEpoch, pauseSec, log.agent_log_id],
+            );
+          } else if (!Number(log.talk_epoch)) {
+            const waitSec = (nowEpoch - Number(log.wait_epoch || 0)) + Number(log.wait_sec || 0);
+            await execute(
+              'UPDATE vicidial_agent_log SET talk_epoch = ?, wait_sec = ? WHERE agent_log_id = ?',
+              [nowEpoch, waitSec, log.agent_log_id],
+            );
+          } else {
+            if (noStatus && Number(log.lead_id) > 0) {
+              await execute("UPDATE vicidial_list SET status = 'PU' WHERE lead_id = ?", [log.lead_id]);
+            }
+            if (!Number(log.dispo_epoch)) {
+              const talkSec = nowEpoch - Number(log.talk_epoch || 0);
+              await execute(
+                `UPDATE vicidial_agent_log SET dispo_epoch = ?, talk_sec = ?${noStatus && Number(log.lead_id) > 0 ? ", status = 'PU'" : ''} WHERE agent_log_id = ?`,
+                [nowEpoch, talkSec, log.agent_log_id],
+              );
+            } else if (!Number(log.dispo_sec)) {
+              await execute(
+                'UPDATE vicidial_agent_log SET dispo_sec = ? WHERE agent_log_id = ?',
+                [nowEpoch - Number(log.dispo_epoch || 0), log.agent_log_id],
+              );
+            }
+          }
+        }
+      }
+
+      await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [agent.user]);
+
+      if (!userGroup) {
+        const [userRow] = await rows('SELECT user_group FROM vicidial_users WHERE user = ?', [agent.user], []);
+        userGroup = userRow?.user_group || '';
+      }
+
+      const kickChannel = `Local/5555${agent.conf_exten || ''}@default`;
+      const queryCID = `ULGH3457${nowEpoch}`;
+      await execute(
+        `INSERT INTO vicidial_manager
+           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+            cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e, cmd_line_f)
+         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, 'Context: default', 'Exten: 8300', 'Priority: 1', ?)`,
+        [agent.server_ip || '', queryCID, `Channel: ${kickChannel}`, `Callerid: ${queryCID}`],
+      ).catch(() => {});
+
+      await execute(
+        `INSERT INTO vicidial_user_log (user, event, campaign_id, event_date, event_epoch, user_group, extension)
+         VALUES (?, 'LOGOUT', ?, NOW(), ?, ?, ?)`,
+        [agent.user, agent.campaign_id, nowEpoch, userGroup, `MGR LOGOUT: ${req.genxUser.user}`],
+      ).catch(() => {});
+    }
+
+    await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX LOGOUT ALL CAMPAIGN AGENTS', 'DELETE FROM vicidial_live_agents WHERE campaign_id', `${agents.length} agents`);
+    return res.json({ ok: true, loggedOut: agents.length });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'logout_agents_failed' });
+  }
+}
+
 function maskPhoneNumber(value, mode) {
   const text = String(value || '');
   if (!text) return text;
@@ -5346,6 +5501,8 @@ app.get('/api/admin', requireAccess, async (req, res) => {
 app.post('/api/admin/campaigns', requireAccess, (req, res) => saveCampaign(req, res, 'create'));
 app.post('/api/admin/campaigns/copy', requireAccess, copyCampaign);
 app.put('/api/admin/campaigns/:id', requireAccess, (req, res) => saveCampaign(req, res, 'update'));
+app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
+app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'create'));

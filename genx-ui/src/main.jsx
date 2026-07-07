@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -448,6 +448,7 @@ function userCanDelete(user, entity) {
   if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
   if (entity === 'callMenuOptions') return Boolean(user?.modifyIngroups);
   if (entity === 'filterPhoneGroups') return Boolean(user?.deleteFilters);
+  if (entity === 'campaigns') return Boolean(user?.deleteCampaigns);
   return false;
 }
 
@@ -3281,7 +3282,92 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
   );
 }
 
-function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction }) {
+// Mirrors the cross-links at the bottom of legacy admin.php campaign modify:
+// lists within the campaign, live hopper view, real-time report, and the
+// log-all-agents-out action. Delete lives on the modal's standard delete button.
+function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, onNavigate, onLogout }) {
+  const campaign = String(campaignId || '');
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [logoutState, setLogoutState] = useState('');
+  const lists = (admin?.lists || []).filter((row) => String(row.campaign_id || '') === campaign);
+  const activeLists = lists.filter((row) => row.active === 'Y').length;
+
+  async function logoutAgents() {
+    if (!confirmingLogout) {
+      setConfirmingLogout(true);
+      return;
+    }
+    setLogoutState('working');
+    try {
+      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaign)}/logout-agents`, token, { method: 'POST' });
+      setLogoutState(`Logged out ${payload.loggedOut} agent${payload.loggedOut === 1 ? '' : 's'}`);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setLogoutState(requestError.status === 403 ? 'Not permitted' : 'Logout failed');
+    } finally {
+      setConfirmingLogout(false);
+    }
+  }
+
+  if (!campaign) return null;
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Connections</p>
+          <h3>Lists, hopper and live activity</h3>
+        </div>
+        <Compass size={20} aria-hidden="true" />
+      </div>
+      <div className="connection-lists">
+        <p className="connection-summary">
+          {lists.length
+            ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} in this campaign (${formatNumber(activeLists)} active)`
+            : 'No lists point at this campaign yet'}
+        </p>
+        {lists.slice(0, 10).map((row) => (
+          <button
+            type="button"
+            className="tool-picker-item"
+            key={row.list_id}
+            onClick={() => userCan(user, 'lists') && onSwitchAction('lists', 'edit', row)}
+            disabled={!userCan(user, 'lists')}
+          >
+            {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
+          </button>
+        ))}
+      </div>
+      <div className="connection-actions">
+        <button type="button" className="row-action" onClick={() => onNavigate('reportHopperList', { campaignId: campaign })}>
+          <Database size={15} aria-hidden="true" />
+          Hopper List
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportRealtimeMain')}>
+          <Radio size={15} aria-hidden="true" />
+          Real-Time Report
+        </button>
+        {userCan(user, 'campaigns') && (
+          <button
+            type="button"
+            className={confirmingLogout ? 'danger-action confirming compact-action' : 'row-action'}
+            disabled={logoutState === 'working'}
+            onClick={logoutAgents}
+          >
+            <LogOut size={15} aria-hidden="true" />
+            {logoutState === 'working' ? 'Logging out' : confirmingLogout ? 'Confirm Logout All?' : 'Log All Agents Out'}
+          </button>
+        )}
+        {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
+      </div>
+    </div>
+  );
+}
+
+function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -3377,6 +3463,18 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'campaigns' && (
+          <CampaignConnections
+            admin={admin}
+            campaignId={form.campaign_id}
+            user={user}
+            token={token}
+            onSwitchAction={onSwitchAction}
+            onNavigate={onNavigate}
+            onLogout={onLogout}
           />
         )}
 
@@ -5470,8 +5568,8 @@ function AgentMonitorLogReportView({ token }) {
   );
 }
 
-function HopperListReportView({ token }) {
-  const [campaignId, setCampaignId] = useState('');
+function HopperListReportView({ token, initialCampaignId }) {
+  const [campaignId, setCampaignId] = useState(initialCampaignId || '');
   const [status, setStatus] = useState('READY');
 
   const params = new URLSearchParams({ status });
@@ -5709,7 +5807,7 @@ function SystemView({ admin, user, onAction }) {
   );
 }
 
-function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
+function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
@@ -5733,7 +5831,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} />;
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
-  if (activeView === 'reportHopperList') return <HopperListReportView token={token} />;
+  if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
@@ -5742,6 +5840,9 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
 
 function AdminShell({ token, user, onLogout }) {
   const [activeView, setActiveView] = useState('command');
+  // Legacy-style cross-page links carry ids (campaign_id etc.); viewParams is
+  // the payload for the view being navigated to, cleared on plain nav clicks.
+  const [viewParams, setViewParams] = useState(null);
   const [range, setRange] = useState('today');
   const [dashboardState, setDashboardState] = useState({ loading: true, error: '', data: null });
   const [adminState, setAdminState] = useState({ loading: true, error: '', data: null });
@@ -5780,6 +5881,12 @@ function AdminShell({ token, user, onLogout }) {
 
   const openAction = useCallback((entity, mode, row = null) => {
     setAction({ entity, mode, row });
+  }, []);
+
+  const navigateTo = useCallback((view, params = null) => {
+    setViewParams(params);
+    setActiveView(view);
+    setAction(null);
   }, []);
 
   const handleSaved = useCallback((nextAdminData) => {
@@ -5846,7 +5953,7 @@ function AdminShell({ token, user, onLogout }) {
                     type="button"
                     key={key}
                     className={key === activeView ? 'active' : ''}
-                    onClick={() => setActiveView(key)}
+                    onClick={() => navigateTo(key)}
                   >
                     <Icon size={16} aria-hidden="true" />
                     <span>{item.label}</span>
@@ -5876,13 +5983,14 @@ function AdminShell({ token, user, onLogout }) {
 
           <AdminPage
             activeView={activeView}
+            viewParams={viewParams}
             dashboard={dashboardState.data}
             admin={adminState.data}
             user={user}
             token={token}
             onAction={openAction}
             onSaved={handleSaved}
-            onNavigate={setActiveView}
+            onNavigate={navigateTo}
           />
 
           <footer className="footer-line">
@@ -5901,6 +6009,7 @@ function AdminShell({ token, user, onLogout }) {
           onSaved={handleSaved}
           onLogout={onLogout}
           onSwitchAction={openAction}
+          onNavigate={navigateTo}
         />
       )}
     </main>
