@@ -6912,6 +6912,30 @@ async function leadFilterConnections(req, res) {
   return res.json({ ok: true, campaigns, users });
 }
 
+// Legacy ADD=73 filter test: read-only COUNT of leads matching the filter SQL.
+async function testLeadFilter(req, res) {
+  if (!requireModify(req, res, 'modifyFilters')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_filter_id');
+  const [filter] = await rows(
+    'SELECT lead_filter_id, lead_filter_sql FROM vicidial_lead_filters WHERE lead_filter_id = ? LIMIT 1',
+    [id],
+    [],
+  );
+  if (!filter) return res.status(404).json({ ok: false, error: 'filter_not_found' });
+  const filterSql = String(filter.lead_filter_sql || '').replace(/\\/g, '').trim();
+  if (!filterSql) return res.json({ ok: true, matches: 0, empty_filter: true });
+  if (/;|--|\b(insert|update|delete|drop|alter|create|grant|truncate|replace|load|outfile)\b/i.test(filterSql)) {
+    return res.status(400).json({ ok: false, error: 'filter_sql_not_testable' });
+  }
+  try {
+    const [row] = await rows(`SELECT COUNT(*) AS matches FROM vicidial_list WHERE ${filterSql}`, [], []);
+    return res.json({ ok: true, matches: Number(row?.matches || 0) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: 'filter_sql_invalid' });
+  }
+}
+
 // Legacy ADD=61111111: delete the lead filter.
 async function deleteLeadFilter(req, res) {
   if (!requireModify(req, res, 'deleteFilters')) return;
@@ -10426,6 +10450,7 @@ app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(
 app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
 app.delete('/api/admin/lead-filters/:id', requireAccess, deleteLeadFilter);
 app.get('/api/admin/lead-filters/:id/connections', requireAccess, leadFilterConnections);
+app.get('/api/admin/lead-filters/:id/test', requireAccess, testLeadFilter);
 app.post('/api/admin/filter-phone-groups', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'create'));
 app.put('/api/admin/filter-phone-groups/:id', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'update'));
 app.delete('/api/admin/filter-phone-groups/:id', requireAccess, deleteFilterPhoneGroup);

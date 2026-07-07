@@ -3855,6 +3855,14 @@ function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, o
           <Radio size={15} aria-hidden="true" />
           Real-Time Report
         </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportOutboundCalling')}>
+          <PhoneCall size={15} aria-hidden="true" />
+          Outbound Calling Report
+        </button>
+        <button type="button" className="row-action" onClick={() => onNavigate('reportCampaignStatusList')}>
+          <Activity size={15} aria-hidden="true" />
+          Status List Report
+        </button>
         {userCan(user, 'campaigns') && (
           <button
             type="button"
@@ -4440,19 +4448,41 @@ function LeadFilterConnections({ filterId, token, onLogout }) {
     };
   }, [filter, token, onLogout]);
 
+  const [testResult, setTestResult] = useState('');
+
+  async function runFilterTest() {
+    setTestResult('testing...');
+    try {
+      const payload = await apiFetch(`/admin/lead-filters/${encodeURIComponent(filter)}/test`, token);
+      setTestResult(payload.empty_filter ? 'Filter SQL is empty' : `${Number(payload.matches).toLocaleString()} leads match this filter`);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setTestResult(requestError.message === 'filter_sql_invalid' ? 'Filter SQL is invalid' : 'Filter test failed');
+    }
+  }
+
   if (!filter || !data || data.error) return null;
 
   return (
-    <ReferencePanel
-      title="Where this filter is used"
-      lists={[
-        ['Campaigns using this filter', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
-        ['Users using this filter', data.users || [], (row) => `${row.user} - ${row.full_name || ''}`],
-      ]}
-      legacyLinks={[
-        ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=FILTERS&stage=${encodeURIComponent(filter)}`],
-      ]}
-    />
+    <>
+      <ReferencePanel
+        title="Where this filter is used"
+        lists={[
+          ['Campaigns using this filter', data.campaigns || [], (row) => `${row.campaign_id} - ${row.campaign_name || ''}`],
+          ['Users using this filter', data.users || [], (row) => `${row.user} - ${row.full_name || ''}`],
+        ]}
+        legacyLinks={[
+          ['Admin Changes', `/vicidial/admin.php?ADD=720000000000000&category=FILTERS&stage=${encodeURIComponent(filter)}`],
+        ]}
+      />
+      <div className="connection-actions">
+        <button type="button" className="row-action" onClick={runFilterTest}>Test Filter (count matching leads)</button>
+        {testResult && <span className="connection-status">{testResult}</span>}
+      </div>
+    </>
   );
 }
 
