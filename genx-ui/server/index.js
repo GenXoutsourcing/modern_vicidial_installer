@@ -183,6 +183,7 @@ function publicUser(row) {
     deleteIngroups: row.delete_ingroups === '1',
     deleteInboundDids: row.delete_inbound_dids === '1',
     deleteFromDnc: row.delete_from_dnc === '1',
+    deleteFilters: row.delete_filters === '1',
     modifyUsergroups: row.modify_usergroups === '1',
     modifyScripts: row.modify_scripts === '1',
     modifyFilters: row.modify_filters === '1',
@@ -258,6 +259,7 @@ async function authenticateVicidialUser(username, password) {
             u.delete_ingroups,
             u.delete_inbound_dids,
             u.delete_from_dnc,
+            u.delete_filters,
             u.modify_usergroups,
             u.modify_scripts,
             u.modify_filters,
@@ -2033,10 +2035,21 @@ async function adminData(user) {
       [],
     ),
     rows(
-      `SELECT filter_phone_group_id,
-              filter_phone_group_name
-       FROM vicidial_filter_phone_groups
-       ORDER BY filter_phone_group_id ASC
+      `SELECT g.filter_phone_group_id,
+              g.filter_phone_group_name,
+              g.filter_phone_group_description,
+              g.user_group,
+              COALESCE(counts.phone_count, 0) AS phone_count,
+              GROUP_CONCAT(numbers.phone_number SEPARATOR '\n') AS phone_numbers
+       FROM vicidial_filter_phone_groups g
+       LEFT JOIN (
+         SELECT filter_phone_group_id, COUNT(*) AS phone_count
+         FROM vicidial_filter_phone_numbers
+         GROUP BY filter_phone_group_id
+       ) counts ON counts.filter_phone_group_id = g.filter_phone_group_id
+       LEFT JOIN vicidial_filter_phone_numbers numbers ON numbers.filter_phone_group_id = g.filter_phone_group_id
+       GROUP BY g.filter_phone_group_id, g.filter_phone_group_name, g.filter_phone_group_description, g.user_group, counts.phone_count
+       ORDER BY g.filter_phone_group_id ASC
        LIMIT 500`,
       [],
       [],
@@ -4360,6 +4373,83 @@ async function saveLeadFilter(req, res, mode) {
   }
 }
 
+function filterPhoneGroupPayload(body) {
+  return {
+    filter_phone_group_name: cleanText(body.filter_phone_group_name, 40) || 'New Filter Group',
+    filter_phone_group_description: cleanText(body.filter_phone_group_description, 100),
+    user_group: codeText(body.user_group, 20, '---ALL---'),
+  };
+}
+
+async function syncFilterPhoneNumbers(groupId, rawNumbers) {
+  const numbers = parseDncPhoneNumbers(rawNumbers).map((value) => value.slice(0, 18));
+  await execute('DELETE FROM vicidial_filter_phone_numbers WHERE filter_phone_group_id = ?', [groupId]);
+  for (const phoneNumber of numbers) {
+    await execute(
+      'INSERT IGNORE INTO vicidial_filter_phone_numbers (phone_number, filter_phone_group_id) VALUES (?, ?)',
+      [phoneNumber, groupId],
+    );
+  }
+  return numbers.length;
+}
+
+async function saveFilterPhoneGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyFilters')) return;
+  const id = cleanId(mode === 'create' ? req.body?.filter_phone_group_id : req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_filter_phone_group_id');
+  if (mode !== 'create' && !scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_filter_phone_groups', 'filter_phone_group_id', id))) {
+    return res.status(403).json({ ok: false, error: 'filter_phone_group_not_allowed' });
+  }
+  const payload = filterPhoneGroupPayload(req.body || {});
+  if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'filter_phone_group_scope_required' });
+  const { assignments, values } = dynamicAssignments(payload);
+
+  try {
+    if (mode === 'create') {
+      await execute(
+        `INSERT INTO vicidial_filter_phone_groups
+         SET filter_phone_group_id = ?,
+             ${assignments}`,
+        [id, ...values],
+      );
+      await adminLog(req, 'FILTERPHONEGROUPS', 'ADD', id, 'GENX ADD FILTER PHONE GROUP', 'INSERT INTO vicidial_filter_phone_groups', payload.filter_phone_group_name);
+    } else {
+      const result = await execute(
+        `UPDATE vicidial_filter_phone_groups
+         SET ${assignments}
+         WHERE filter_phone_group_id = ?`,
+        [...values, id],
+      );
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'filter_phone_group_not_found' });
+      await adminLog(req, 'FILTERPHONEGROUPS', 'MODIFY', id, 'GENX MODIFY FILTER PHONE GROUP', 'UPDATE vicidial_filter_phone_groups', payload.filter_phone_group_name);
+    }
+    const phoneCount = await syncFilterPhoneNumbers(id, req.body?.phone_numbers);
+    await adminLog(req, 'FILTERPHONEGROUPS', 'MODIFY', id, 'GENX SYNC FILTER PHONE NUMBERS', 'REPLACE vicidial_filter_phone_numbers', `${phoneCount} numbers`);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'filter_phone_group_exists' : 'filter_phone_group_write_failed' });
+  }
+}
+
+async function deleteFilterPhoneGroup(req, res) {
+  if (!requireModify(req, res, 'deleteFilters')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_filter_phone_group_id');
+  if (!scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_filter_phone_groups', 'filter_phone_group_id', id))) {
+    return res.status(403).json({ ok: false, error: 'filter_phone_group_not_allowed' });
+  }
+  try {
+    await execute('DELETE FROM vicidial_filter_phone_numbers WHERE filter_phone_group_id = ?', [id]);
+    const result = await execute('DELETE FROM vicidial_filter_phone_groups WHERE filter_phone_group_id = ?', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'filter_phone_group_not_found' });
+    await adminLog(req, 'FILTERPHONEGROUPS', 'DELETE', id, 'GENX DELETE FILTER PHONE GROUP', 'DELETE FROM vicidial_filter_phone_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'filter_phone_group_delete_failed' });
+  }
+}
+
 function callTimeValue(value, fallback = 0) {
   return cleanInt(value, fallback, 0, 2400);
 }
@@ -5027,6 +5117,9 @@ app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res,
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
 app.post('/api/admin/lead-filters', requireAccess, (req, res) => saveLeadFilter(req, res, 'create'));
 app.put('/api/admin/lead-filters/:id', requireAccess, (req, res) => saveLeadFilter(req, res, 'update'));
+app.post('/api/admin/filter-phone-groups', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'create'));
+app.put('/api/admin/filter-phone-groups/:id', requireAccess, (req, res) => saveFilterPhoneGroup(req, res, 'update'));
+app.delete('/api/admin/filter-phone-groups/:id', requireAccess, deleteFilterPhoneGroup);
 app.post('/api/admin/call-times', requireAccess, (req, res) => saveCallTime(req, res, 'create'));
 app.put('/api/admin/call-times/:id', requireAccess, (req, res) => saveCallTime(req, res, 'update'));
 app.post('/api/admin/call-menus', requireAccess, (req, res) => saveCallMenu(req, res, 'create'));

@@ -197,6 +197,7 @@ const NAV_ITEMS = [
   { key: 'inbound', label: 'Inbound', eyebrow: 'Admin', title: 'Inbound Groups', icon: Headphones },
   { key: 'dids', label: 'DIDs', eyebrow: 'Inbound', title: 'DID Routing', icon: PhoneCall },
   { key: 'callMenus', label: 'Call Menus', eyebrow: 'Inbound', title: 'Call Menu Routing', icon: Compass },
+  { key: 'filterPhoneGroups', label: 'Filter Groups', eyebrow: 'Inbound', title: 'Filter Phone Groups', icon: SlidersHorizontal },
   { key: 'phones', label: 'Phones', eyebrow: 'Platform', title: 'Phones and Webphones', icon: PhoneCall },
   { key: 'scripts', label: 'Scripts', eyebrow: 'Admin', title: 'Scripts and Agent Prompts', icon: FileText },
   { key: 'leadFilters', label: 'Filters', eyebrow: 'Admin', title: 'Lead Filters', icon: SlidersHorizontal },
@@ -372,6 +373,7 @@ function userCan(user, entity) {
   if (entity === 'carriers') return Boolean(user?.modifyCarriers);
   if (entity === 'scripts') return Boolean(user?.modifyScripts);
   if (entity === 'leadFilters') return Boolean(user?.modifyFilters);
+  if (entity === 'filterPhoneGroups') return Boolean(user?.modifyFilters);
   if (entity === 'callTimes') return Boolean(user?.modifyCallTimes);
   if (entity === 'shifts') return Boolean(user?.modifyCallTimes);
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
@@ -379,7 +381,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -388,6 +390,7 @@ function userCanDelete(user, entity) {
   if (entity === 'dids') return Boolean(user?.deleteInboundDids);
   if (entity === 'callMenus') return Boolean(user?.modifyIngroups);
   if (entity === 'callMenuOptions') return Boolean(user?.modifyIngroups);
+  if (entity === 'filterPhoneGroups') return Boolean(user?.deleteFilters);
   return false;
 }
 
@@ -1410,6 +1413,16 @@ function actionDefaults(entity, admin) {
       lead_filter_comments: '',
       lead_filter_sql: '',
       user_group: group,
+    };
+  }
+
+  if (entity === 'filterPhoneGroups') {
+    return {
+      filter_phone_group_id: '',
+      filter_phone_group_name: '',
+      filter_phone_group_description: '',
+      user_group: group,
+      phone_numbers: '',
     };
   }
 
@@ -2659,6 +2672,16 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'filterPhoneGroups') {
+    return [
+      { key: 'filter_phone_group_id', label: 'Filter Phone Group ID', disabled: mode === 'edit' },
+      { key: 'filter_phone_group_name', label: 'Group Name' },
+      { key: 'filter_phone_group_description', label: 'Description', wide: true },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'phone_numbers', label: 'Phone Numbers (one per line - replaces the full list on save)', type: 'textarea', wide: true },
+    ];
+  }
+
   if (entity === 'callTimes') {
     return [
       { key: 'call_time_id', label: 'Call Time ID', disabled: mode === 'edit' },
@@ -3042,6 +3065,7 @@ function entityId(entity, row) {
     carriers: row.carrier_id,
     scripts: row.script_id,
     leadFilters: row.lead_filter_id,
+    filterPhoneGroups: row.filter_phone_group_id,
     callTimes: row.call_time_id,
     shifts: row.shift_id,
     statuses: row.status,
@@ -3057,6 +3081,7 @@ function entityPath(entity) {
     leadRecycle: 'lead-recycle',
     listMixes: 'list-mixes',
     leadFilters: 'lead-filters',
+    filterPhoneGroups: 'filter-phone-groups',
     callTimes: 'call-times',
     callMenus: 'call-menus',
     callMenuOptions: 'call-menu-options',
@@ -4679,6 +4704,50 @@ function LeadFiltersView({ admin, user, onAction }) {
   );
 }
 
+function FilterPhoneGroupsView({ admin, user, onAction }) {
+  const groups = admin?.filterPhoneGroups || [];
+  const canManage = userCan(user, 'filterPhoneGroups');
+
+  return (
+    <>
+      <AdminSummary admin={admin} />
+      <ActionBar entity="filterPhoneGroups" label="Filter Group" user={user} onAction={onAction}>
+        <p className="action-copy">Manage phone-number filter groups used by DID and call menu filter routing.</p>
+      </ActionBar>
+      <section className="admin-grid">
+        <Panel eyebrow="Inbound Admin" title="Filter Phone Groups" icon={SlidersHorizontal} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No filter phone groups configured"
+            rows={groups.map((row) => ({ ...row, id: row.filter_phone_group_id }))}
+            columns={[
+              {
+                key: 'group',
+                label: 'Group',
+                render: (row) => (
+                  <>
+                    <strong>{row.filter_phone_group_id}</strong>
+                    <span>{row.filter_phone_group_name || 'Unnamed group'}</span>
+                  </>
+                ),
+              },
+              { key: 'filter_phone_group_description', label: 'Description', render: (row) => row.filter_phone_group_description || 'None' },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              { key: 'phone_count', label: 'Numbers', render: (row) => formatNumber(row.phone_count || 0) },
+              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('filterPhoneGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel eyebrow="Filters" title="Group Mix" icon={Database}>
+          <div className="quick-stack">
+            <MetricCard icon={SlidersHorizontal} label="Filter Groups" value={formatNumber(groups.length)} detail="Configured groups" accent="#00d9ff" />
+            <MetricCard icon={PhoneCall} label="Total Numbers" value={formatNumber(groups.reduce((sum, row) => sum + Number(row.phone_count || 0), 0))} detail="Across all groups" accent="#73fbd3" />
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function CallTimesView({ admin, user, onAction }) {
   const callTimes = admin?.callTimes || [];
   const canManage = userCan(user, 'callTimes');
@@ -5221,6 +5290,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'callMenus') return <CallMenusView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'filterPhoneGroups') return <FilterPhoneGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'phones') return <PhonesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'scripts') return <ScriptsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadFilters') return <LeadFiltersView admin={admin} user={user} onAction={onAction} />;

@@ -32,7 +32,7 @@ export const LEGACY_ADMIN_GROUPS = [
       { label: 'Add DID', href: '/vicidial/admin.php?ADD=1311' },
       { label: 'Call Menus', href: '/vicidial/admin.php?ADD=1500' },
       { label: 'Add Call Menu', href: '/vicidial/admin.php?ADD=1511' },
-      { label: 'Filter Phone Groups', href: '/vicidial/admin.php?ADD=1700' },
+      { label: 'Filter Phone Groups', href: '/vicidial/admin.php?ADD=1700', view: 'filterPhoneGroups' },
       { label: 'Email In-Groups', href: '/vicidial/admin.php?ADD=1800' },
       { label: 'Chat In-Groups', href: '/vicidial/admin.php?ADD=1900' },
     ],
