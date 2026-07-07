@@ -12639,6 +12639,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [dialFail, setDialFail] = useState(null);
   const [customFields, setCustomFields] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -12680,6 +12681,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       if (payload.dialableLeads !== undefined) setDialableLeads(payload.dialableLeads);
       setDialFail(payload.dialFail || null);
       if (!payload.live || !Number(payload.live.preview_lead_id)) setPreviewInfo(null);
+      setIsRecording(Boolean(payload.recording));
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
@@ -12774,6 +12776,9 @@ function AgentConsole({ token, authInfo, onExit }) {
         not_on_call: 'No customer call in progress',
         hopper_empty: 'No leads in the hopper for this campaign',
         alt_number_missing: 'Lead has no usable alternate number',
+        recording_disabled: 'Recording is disabled for this campaign',
+        not_recording: 'No active recording found',
+        no_preview_lead: 'No previewed lead to skip',
       };
       setMessage(map[requestError.message] || 'Action failed');
       return null;
@@ -12923,6 +12928,19 @@ function AgentConsole({ token, authInfo, onExit }) {
                 <button type="button" className="danger-action" disabled={busy} onClick={() => act('/agent/hangup')}>
                   <PhoneCall size={16} aria-hidden="true" />
                   Hangup Customer
+                </button>
+              )}
+              {live.status === 'INCALL' && (
+                <button
+                  type="button"
+                  className={isRecording ? 'danger-action' : 'secondary-action'}
+                  disabled={busy}
+                  onClick={async () => {
+                    const payload = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' });
+                    if (payload) setMessage(isRecording ? 'Recording stopped' : `Recording started${payload.filename ? `: ${payload.filename}` : ''}`);
+                  }}
+                >
+                  {isRecording ? 'Stop Recording' : 'Record Call'}
                 </button>
               )}
               <button

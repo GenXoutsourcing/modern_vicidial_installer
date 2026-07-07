@@ -7198,6 +7198,7 @@ async function agentStatus(req, res) {
     dialFail,
     dialableLeads: stats ? Number(stats.dialable_leads || 0) : null,
     inbound,
+    recording: Boolean(await agentRecordingChannel(live)),
   });
 }
 
@@ -7892,6 +7893,97 @@ async function agentCallLog(req, res) {
   const phoneMode = req.genxUser?.adminHidePhoneData || '0';
   if (phoneMode !== '0') all.forEach((r) => { r.phone_number = maskPhoneNumber(r.phone_number, phoneMode); });
   return res.json({ ok: true, enabled: true, date, days, rows: all });
+}
+
+// Recording controls (legacy ONDEMAND recording): a Local channel joins the
+// conference as a recording user (5-prefix on CONFBRIDGE) and runs the
+// campaign_rec_exten (8309 = Monitor(wav, CALLERID(name))); the CID name
+// carries the merged campaign_rec_filename.
+function recordingFilename(template, ctx) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  const fulldate = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  let name = String(template || 'FULLDATE_AGENT')
+    .replace(/FULLDATE/g, fulldate)
+    .replace(/CUSTPHONE/g, ctx.phone || '')
+    .replace(/AGENT/g, ctx.user || '')
+    .replace(/CAMPAIGN/g, ctx.campaign || '')
+    .replace(/LEADID/g, String(ctx.leadId || ''))
+    .replace(/CALLID/g, ctx.callerid || '')
+    .replace(/VENDORLEADCODE/g, ctx.vendorLeadCode || '');
+  name = name.replace(/[^0-9a-zA-Z_-]/g, '').slice(0, 90);
+  return name || `${fulldate}_${ctx.user || 'agent'}`;
+}
+
+async function agentRecordingChannel(live) {
+  const [chan] = await rows(
+    'SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ? ORDER BY channel LIMIT 1',
+    [live.server_ip, `Local/5${live.conf_exten}@%`],
+    [],
+  );
+  return chan?.channel || null;
+}
+
+async function agentRecording(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const stop = req.body?.action === 'stop';
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const context = req.agentPhone?.ext_context || 'default';
+
+  if (stop) {
+    const channel = await agentRecordingChannel(live);
+    if (!channel) return res.status(404).json({ ok: false, error: 'not_recording' });
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
+      [live.server_ip, `RXvdcW${nowEpoch}`.slice(0, 20), `Channel: ${channel}`],
+    );
+    return res.json({ ok: true, recording: false });
+  }
+
+  const [camp] = await rows(
+    'SELECT campaign_recording, campaign_rec_exten, campaign_rec_filename FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  if (String(camp?.campaign_recording || 'NEVER') === 'NEVER') {
+    return res.status(403).json({ ok: false, error: 'recording_disabled' });
+  }
+  let vendorLeadCode = '';
+  if (Number(live.lead_id) > 0) {
+    const [vlc] = await rows('SELECT vendor_lead_code, phone_number FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
+    vendorLeadCode = vlc?.vendor_lead_code || '';
+    req._recPhone = vlc?.phone_number || '';
+  }
+  const filename = recordingFilename(camp?.campaign_rec_filename, {
+    user,
+    campaign: live.campaign_id,
+    leadId: live.lead_id,
+    callerid: live.callerid,
+    phone: req._recPhone || '',
+    vendorLeadCode,
+  });
+  const recExten = String(camp?.campaign_rec_exten || '8309').replace(/[^0-9]/g, '') || '8309';
+  const confInfo = await serverConfInfo(live.server_ip);
+  const recPrefix = confInfo.agentPrefix ? '5' : '4'; // confbridge rec join _59600XXX; meetme monitor 4-prefix
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d, cmd_line_e)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Originate', ?, ?, ?, ?, 'Priority: 1')`,
+    [live.server_ip, filename.slice(0, 40), `Channel: Local/${recPrefix}${live.conf_exten}@${context}`,
+      `Context: ${context}`, `Exten: ${recExten}`],
+  );
+  await execute(
+    'INSERT INTO recording_log SET channel = ?, server_ip = ?, extension = ?, start_time = NOW(), start_epoch = ?, filename = ?, lead_id = ?, user = ?, vicidial_id = ?',
+    [`Local/${recPrefix}${live.conf_exten}@${context}`, live.server_ip, recExten, nowEpoch,
+      filename, Number(live.lead_id) || 0, user, live.uniqueid || ''],
+  ).catch(() => {});
+  return res.json({ ok: true, recording: true, filename });
 }
 
 // Custom fields (legacy FORM tab): definitions in vicidial_lists_fields per
@@ -12467,6 +12559,7 @@ app.post('/api/agent/dial-next', requireAgentAccess, agentDialNext);
 app.post('/api/agent/preview-skip', requireAgentAccess, agentPreviewSkip);
 app.get('/api/agent/custom-fields', requireAgentAccess, agentCustomFields);
 app.put('/api/agent/custom-fields', requireAgentAccess, agentCustomFieldsSave);
+app.post('/api/agent/recording', requireAgentAccess, agentRecording);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
