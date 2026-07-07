@@ -12227,6 +12227,10 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [message, setMessage] = useState('');
   const [webphoneUrl, setWebphoneUrl] = useState(null);
   const [showPhone, setShowPhone] = useState(true);
+  const [sidePanel, setSidePanel] = useState('');
+  const [agentsView, setAgentsView] = useState(null);
+  const [queueView, setQueueView] = useState(null);
+  const [callbacks, setCallbacks] = useState(null);
   // Legacy webphone_call_seconds: after the webphone iframe loads and
   // registers, ring it into the conference once (auto-answer picks up).
   const webphoneCalledRef = useRef(false);
@@ -12293,6 +12297,23 @@ function AgentConsole({ token, authInfo, onExit }) {
       setBusy(false);
     }
   };
+
+  // Side panels (legacy AGENTSview / CALLSINQUEUEview / CalLBacKLisT): poll
+  // the open panel every 4s while the agent is logged in.
+  useEffect(() => {
+    if (!live || !sidePanel) return undefined;
+    const paths = {
+      agents: ['/agent/agents-view', setAgentsView],
+      queue: ['/agent/calls-in-queue', setQueueView],
+      callbacks: ['/agent/callbacks', setCallbacks],
+    };
+    const [path, setter] = paths[sidePanel];
+    let cancelled = false;
+    const load = () => apiFetch(path, token).then((p) => { if (!cancelled) setter(p); }).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 4000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [live ? 1 : 0, sidePanel, token]);
 
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
@@ -12436,7 +12457,95 @@ function AgentConsole({ token, authInfo, onExit }) {
                 ))}
               </div>
             )}
+            <div className="connection-actions">
+              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`]].map(([key, label]) => (
+                <button
+                  type="button"
+                  key={key}
+                  className={sidePanel === key ? 'row-action tool-picker-item selected' : 'row-action'}
+                  onClick={() => setSidePanel((current) => (current === key ? '' : key))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             {message && <p className="connection-summary">{message}</p>}
+          </Panel>
+        )}
+        {live && sidePanel === 'agents' && (
+          <Panel eyebrow="Live" title="Agents View" icon={Users} className="admin-wide-panel">
+            {agentsView && !agentsView.enabled && <p className="connection-summary">Agent status view not enabled for your user group</p>}
+            {agentsView?.enabled && (
+              <table className="data-table">
+                <thead><tr><th>Agent</th><th>Status</th><th>Campaign</th><th>Time</th></tr></thead>
+                <tbody>
+                  {(agentsView.agents || []).map((a) => (
+                    <tr key={a.user}>
+                      <td>{a.user} {a.full_name}</td>
+                      <td>{a.status}</td>
+                      <td>{a.campaign_id}</td>
+                      <td>{formatSeconds(Math.max(0, Math.floor(Date.now() / 1000) - Number(a.state_epoch || 0)))}</td>
+                    </tr>
+                  ))}
+                  {!(agentsView.agents || []).length && <tr><td colSpan={4}>No agents logged in</td></tr>}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        )}
+        {live && sidePanel === 'queue' && (
+          <Panel eyebrow="Live" title="Calls in Queue" icon={PhoneCall} className="admin-wide-panel">
+            {queueView && !queueView.enabled && <p className="connection-summary">Calls-in-queue view disabled for this campaign</p>}
+            {queueView?.enabled && (
+              <table className="data-table">
+                <thead><tr><th>Group</th><th>Phone</th><th>Type</th><th>Waiting</th></tr></thead>
+                <tbody>
+                  {(queueView.calls || []).map((c) => (
+                    <tr key={c.auto_call_id}>
+                      <td>{c.campaign_id}</td>
+                      <td>{c.phone_number}</td>
+                      <td>{c.call_type}</td>
+                      <td>{formatSeconds(Math.max(0, Math.floor(Date.now() / 1000) - Number(c.call_epoch || 0)))}</td>
+                    </tr>
+                  ))}
+                  {!(queueView.calls || []).length && <tr><td colSpan={4}>No calls waiting</td></tr>}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+        )}
+        {live && sidePanel === 'callbacks' && (
+          <Panel eyebrow="Scheduled" title={`My Callbacks${callbacks ? ` — ${callbacks.liveCount} due` : ''}`} icon={Clock3} className="admin-wide-panel">
+            <table className="data-table">
+              <thead><tr><th>Callback Time</th><th>Name</th><th>Phone</th><th>Status</th><th>Comments</th><th /></tr></thead>
+              <tbody>
+                {(callbacks?.callbacks || []).map((c) => (
+                  <tr key={c.callback_id}>
+                    <td>{formatDateTime(c.callback_time)}</td>
+                    <td>{c.first_name} {c.last_name}</td>
+                    <td>{c.phone_number}</td>
+                    <td>{c.status}</td>
+                    <td>{c.comments}</td>
+                    <td>
+                      {live.status !== 'INCALL' && !Number(live.lead_id) && (
+                        <button
+                          type="button"
+                          className="row-action"
+                          disabled={busy}
+                          onClick={async () => {
+                            const payload = await act('/agent/manual-dial', { lead_id: c.lead_id, callback_id: c.callback_id });
+                            if (payload) setMessage(`Dialing callback lead ${c.lead_id}`);
+                          }}
+                        >
+                          Dial
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!(callbacks?.callbacks || []).length && <tr><td colSpan={6}>No scheduled callbacks</td></tr>}
+              </tbody>
+            </table>
           </Panel>
         )}
         {live && lead && (

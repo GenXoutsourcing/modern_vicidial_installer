@@ -7241,6 +7241,141 @@ async function agentLogout(req, res) {
   }
 }
 
+// Legacy AGENTSview: statuses of other agents, scoped by the user group's
+// agent_status_viewable_groups (ALL-GROUPS / CAMPAIGN-AGENTS markers).
+async function agentAgentsView(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [ug] = await rows(
+    'SELECT agent_status_viewable_groups, agent_status_view_time FROM vicidial_user_groups WHERE user_group = ? LIMIT 1',
+    [req.genxUser.userGroup || ''],
+    [],
+  );
+  const viewable = String(ug?.agent_status_viewable_groups || '').trim();
+  if (viewable.length < 3) return res.json({ ok: true, enabled: false, agents: [] });
+
+  let where = '1=1';
+  const params = [];
+  if (!/ALL-GROUPS/.test(viewable)) {
+    const groups = viewable.split(/\s+/).filter((g) => g && g !== 'CAMPAIGN-AGENTS');
+    const parts = [];
+    if (groups.length) {
+      parts.push(`vla.user_group IN (${groups.map(() => '?').join(',')})`);
+      params.push(...groups);
+    }
+    if (/CAMPAIGN-AGENTS/.test(viewable)) {
+      parts.push('vla.campaign_id = ?');
+      params.push(live.campaign_id);
+    }
+    if (!parts.length) return res.json({ ok: true, enabled: false, agents: [] });
+    where = `(${parts.join(' OR ')})`;
+  }
+  const agents = await rows(
+    `SELECT vla.user, vla.status, vla.campaign_id, vu.full_name,
+            UNIX_TIMESTAMP(vla.last_state_change) AS state_epoch
+     FROM vicidial_live_agents vla
+     JOIN vicidial_users vu ON vu.user = vla.user
+     WHERE ${where} ORDER BY vu.full_name LIMIT 500`,
+    params,
+    [],
+  );
+  return res.json({ ok: true, enabled: true, showTime: ug?.agent_status_view_time === 'Y', agents });
+}
+
+// Legacy CALLSINQUEUEview: LIVE calls waiting for this agent's campaign or
+// closer in-groups (AGENTDIRECT restricted to agent_only=user, listed first).
+async function agentCallsInQueue(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [camp] = await rows(
+    'SELECT view_calls_in_queue FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const viewSetting = String(camp?.view_calls_in_queue || 'NONE');
+  if (/NONE/i.test(viewSetting)) return res.json({ ok: true, enabled: false, calls: [] });
+  const maxRows = /ALL/.test(viewSetting) ? 99 : (Number(viewSetting.replace(/[^0-9]/g, '')) || 99);
+
+  const [liveFull] = await rows(
+    'SELECT closer_campaigns FROM vicidial_live_agents WHERE user = ? LIMIT 1',
+    [req.genxUser.user],
+    [],
+  );
+  const closers = String(liveFull?.closer_campaigns || '').replace(/\s-/g, '').trim().split(/\s+/).filter(Boolean);
+  const hasAgentDirect = closers.some((c) => /AGENTDIRECT/i.test(c));
+  const plainClosers = closers.filter((c) => !/AGENTDIRECT/i.test(c));
+
+  const parts = ['campaign_id = ?'];
+  const params = [live.campaign_id];
+  if (plainClosers.length) {
+    parts.push(`campaign_id IN (${plainClosers.map(() => '?').join(',')})`);
+    params.push(...plainClosers);
+  }
+  if (hasAgentDirect) {
+    parts.push("(campaign_id LIKE 'AGENTDIRECT%' AND agent_only = ?)");
+    params.push(req.genxUser.user);
+  }
+  const calls = await rows(
+    `SELECT lead_id, campaign_id, phone_number, uniqueid, UNIX_TIMESTAMP(call_time) AS call_epoch,
+            call_type, auto_call_id
+     FROM vicidial_auto_calls WHERE status IN ('LIVE') AND (${parts.join(' OR ')})
+     ORDER BY queue_priority, call_time LIMIT 200`,
+    params,
+    [],
+  );
+  // AGENTDIRECT calls always list first (legacy re-order loop).
+  const ordered = [
+    ...calls.filter((c) => /AGENTDIRECT/i.test(c.campaign_id)),
+    ...calls.filter((c) => !/AGENTDIRECT/i.test(c.campaign_id)),
+  ].slice(0, maxRows);
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode !== '0') ordered.forEach((c) => { c.phone_number = maskPhoneNumber(c.phone_number, phoneMode); });
+  return res.json({ ok: true, enabled: true, calls: ordered });
+}
+
+// Legacy CalLBacKLisT + CalLBacKCounT: USERONLY callbacks for this agent with
+// the campaign hours-block/display-days windows (dialable flag omitted v1).
+async function agentCallbacks(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [camp] = await rows(
+    'SELECT callback_hours_block, callback_display_days FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const conds = ["recipient = 'USERONLY'", 'vc.user = ?', "vc.status NOT IN ('INACTIVE','DEAD')"];
+  const params = [req.genxUser.user];
+  if (Number(camp?.callback_hours_block) > 0) {
+    conds.push('vc.entry_time < NOW() - INTERVAL ? HOUR');
+    params.push(Number(camp.callback_hours_block));
+  }
+  if (Number(camp?.callback_display_days) > 0) {
+    conds.push('vc.callback_time < CURDATE() + INTERVAL ? DAY');
+    params.push(Number(camp.callback_display_days));
+  }
+  const callbacks = await rows(
+    `SELECT vc.callback_id, vc.lead_id, vc.campaign_id, vc.status, vc.entry_time, vc.callback_time,
+            vc.comments, vc.lead_status, vl.first_name, vl.last_name, vl.phone_number, vl.alt_phone
+     FROM vicidial_callbacks vc
+     LEFT JOIN vicidial_list vl ON vl.lead_id = vc.lead_id
+     WHERE ${conds.join(' AND ')} ORDER BY vc.callback_time LIMIT 200`,
+    params,
+    [],
+  );
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode !== '0') {
+    callbacks.forEach((c) => {
+      c.phone_number = maskPhoneNumber(c.phone_number, phoneMode);
+      c.alt_phone = maskPhoneNumber(c.alt_phone, phoneMode);
+    });
+  }
+  const liveCount = callbacks.filter((c) => c.status === 'LIVE').length;
+  return res.json({ ok: true, callbacks, count: callbacks.length, liveCount });
+}
+
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
 // leg is a Local channel into the conf whose Exten is the prefixed number.
 async function agentManualDial(req, res) {
@@ -7251,6 +7386,7 @@ async function agentManualDial(req, res) {
   if (Number(live.lead_id) > 0) return res.status(409).json({ ok: false, error: 'already_on_call' });
 
   const requestedLead = Number(req.body?.lead_id || 0);
+  const callbackId = Number(req.body?.callback_id || 0);
   const phoneNumber = String(req.body?.phone_number || '').replace(/[^0-9]/g, '').slice(0, 18);
   if (!requestedLead && phoneNumber.length < 5) return badRequest(res, 'phone_or_lead_required');
 
@@ -7332,6 +7468,13 @@ async function agentManualDial(req, res) {
       "INSERT INTO vicidial_user_dial_log SET caller_code = ?, user = ?, call_date = NOW(), call_type = 'MAIN', notes = ?",
       [callerCode, user, `${dialExten} ${context}`],
     ).catch(() => {});
+    // Dialing a scheduled callback retires it (legacy CBLead handling).
+    if (callbackId) {
+      await execute(
+        "UPDATE vicidial_callbacks SET status = 'INACTIVE' WHERE callback_id = ? AND user = ?",
+        [callbackId, user],
+      ).catch(() => {});
+    }
 
     return res.json({ ok: true, live: await agentLiveRow(user) });
   } catch (error) {
@@ -11217,6 +11360,9 @@ app.post('/api/agent/auth', agentAuth);
 app.get('/api/agent/setup', requireAgentAccess, agentSetup);
 app.post('/api/agent/login', requireAgentAccess, agentLogin);
 app.post('/api/agent/webphone-call', requireAgentAccess, agentWebphoneCall);
+app.get('/api/agent/agents-view', requireAgentAccess, agentAgentsView);
+app.get('/api/agent/calls-in-queue', requireAgentAccess, agentCallsInQueue);
+app.get('/api/agent/callbacks', requireAgentAccess, agentCallbacks);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
