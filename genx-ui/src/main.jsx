@@ -6107,7 +6107,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
             columns={[
               { key: 'lead_id', label: 'Lead' },
               { key: 'name', label: 'Name', render: (row) => `${row.first_name || ''} ${row.last_name || ''}`.trim() || '—' },
-              { key: 'phone_number', label: 'Phone', render: (row) => (row.phone_code ? `${row.phone_number} (${row.phone_code})` : row.phone_number) },
+              { key: 'phone_number', label: 'Phone' },
               { key: 'list_id', label: 'List' },
               { key: 'status', label: 'Status' },
               { key: 'entry_date', label: 'Entered', render: (row) => formatDateTime(row.entry_date) },
