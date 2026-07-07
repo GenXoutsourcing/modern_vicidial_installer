@@ -1632,3 +1632,18 @@ td span {
     width: 100%;
   }
 }
+
+.checkbox-field {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px;
+  align-self: end;
+  padding-bottom: 10px;
+}
+
+.checkbox-field input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #00d9ff;
+}

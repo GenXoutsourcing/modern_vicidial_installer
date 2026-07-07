@@ -7813,6 +7813,463 @@ function ListStatusesReportView({ token, onLogout }) {
   );
 }
 
+// Shared campaign multi-select toggle row used by the campaign-driven reports.
+function CampaignTogglePicker({ campaigns, selected, onChange, emptyLabel = 'No campaigns available' }) {
+  return (
+    <div className="connection-actions">
+      {campaigns.map((row) => {
+        const id = String(row.campaign_id);
+        const isSelected = selected.includes(id);
+        return (
+          <button
+            type="button"
+            key={id}
+            className={isSelected ? 'row-action tool-picker-item selected' : 'row-action'}
+            onClick={() => onChange(isSelected ? selected.filter((item) => item !== id) : [...selected, id])}
+          >
+            {id}{row.campaign_name ? ` - ${row.campaign_name}` : ''}{isSelected ? ' ✓' : ''}
+          </button>
+        );
+      })}
+      {!campaigns.length && <span className="connection-summary">{emptyLabel}</span>}
+    </div>
+  );
+}
+
+// Native AST_LISTS_campaign_stats.php: list summary, status-flag rollups and
+// status-category counts for every list in the selected campaigns.
+function ListCampaignStatusesReportView({ token, onLogout }) {
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaignIds) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = campaignIds.length ? `?campaigns=${encodeURIComponent(campaignIds.join(','))}` : '';
+      const payload = await apiFetch(`/reports/list-campaign-statuses${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([]);
+  }, [load]);
+
+  const campaigns = data?.campaigns || [];
+  const lists = data?.lists;
+  const entries = data?.entries || [];
+  const flagMap = new Map((data?.statusFlags || []).map((row) => [String(row.status), row]));
+
+  const perList = new Map();
+  let totalLeads = 0;
+  const flagTotals = Object.fromEntries(LIST_STATUS_ROLLUPS.map(([flag]) => [flag, 0]));
+  const categoryTotals = new Map();
+  for (const row of entries) {
+    const key = String(row.list_id);
+    if (!perList.has(key)) perList.set(key, { statuses: [], total: 0, rollups: Object.fromEntries(LIST_STATUS_ROLLUPS.map(([flag]) => [flag, 0])) });
+    const bucket = perList.get(key);
+    const leads = Number(row.leads || 0);
+    bucket.statuses.push(row);
+    bucket.total += leads;
+    totalLeads += leads;
+    const flags = flagMap.get(String(row.status));
+    if (flags) {
+      for (const [flag] of LIST_STATUS_ROLLUPS) {
+        if (flags[flag] === 'Y') {
+          bucket.rollups[flag] += leads;
+          flagTotals[flag] += leads;
+        }
+      }
+      if (flags.category && flags.category !== 'UNDEFINED') {
+        categoryTotals.set(flags.category, (categoryTotals.get(flags.category) || 0) + leads);
+      }
+    }
+  }
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>List Campaign Statuses</h2>
+          <p className="action-copy">Lead totals, status flags and category rollups for every list in the selected campaigns.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaigns" icon={Search} className="admin-wide-panel">
+        <CampaignTogglePicker
+          campaigns={campaigns}
+          selected={selected}
+          onChange={(next) => {
+            setSelected(next);
+            load(next);
+          }}
+        />
+        {error && <p className="form-error">{error}</p>}
+        {loading && <p className="connection-summary">Loading...</p>}
+      </Panel>
+      {lists && selected.length > 0 && (
+        <section className="admin-grid media-tools-grid">
+          <Panel eyebrow="Summary" title={`List ID Summary (${formatNumber(totalLeads)} leads)`} icon={Database}>
+            <DataTable
+              emptyLabel="No lists in the selected campaigns"
+              rows={lists.map((row) => ({ ...row, id: String(row.list_id) }))}
+              columns={[
+                { key: 'list_id', label: 'List' },
+                { key: 'list_name', label: 'Name' },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'leads', label: 'Leads', render: (row) => formatNumber(perList.get(String(row.list_id))?.total || 0) },
+                { key: 'active', label: 'Active', render: (row) => (row.active === 'Y' ? 'ACTIVE' : 'INACTIVE') },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Summary" title="Status Flags and Categories" icon={Activity}>
+            <DataTable
+              emptyLabel="No leads"
+              rows={LIST_STATUS_ROLLUPS.map(([flag, label]) => ({ id: flag, label, count: flagTotals[flag] }))}
+              columns={[
+                { key: 'label', label: 'Status Flag' },
+                { key: 'count', label: 'Leads', render: (row) => formatNumber(row.count) },
+                { key: 'pct', label: '%', render: (row) => `${totalLeads ? ((row.count / totalLeads) * 100).toFixed(2) : '0.00'}%` },
+              ]}
+            />
+            <DataTable
+              emptyLabel="No status categories defined"
+              rows={(data?.categories || []).map((row) => ({ id: row.vsc_id, ...row }))}
+              columns={[
+                { key: 'vsc_name', label: 'Status Category', render: (row) => row.vsc_name || row.vsc_id },
+                { key: 'count', label: 'Leads', render: (row) => formatNumber(categoryTotals.get(row.vsc_id) || 0) },
+              ]}
+            />
+          </Panel>
+          {[...perList.keys()].map((listId) => {
+            const bucket = perList.get(listId);
+            const listMeta = (lists || []).find((row) => String(row.list_id) === listId);
+            return (
+              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId} (${formatNumber(bucket.total)} leads)`} icon={Database}>
+                <div className="connection-actions">
+                  {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
+                    <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
+                  ))}
+                </div>
+                <DataTable
+                  emptyLabel="No leads in this list"
+                  rows={bucket.statuses.map((row) => ({ ...row, id: `${row.list_id}-${row.status}` }))}
+                  columns={[
+                    { key: 'status', label: 'Status' },
+                    { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '' },
+                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%` },
+                  ]}
+                />
+              </Panel>
+            );
+          })}
+        </section>
+      )}
+    </>
+  );
+}
+
+// Native AST_campaign_status_list_report.php: per campaign and list, call
+// dispositions with duration/handle time plus status-flag percentages.
+function CampaignStatusListReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaignIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = `?begin_date=${begin}&end_date=${end}${campaignIds.length ? `&campaigns=${encodeURIComponent(campaignIds.join(','))}` : ''}`;
+      const payload = await apiFetch(`/reports/campaign-status-list${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const campaigns = data?.campaigns || [];
+  const results = data?.results;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>Campaign Status List</h2>
+          <p className="action-copy">Call dispositions per list for the selected campaigns and date range.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaigns and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <CampaignTogglePicker campaigns={campaigns} selected={selected} onChange={setSelected} />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {results && results.map((campaign) => {
+        const flagMap = new Map((campaign.statuses || []).map((row) => [String(row.status), row]));
+        return (
+          <section className="admin-grid media-tools-grid" key={campaign.campaign_id}>
+            {(campaign.lists || []).map((list) => {
+              const totals = { calls: 0, duration: 0, handle_time: 0 };
+              const rollups = Object.fromEntries(LIST_STATUS_ROLLUPS.map(([flag]) => [flag, 0]));
+              for (const dispo of list.dispositions) {
+                totals.calls += Number(dispo.calls || 0);
+                totals.duration += Number(dispo.duration || 0);
+                totals.handle_time += Number(dispo.handle_time || 0);
+                const flags = flagMap.get(String(dispo.status));
+                if (flags) {
+                  for (const [flag] of LIST_STATUS_ROLLUPS) {
+                    if (flags[flag] === 'Y') rollups[flag] += Number(dispo.calls || 0);
+                  }
+                }
+              }
+              return (
+                <Panel
+                  key={`${campaign.campaign_id}-${list.list_id}`}
+                  eyebrow={`Campaign ${campaign.campaign_id} / List ${list.list_id} (${list.active === 'Y' ? 'ACTIVE' : 'INACTIVE'})`}
+                  title={`${list.list_name || list.list_id} (${formatNumber(totals.calls)} calls)`}
+                  icon={PhoneCall}
+                >
+                  <div className="connection-actions">
+                    {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
+                      <span className="connection-status" key={flag}>
+                        {label}: {formatNumber(rollups[flag])} ({totals.calls ? ((rollups[flag] / totals.calls) * 100).toFixed(2) : '0.00'}%)
+                      </span>
+                    ))}
+                  </div>
+                  <DataTable
+                    emptyLabel="No calls for this list in the date range"
+                    rows={list.dispositions.map((row) => ({ ...row, id: `${list.list_id}-${row.status}` }))}
+                    columns={[
+                      { key: 'status', label: 'Disposition', render: (row) => `${row.status}${flagMap.get(String(row.status))?.status_name ? ` - ${flagMap.get(String(row.status)).status_name}` : ''}` },
+                      { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                      { key: 'duration', label: 'Duration', render: (row) => formatSeconds(row.duration) },
+                      { key: 'handle_time', label: 'Handle Time', render: (row) => formatSeconds(row.handle_time) },
+                    ]}
+                  />
+                  <p className="connection-summary">
+                    Totals: {formatNumber(totals.calls)} calls, {formatSeconds(totals.duration)} duration, {formatSeconds(totals.handle_time)} handle time
+                  </p>
+                </Panel>
+              );
+            })}
+            {!(campaign.lists || []).length && (
+              <Panel eyebrow={`Campaign ${campaign.campaign_id}`} title="No lists" icon={PhoneCall}>
+                <p className="connection-summary">This campaign has no lists.</p>
+              </Panel>
+            )}
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
+// Native AST_dialer_inventory_report.php: dialable-lead inventory per list with
+// live campaign/list modes and stored snapshot mode.
+const DIALER_INVENTORY_COLUMNS = [
+  { key: 'list_id', label: 'List' },
+  { key: 'list_name', label: 'Name' },
+  { key: 'campaign_id', label: 'Campaign' },
+  { key: 'last_call_date', label: 'Last Call', render: (row) => row.last_call_date || 'Not called' },
+  { key: 'start_inv', label: 'Start Inv', render: (row) => formatNumber(row.start_inv) },
+  { key: 'dialable', label: 'Dialable', render: (row) => formatNumber(row.dialable) },
+  { key: 'dialable_nofilter', label: 'No Filter', render: (row) => formatNumber(row.dialable_nofilter) },
+  { key: 'oneoff', label: '1-Off', render: (row) => formatNumber(row.oneoff) },
+  { key: 'inactive_dialable', label: 'Inactive', render: (row) => formatNumber(row.inactive_dialable) },
+  { key: 'average_calls', label: 'Avg Calls' },
+  { key: 'penetration', label: 'Penetration', render: (row) => `${Number(row.penetration || 0).toFixed(2)}%` },
+];
+
+function DialerInventoryReportView({ token, onLogout }) {
+  const [reportType, setReportType] = useState('CAMPAIGNS');
+  const [selected, setSelected] = useState([]);
+  const [listId, setListId] = useState('');
+  const [snapshotTime, setSnapshotTime] = useState('');
+  const [override24, setOverride24] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (query) => {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiFetch(`/reports/dialer-inventory${query}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      if (requestError.status === 404) setError('That list is not enabled for the inventory report');
+      else setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('');
+  }, [load]);
+
+  const run = (event) => {
+    event.preventDefault();
+    const params = new URLSearchParams({ submit: '1', report_type: reportType });
+    if (override24) params.set('override_24hours', '1');
+    if (reportType === 'CAMPAIGNS') params.set('campaigns', selected.join(','));
+    if (reportType === 'LIST') params.set('list_id', listId);
+    if (reportType === 'SNAPSHOT') params.set('snapshot_time', snapshotTime);
+    load(`?${params.toString()}`);
+  };
+
+  const campaigns = data?.campaigns || [];
+  const pickerLists = data?.lists || [];
+  const snapshots = data?.snapshots || [];
+  const entries = data?.entries;
+  const totals = (entries || []).reduce((sum, row) => ({
+    start_inv: sum.start_inv + Number(row.start_inv || 0),
+    dialable: sum.dialable + Number(row.dialable || 0),
+    dialable_nofilter: sum.dialable_nofilter + Number(row.dialable_nofilter || 0),
+    oneoff: sum.oneoff + Number(row.oneoff || 0),
+    inactive_dialable: sum.inactive_dialable + Number(row.inactive_dialable || 0),
+  }), { start_inv: 0, dialable: 0, dialable_nofilter: 0, oneoff: 0, inactive_dialable: 0 });
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>Dialer Inventory</h2>
+          <p className="action-copy">Dialable-lead inventory per list. Only lists with Inventory Report enabled are included.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Inventory Source" icon={Search} className="admin-wide-panel">
+        <form className="entity-form report-filter-bar" onSubmit={run}>
+          <div className="field-grid">
+            <label>
+              <span>Report Type</span>
+              <select value={reportType} onChange={(event) => setReportType(event.target.value)}>
+                <option value="CAMPAIGNS">Campaigns (live)</option>
+                <option value="LIST">Single List (live)</option>
+                <option value="SNAPSHOT">Snapshot</option>
+              </select>
+            </label>
+            {reportType === 'LIST' && (
+              <label>
+                <span>List</span>
+                <select value={listId} onChange={(event) => setListId(event.target.value)}>
+                  <option value="">Select a list</option>
+                  {pickerLists.map((row) => (
+                    <option key={row.list_id} value={row.list_id}>{row.list_id} - {row.list_name || ''}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {reportType === 'SNAPSHOT' && (
+              <label>
+                <span>Snapshot Time</span>
+                <select value={snapshotTime} onChange={(event) => setSnapshotTime(event.target.value)}>
+                  <option value="">Select a snapshot</option>
+                  {snapshots.map((time) => (
+                    <option key={time} value={time}>{time}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {reportType !== 'SNAPSHOT' && (
+              <label className="checkbox-field">
+                <input type="checkbox" checked={override24} onChange={(event) => setOverride24(event.target.checked)} />
+                <span>Override call times (24 hours)</span>
+              </label>
+            )}
+          </div>
+          {reportType === 'CAMPAIGNS' && (
+            <CampaignTogglePicker
+              campaigns={campaigns}
+              selected={selected}
+              onChange={setSelected}
+              emptyLabel="No campaigns have inventory-report lists"
+            />
+          )}
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel eyebrow="Inventory" title={data?.reportType === 'SNAPSHOT' ? `Snapshot ${data?.snapshotTime || ''}` : 'Dialable Inventory'} icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No inventory rows. Enable Inventory Report on lists, or take snapshots."
+            rows={entries.map((row) => ({ ...row, id: `${row.campaign_id}-${row.list_id}` }))}
+            columns={DIALER_INVENTORY_COLUMNS}
+          />
+          {entries.length > 0 && (
+            <p className="connection-summary">
+              Totals: {formatNumber(totals.start_inv)} start inventory, {formatNumber(totals.dialable)} dialable,
+              {' '}{formatNumber(totals.dialable_nofilter)} without filter, {formatNumber(totals.oneoff)} one-off,
+              {' '}{formatNumber(totals.inactive_dialable)} inactive-status dialable
+            </p>
+          )}
+        </Panel>
+      )}
+      {data?.statusMatrix && (
+        <Panel eyebrow="List Detail" title="Status / Called Count Breakdown" icon={Activity} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No leads in this list"
+            rows={data.statusMatrix.map((row) => ({ ...row, id: `${row.status}-${row.called_count}` }))}
+            columns={[
+              { key: 'status', label: 'Status' },
+              { key: 'called_count', label: 'Called Count' },
+              { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+            ]}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -8028,6 +8485,9 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
   if (activeView === 'reportHopperList') return <HopperListReportView token={token} initialCampaignId={viewParams?.campaignId} />;
   if (activeView === 'reportListStatuses') return <ListStatusesReportView token={token} />;
+  if (activeView === 'reportListCampaignStatuses') return <ListCampaignStatusesReportView token={token} />;
+  if (activeView === 'reportCampaignStatusList') return <CampaignStatusListReportView token={token} />;
+  if (activeView === 'reportDialerInventory') return <DialerInventoryReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

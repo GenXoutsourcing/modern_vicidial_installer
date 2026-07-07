@@ -3855,6 +3855,461 @@ async function listStatusesReport(req, res) {
   return res.json({ ok: true, lists, entries, statusFlags });
 }
 
+// Native port of AST_LISTS_campaign_stats.php: pick campaigns instead of lists,
+// then the same per-list status math plus status-category counts.
+async function listCampaignStatusesReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 200);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+
+  if (!campaignIdsRaw.length) return res.json({ ok: true, campaigns, lists: null, entries: null, statusFlags: [], categories: [] });
+
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+  if (!campaignIds.length) return res.json({ ok: true, campaigns, lists: [], entries: [], statusFlags: [], categories: [] });
+  const campPlaceholders = campaignIds.map(() => '?').join(',');
+
+  const lists = await rows(
+    `SELECT list_id, list_name, campaign_id, active FROM vicidial_lists
+     WHERE active IN ('Y','N') AND campaign_id IN (${campPlaceholders})
+     ORDER BY list_id ASC LIMIT 1000`,
+    campaignIds,
+    [],
+  );
+  const listIds = lists.map((row) => String(row.list_id));
+  const entries = listIds.length
+    ? await rows(
+      `SELECT list_id, status, COUNT(*) AS leads
+       FROM vicidial_list WHERE list_id IN (${listIds.map(() => '?').join(',')})
+       GROUP BY list_id, status ORDER BY list_id ASC, status ASC LIMIT 5000`,
+      listIds,
+      [],
+    )
+    : [];
+
+  const statusFlags = await rows(
+    `SELECT status, status_name, category, human_answered, sale, dnc, customer_contact, not_interested,
+            unworkable, scheduled_callback, completed
+     FROM vicidial_statuses
+     UNION
+     SELECT status, status_name, category, human_answered, sale, dnc, customer_contact, not_interested,
+            unworkable, scheduled_callback, completed
+     FROM vicidial_campaign_statuses WHERE campaign_id IN (${campPlaceholders}) LIMIT 1000`,
+    campaignIds,
+    [],
+  );
+  const categories = await rows(
+    'SELECT vsc_id, vsc_name FROM vicidial_status_categories ORDER BY vsc_id ASC LIMIT 200',
+    [],
+    [],
+  );
+
+  return res.json({ ok: true, campaigns, lists, entries, statusFlags, categories });
+}
+
+// Native port of AST_campaign_status_list_report.php: per campaign, per list,
+// dispositions from outbound + inbound logs in the date range with duration and
+// handle-time sums. The legacy per-call UNION is aggregated with GROUP BY here.
+async function campaignStatusListReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const campaignIdsRaw = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 20);
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+
+  if (!campaignIdsRaw.length) {
+    return res.json({ ok: true, campaigns, results: null, range: { beginDate, endDate } });
+  }
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+  const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
+
+  const results = [];
+  for (const campaignId of campaignIds) {
+    const statuses = await rows(
+      `SELECT status, status_name, human_answered, sale, dnc, customer_contact, not_interested,
+              unworkable, scheduled_callback, completed
+       FROM vicidial_campaign_statuses WHERE campaign_id = ?
+       UNION
+       SELECT status, status_name, human_answered, sale, dnc, customer_contact, not_interested,
+              unworkable, scheduled_callback, completed
+       FROM vicidial_statuses LIMIT 500`,
+      [campaignId],
+      [],
+    );
+    const lists = await rows(
+      'SELECT DISTINCT list_id, list_name, active FROM vicidial_lists WHERE campaign_id = ? ORDER BY list_id ASC LIMIT 100',
+      [campaignId],
+      [],
+    );
+    const listResults = [];
+    for (const list of lists) {
+      const outbound = await rows(
+        `SELECT vl.status AS status, COUNT(*) AS calls,
+                COALESCE(SUM(vl.length_in_sec), 0) AS duration,
+                COALESCE(SUM(CAST(al.talk_sec AS SIGNED) - CAST(al.dead_sec AS SIGNED)), 0) AS handle_time
+         FROM vicidial_log vl
+         LEFT JOIN vicidial_agent_log al
+           ON al.lead_id = vl.lead_id AND al.uniqueid = vl.uniqueid AND al.user = vl.user
+         WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.list_id = ?
+         GROUP BY vl.status LIMIT 500`,
+        [begin, end, list.list_id],
+        [],
+      );
+      const inbound = await rows(
+        `SELECT cl.status AS status, COUNT(*) AS calls,
+                COALESCE(SUM(cl.length_in_sec), 0) AS duration,
+                COALESCE(SUM(CAST(al.talk_sec AS SIGNED) - CAST(al.dead_sec AS SIGNED)), 0) AS handle_time
+         FROM vicidial_closer_log cl
+         LEFT JOIN vicidial_agent_log al
+           ON al.lead_id = cl.lead_id AND al.uniqueid = cl.uniqueid AND al.user = cl.user
+         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.list_id = ?
+         GROUP BY cl.status LIMIT 500`,
+        [begin, end, list.list_id],
+        [],
+      );
+      const merged = new Map();
+      for (const row of [...outbound, ...inbound]) {
+        const key = String(row.status ?? '');
+        if (!merged.has(key)) merged.set(key, { status: key, calls: 0, duration: 0, handle_time: 0 });
+        const bucket = merged.get(key);
+        bucket.calls += Number(row.calls || 0);
+        bucket.duration += Number(row.duration || 0);
+        bucket.handle_time += Number(row.handle_time || 0);
+      }
+      listResults.push({
+        list_id: list.list_id,
+        list_name: list.list_name,
+        active: list.active,
+        dispositions: [...merged.values()].sort((a, b) => a.status.localeCompare(b.status)),
+      });
+    }
+    results.push({ campaign_id: campaignId, statuses, lists: listResults });
+  }
+
+  return res.json({ ok: true, campaigns, results, range: { beginDate, endDate } });
+}
+
+// --- Dialer Inventory report (native port of AST_dialer_inventory_report.php) ---
+// The legacy report leans on dialable_leads() in functions.php; the call-time to
+// GMT-offset window math is ported below. State call-time split rules are ported;
+// per-shift columns are only produced when shifts have report_option='Y' (none on
+// this system), so they are omitted here.
+const CT_DAY_FIELDS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+function ctWindow(row, prefix, dayIndex) {
+  const start = Number(row[`${prefix}_${CT_DAY_FIELDS[dayIndex]}_start`] || 0);
+  const stop = Number(row[`${prefix}_${CT_DAY_FIELDS[dayIndex]}_stop`] || 0);
+  if (start === 0 && stop === 0) {
+    return [Number(row[`${prefix}_default_start`] || 0), Number(row[`${prefix}_default_stop`] || 0)];
+  }
+  return [start, stop];
+}
+
+function gmtOffsetSlots() {
+  const slots = [];
+  const now = Date.now();
+  for (let p = 13; p > -13; p -= 0.25) {
+    const t = new Date(now + p * 3600000);
+    slots.push({ gmt: p.toFixed(2), day: t.getUTCDay(), hour: t.getUTCHours() * 100 + t.getUTCMinutes() });
+  }
+  return slots;
+}
+
+async function holidayWindowToday(holidayList) {
+  const ids = String(holidayList || '').split('|').map((item) => cleanId(item, 30)).filter(Boolean);
+  if (!ids.length) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const [holiday] = await rows(
+    `SELECT holiday_id, ct_default_start, ct_default_stop FROM vicidial_call_time_holidays
+     WHERE holiday_id IN (${ids.map(() => '?').join(',')}) AND holiday_status = 'ACTIVE' AND holiday_date = ?
+     ORDER BY holiday_id LIMIT 1`,
+    [...ids, today],
+    [],
+  );
+  return holiday || null;
+}
+
+// Tighten every day window with an active holiday's window, like legacy does.
+function applyHolidayWindows(row, prefix, holiday, guardStopPositive) {
+  if (!holiday) return;
+  const hStart = Number(holiday.ct_default_start || 0);
+  const hStop = Number(holiday.ct_default_stop || 0);
+  const fields = ['default', ...CT_DAY_FIELDS];
+  for (const field of fields) {
+    const startKey = `${prefix}_${field}_start`;
+    const stopKey = `${prefix}_${field}_stop`;
+    const stopOk = guardStopPositive ? Number(row[stopKey] || 0) > 0 : true;
+    if (Number(row[startKey] || 0) < hStart && stopOk) row[startKey] = hStart;
+    if (Number(row[stopKey] || 0) > hStop && stopOk) row[stopKey] = hStop;
+  }
+}
+
+// Returns a SQL condition on vicidial_list (gmt_offset_now/state) for the given
+// call time, or null when the call time imposes no restriction (24hours).
+async function callTimeGmtCondition(callTimeId) {
+  const id = cleanId(callTimeId, 10);
+  if (!id || id === '24hours') return null;
+  const [ct] = await rows(
+    `SELECT ct_default_start, ct_default_stop,
+            ct_sunday_start, ct_sunday_stop, ct_monday_start, ct_monday_stop,
+            ct_tuesday_start, ct_tuesday_stop, ct_wednesday_start, ct_wednesday_stop,
+            ct_thursday_start, ct_thursday_stop, ct_friday_start, ct_friday_stop,
+            ct_saturday_start, ct_saturday_stop, ct_state_call_times, ct_holidays
+     FROM vicidial_call_times WHERE call_time_id = ? LIMIT 1`,
+    [id],
+    [],
+  );
+  if (!ct) return null;
+  applyHolidayWindows(ct, 'ct', await holidayWindowToday(ct.ct_holidays), false);
+
+  const slots = gmtOffsetSlots();
+  const inSet = (row, prefix) => slots
+    .filter((slot) => {
+      const [start, stop] = ctWindow(row, prefix, slot.day);
+      return slot.hour >= start && slot.hour < stop;
+    })
+    .map((slot) => `'${slot.gmt}'`);
+
+  const defaultSet = inSet(ct, 'ct');
+  defaultSet.push("'99'");
+
+  const stateIds = String(ct.ct_state_call_times || '').split('|').map((item) => cleanId(item, 10)).filter(Boolean);
+  const stateParts = [];
+  const stateNames = [];
+  for (const stateId of stateIds) {
+    const [sct] = await rows(
+      `SELECT state_call_time_state, sct_default_start, sct_default_stop,
+              sct_sunday_start, sct_sunday_stop, sct_monday_start, sct_monday_stop,
+              sct_tuesday_start, sct_tuesday_stop, sct_wednesday_start, sct_wednesday_stop,
+              sct_thursday_start, sct_thursday_stop, sct_friday_start, sct_friday_stop,
+              sct_saturday_start, sct_saturday_stop, ct_holidays
+       FROM vicidial_state_call_times WHERE state_call_time_id = ? LIMIT 1`,
+      [stateId],
+      [],
+    );
+    if (!sct) continue;
+    applyHolidayWindows(sct, 'sct', await holidayWindowToday(sct.ct_holidays), true);
+    const state = cleanText(sct.state_call_time_state, 4).replace(/[^A-Z0-9]/gi, '');
+    if (!state) continue;
+    stateNames.push(`'${state}'`);
+    const stateSet = inSet(sct, 'sct');
+    stateSet.push("'99'");
+    stateParts.push(`(state = '${state}' AND gmt_offset_now IN (${stateSet.join(',')}))`);
+  }
+
+  const stateExclusion = stateNames.length ? ` AND state NOT IN (${stateNames.join(',')})` : '';
+  const base = `(gmt_offset_now IN (${defaultSet.join(',')})${stateExclusion})`;
+  return stateParts.length ? `(${base} OR ${stateParts.join(' OR ')})` : base;
+}
+
+// Port of dialable_leads() as used by the inventory report: counts leads in one
+// list matching statuses + call-time window + campaign limits + filter SQL.
+async function dialableLeadCount(list, statuses, campaign, gmtCondition, extraSql) {
+  if (!list || list.active !== 'Y') return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  if (list.expiration_date && String(list.expiration_date).slice(0, 10) < today) return 0;
+  const statusIn = statuses.length
+    ? statuses.map((status) => `'${String(status).replace(/[^-_0-9A-Za-z]/g, '')}'`).join(',')
+    : "''";
+  let where = `called_since_last_reset = 'N' AND status IN (${statusIn}) AND list_id = ?`;
+  if (gmtCondition) where += ` AND ${gmtCondition}`;
+  const callCountLimit = Number(campaign.call_count_limit || 0);
+  if (callCountLimit > 0) where += ` AND called_count < ${callCountLimit}`;
+  const dropLockout = Number(campaign.drop_lockout_time || 0);
+  if (dropLockout > 0) {
+    const seconds = Math.floor(dropLockout * 3600);
+    where += ` AND ((status IN ('DROP','XDROP') AND last_local_call_time < CONCAT(DATE_ADD(NOW(), INTERVAL -${seconds} SECOND), ' ', CURTIME())) OR status NOT IN ('DROP','XDROP'))`;
+  }
+  if (extraSql) where += ` AND ${extraSql}`;
+  const [row] = await rows(`SELECT COUNT(*) AS cnt FROM vicidial_list WHERE ${where}`, [list.list_id], []);
+  return Number(row?.cnt || 0);
+}
+
+async function inventoryListRow(campaign, list, inventoryStatuses, inactiveStatuses, filterSql, gmtCondition, override24) {
+  // Lists may override the campaign call time (legacy list local_call_time branch).
+  if (!override24 && list.local_call_time && list.local_call_time !== 'campaign'
+    && list.local_call_time !== campaign.local_call_time) {
+    gmtCondition = await callTimeGmtCondition(list.local_call_time);
+  }
+  const counts = await rows(
+    'SELECT status, called_count, COUNT(*) AS leads FROM vicidial_list WHERE list_id = ? GROUP BY status, called_count ORDER BY status, called_count LIMIT 2000',
+    [list.list_id],
+    [],
+  );
+  let startInv = 0;
+  let totalCalls = 0;
+  for (const row of counts) {
+    startInv += Number(row.leads || 0);
+    totalCalls += Number(row.called_count || 0) * Number(row.leads || 0);
+  }
+  const callCountLimit = Number(campaign.call_count_limit || 0);
+  const oneoffSql = `${filterSql ? `${filterSql} AND ` : ''}(called_count < ${callCountLimit - 1})`;
+  const [dialable, dialableNoFilter, oneoff, inactiveDialable] = await Promise.all([
+    dialableLeadCount(list, inventoryStatuses, campaign, gmtCondition, filterSql),
+    dialableLeadCount(list, inventoryStatuses, campaign, gmtCondition, ''),
+    dialableLeadCount(list, inventoryStatuses, campaign, gmtCondition, oneoffSql),
+    inactiveStatuses.length
+      ? dialableLeadCount(list, inactiveStatuses, campaign, gmtCondition, filterSql)
+      : Promise.resolve(0),
+  ]);
+  return {
+    list_id: list.list_id,
+    list_name: list.list_name,
+    list_description: String(list.list_description || '').slice(0, 30),
+    campaign_id: campaign.campaign_id,
+    last_call_date: list.list_lastcalldate || null,
+    start_inv: startInv,
+    dialable,
+    dialable_nofilter: dialableNoFilter,
+    oneoff,
+    inactive_dialable: inactiveDialable,
+    average_calls: startInv ? Number((totalCalls / startInv).toFixed(1)) : 0,
+    penetration: startInv ? Number((100 * ((startInv - dialable) / startInv)).toFixed(2)) : 0,
+    status_counts: counts,
+  };
+}
+
+async function inventoryCampaignContext(campaignId, override24) {
+  const [campaign] = await rows(
+    `SELECT campaign_id, call_count_limit, call_count_target, dial_statuses, local_call_time,
+            drop_lockout_time, lead_filter_id
+     FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1`,
+    [campaignId],
+    [],
+  );
+  if (!campaign) return null;
+  const statusRows = await rows(
+    `SELECT DISTINCT status FROM vicidial_statuses WHERE completed = 'N'
+     UNION
+     SELECT DISTINCT status FROM vicidial_campaign_statuses WHERE completed = 'N' AND campaign_id = ? LIMIT 500`,
+    [campaignId],
+    [],
+  );
+  const inventoryStatuses = statusRows.map((row) => String(row.status));
+  const activeSet = new Set(String(campaign.dial_statuses || '').trim().split(/\s+/).filter(Boolean));
+  const inactiveStatuses = inventoryStatuses.filter((status) => !activeSet.has(status));
+
+  let filterSql = '';
+  if (campaign.lead_filter_id && campaign.lead_filter_id !== 'NONE') {
+    // Legacy appends the raw admin-authored filter SQL; parenthesized here.
+    const [filter] = await rows(
+      'SELECT lead_filter_sql FROM vicidial_lead_filters WHERE lead_filter_id = ? LIMIT 1',
+      [campaign.lead_filter_id],
+      [],
+    );
+    if (filter?.lead_filter_sql) filterSql = `(${String(filter.lead_filter_sql).replace(/\\/g, '')})`;
+  }
+  const gmtCondition = override24 ? null : await callTimeGmtCondition(campaign.local_call_time);
+  return { campaign, inventoryStatuses, inactiveStatuses, filterSql, gmtCondition };
+}
+
+async function dialerInventoryReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const reportType = cleanChoice(req.query?.report_type, ['CAMPAIGNS', 'LIST', 'SNAPSHOT'], 'CAMPAIGNS');
+  const override24 = String(req.query?.override_24hours || '') === '1';
+  const submitted = String(req.query?.submit || '') === '1';
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id FROM vicidial_campaigns
+     WHERE campaign_id IN (SELECT DISTINCT campaign_id FROM vicidial_lists WHERE inventory_report = 'Y')
+       AND ${campaignWhere}
+     ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+  const listParams = [];
+  const listWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', listParams);
+  const pickerLists = await rows(
+    `SELECT list_id, list_name, campaign_id FROM vicidial_lists
+     WHERE inventory_report = 'Y' AND ${listWhere}
+     ORDER BY list_id ASC LIMIT 500`,
+    listParams,
+    [],
+  );
+  const snapshots = await rows(
+    'SELECT DISTINCT snapshot_time FROM dialable_inventory_snapshots ORDER BY snapshot_time DESC LIMIT 100',
+    [],
+    [],
+  );
+
+  const picker = { campaigns, lists: pickerLists, snapshots: snapshots.map((row) => row.snapshot_time) };
+  if (!submitted) return res.json({ ok: true, ...picker, entries: null });
+
+  if (reportType === 'SNAPSHOT') {
+    const snapshotTime = cleanText(req.query?.snapshot_time, 20);
+    const timeSetting = cleanChoice(req.query?.time_setting, ['GMT', 'LOCAL'], 'GMT');
+    const params = [snapshotTime, timeSetting];
+    const snapWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', params);
+    const entries = await rows(
+      `SELECT snapshot_time, list_id, list_name, list_description, campaign_id, list_lastcalldate AS last_call_date,
+              list_start_inv AS start_inv, dialable_count AS dialable, dialable_count_nofilter AS dialable_nofilter,
+              dialable_count_oneoff AS oneoff, dialable_count_inactive AS inactive_dialable,
+              average_call_count AS average_calls, penetration, time_setting
+       FROM dialable_inventory_snapshots
+       WHERE snapshot_time = ? AND time_setting = ? AND ${snapWhere}
+       ORDER BY campaign_id ASC, list_id ASC LIMIT 1000`,
+      params,
+      [],
+    );
+    return res.json({ ok: true, ...picker, reportType, entries, snapshotTime, timeSetting });
+  }
+
+  const allowedIds = new Set(campaigns.map((row) => String(row.campaign_id)));
+
+  if (reportType === 'LIST') {
+    const listId = cleanId(req.query?.list_id, 30);
+    const [list] = await rows(
+      `SELECT list_id, list_name, list_description, active, expiration_date, local_call_time,
+              campaign_id, list_lastcalldate
+       FROM vicidial_lists WHERE list_id = ? AND inventory_report = 'Y' LIMIT 1`,
+      [listId],
+      [],
+    );
+    if (!list || !allowedIds.has(String(list.campaign_id))) {
+      return res.status(404).json({ ok: false, error: 'list_not_found' });
+    }
+    const context = await inventoryCampaignContext(list.campaign_id, override24);
+    if (!context) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+    const entry = await inventoryListRow(context.campaign, list, context.inventoryStatuses, context.inactiveStatuses, context.filterSql, context.gmtCondition, override24);
+    return res.json({ ok: true, ...picker, reportType, entries: [entry], statusMatrix: entry.status_counts });
+  }
+
+  const requestedIds = String(req.query?.campaigns || '').split(',').map((item) => cleanId(item, 20)).filter(Boolean).slice(0, 50);
+  const campaignIds = requestedIds.filter((id) => allowedIds.has(id));
+  const entries = [];
+  for (const campaignId of campaignIds) {
+    const context = await inventoryCampaignContext(campaignId, override24);
+    if (!context) continue;
+    const lists = await rows(
+      `SELECT list_id, list_name, list_description, active, expiration_date, local_call_time, list_lastcalldate
+       FROM vicidial_lists WHERE campaign_id = ? AND inventory_report = 'Y' ORDER BY list_id ASC LIMIT 200`,
+      [campaignId],
+      [],
+    );
+    for (const list of lists) {
+      entries.push(await inventoryListRow(context.campaign, list, context.inventoryStatuses, context.inactiveStatuses, context.filterSql, context.gmtCondition, override24));
+    }
+  }
+  return res.json({ ok: true, ...picker, reportType, entries });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -7538,6 +7993,9 @@ app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);
 app.get('/api/reports/whiteboard', requireAccess, whiteboardReport);
 app.get('/api/reports/hopper-list', requireAccess, hopperListReport);
 app.get('/api/reports/list-statuses', requireAccess, listStatusesReport);
+app.get('/api/reports/list-campaign-statuses', requireAccess, listCampaignStatusesReport);
+app.get('/api/reports/campaign-status-list', requireAccess, campaignStatusListReport);
+app.get('/api/reports/dialer-inventory', requireAccess, dialerInventoryReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
