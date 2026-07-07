@@ -944,6 +944,9 @@ async function adminData(user) {
     mohFull,
     ttsPrompts,
     soundboards,
+    stateCallTimes,
+    holidays,
+    statusGroups,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2276,6 +2279,26 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT state_call_time_id, state_call_time_state, state_call_time_name, state_call_time_comments,
+              sct_default_start, sct_default_stop, user_group
+       FROM vicidial_state_call_times ORDER BY state_call_time_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT holiday_id, holiday_name, holiday_comments, holiday_date, holiday_status,
+              ct_default_start, ct_default_stop, holiday_method, user_group
+       FROM vicidial_call_time_holidays ORDER BY holiday_date DESC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT status_group_id, status_group_notes, user_group
+       FROM vicidial_status_groups ORDER BY status_group_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2375,6 +2398,9 @@ async function adminData(user) {
     mohFull,
     ttsPrompts,
     soundboards,
+    stateCallTimes,
+    holidays,
+    statusGroups,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -5020,6 +5046,148 @@ async function deleteSimpleMedia(req, res, kind) {
   }
 }
 
+const HHMM_FIELDS_SCT = ['sct_default_start', 'sct_default_stop', 'sct_sunday_start', 'sct_sunday_stop',
+  'sct_monday_start', 'sct_monday_stop', 'sct_tuesday_start', 'sct_tuesday_stop', 'sct_wednesday_start',
+  'sct_wednesday_stop', 'sct_thursday_start', 'sct_thursday_stop', 'sct_friday_start', 'sct_friday_stop',
+  'sct_saturday_start', 'sct_saturday_stop'];
+
+async function saveStateCallTime(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCallTimes')) return;
+  const payload = {
+    state_call_time_state: cleanId(req.body?.state_call_time_state, 2).toUpperCase(),
+    state_call_time_name: cleanText(req.body?.state_call_time_name, 30) || 'New State Call Time',
+    state_call_time_comments: cleanText(req.body?.state_call_time_comments, 255),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  for (const field of HHMM_FIELDS_SCT) {
+    payload[field] = cleanInt(req.body?.[field], 0, 0, 2400);
+  }
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.state_call_time_id, 10);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_state_call_time_id');
+      const { assignments, values } = dynamicAssignments({ state_call_time_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_state_call_times SET ${assignments}`, values);
+      await adminLog(req, 'CALLTIMES', 'ADD', id, 'GENX ADD STATE CALL TIME', 'INSERT INTO vicidial_state_call_times', payload.state_call_time_name);
+    } else {
+      const id = cleanId(req.params.id, 10);
+      if (!id) return badRequest(res, 'invalid_state_call_time_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_state_call_times SET ${assignments} WHERE state_call_time_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'state_call_time_not_found' });
+      await adminLog(req, 'CALLTIMES', 'MODIFY', id, 'GENX MODIFY STATE CALL TIME', 'UPDATE vicidial_state_call_times', payload.state_call_time_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'state_call_time_save_failed' });
+  }
+}
+
+// Legacy ADD=5211111111 gate: delete_call_times.
+async function deleteStateCallTime(req, res) {
+  if (!requireModify(req, res, 'deleteCallTimes')) return;
+  const id = cleanId(req.params.id, 10);
+  if (!id) return badRequest(res, 'invalid_state_call_time_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_state_call_times WHERE state_call_time_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'state_call_time_not_found' });
+    await adminLog(req, 'CALLTIMES', 'DELETE', id, 'GENX DELETE STATE CALL TIME', 'DELETE FROM vicidial_state_call_times', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'state_call_time_delete_failed' });
+  }
+}
+
+async function saveHoliday(req, res, mode) {
+  if (!requireModify(req, res, 'modifyCallTimes')) return;
+  const holidayDate = cleanText(req.body?.holiday_date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(holidayDate)) return badRequest(res, 'invalid_holiday_date');
+  const payload = {
+    holiday_name: cleanText(req.body?.holiday_name, 100) || 'New Holiday',
+    holiday_comments: cleanText(req.body?.holiday_comments, 255),
+    holiday_date: holidayDate,
+    holiday_status: cleanChoice(req.body?.holiday_status, ['ACTIVE', 'INACTIVE', 'EXPIRED'], 'INACTIVE'),
+    ct_default_start: cleanInt(req.body?.ct_default_start, 0, 0, 2400),
+    ct_default_stop: cleanInt(req.body?.ct_default_stop, 0, 0, 2400),
+    holiday_method: cleanChoice(req.body?.holiday_method, ['REPLACE', 'REDUCE', 'ADDITIVE'], 'REPLACE'),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.holiday_id, 30);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_holiday_id');
+      const { assignments, values } = dynamicAssignments({ holiday_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_call_time_holidays SET ${assignments}`, values);
+      await adminLog(req, 'CALLTIMES', 'ADD', id, 'GENX ADD HOLIDAY', 'INSERT INTO vicidial_call_time_holidays', payload.holiday_name);
+    } else {
+      const id = cleanId(req.params.id, 30);
+      if (!id) return badRequest(res, 'invalid_holiday_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_call_time_holidays SET ${assignments} WHERE holiday_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'holiday_not_found' });
+      await adminLog(req, 'CALLTIMES', 'MODIFY', id, 'GENX MODIFY HOLIDAY', 'UPDATE vicidial_call_time_holidays', payload.holiday_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'holiday_save_failed' });
+  }
+}
+
+async function deleteHoliday(req, res) {
+  if (!requireModify(req, res, 'deleteCallTimes')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_holiday_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_call_time_holidays WHERE holiday_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'holiday_not_found' });
+    await adminLog(req, 'CALLTIMES', 'DELETE', id, 'GENX DELETE HOLIDAY', 'DELETE FROM vicidial_call_time_holidays', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'holiday_delete_failed' });
+  }
+}
+
+async function saveStatusGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyStatuses')) return;
+  const payload = {
+    status_group_notes: cleanText(req.body?.status_group_notes, 255),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.status_group_id, 20);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_status_group_id');
+      const { assignments, values } = dynamicAssignments({ status_group_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_status_groups SET ${assignments}`, values);
+      await adminLog(req, 'STATUSES', 'ADD', id, 'GENX ADD STATUS GROUP', 'INSERT INTO vicidial_status_groups', payload.status_group_notes);
+    } else {
+      const id = cleanId(req.params.id, 20);
+      if (!id) return badRequest(res, 'invalid_status_group_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_status_groups SET ${assignments} WHERE status_group_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'status_group_not_found' });
+      await adminLog(req, 'STATUSES', 'MODIFY', id, 'GENX MODIFY STATUS GROUP', 'UPDATE vicidial_status_groups', payload.status_group_notes);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'status_group_save_failed' });
+  }
+}
+
+async function deleteStatusGroup(req, res) {
+  if (!requireModify(req, res, 'modifyStatuses')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_status_group_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_status_groups WHERE status_group_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'status_group_not_found' });
+    await adminLog(req, 'STATUSES', 'DELETE', id, 'GENX DELETE STATUS GROUP', 'DELETE FROM vicidial_status_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'status_group_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -7180,6 +7348,15 @@ app.delete('/api/admin/tts/:id', requireAccess, (req, res) => deleteSimpleMedia(
 app.post('/api/admin/soundboards', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'create'));
 app.put('/api/admin/soundboards/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'update'));
 app.delete('/api/admin/soundboards/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'soundboards'));
+app.post('/api/admin/state-call-times', requireAccess, (req, res) => saveStateCallTime(req, res, 'create'));
+app.put('/api/admin/state-call-times/:id', requireAccess, (req, res) => saveStateCallTime(req, res, 'update'));
+app.delete('/api/admin/state-call-times/:id', requireAccess, deleteStateCallTime);
+app.post('/api/admin/holidays', requireAccess, (req, res) => saveHoliday(req, res, 'create'));
+app.put('/api/admin/holidays/:id', requireAccess, (req, res) => saveHoliday(req, res, 'update'));
+app.delete('/api/admin/holidays/:id', requireAccess, deleteHoliday);
+app.post('/api/admin/status-groups', requireAccess, (req, res) => saveStatusGroup(req, res, 'create'));
+app.put('/api/admin/status-groups/:id', requireAccess, (req, res) => saveStatusGroup(req, res, 'update'));
+app.delete('/api/admin/status-groups/:id', requireAccess, deleteStatusGroup);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));

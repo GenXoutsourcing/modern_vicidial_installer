@@ -452,10 +452,12 @@ function userCan(user, entity) {
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
   if (entity === 'tts') return Boolean(user?.modifyTts);
+  if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.deleteCallTimes);
+  if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -486,6 +488,8 @@ function userCanDelete(user, entity) {
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
   if (entity === 'tts') return Boolean(user?.modifyTts);
+  if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.modifyCallTimes);
+  if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
   return false;
 }
 
@@ -1621,6 +1625,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'moh') {
     return { moh_id: '', moh_name: '', active: 'N', random: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'stateCallTimes') {
+    return { state_call_time_id: '', state_call_time_state: '', state_call_time_name: '', state_call_time_comments: '', sct_default_start: '900', sct_default_stop: '2100', user_group: '---ALL---' };
+  }
+
+  if (entity === 'holidays') {
+    return { holiday_id: '', holiday_name: '', holiday_comments: '', holiday_date: '', holiday_status: 'INACTIVE', ct_default_start: '0', ct_default_stop: '0', holiday_method: 'REPLACE', user_group: '---ALL---' };
+  }
+
+  if (entity === 'statusGroups') {
+    return { status_group_id: '', status_group_notes: '', user_group: '---ALL---' };
   }
 
   if (entity === 'tts') {
@@ -2968,6 +2984,40 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'stateCallTimes') {
+    return [
+      { key: 'state_call_time_id', label: 'State Call Time ID', disabled: mode === 'edit' },
+      { key: 'state_call_time_state', label: 'State (2-letter)' },
+      { key: 'state_call_time_name', label: 'Name' },
+      { key: 'state_call_time_comments', label: 'Comments' },
+      { key: 'sct_default_start', label: 'Default Start (HHMM)', type: 'number' },
+      { key: 'sct_default_stop', label: 'Default Stop (HHMM)', type: 'number' },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'holidays') {
+    return [
+      { key: 'holiday_id', label: 'Holiday ID', disabled: mode === 'edit' },
+      { key: 'holiday_name', label: 'Name' },
+      { key: 'holiday_date', label: 'Date', type: 'date' },
+      { key: 'holiday_status', label: 'Status', type: 'select', options: enumOptions(['ACTIVE', 'INACTIVE', 'EXPIRED']) },
+      { key: 'holiday_method', label: 'Method', type: 'select', options: enumOptions(['REPLACE', 'REDUCE', 'ADDITIVE']) },
+      { key: 'ct_default_start', label: 'Default Start (HHMM)', type: 'number' },
+      { key: 'ct_default_stop', label: 'Default Stop (HHMM)', type: 'number' },
+      { key: 'holiday_comments', label: 'Comments', wide: true },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'statusGroups') {
+    return [
+      { key: 'status_group_id', label: 'Status Group ID', disabled: mode === 'edit' },
+      { key: 'status_group_notes', label: 'Notes' },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
   if (entity === 'moh') {
     return [
       { key: 'moh_id', label: 'MOH ID', disabled: mode === 'edit' },
@@ -3449,6 +3499,9 @@ function entityLabel(entity) {
     moh: 'Music On Hold Group',
     tts: 'TTS Prompt',
     soundboards: 'Soundboard',
+    stateCallTimes: 'State Call Time',
+    holidays: 'Holiday',
+    statusGroups: 'Status Group',
   }[entity] || 'Record';
 }
 
@@ -3494,6 +3547,9 @@ function entityId(entity, row) {
     moh: row.moh_id,
     tts: row.tts_id,
     soundboards: row.avatar_id,
+    stateCallTimes: row.state_call_time_id,
+    holidays: row.holiday_id,
+    statusGroups: row.status_group_id,
   }[entity];
 }
 
@@ -3522,6 +3578,8 @@ function entityPath(entity) {
     voicemailBoxes: 'voicemail-boxes',
     vmMessageGroups: 'vm-message-groups',
     automatedReports: 'automated-reports',
+    stateCallTimes: 'state-call-times',
+    statusGroups: 'status-groups',
   }[entity] || entity;
 }
 
@@ -6268,6 +6326,50 @@ function CallTimesView({ admin, user, onAction }) {
             <MetricCard icon={CalendarDays} label="Holiday Rules" value={formatNumber(callTimes.filter((row) => String(row.ct_holidays || '').trim()).length)} detail="Call times with holidays" accent="#73fbd3" />
           </div>
         </Panel>
+        <Panel
+          eyebrow="Schedule"
+          title={`State Call Times (${formatNumber((admin?.stateCallTimes || []).length)})`}
+          icon={Timer}
+          headerActions={userCan(user, 'stateCallTimes') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('stateCallTimes', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No state call times (per-state dialing window overrides)"
+            rows={(admin?.stateCallTimes || []).map((row) => ({ ...row, id: row.state_call_time_id }))}
+            columns={[
+              { key: 'state_call_time_id', label: 'ID' },
+              { key: 'state_call_time_state', label: 'State' },
+              { key: 'state_call_time_name', label: 'Name' },
+              { key: 'default_window', label: 'Default', render: (row) => `${row.sct_default_start}-${row.sct_default_stop}` },
+              ...(userCan(user, 'stateCallTimes') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('stateCallTimes', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Schedule"
+          title={`Holidays (${formatNumber((admin?.holidays || []).length)})`}
+          icon={CalendarDays}
+          headerActions={userCan(user, 'holidays') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('holidays', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No holidays (date-specific call time overrides)"
+            rows={(admin?.holidays || []).map((row) => ({ ...row, id: row.holiday_id }))}
+            columns={[
+              { key: 'holiday_id', label: 'ID' },
+              { key: 'holiday_name', label: 'Name' },
+              { key: 'holiday_date', label: 'Date', render: (row) => String(row.holiday_date || '').slice(0, 10) },
+              { key: 'holiday_status', label: 'Status', render: (row) => <StatusPill ok={row.holiday_status === 'ACTIVE'}>{row.holiday_status}</StatusPill> },
+              ...(userCan(user, 'holidays') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('holidays', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
       </section>
     </>
   );
@@ -6464,6 +6566,27 @@ function StatusesView({ admin, user, onAction }) {
               { key: 'sale', label: 'Sale', render: (row) => row.sale || 'N' },
               { key: 'dnc', label: 'DNC', render: (row) => row.dnc || 'N' },
               ...(canManageCampaign ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('campaignStatuses', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Grouping"
+          title={`Status Groups (${formatNumber((admin?.statusGroups || []).length)})`}
+          icon={Gauge}
+          headerActions={userCan(user, 'statusGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No status groups (per-list status set overrides)"
+            rows={(admin?.statusGroups || []).map((row) => ({ ...row, id: row.status_group_id }))}
+            columns={[
+              { key: 'status_group_id', label: 'ID' },
+              { key: 'status_group_notes', label: 'Notes' },
+              { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
+              ...(userCan(user, 'statusGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('statusGroups', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
