@@ -211,6 +211,7 @@ const NAV_ITEMS = [
   { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
   { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
+  { key: 'display', label: 'Display', eyebrow: 'Platform', title: 'Screen Labels, Colors and Containers', icon: LayoutDashboard },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
@@ -223,7 +224,7 @@ const NAV_GROUPS = [
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'mediaTools', 'map'] },
+  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'mediaTools', 'display', 'map'] },
   { title: 'Reports', keys: ['reports', 'recordings'] },
 ];
 
@@ -454,10 +455,13 @@ function userCan(user, entity) {
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.deleteCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
+  if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
+  if (entity === 'screenColors') return Boolean(user?.modifyColors);
+  if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -490,6 +494,9 @@ function userCanDelete(user, entity) {
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.modifyCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
+  if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
+  if (entity === 'screenColors') return Boolean(user?.modifyColors);
+  if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
 }
 
@@ -1637,6 +1644,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'statusGroups') {
     return { status_group_id: '', status_group_notes: '', user_group: '---ALL---' };
+  }
+
+  if (entity === 'screenLabels') {
+    return { label_id: '', label_name: '', active: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'screenColors') {
+    return { colors_id: '', colors_name: '', active: 'N', user_group: '---ALL---', menu_background: '', frame_background: '', std_row1_background: '', std_row2_background: '', std_row3_background: '', std_row4_background: '', std_row5_background: '', alt_row1_background: '', alt_row2_background: '', alt_row3_background: '', web_logo: '', button_color: '' };
+  }
+
+  if (entity === 'settingsContainers') {
+    return { container_id: '', container_notes: '', container_type: 'OTHER', user_group: '---ALL---', container_entry: '' };
   }
 
   if (entity === 'tts') {
@@ -2984,6 +3003,46 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'screenLabels') {
+    const labelFields = ['label_title', 'label_first_name', 'label_middle_initial', 'label_last_name',
+      'label_address1', 'label_address2', 'label_address3', 'label_city', 'label_state', 'label_province',
+      'label_postal_code', 'label_vendor_lead_code', 'label_gender', 'label_phone_number', 'label_phone_code',
+      'label_alt_phone', 'label_security_phrase', 'label_email', 'label_comments'];
+    return [
+      { key: 'label_id', label: 'Label Set ID', disabled: mode === 'edit' },
+      { key: 'label_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { section: 'Field Labels (blank = default, ---HIDE--- hides the field)' },
+      ...labelFields.map((key) => ({ key, label: key.replace('label_', '').replace(/_/g, ' ') })),
+    ];
+  }
+
+  if (entity === 'screenColors') {
+    const colorFields = ['menu_background', 'frame_background', 'std_row1_background', 'std_row2_background',
+      'std_row3_background', 'std_row4_background', 'std_row5_background', 'alt_row1_background',
+      'alt_row2_background', 'alt_row3_background', 'button_color'];
+    return [
+      { key: 'colors_id', label: 'Color Scheme ID', disabled: mode === 'edit' },
+      { key: 'colors_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'web_logo', label: 'Web Logo' },
+      { section: 'Colors (6-digit hex, no #)' },
+      ...colorFields.map((key) => ({ key, label: key.replace(/_/g, ' ') })),
+    ];
+  }
+
+  if (entity === 'settingsContainers') {
+    return [
+      { key: 'container_id', label: 'Container ID', disabled: mode === 'edit' },
+      { key: 'container_notes', label: 'Notes' },
+      { key: 'container_type', label: 'Type' },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'container_entry', label: 'Container Entry', type: 'textarea', wide: true },
+    ];
+  }
+
   if (entity === 'stateCallTimes') {
     return [
       { key: 'state_call_time_id', label: 'State Call Time ID', disabled: mode === 'edit' },
@@ -3502,6 +3561,9 @@ function entityLabel(entity) {
     stateCallTimes: 'State Call Time',
     holidays: 'Holiday',
     statusGroups: 'Status Group',
+    screenLabels: 'Screen Label Set',
+    screenColors: 'Screen Color Scheme',
+    settingsContainers: 'Settings Container',
   }[entity] || 'Record';
 }
 
@@ -3550,6 +3612,9 @@ function entityId(entity, row) {
     stateCallTimes: row.state_call_time_id,
     holidays: row.holiday_id,
     statusGroups: row.status_group_id,
+    screenLabels: row.label_id,
+    screenColors: row.colors_id,
+    settingsContainers: row.container_id,
   }[entity];
 }
 
@@ -3580,6 +3645,9 @@ function entityPath(entity) {
     automatedReports: 'automated-reports',
     stateCallTimes: 'state-call-times',
     statusGroups: 'status-groups',
+    screenLabels: 'screen-labels',
+    screenColors: 'screen-colors',
+    settingsContainers: 'settings-containers',
   }[entity] || entity;
 }
 
@@ -7394,6 +7462,81 @@ function MediaToolsView({ admin, user, onAction }) {
   );
 }
 
+function DisplayView({ admin, user, onAction }) {
+  return (
+    <>
+      <section className="admin-grid media-tools-grid">
+        <Panel
+          eyebrow="Agent Screen"
+          title={`Screen Labels (${formatNumber((admin?.screenLabels || []).length)})`}
+          icon={FileText}
+          headerActions={userCan(user, 'screenLabels') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('screenLabels', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No screen label sets (rename/hide agent screen lead fields)"
+            rows={(admin?.screenLabels || []).map((row) => ({ ...row, id: row.label_id }))}
+            columns={[
+              { key: 'label_id', label: 'ID' },
+              { key: 'label_name', label: 'Name' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'screenLabels') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('screenLabels', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Agent Screen"
+          title={`Screen Colors (${formatNumber((admin?.screenColors || []).length)})`}
+          icon={SlidersHorizontal}
+          headerActions={userCan(user, 'screenColors') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('screenColors', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No color schemes"
+            rows={(admin?.screenColors || []).map((row) => ({ ...row, id: row.colors_id }))}
+            columns={[
+              { key: 'colors_id', label: 'ID' },
+              { key: 'colors_name', label: 'Name' },
+              { key: 'menu_background', label: 'Menu', render: (row) => (row.menu_background ? <span style={{ display: 'inline-block', width: 40, height: 16, borderRadius: 4, background: `#${row.menu_background}` }} title={`#${row.menu_background}`} /> : '—') },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'screenColors') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('screenColors', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Configuration"
+          title={`Settings Containers (${formatNumber((admin?.settingsContainers || []).length)})`}
+          icon={Database}
+          className="admin-wide-panel"
+          headerActions={userCan(user, 'settingsContainers') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('settingsContainers', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No settings containers (free-form config blocks used across features)"
+            rows={(admin?.settingsContainers || []).map((row) => ({ ...row, id: row.container_id }))}
+            columns={[
+              { key: 'container_id', label: 'ID' },
+              { key: 'container_type', label: 'Type' },
+              { key: 'container_notes', label: 'Notes' },
+              { key: 'entry_size', label: 'Entry Size', render: (row) => `${formatNumber(String(row.container_entry || '').length)} chars` },
+              ...(userCan(user, 'settingsContainers') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('settingsContainers', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function RemoteAgentsView({ admin, user, onAction }) {
   const remoteAgents = admin?.remoteAgents || [];
   const canManage = userCan(user, 'remoteAgents');
@@ -7618,6 +7761,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'mediaTools') return <MediaToolsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'display') return <DisplayView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;
