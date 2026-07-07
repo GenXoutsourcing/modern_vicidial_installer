@@ -208,6 +208,8 @@ function publicUser(row) {
     modifyRemoteagents: row.modify_remoteagents === '1',
     deleteRemoteAgents: row.delete_remote_agents === '1',
     modifyIpLists: row.modify_ip_lists === '1',
+    modifyContacts: row.modify_contacts === '1',
+    modifyLanguages: row.modify_languages === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
     adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
@@ -298,6 +300,8 @@ async function authenticateVicidialUser(username, password) {
             u.modify_remoteagents,
             u.delete_remote_agents,
             u.modify_ip_lists,
+            u.modify_contacts,
+            u.modify_languages,
             u.admin_hide_lead_data,
             u.admin_hide_phone_data,
             ug.allowed_campaigns,
@@ -923,6 +927,9 @@ async function adminData(user) {
     groupAliases,
     conferences,
     agentConferences,
+    queueGroups,
+    contacts,
+    languages,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2194,6 +2201,25 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT queue_group, queue_group_name, included_campaigns, included_inbound_groups, user_group, active
+       FROM vicidial_queue_groups ORDER BY queue_group ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT contact_id, first_name, last_name, office_num, cell_num, other_num1, other_num2,
+              bu_name, department, group_name, job_title, location
+       FROM contact_information ORDER BY last_name ASC, first_name ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT language_id, language_code, language_description, user_group, active
+       FROM vicidial_languages ORDER BY language_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2284,6 +2310,9 @@ async function adminData(user) {
     groupAliases,
     conferences,
     agentConferences,
+    queueGroups,
+    contacts,
+    languages,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -4542,6 +4571,145 @@ async function deleteCidGroup(req, res) {
   }
 }
 
+async function saveQueueGroup(req, res, mode) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const payload = {
+    queue_group_name: cleanText(req.body?.queue_group_name, 40) || 'New Queue Group',
+    included_campaigns: cleanText(req.body?.included_campaigns, 2000),
+    included_inbound_groups: cleanText(req.body?.included_inbound_groups, 2000),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+    active: ynFlag(req.body?.active, 'N'),
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.queue_group, 20);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_queue_group');
+      const { assignments, values } = dynamicAssignments({ queue_group: id, ...payload });
+      await execute(`INSERT INTO vicidial_queue_groups SET ${assignments}`, values);
+      await adminLog(req, 'QUEUEGROUPS', 'ADD', id, 'GENX ADD QUEUE GROUP', 'INSERT INTO vicidial_queue_groups', payload.queue_group_name);
+    } else {
+      const id = cleanId(req.params.id, 20);
+      if (!id) return badRequest(res, 'invalid_queue_group');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_queue_groups SET ${assignments} WHERE queue_group = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'queue_group_not_found' });
+      await adminLog(req, 'QUEUEGROUPS', 'MODIFY', id, 'GENX MODIFY QUEUE GROUP', 'UPDATE vicidial_queue_groups', payload.queue_group_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'queue_group_save_failed' });
+  }
+}
+
+async function deleteQueueGroup(req, res) {
+  if (!requireModify(req, res, 'modifyIngroups')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_queue_group');
+  try {
+    const result = await execute('DELETE FROM vicidial_queue_groups WHERE queue_group = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'queue_group_not_found' });
+    await adminLog(req, 'QUEUEGROUPS', 'DELETE', id, 'GENX DELETE QUEUE GROUP', 'DELETE FROM vicidial_queue_groups', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'queue_group_delete_failed' });
+  }
+}
+
+function contactPayload(body) {
+  return {
+    first_name: cleanText(body.first_name, 50),
+    last_name: cleanText(body.last_name, 50),
+    office_num: cleanDigits(body.office_num, 20),
+    cell_num: cleanDigits(body.cell_num, 20),
+    other_num1: cleanDigits(body.other_num1, 20),
+    other_num2: cleanDigits(body.other_num2, 20),
+    bu_name: cleanText(body.bu_name, 100),
+    department: cleanText(body.department, 100),
+    group_name: cleanText(body.group_name, 100),
+    job_title: cleanText(body.job_title, 100),
+    location: cleanText(body.location, 100),
+  };
+}
+
+async function saveContact(req, res, mode) {
+  if (!requireModify(req, res, 'modifyContacts')) return;
+  const payload = contactPayload(req.body || {});
+  if (!payload.first_name && !payload.last_name) return badRequest(res, 'missing_name');
+  try {
+    const { assignments, values } = dynamicAssignments(payload);
+    if (mode === 'create') {
+      const result = await execute(`INSERT INTO contact_information SET ${assignments}`, values);
+      await adminLog(req, 'CONTACTS', 'ADD', String(result.insertId), 'GENX ADD CONTACT', 'INSERT INTO contact_information', `${payload.first_name} ${payload.last_name}`);
+    } else {
+      const id = cleanInt(req.params.id, 0, 1, 999999999);
+      if (!id) return badRequest(res, 'invalid_contact_id');
+      const result = await execute(`UPDATE contact_information SET ${assignments} WHERE contact_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'contact_not_found' });
+      await adminLog(req, 'CONTACTS', 'MODIFY', String(id), 'GENX MODIFY CONTACT', 'UPDATE contact_information', `${payload.first_name} ${payload.last_name}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'contact_save_failed' });
+  }
+}
+
+async function deleteContact(req, res) {
+  if (!requireModify(req, res, 'modifyContacts')) return;
+  const id = cleanInt(req.params.id, 0, 1, 999999999);
+  if (!id) return badRequest(res, 'invalid_contact_id');
+  try {
+    const result = await execute('DELETE FROM contact_information WHERE contact_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'contact_not_found' });
+    await adminLog(req, 'CONTACTS', 'DELETE', String(id), 'GENX DELETE CONTACT', 'DELETE FROM contact_information', String(id));
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'contact_delete_failed' });
+  }
+}
+
+async function saveLanguage(req, res, mode) {
+  if (!requireModify(req, res, 'modifyLanguages')) return;
+  const payload = {
+    language_code: cleanId(req.body?.language_code, 20),
+    language_description: cleanText(req.body?.language_description, 255),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+    active: ynFlag(req.body?.active, 'N'),
+  };
+  try {
+    if (mode === 'create') {
+      const id = cleanText(req.body?.language_id, 100).replace(/[^-_ 0-9a-zA-Z]/g, '');
+      if (!id || id.length < 2) return badRequest(res, 'invalid_language_id');
+      const { assignments, values } = dynamicAssignments({ language_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_languages SET ${assignments}`, values);
+      await adminLog(req, 'LANGUAGES', 'ADD', id, 'GENX ADD LANGUAGE', 'INSERT INTO vicidial_languages', payload.language_description);
+    } else {
+      const id = cleanText(req.params.id, 100).replace(/[^-_ 0-9a-zA-Z]/g, '');
+      if (!id) return badRequest(res, 'invalid_language_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_languages SET ${assignments} WHERE language_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'language_not_found' });
+      await adminLog(req, 'LANGUAGES', 'MODIFY', id, 'GENX MODIFY LANGUAGE', 'UPDATE vicidial_languages', payload.language_description);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'language_save_failed' });
+  }
+}
+
+async function deleteLanguage(req, res) {
+  if (!requireModify(req, res, 'modifyLanguages')) return;
+  const id = cleanText(req.params.id, 100).replace(/[^-_ 0-9a-zA-Z]/g, '');
+  if (!id) return badRequest(res, 'invalid_language_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_languages WHERE language_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'language_not_found' });
+    await adminLog(req, 'LANGUAGES', 'DELETE', id, 'GENX DELETE LANGUAGE', 'DELETE FROM vicidial_languages', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'language_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6675,6 +6843,15 @@ app.delete('/api/admin/ip-lists/:id', requireAccess, deleteIpList);
 app.post('/api/admin/cid-groups', requireAccess, (req, res) => saveCidGroup(req, res, 'create'));
 app.put('/api/admin/cid-groups/:id', requireAccess, (req, res) => saveCidGroup(req, res, 'update'));
 app.delete('/api/admin/cid-groups/:id', requireAccess, deleteCidGroup);
+app.post('/api/admin/queue-groups', requireAccess, (req, res) => saveQueueGroup(req, res, 'create'));
+app.put('/api/admin/queue-groups/:id', requireAccess, (req, res) => saveQueueGroup(req, res, 'update'));
+app.delete('/api/admin/queue-groups/:id', requireAccess, deleteQueueGroup);
+app.post('/api/admin/contacts', requireAccess, (req, res) => saveContact(req, res, 'create'));
+app.put('/api/admin/contacts/:id', requireAccess, (req, res) => saveContact(req, res, 'update'));
+app.delete('/api/admin/contacts/:id', requireAccess, deleteContact);
+app.post('/api/admin/languages', requireAccess, (req, res) => saveLanguage(req, res, 'create'));
+app.put('/api/admin/languages/:id', requireAccess, (req, res) => saveLanguage(req, res, 'update'));
+app.delete('/api/admin/languages/:id', requireAccess, deleteLanguage);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));

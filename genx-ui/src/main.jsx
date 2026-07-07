@@ -445,10 +445,13 @@ function userCan(user, entity) {
   if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.modifyServers);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
+  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
+  if (entity === 'contacts') return Boolean(user?.modifyContacts);
+  if (entity === 'languages') return Boolean(user?.modifyLanguages);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -472,6 +475,9 @@ function userCanDelete(user, entity) {
   if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.astDeletePhones);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
+  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
+  if (entity === 'contacts') return Boolean(user?.modifyContacts);
+  if (entity === 'languages') return Boolean(user?.modifyLanguages);
   return false;
 }
 
@@ -1595,6 +1601,18 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'ipLists') {
     return { ip_list_id: '', ip_list_name: '', active: 'N', user_group: '---ALL---' };
+  }
+
+  if (entity === 'queueGroups') {
+    return { queue_group: '', queue_group_name: '', included_campaigns: '', included_inbound_groups: '', user_group: '---ALL---', active: 'N' };
+  }
+
+  if (entity === 'contacts') {
+    return { first_name: '', last_name: '', office_num: '', cell_num: '', other_num1: '', other_num2: '', bu_name: '', department: '', group_name: '', job_title: '', location: '' };
+  }
+
+  if (entity === 'languages') {
+    return { language_id: '', language_code: '', language_description: '', user_group: '---ALL---', active: 'N' };
   }
 
   if (entity === 'cidGroups') {
@@ -2918,6 +2936,43 @@ function actionFields(entity, mode, admin, form = {}) {
     ];
   }
 
+  if (entity === 'queueGroups') {
+    return [
+      { key: 'queue_group', label: 'Queue Group ID', disabled: mode === 'edit' },
+      { key: 'queue_group_name', label: 'Name' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'included_campaigns', label: 'Included Campaigns (space-separated)', type: 'textarea', wide: true },
+      { key: 'included_inbound_groups', label: 'Included In-Groups (space-separated)', type: 'textarea', wide: true },
+    ];
+  }
+
+  if (entity === 'contacts') {
+    return [
+      { key: 'first_name', label: 'First Name' },
+      { key: 'last_name', label: 'Last Name' },
+      { key: 'office_num', label: 'Office Number' },
+      { key: 'cell_num', label: 'Cell Number' },
+      { key: 'other_num1', label: 'Other Number 1' },
+      { key: 'other_num2', label: 'Other Number 2' },
+      { key: 'bu_name', label: 'Business Unit' },
+      { key: 'department', label: 'Department' },
+      { key: 'group_name', label: 'Group Name' },
+      { key: 'job_title', label: 'Job Title' },
+      { key: 'location', label: 'Location' },
+    ];
+  }
+
+  if (entity === 'languages') {
+    return [
+      { key: 'language_id', label: 'Language ID', disabled: mode === 'edit' },
+      { key: 'language_code', label: 'Language Code' },
+      { key: 'language_description', label: 'Description' },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
   if (entity === 'ipLists') {
     return [
       { key: 'ip_list_id', label: 'IP List ID', disabled: mode === 'edit' },
@@ -3273,6 +3328,9 @@ function entityLabel(entity) {
     agentConferences: 'Agent Conference',
     ipLists: 'IP List',
     cidGroups: 'CID Group',
+    queueGroups: 'Queue Group',
+    contacts: 'Contact',
+    languages: 'Language',
   }[entity] || 'Record';
 }
 
@@ -3309,6 +3367,9 @@ function entityId(entity, row) {
     agentConferences: `${row.conf_exten}__${row.server_ip}`,
     ipLists: row.ip_list_id,
     cidGroups: row.cid_group_id,
+    queueGroups: row.queue_group,
+    contacts: row.contact_id,
+    languages: row.language_id,
   }[entity];
 }
 
@@ -3333,6 +3394,7 @@ function entityPath(entity) {
     agentConferences: 'agent-conferences',
     ipLists: 'ip-lists',
     cidGroups: 'cid-groups',
+    queueGroups: 'queue-groups',
   }[entity] || entity;
 }
 
@@ -6891,6 +6953,70 @@ function MediaToolsView({ admin, user, onAction }) {
               { key: 'cid_group_type', label: 'Type' },
               { key: 'cid_auto_rotate_minutes', label: 'Rotate Min', render: (row) => formatNumber(row.cid_auto_rotate_minutes) },
               ...(userCan(user, 'cidGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('cidGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Routing"
+          title={`Queue Groups (${formatNumber((admin?.queueGroups || []).length)})`}
+          icon={Headphones}
+          headerActions={userCan(user, 'queueGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('queueGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No queue groups (campaign/in-group bundles for permissions and stats)"
+            rows={(admin?.queueGroups || []).map((row) => ({ ...row, id: row.queue_group }))}
+            columns={[
+              { key: 'queue_group', label: 'ID' },
+              { key: 'queue_group_name', label: 'Name' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'queueGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('queueGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Directory"
+          title={`Contacts (${formatNumber((admin?.contacts || []).length)})`}
+          icon={Users}
+          headerActions={userCan(user, 'contacts') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('contacts', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No contacts (transfer directory entries)"
+            rows={(admin?.contacts || []).map((row) => ({ ...row, id: row.contact_id }))}
+            columns={[
+              { key: 'name', label: 'Name', render: (row) => `${row.first_name} ${row.last_name}`.trim() },
+              { key: 'office_num', label: 'Office' },
+              { key: 'cell_num', label: 'Cell' },
+              { key: 'department', label: 'Department' },
+              ...(userCan(user, 'contacts') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('contacts', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
+          eyebrow="Localization"
+          title={`Languages (${formatNumber((admin?.languages || []).length)})`}
+          icon={FileText}
+          headerActions={userCan(user, 'languages') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('languages', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No languages (agent screen translations)"
+            rows={(admin?.languages || []).map((row) => ({ ...row, id: row.language_id }))}
+            columns={[
+              { key: 'language_id', label: 'Language' },
+              { key: 'language_code', label: 'Code' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'languages') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('languages', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
