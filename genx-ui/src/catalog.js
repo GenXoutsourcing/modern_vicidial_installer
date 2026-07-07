@@ -104,7 +104,7 @@ export const REPORT_GROUPS = [
       { label: 'DID Summary', href: '/vicidial/AST_DIDstats_v2.php', view: 'reportDidStats' },
       { label: 'DID Detail', href: '/vicidial/AST_DIDdetail.php', view: 'reportDidDetail' },
       { label: 'IVR Report', href: '/vicidial/AST_IVRstats.php', view: 'reportIvr' },
-      { label: 'Forecasting', href: '/vicidial/AST_inbound_forecasting.php' },
+      { label: 'Forecasting', href: '/vicidial/AST_inbound_forecasting.php', view: 'reportForecasting' },
     ],
   },
   {
@@ -124,7 +124,7 @@ export const REPORT_GROUPS = [
   {
     title: 'Agents and Teams',
     items: [
-      { label: 'Agent Time Detail', href: '/vicidial/AST_agent_time_detail.php' },
+      { label: 'Agent Time Detail', href: '/vicidial/AST_agent_time_detail.php', view: 'reportAgentTimeDetail' },
       { label: 'Agent Status Detail', href: '/vicidial/AST_agent_status_detail.php' },
       { label: 'Agent Performance Detail', href: '/vicidial/AST_agent_performance_detail.php' },
       { label: 'Agent Performance', href: '/vicidial/AST_agent_performance.php' },

@@ -5040,6 +5040,306 @@ async function ivrReport(req, res) {
   return res.json({ ok: true, groups, range: { beginDate, endDate }, sections: { totals, perGroup, perExtension, perEvent } });
 }
 
+// --- Inbound Forecasting (native port of AST_inbound_forecasting.php) ---
+// Erlang B/C math ported literally from the legacy PHP; loops are capped so a
+// NaN/Infinity overflow (same float limits as PHP) can never spin forever.
+const ERLANG_MAX_LINES = 300;
+
+function erlangFactorial(num) {
+  const n = Math.floor(num);
+  if (n <= 0) return 1;
+  let result = 1;
+  for (let x = 1; x <= n; x++) result *= x;
+  return result;
+}
+
+function erlangSum(low, limit, erlangs) {
+  let result = 0;
+  for (let n = low; n <= limit; n++) result += (erlangs ** n) / erlangFactorial(n);
+  return result;
+}
+
+function zdc(numerator, denominator) {
+  return denominator ? numerator / denominator : 0;
+}
+
+function erlangGoS(erlangs, lines) {
+  return zdc((erlangs ** lines) / erlangFactorial(lines), erlangSum(0, lines, erlangs));
+}
+
+function adjustedGoS(erlangs, gos, retryRate, lines) {
+  let e = erlangs;
+  let p = gos;
+  for (let q = 0; q < 100; q++) {
+    const nextE = erlangs + (retryRate / 100) * e * p;
+    const nextP = zdc((nextE ** lines) / erlangFactorial(lines), erlangSum(0, lines, nextE));
+    e = nextE;
+    p = nextP;
+  }
+  return p;
+}
+
+function erlangPqueue(erlangs, lines) {
+  const top = (erlangs ** lines) / erlangFactorial(lines);
+  return top / (top + (1 - zdc(erlangs, lines)) * erlangSum(0, lines - 1, erlangs));
+}
+
+// Walks lines upward until the blocking metric drops under target (legacy
+// "estimated"/"recommended" agent loops).
+function erlangAgents(type, erlangs, target, retryRate) {
+  let lines = 1;
+  if (type === 'B') {
+    let gos = erlangGoS(erlangs, lines);
+    while (gos > target && lines < ERLANG_MAX_LINES && Number.isFinite(gos)) {
+      lines++;
+      gos = erlangGoS(erlangs, lines);
+      if (retryRate > 0) gos = adjustedGoS(erlangs, gos, retryRate, lines);
+    }
+    return { lines, gos };
+  }
+  let pq = erlangPqueue(erlangs, lines);
+  while (pq > target && lines < ERLANG_MAX_LINES && Number.isFinite(pq)) {
+    lines++;
+    pq = erlangPqueue(erlangs, lines);
+  }
+  return { lines, pqueue: pq };
+}
+
+// The legacy hour query splits each call's seconds across the hour boundary;
+// the same expressions feed two GROUP BYs (start hour + spillover hour).
+const FORECAST_HOUR_EXPRS = `
+  SUBSTR(call_date, 1, 13) AS start_hour,
+  SUBSTR(call_date + INTERVAL length_in_sec SECOND, 1, 13) AS end_hour,
+  IF(DATE_FORMAT(call_date, '%Y-%m-%d %H:00:00') != DATE_FORMAT(call_date + INTERVAL length_in_sec SECOND, '%Y-%m-%d %H:00:00'),
+     UNIX_TIMESTAMP(DATE_FORMAT(call_date + INTERVAL length_in_sec SECOND, '%Y-%m-%d %H:00:00')) - UNIX_TIMESTAMP(call_date),
+     length_in_sec) AS len_start,
+  IF(DATE_FORMAT(call_date, '%Y-%m-%d %H:00:00') != DATE_FORMAT(call_date + INTERVAL length_in_sec SECOND, '%Y-%m-%d %H:00:00'),
+     UNIX_TIMESTAMP(call_date + INTERVAL length_in_sec SECOND) - UNIX_TIMESTAMP(DATE_FORMAT(call_date + INTERVAL length_in_sec SECOND, '%Y-%m-%d %H:00:00')),
+     0) AS len_spill,
+  status`;
+
+async function inboundForecastingReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const erlangType = cleanChoice(req.query?.erlang_type, ['B', 'C'], 'C');
+  const dropPercent = Math.min(100, Math.max(0, Number(req.query?.drop_percent) || 3));
+  const retryRate = Math.min(100, Math.max(0, Number(req.query?.retry_rate) || 0));
+  const targetPqueue = Math.min(100, Math.max(0, Number(req.query?.target_pqueue) || 0));
+  const actualAgents = Math.max(0, Number(req.query?.actual_agents) || 0);
+  const { groups, groupIds } = await inboundGroupSelection(req);
+  if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+
+  const ph = groupIds.map(() => '?').join(',');
+  const params = [begin, end, ...groupIds];
+  const baseWhere = `length_in_sec IS NOT NULL AND call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})`;
+  const sets = await campaignStatusSets(groupIds);
+  const saleIn = sqlStatusList(sets.sale);
+
+  const [startHours, spillHours, avgRow, wrapRow] = await Promise.all([
+    rows(
+      `SELECT start_hour, COUNT(*) AS calls, COALESCE(SUM(len_start),0) AS secs,
+              COALESCE(SUM(status = 'DROP'),0) AS drops,
+              COALESCE(SUM(CASE WHEN status = 'DROP' THEN len_start ELSE 0 END),0) AS drop_secs,
+              COALESCE(SUM(status IN (${saleIn})),0) AS sales
+       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM vicidial_closer_log
+             WHERE ${baseWhere} AND status != 'AFTHRS') t
+       GROUP BY start_hour ORDER BY start_hour ASC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT end_hour, COUNT(*) AS calls, COALESCE(SUM(len_spill),0) AS secs,
+              COALESCE(SUM(status = 'DROP'),0) AS drops,
+              COALESCE(SUM(CASE WHEN status = 'DROP' THEN len_spill ELSE 0 END),0) AS drop_secs
+       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM vicidial_closer_log
+             WHERE ${baseWhere} AND status != 'AFTHRS') t
+       WHERE len_spill > 0
+       GROUP BY end_hour ORDER BY end_hour ASC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT AVG(length_in_sec) AS avg_length FROM vicidial_closer_log WHERE ${baseWhere}`,
+      params,
+      [],
+    ).then((result) => result[0] || {}),
+    rows(
+      `SELECT COUNT(DISTINCT cl.uniqueid) AS calls, COALESCE(SUM(al.dispo_sec),0) AS dispo_secs,
+              COALESCE(SUM(al.talk_sec),0) AS talk_secs
+       FROM vicidial_closer_log cl JOIN vicidial_agent_log al ON al.uniqueid = cl.uniqueid
+       WHERE cl.length_in_sec IS NOT NULL AND cl.user != 'VDCL'
+         AND cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${ph})`,
+      params,
+      [],
+    ).then((result) => result[0] || {}),
+  ]);
+
+  // Merge spillover into the hour map exactly like the legacy loop.
+  const hourMap = new Map();
+  const ensureHour = (hour) => {
+    if (!hourMap.has(hour)) hourMap.set(hour, { hour, secs: 0, drop_secs: 0, calls: 0, drops: 0, sales: 0 });
+    return hourMap.get(hour);
+  };
+  let totalCalls = 0;
+  let totalDrops = 0;
+  let totalSales = 0;
+  for (const row of startHours) {
+    const bucket = ensureHour(row.start_hour);
+    bucket.secs += Number(row.secs || 0);
+    bucket.calls += Number(row.calls || 0);
+    bucket.drops += Number(row.drops || 0);
+    bucket.drop_secs += Number(row.drop_secs || 0);
+    bucket.sales += Number(row.sales || 0);
+    totalCalls += Number(row.calls || 0);
+    totalDrops += Number(row.drops || 0);
+    totalSales += Number(row.sales || 0);
+  }
+  for (const row of spillHours) {
+    const bucket = ensureHour(row.end_hour);
+    bucket.secs += Number(row.secs || 0);
+    bucket.calls += Number(row.calls || 0);
+    bucket.drops += Number(row.drops || 0);
+    bucket.drop_secs += Number(row.drop_secs || 0);
+  }
+
+  const avgCallLength = Number(avgRow.avg_length || 0);
+  const hoursActive = hourMap.size;
+  const totalErlangs = zdc(totalCalls * avgCallLength, 3600 * hoursActive);
+  const totalBlocking = zdc(totalDrops, totalCalls);
+  const dropTarget = dropPercent / 100;
+  const pqueueTarget = targetPqueue / 100;
+
+  const summarize = (erlangs, blocking) => {
+    const estimated = blocking > 0
+      ? erlangAgents(erlangType, erlangs, blocking, erlangType === 'B' ? retryRate : 0)
+      : { lines: 0 };
+    const recommended = erlangAgents(
+      erlangType, erlangs,
+      erlangType === 'B' ? dropTarget : pqueueTarget,
+      erlangType === 'B' ? retryRate : 0,
+    );
+    const estLines = estimated.lines || 0;
+    const pqueue = estLines > 0 ? Math.min(1, erlangPqueue(erlangs, estLines)) : 0;
+    const asa = estLines > 0 ? zdc(pqueue * avgCallLength, estLines - erlangs) : 0;
+    return {
+      est_agents: estLines,
+      rec_agents: recommended.lines,
+      gos: Number.isFinite(estimated.gos) ? estimated.gos : 0,
+      pqueue: Number.isFinite(pqueue) ? pqueue : 0,
+      asa: Number.isFinite(asa) ? asa : 0,
+    };
+  };
+
+  const hours = [...hourMap.values()].sort((a, b) => String(a.hour).localeCompare(String(b.hour))).map((bucket) => {
+    const erlangs = bucket.secs / 3600;
+    const blocking = zdc(bucket.drops, bucket.calls);
+    const stats = summarize(erlangs, blocking);
+    return {
+      ...bucket,
+      erlangs: Number(erlangs.toFixed(4)),
+      blocking: Number((blocking * 100).toFixed(2)),
+      avg_secs: bucket.calls ? Math.round(bucket.secs / bucket.calls) : 0,
+      dropped_hours: Number((bucket.drop_secs / 3600).toFixed(2)),
+      ...stats,
+      calls_per_agent: stats.rec_agents ? Number((bucket.calls / stats.rec_agents).toFixed(1)) : 0,
+    };
+  });
+
+  const totals = {
+    calls: totalCalls,
+    drops: totalDrops,
+    sales: totalSales,
+    sale_rate: Number((zdc(totalSales, totalCalls) * 100).toFixed(2)),
+    blocking: Number((totalBlocking * 100).toFixed(2)),
+    avg_call_length: Number(avgCallLength.toFixed(2)),
+    erlangs: Number(totalErlangs.toFixed(4)),
+    avg_dispo_sec: Number(zdc(Number(wrapRow.dispo_secs || 0), Number(wrapRow.calls || 0)).toFixed(1)),
+    avg_talk_sec: Number(zdc(Number(wrapRow.talk_secs || 0), Number(wrapRow.calls || 0)).toFixed(1)),
+    actual_agents: actualAgents,
+    ...summarize(totalErlangs, totalBlocking),
+  };
+
+  return res.json({
+    ok: true,
+    groups,
+    range: { beginDate, endDate },
+    erlangType,
+    sections: { totals, hours },
+  });
+}
+
+// --- Agent Time Detail (native port of AST_agent_time_detail.php) ---
+async function agentTimeDetailReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+
+  const campaignId = cleanId(req.query?.campaign, 20);
+  const agentParams = [begin, end];
+  let campaignSql = '';
+  if (campaignId) {
+    if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
+      return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+    }
+    campaignSql = ' AND campaign_id = ?';
+    agentParams.push(campaignId);
+  }
+  const groupScopeParams = [];
+  const groupScopeWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', groupScopeParams);
+
+  const campaignPickerParams = [];
+  const campaignPickerWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignPickerParams);
+  const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+
+  const [campaigns, agents, logins, pauses, parks] = await Promise.all([
+    rows(`SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignPickerWhere} ORDER BY campaign_id ASC LIMIT 500`, campaignPickerParams, []),
+    rows(
+      `SELECT al.user, u.full_name, u.user_group, COUNT(*) AS events,
+              COUNT(al.lead_id) AS calls,
+              ${cap('al.wait_sec')} AS wait_sec, ${cap('al.talk_sec')} AS talk_sec,
+              ${cap('al.dead_sec')} AS dead_sec, ${cap('al.dispo_sec')} AS dispo_sec,
+              ${cap('al.pause_sec')} AS pause_sec
+       FROM vicidial_agent_log al
+       LEFT JOIN vicidial_users u ON u.user = al.user
+       WHERE al.event_time >= ? AND al.event_time <= ?${campaignSql} AND ${groupScopeWhere.replace(/user_group/g, 'al.user_group')}
+       GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
+      [...agentParams, ...groupScopeParams],
+      [],
+    ),
+    rows(
+      `SELECT user, COALESCE(SUM(login_sec),0) AS login_sec FROM vicidial_timeclock_log
+       WHERE event IN ('LOGIN','START') AND event_date >= ? AND event_date <= ?
+       GROUP BY user LIMIT 2000`,
+      [begin, end],
+      [],
+    ),
+    rows(
+      `SELECT user, sub_status, COALESCE(SUM(pause_sec),0) AS pause_sec FROM vicidial_agent_log
+       WHERE event_time >= ? AND event_time <= ? AND pause_sec > 0 AND pause_sec < 65000${campaignSql}
+       GROUP BY user, sub_status ORDER BY user ASC LIMIT 5000`,
+      agentParams,
+      [],
+    ),
+    rows(
+      `SELECT user, COUNT(*) AS parks, COALESCE(SUM(parked_sec),0) AS parked_sec FROM park_log
+       WHERE parked_time >= ? AND parked_time <= ? GROUP BY user LIMIT 2000`,
+      [begin, end],
+      [],
+    ),
+  ]);
+  const pauseCodes = await rows('SELECT DISTINCT pause_code, pause_code_name FROM vicidial_pause_codes LIMIT 500', [], []);
+
+  return res.json({
+    ok: true,
+    campaigns,
+    range: { beginDate, endDate },
+    sections: { agents, logins, pauses, parks, pauseCodes },
+  });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -8736,6 +9036,8 @@ app.get('/api/reports/inbound-daily', requireAccess, inboundDailyReport);
 app.get('/api/reports/did-stats', requireAccess, didStatsReport);
 app.get('/api/reports/did-detail', requireAccess, didDetailReport);
 app.get('/api/reports/ivr', requireAccess, ivrReport);
+app.get('/api/reports/inbound-forecasting', requireAccess, inboundForecastingReport);
+app.get('/api/reports/agent-time-detail', requireAccess, agentTimeDetailReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

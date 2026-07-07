@@ -9539,6 +9539,290 @@ function IvrReportView({ token, onLogout }) {
   );
 }
 
+// Native AST_inbound_forecasting.php with the Erlang B/C math server-side.
+function InboundForecastingReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [erlangType, setErlangType] = useState('C');
+  const [dropPercent, setDropPercent] = useState('3');
+  const [retryRate, setRetryRate] = useState('0');
+  const [targetPqueue, setTargetPqueue] = useState('0');
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (groupIds, options) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({
+        begin_date: options.begin, end_date: options.end, erlang_type: options.type,
+        drop_percent: options.drop, retry_rate: options.retry, target_pqueue: options.pqueue,
+      });
+      if (groupIds.length) params.set('groups', groupIds.join(','));
+      const payload = await apiFetch(`/reports/inbound-forecasting?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], { begin: today, end: today, type: 'C', drop: '3', retry: '0', pqueue: '0' });
+  }, [load, today]);
+
+  const groups = (data?.groups || []).map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }));
+  const s = data?.sections;
+  const isB = data?.erlangType === 'B';
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>Forecasting</h2>
+          <p className="action-copy">Erlang staffing estimates from historical inbound volume for the selected in-groups.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Groups, Dates and Erlang Options" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, { begin: beginDate, end: endDate, type: erlangType, drop: dropPercent, retry: retryRate, pqueue: targetPqueue });
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Erlang Model</span>
+              <select value={erlangType} onChange={(event) => setErlangType(event.target.value)}>
+                <option value="C">Erlang C (queueing)</option>
+                <option value="B">Erlang B (blocking)</option>
+              </select>
+            </label>
+            {erlangType === 'B' && (
+              <>
+                <label>
+                  <span>Desired Drop Rate %</span>
+                  <input type="number" min="0" max="100" step="0.1" value={dropPercent} onChange={(event) => setDropPercent(event.target.value)} />
+                </label>
+                <label>
+                  <span>Retry Rate %</span>
+                  <input type="number" min="0" max="100" step="1" value={retryRate} onChange={(event) => setRetryRate(event.target.value)} />
+                </label>
+              </>
+            )}
+            {erlangType === 'C' && (
+              <label>
+                <span>Target Queue Probability %</span>
+                <input type="number" min="0" max="100" step="1" value={targetPqueue} onChange={(event) => setTargetPqueue(event.target.value)} />
+              </label>
+            )}
+          </div>
+          <CampaignTogglePicker campaigns={groups} selected={selected} onChange={setSelected} emptyLabel="No inbound groups available" />
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title="Forecast Summary" icon={Activity} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">Total calls: {formatNumber(s.totals.calls)}</span>
+              <span className="connection-status">Total drops: {formatNumber(s.totals.drops)}</span>
+              <span className="connection-status">Blocking/drop rate: {s.totals.blocking}%</span>
+              <span className="connection-status">Sale rate: {s.totals.sale_rate}%</span>
+              <span className="connection-status">Avg call: {s.totals.avg_call_length}s</span>
+              <span className="connection-status">Avg talk: {s.totals.avg_talk_sec}s</span>
+              <span className="connection-status">Avg wrapup: {s.totals.avg_dispo_sec}s</span>
+              <span className="connection-status">Erlangs: {s.totals.erlangs}</span>
+              {isB
+                ? <span className="connection-status">Grade of service: {(s.totals.gos * 100).toFixed(2)}%</span>
+                : (
+                  <>
+                    <span className="connection-status">Queue probability: {(s.totals.pqueue * 100).toFixed(2)}%</span>
+                    <span className="connection-status">Avg speed of answer: {Math.round(s.totals.asa)}s</span>
+                  </>
+                )}
+              <span className="connection-status">Estimated agents: {s.totals.est_agents}</span>
+              <span className="connection-status">Recommended agents: {s.totals.rec_agents}</span>
+            </div>
+          </Panel>
+          <Panel eyebrow="Hourly" title="Per-Hour Forecast" icon={PhoneCall} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No inbound calls in the date range"
+              rows={(s.hours || []).map((row) => ({ ...row, id: row.hour }))}
+              columns={[
+                { key: 'hour', label: 'Hour', render: (row) => `${row.hour}:00` },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
+                { key: 'secs', label: 'Total Time', render: (row) => formatSeconds(row.secs) },
+                { key: 'avg_secs', label: 'Avg Time', render: (row) => `${row.avg_secs}s` },
+                { key: 'dropped_hours', label: 'Dropped Hrs' },
+                { key: 'blocking', label: 'Blocking %', render: (row) => `${row.blocking}%` },
+                { key: 'erlangs', label: 'Erlangs' },
+                ...(isB
+                  ? [{ key: 'gos', label: 'GoS %', render: (row) => `${(row.gos * 100).toFixed(2)}%` }]
+                  : [
+                    { key: 'pqueue', label: 'Queue Prob %', render: (row) => `${(row.pqueue * 100).toFixed(2)}%` },
+                    { key: 'asa', label: 'Avg Answer', render: (row) => `${Math.round(row.asa)}s` },
+                  ]),
+                { key: 'rec_agents', label: 'Rec Agents' },
+                { key: 'est_agents', label: 'Est Agents' },
+                { key: 'calls_per_agent', label: 'Calls/Agent' },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
+// Native AST_agent_time_detail.php: per-agent time totals with pause-code and
+// park breakdowns.
+function AgentTimeDetailReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [campaignId, setCampaignId] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (campaign, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (campaign) params.set('campaign', campaign);
+      const payload = await apiFetch(`/reports/agent-time-detail?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not allowed to view this report or campaign' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load('', today, today);
+  }, [load, today]);
+
+  const campaigns = data?.campaigns || [];
+  const s = data?.sections;
+  const loginMap = new Map((s?.logins || []).map((row) => [String(row.user), Number(row.login_sec || 0)]));
+  const parkMap = new Map((s?.parks || []).map((row) => [String(row.user), row]));
+  const pauseNameMap = new Map((s?.pauseCodes || []).map((row) => [String(row.pause_code), row.pause_code_name]));
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Agents and Teams</p>
+          <h2>Agent Time Detail</h2>
+          <p className="action-copy">Per-agent login, wait, talk, dead, wrapup, pause and park time.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Dates" icon={Search} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(campaignId, beginDate, endDate);
+          }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Begin Date</span>
+              <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+            </label>
+            <label>
+              <span>End Date</span>
+              <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </label>
+            <label>
+              <span>Campaign</span>
+              <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+                <option value="">All campaigns</option>
+                {campaigns.map((row) => (
+                  <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={loading}>
+              <Search size={16} aria-hidden="true" />
+              {loading ? 'Loading' : 'Run Report'}
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Agents" title="Time Totals" icon={Users} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No agent activity in the date range"
+              rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'user_group', label: 'Group' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'login', label: 'Timeclock', render: (row) => formatSeconds(loginMap.get(String(row.user)) || 0) },
+                { key: 'wait_sec', label: 'Wait', render: (row) => formatSeconds(row.wait_sec) },
+                { key: 'talk_sec', label: 'Talk', render: (row) => formatSeconds(row.talk_sec) },
+                { key: 'dead_sec', label: 'Dead', render: (row) => formatSeconds(row.dead_sec) },
+                { key: 'dispo_sec', label: 'Wrapup', render: (row) => formatSeconds(row.dispo_sec) },
+                { key: 'pause_sec', label: 'Pause', render: (row) => formatSeconds(row.pause_sec) },
+                { key: 'park', label: 'Park', render: (row) => formatSeconds(parkMap.get(String(row.user))?.parked_sec || 0) },
+              ]}
+            />
+          </Panel>
+          <Panel eyebrow="Pause Codes" title="Pause Time by Code" icon={Activity} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No paused agent time in the date range"
+              rows={(s.pauses || []).map((row) => ({ ...row, id: `${row.user}-${row.sub_status || 'NONE'}` }))}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'sub_status', label: 'Pause Code', render: (row) => `${row.sub_status || '(none)'}${pauseNameMap.get(String(row.sub_status)) ? ` - ${pauseNameMap.get(String(row.sub_status))}` : ''}` },
+                { key: 'pause_sec', label: 'Pause Time', render: (row) => formatSeconds(row.pause_sec) },
+              ]}
+            />
+          </Panel>
+        </>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -9767,6 +10051,8 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportDidStats') return <DidStatsReportView token={token} />;
   if (activeView === 'reportDidDetail') return <DidDetailReportView token={token} />;
   if (activeView === 'reportIvr') return <IvrReportView token={token} />;
+  if (activeView === 'reportForecasting') return <InboundForecastingReportView token={token} />;
+  if (activeView === 'reportAgentTimeDetail') return <AgentTimeDetailReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
