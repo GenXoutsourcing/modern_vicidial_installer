@@ -4353,7 +4353,7 @@ async function campaignInboundGroups(campaignIds) {
   );
   const dropGroups = [...new Set(camps
     .map((row) => String(row.drop_inbound_group || '').trim())
-    .filter((group) => group && group !== 'NONE'))];
+    .filter((group) => group && !/NONE/i.test(group)))];
   const closerGroups = [...new Set(camps
     .flatMap((row) => String(row.closer_campaigns || '').trim().replace(/ -$/, '').split(/\s+/))
     .filter(Boolean))];
