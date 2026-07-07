@@ -5361,6 +5361,52 @@ async function deleteSettingsContainer(req, res) {
   }
 }
 
+// System Settings: single-row table, ~248 columns. Column list and types come
+// from SHOW COLUMNS so the editor stays correct across Vicidial upgrades.
+async function getSystemSettings(req, res) {
+  if (Number(req.genxUser?.userLevel || 0) < 9) return res.status(403).json({ ok: false, error: 'permission_denied' });
+  try {
+    const columns = await rows('SHOW COLUMNS FROM system_settings', [], []);
+    const [settings] = await rows('SELECT * FROM system_settings LIMIT 1', [], []);
+    return res.json({
+      ok: true,
+      settings: settings || {},
+      columns: columns.map((column) => ({ field: column.Field, type: column.Type })),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'system_settings_load_failed' });
+  }
+}
+
+async function saveSystemSettings(req, res) {
+  if (Number(req.genxUser?.userLevel || 0) < 9) return res.status(403).json({ ok: false, error: 'permission_denied' });
+  const changes = req.body?.changes;
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return badRequest(res, 'invalid_changes');
+  try {
+    const columns = await rows('SHOW COLUMNS FROM system_settings', [], []);
+    const allowed = new Map(columns.map((column) => [column.Field, String(column.Type)]));
+    const payload = {};
+    for (const [key, rawValue] of Object.entries(changes)) {
+      const type = allowed.get(key);
+      if (!type) continue;
+      let value = String(rawValue ?? '');
+      if (/int\(/.test(type) || /decimal|float|double/.test(type)) {
+        value = value.replace(/[^-0-9.]/g, '') || '0';
+      } else {
+        value = value.slice(0, 60000);
+      }
+      payload[key] = value;
+    }
+    if (!Object.keys(payload).length) return badRequest(res, 'no_valid_changes');
+    const { assignments, values } = dynamicAssignments(payload);
+    await execute(`UPDATE system_settings SET ${assignments} LIMIT 1`, values);
+    await adminLog(req, 'SYSTEM SETTINGS', 'MODIFY', 'system_settings', 'GENX MODIFY SYSTEM SETTINGS', 'UPDATE system_settings', Object.keys(payload).join(','));
+    return res.json({ ok: true, updated: Object.keys(payload) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'system_settings_save_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -7539,6 +7585,8 @@ app.delete('/api/admin/screen-colors/:id', requireAccess, deleteScreenColor);
 app.post('/api/admin/settings-containers', requireAccess, (req, res) => saveSettingsContainer(req, res, 'create'));
 app.put('/api/admin/settings-containers/:id', requireAccess, (req, res) => saveSettingsContainer(req, res, 'update'));
 app.delete('/api/admin/settings-containers/:id', requireAccess, deleteSettingsContainer);
+app.get('/api/admin/system-settings', requireAccess, getSystemSettings);
+app.put('/api/admin/system-settings', requireAccess, saveSystemSettings);
 app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));

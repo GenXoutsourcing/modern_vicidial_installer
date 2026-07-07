@@ -212,6 +212,7 @@ const NAV_ITEMS = [
   { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
   { key: 'display', label: 'Display', eyebrow: 'Platform', title: 'Screen Labels, Colors and Containers', icon: LayoutDashboard },
+  { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
 ];
 
 // Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
@@ -224,7 +225,7 @@ const NAV_GROUPS = [
   { title: 'Lists', keys: ['lists', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'mediaTools', 'display', 'map'] },
+  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display', 'map'] },
   { title: 'Reports', keys: ['reports', 'recordings'] },
 ];
 
@@ -7462,6 +7463,127 @@ function MediaToolsView({ admin, user, onAction }) {
   );
 }
 
+// Sectioned editor for the single-row system_settings table. Fields and types
+// come from the server (SHOW COLUMNS) so it tracks Vicidial schema upgrades.
+function SystemSettingsView({ user, token, onLogout }) {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState({});
+  const [filter, setFilter] = useState('');
+  const [saveState, setSaveState] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/admin/system-settings', token)
+      .then((payload) => {
+        if (cancelled) return;
+        setData(payload);
+        setForm(payload.settings || {});
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setData({ error: requestError.status === 403 ? 'Level 9 required' : 'Failed to load' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, onLogout]);
+
+  if (!data) return <div className="loading-band">Loading system settings</div>;
+  if (data.error) return <div className="alert">{data.error}</div>;
+
+  const enumMatch = (type) => {
+    const match = /^enum\((.+)\)$/.exec(type);
+    if (!match) return null;
+    return match[1].split(',').map((option) => option.replace(/^'|'$/g, ''));
+  };
+
+  const changed = Object.fromEntries(
+    Object.entries(form).filter(([key, value]) => String(value ?? '') !== String(data.settings?.[key] ?? '')),
+  );
+  const changedCount = Object.keys(changed).length;
+
+  async function save() {
+    setSaveState('working');
+    try {
+      const payload = await apiFetch('/admin/system-settings', token, {
+        method: 'PUT',
+        body: JSON.stringify({ changes: changed }),
+      });
+      setData((current) => ({ ...current, settings: { ...current.settings, ...changed } }));
+      setSaveState(`Saved ${payload.updated.length} setting${payload.updated.length === 1 ? '' : 's'}`);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+    }
+  }
+
+  const query = filter.trim().toLowerCase();
+  const fields = (data.columns || []).filter((column) => !query || column.field.toLowerCase().includes(query));
+  const groups = new Map();
+  for (const column of fields) {
+    const prefix = column.field.split('_')[0];
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    groups.get(prefix).push(column);
+  }
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">System</p>
+          <h2>System Settings</h2>
+          <p className="action-copy">{formatNumber((data.columns || []).length)} settings on this install. Only changed fields are saved.</p>
+        </div>
+        <div className="strip-items">
+          <input
+            type="text"
+            className="catalog-search"
+            placeholder="Filter settings..."
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <button type="button" className="primary-action" disabled={!changedCount || saveState === 'working'} onClick={save}>
+            <Save size={16} aria-hidden="true" />
+            {saveState === 'working' ? 'Saving' : `Save ${changedCount ? `(${changedCount})` : ''}`}
+          </button>
+          {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
+        </div>
+      </section>
+      <section className="admin-grid media-tools-grid">
+        {Array.from(groups.entries()).map(([prefix, columns]) => (
+          <Panel key={prefix} eyebrow="Settings" title={`${prefix} (${columns.length})`} icon={SlidersHorizontal}>
+            <div className="field-grid">
+              {columns.map((column) => {
+                const options = enumMatch(column.type);
+                const isNumber = /int\(|decimal|float|double/.test(column.type);
+                return (
+                  <label key={column.field}>
+                    <span>{column.field}</span>
+                    {options ? (
+                      <select value={String(form[column.field] ?? '')} onChange={(event) => setForm((current) => ({ ...current, [column.field]: event.target.value }))}>
+                        {ensureOption(options, form[column.field]).map((value) => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type={isNumber ? 'number' : 'text'}
+                        value={String(form[column.field] ?? '')}
+                        onChange={(event) => setForm((current) => ({ ...current, [column.field]: event.target.value }))}
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </Panel>
+        ))}
+      </section>
+    </>
+  );
+}
+
 function DisplayView({ admin, user, onAction }) {
   return (
     <>
@@ -7762,6 +7884,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'mediaTools') return <MediaToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'display') return <DisplayView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'systemSettings') return <SystemSettingsView user={user} token={token} onLogout={() => onNavigate('command')} />;
   if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;
