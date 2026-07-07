@@ -4891,6 +4891,155 @@ async function inboundDailyReport(req, res) {
   return res.json({ ok: true, groups, range: { beginDate, endDate }, hourly, sections: { slots, statusBreakdown, termReasons } });
 }
 
+// DID picker scoped like legacy (vicidial_inbound_dids.user_group vs admin
+// viewable groups).
+async function didSelection(req) {
+  const pickerParams = [];
+  const pickerWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', pickerParams);
+  const dids = await rows(
+    `SELECT did_id, did_pattern, did_description FROM vicidial_inbound_dids
+     WHERE ${pickerWhere} ORDER BY did_pattern ASC LIMIT 1000`,
+    pickerParams,
+    [],
+  );
+  const requested = String(req.query?.dids || '').split(',').map((item) => cleanId(item, 10)).filter(Boolean).slice(0, 100);
+  const allowed = new Set(dids.map((row) => String(row.did_id)));
+  return { dids, didIds: requested.filter((id) => allowed.has(id)) };
+}
+
+// Native merge of AST_DIDstats.php + AST_DIDstats_v2.php: per-DID call counts,
+// answered + talk time via the closer-log join, route/extension and hourly
+// breakdowns.
+async function didStatsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const { dids, didIds } = await didSelection(req);
+  if (!didIds.length) return res.json({ ok: true, dids, sections: null, range: { beginDate, endDate } });
+
+  const ph = didIds.map(() => '?').join(',');
+  const params = [begin, end, ...didIds];
+  const [perDid, answered, routes, extensions, hourly] = await Promise.all([
+    rows(
+      `SELECT did_id, COUNT(*) AS calls FROM vicidial_did_log
+       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+       GROUP BY did_id ORDER BY calls DESC LIMIT 500`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT vdl.did_id, COUNT(*) AS answered, COALESCE(SUM(vcl.length_in_sec),0) AS talk_sec
+       FROM vicidial_did_log vdl, vicidial_closer_log vcl
+       WHERE vdl.uniqueid = vcl.uniqueid AND vdl.call_date >= ? AND vdl.call_date <= ? AND vdl.did_id IN (${ph})
+       GROUP BY vdl.did_id LIMIT 500`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT did_id, did_route, COUNT(*) AS calls FROM vicidial_did_log
+       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+       GROUP BY did_id, did_route ORDER BY did_id ASC, calls DESC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT did_id, extension, COUNT(*) AS calls FROM vicidial_did_log
+       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+       GROUP BY did_id, extension ORDER BY did_id ASC, calls DESC LIMIT 1000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT DATE_FORMAT(call_date, '%Y-%m-%d %H:00') AS hour_slot, COUNT(*) AS calls
+       FROM vicidial_did_log WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+       GROUP BY hour_slot ORDER BY hour_slot ASC LIMIT 1000`,
+      params,
+      [],
+    ),
+  ]);
+  const meta = await rows(
+    `SELECT did_id, did_pattern, did_description, did_route, did_carrier_description
+     FROM vicidial_inbound_dids WHERE did_id IN (${ph}) LIMIT 500`,
+    didIds,
+    [],
+  );
+  return res.json({
+    ok: true,
+    dids,
+    range: { beginDate, endDate },
+    sections: { perDid, answered, routes, extensions, hourly, meta },
+  });
+}
+
+// Native port of AST_DIDdetail.php: raw DID log rows for the selected DIDs.
+async function didDetailReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const { dids, didIds } = await didSelection(req);
+  if (!didIds.length) return res.json({ ok: true, dids, entries: null, range: { beginDate, endDate } });
+
+  const ph = didIds.map(() => '?').join(',');
+  const entries = await rows(
+    `SELECT vdl.call_date, vdl.extension, vdl.server_ip, vdl.uniqueid, vdl.did_route, vdl.did_id,
+            vdl.caller_id_number, vdl.caller_id_name, vdl.channel, d.did_pattern
+     FROM vicidial_did_log vdl
+     LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
+     WHERE vdl.call_date >= ? AND vdl.call_date <= ? AND vdl.did_id IN (${ph})
+     ORDER BY vdl.call_date ASC LIMIT 2000`,
+    [begin, end, ...didIds],
+    [],
+  );
+  return res.json({ ok: true, dids, entries, range: { beginDate, endDate } });
+}
+
+// Native port of AST_IVRstats.php (in-group mode): live_inbound_log IVR
+// activity for the selected in-groups. The legacy per-call path reconstruction
+// is summarized as unique-call totals plus per-extension and per-event counts.
+async function ivrReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const begin = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const { groups, groupIds } = await inboundGroupSelection(req);
+  if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
+
+  const ph = groupIds.map(() => '?').join(',');
+  const params = [begin, end, ...groupIds];
+  const [totals, perGroup, perExtension, perEvent] = await Promise.all([
+    rows(
+      `SELECT COUNT(DISTINCT uniqueid) AS calls, COUNT(*) AS events FROM live_inbound_log
+       WHERE start_time >= ? AND start_time <= ? AND comment_a IN (${ph})`,
+      params,
+      [],
+    ).then((result) => result[0] || { calls: 0, events: 0 }),
+    rows(
+      `SELECT comment_a AS group_id, COUNT(DISTINCT uniqueid) AS calls, COUNT(*) AS events
+       FROM live_inbound_log WHERE start_time >= ? AND start_time <= ? AND comment_a IN (${ph})
+       GROUP BY comment_a ORDER BY calls DESC LIMIT 200`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT extension, COUNT(DISTINCT uniqueid) AS calls, COUNT(*) AS events
+       FROM live_inbound_log WHERE start_time >= ? AND start_time <= ? AND comment_a IN (${ph})
+       GROUP BY extension ORDER BY calls DESC LIMIT 200`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT comment_b AS event, COUNT(*) AS events FROM live_inbound_log
+       WHERE start_time >= ? AND start_time <= ? AND comment_a IN (${ph})
+       GROUP BY comment_b ORDER BY events DESC LIMIT 100`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, groups, range: { beginDate, endDate }, sections: { totals, perGroup, perExtension, perEvent } });
+}
+
 const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS'];
 
 async function whiteboardReport(req, res) {
@@ -8584,6 +8733,9 @@ app.get('/api/reports/inbound-summary', requireAccess, inboundSummaryReport);
 app.get('/api/reports/service-level', requireAccess, serviceLevelReport);
 app.get('/api/reports/inbound-hourly', requireAccess, inboundHourlyReport);
 app.get('/api/reports/inbound-daily', requireAccess, inboundDailyReport);
+app.get('/api/reports/did-stats', requireAccess, didStatsReport);
+app.get('/api/reports/did-detail', requireAccess, didDetailReport);
+app.get('/api/reports/ivr', requireAccess, ivrReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);

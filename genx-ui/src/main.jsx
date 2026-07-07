@@ -9192,6 +9192,353 @@ function InboundDailyReportView({ token, onLogout }) {
   );
 }
 
+// DID multi-select toggle row (patterns instead of campaign ids).
+function DidTogglePicker({ dids, selected, onChange }) {
+  return (
+    <div className="connection-actions">
+      {dids.map((row) => {
+        const id = String(row.did_id);
+        const isSelected = selected.includes(id);
+        return (
+          <button
+            type="button"
+            key={id}
+            className={isSelected ? 'row-action tool-picker-item selected' : 'row-action'}
+            onClick={() => onChange(isSelected ? selected.filter((item) => item !== id) : [...selected, id])}
+          >
+            {row.did_pattern}{row.did_description ? ` - ${row.did_description}` : ''}{isSelected ? ' ✓' : ''}
+          </button>
+        );
+      })}
+      {!dids.length && <span className="connection-summary">No DIDs available</span>}
+    </div>
+  );
+}
+
+// Native merge of AST_DIDstats.php / AST_DIDstats_v2.php.
+function DidStatsReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (didIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (didIds.length) params.set('dids', didIds.join(','));
+      const payload = await apiFetch(`/reports/did-stats?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const dids = data?.dids || [];
+  const s = data?.sections;
+  const answeredMap = new Map((s?.answered || []).map((row) => [String(row.did_id), row]));
+  const callsMap = new Map((s?.perDid || []).map((row) => [String(row.did_id), Number(row.calls || 0)]));
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>DID Report</h2>
+          <p className="action-copy">Per-DID call volume, answers and talk time with route, extension and hourly breakdowns.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="DIDs and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <DidTogglePicker dids={dids} selected={selected} onChange={setSelected} />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title="Per-DID Totals" icon={PhoneCall} className="admin-wide-panel">
+            <DataTable
+              emptyLabel="No DID calls in the date range"
+              rows={(s.meta || []).map((row) => ({ ...row, id: String(row.did_id) }))}
+              columns={[
+                { key: 'did_pattern', label: 'DID' },
+                { key: 'did_description', label: 'Description' },
+                { key: 'did_route', label: 'Route' },
+                { key: 'did_carrier_description', label: 'Carrier' },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(callsMap.get(String(row.did_id)) || 0) },
+                { key: 'answered', label: 'Answered', render: (row) => formatNumber(answeredMap.get(String(row.did_id))?.answered || 0) },
+                { key: 'talk', label: 'Talk Time', render: (row) => formatSeconds(answeredMap.get(String(row.did_id))?.talk_sec || 0) },
+              ]}
+            />
+          </Panel>
+          <section className="admin-grid media-tools-grid">
+            <Panel eyebrow="Breakdown" title="Routes" icon={Activity}>
+              <DataTable
+                emptyLabel="No DID calls in the date range"
+                rows={(s.routes || []).map((row) => ({ ...row, id: `${row.did_id}-${row.did_route}` }))}
+                columns={[
+                  { key: 'did_id', label: 'DID', render: (row) => (s.meta || []).find((m) => String(m.did_id) === String(row.did_id))?.did_pattern || row.did_id },
+                  { key: 'did_route', label: 'Route' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                ]}
+              />
+            </Panel>
+            <Panel eyebrow="Breakdown" title="Route Extensions" icon={Activity}>
+              <DataTable
+                emptyLabel="No DID calls in the date range"
+                rows={(s.extensions || []).map((row) => ({ ...row, id: `${row.did_id}-${row.extension}` }))}
+                columns={[
+                  { key: 'did_id', label: 'DID', render: (row) => (s.meta || []).find((m) => String(m.did_id) === String(row.did_id))?.did_pattern || row.did_id },
+                  { key: 'extension', label: 'Extension' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                ]}
+              />
+            </Panel>
+            <Panel eyebrow="Breakdown" title="Hourly Volume" icon={Activity}>
+              <DataTable
+                emptyLabel="No DID calls in the date range"
+                rows={(s.hourly || []).map((row) => ({ ...row, id: row.hour_slot }))}
+                columns={[
+                  { key: 'hour_slot', label: 'Hour' },
+                  { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                ]}
+              />
+            </Panel>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
+// Native AST_DIDdetail.php: raw DID log rows with CSV download.
+const DID_DETAIL_COLUMNS = [
+  { key: 'call_date', label: 'Date' },
+  { key: 'did_pattern', label: 'DID' },
+  { key: 'caller_id_number', label: 'Caller ID' },
+  { key: 'caller_id_name', label: 'Caller Name' },
+  { key: 'did_route', label: 'Route' },
+  { key: 'extension', label: 'Extension' },
+  { key: 'server_ip', label: 'Server' },
+  { key: 'channel', label: 'Channel' },
+];
+
+function DidDetailReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (didIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (didIds.length) params.set('dids', didIds.join(','));
+      const payload = await apiFetch(`/reports/did-detail?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const dids = data?.dids || [];
+  const entries = data?.entries;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>DID Detail</h2>
+          <p className="action-copy">Individual inbound DID log entries for the selected DIDs.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="DIDs and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <DidTogglePicker dids={dids} selected={selected} onChange={setSelected} />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {entries && (
+        <Panel eyebrow="Detail" title={`DID Log (${formatNumber(entries.length)} rows${entries.length === 2000 ? ', capped' : ''})`} icon={Database} className="admin-wide-panel">
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="secondary-action"
+              disabled={!entries.length}
+              onClick={() => downloadCsv(
+                `did_detail_${beginDate}_${endDate}.csv`,
+                DID_DETAIL_COLUMNS.map((column) => ({ label: column.label, value: (row) => row[column.key] })),
+                entries,
+              )}
+            >
+              Download CSV
+            </button>
+          </div>
+          <DataTable
+            emptyLabel="No DID calls in the date range"
+            rows={entries.map((row, index) => ({ ...row, id: `${row.uniqueid}-${index}` }))}
+            columns={DID_DETAIL_COLUMNS}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// Native AST_IVRstats.php (in-group mode): IVR activity summaries from
+// live_inbound_log for the selected in-groups.
+function IvrReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [selected, setSelected] = useState([]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (groupIds, begin, end) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (groupIds.length) params.set('groups', groupIds.join(','));
+      const payload = await apiFetch(`/reports/ivr?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => {
+    load([], today, today);
+  }, [load, today]);
+
+  const groups = (data?.groups || []).map((row) => ({ campaign_id: row.group_id, campaign_name: row.group_name }));
+  const s = data?.sections;
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Inbound</p>
+          <h2>IVR Report</h2>
+          <p className="action-copy">IVR activity from the live inbound log for the selected in-groups.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="In-Groups and Dates" icon={Search} className="admin-wide-panel">
+        <ReportFilterBar
+          beginDate={beginDate}
+          endDate={endDate}
+          onBeginDate={setBeginDate}
+          onEndDate={setEndDate}
+          loading={loading}
+          onSubmit={(event) => {
+            event.preventDefault();
+            load(selected, beginDate, endDate);
+          }}
+        />
+        <CampaignTogglePicker campaigns={groups} selected={selected} onChange={setSelected} emptyLabel="No inbound groups available" />
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {s && (
+        <>
+          <Panel eyebrow="Summary" title="IVR Totals" icon={PhoneCall} className="admin-wide-panel">
+            <div className="connection-actions">
+              <span className="connection-status">Unique calls: {formatNumber(s.totals.calls)}</span>
+              <span className="connection-status">IVR events: {formatNumber(s.totals.events)}</span>
+            </div>
+            <DataTable
+              emptyLabel="No IVR activity in the date range"
+              rows={(s.perGroup || []).map((row) => ({ ...row, id: row.group_id }))}
+              columns={[
+                { key: 'group_id', label: 'In-Group' },
+                { key: 'calls', label: 'Unique Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'events', label: 'Events', render: (row) => formatNumber(row.events) },
+              ]}
+            />
+          </Panel>
+          <section className="admin-grid media-tools-grid">
+            <Panel eyebrow="Breakdown" title="Extensions" icon={Activity}>
+              <DataTable
+                emptyLabel="No IVR activity in the date range"
+                rows={(s.perExtension || []).map((row) => ({ ...row, id: row.extension || 'NONE' }))}
+                columns={[
+                  { key: 'extension', label: 'Extension' },
+                  { key: 'calls', label: 'Unique Calls', render: (row) => formatNumber(row.calls) },
+                  { key: 'events', label: 'Events', render: (row) => formatNumber(row.events) },
+                ]}
+              />
+            </Panel>
+            <Panel eyebrow="Breakdown" title="Events" icon={Activity}>
+              <DataTable
+                emptyLabel="No IVR activity in the date range"
+                rows={(s.perEvent || []).map((row) => ({ ...row, id: row.event || 'NONE' }))}
+                columns={[
+                  { key: 'event', label: 'Event' },
+                  { key: 'events', label: 'Count', render: (row) => formatNumber(row.events) },
+                ]}
+              />
+            </Panel>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -9417,6 +9764,9 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportServiceLevel') return <ServiceLevelReportView token={token} />;
   if (activeView === 'reportInboundHourly') return <InboundHourlyReportView token={token} />;
   if (activeView === 'reportInboundDaily') return <InboundDailyReportView token={token} />;
+  if (activeView === 'reportDidStats') return <DidStatsReportView token={token} />;
+  if (activeView === 'reportDidDetail') return <DidDetailReportView token={token} />;
+  if (activeView === 'reportIvr') return <IvrReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
