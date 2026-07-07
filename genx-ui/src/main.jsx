@@ -438,7 +438,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -454,6 +454,7 @@ function userCanDelete(user, entity) {
   if (entity === 'scripts') return Boolean(user?.deleteScripts);
   if (entity === 'leadFilters') return Boolean(user?.deleteFilters);
   if (entity === 'userGroups') return Boolean(user?.deleteUserGroups);
+  if (entity === 'carriers') return Boolean(user?.modifyCarriers);
   return false;
 }
 
@@ -4072,6 +4073,60 @@ function PhoneConnections({ extension, serverIp, user, token, onLogout, onSaved,
   );
 }
 
+// Server delete needs the composite key (server_id + server_ip).
+function ServerConnections({ serverId, serverIp, user, token, onLogout, onSaved, onClose }) {
+  const id = String(serverId || '');
+  const ip = String(serverIp || '');
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState('');
+
+  async function deleteServer() {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setState('working');
+    try {
+      const payload = await apiFetch(`/admin/servers/${encodeURIComponent(id)}?server_ip=${encodeURIComponent(ip)}`, token, { method: 'DELETE' });
+      onSaved(payload.data);
+      onClose();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setState(requestError.status === 403 ? 'Not permitted' : 'Delete failed');
+      setConfirming(false);
+    }
+  }
+
+  const canDeleteServer = Number(user?.userLevel || 0) >= 9 || (Boolean(user?.astDeletePhones) && Boolean(user?.modifyServers));
+  if (!id || !ip) return null;
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="connection-actions">
+        {canDeleteServer && (
+          <button
+            type="button"
+            className={confirming ? 'danger-action confirming compact-action' : 'row-action'}
+            disabled={state === 'working'}
+            onClick={deleteServer}
+          >
+            <Trash2 size={15} aria-hidden="true" />
+            {state === 'working' ? 'Deleting' : confirming ? `Confirm Delete ${id}@${ip}?` : 'Delete Server'}
+          </button>
+        )}
+        <a className="row-action" href={`/vicidial/admin.php?ADD=720000000000000&category=SERVERS&stage=${encodeURIComponent(id)}`} target="_blank" rel="noreferrer">
+          <ExternalLink size={15} aria-hidden="true" />
+          Admin Changes
+        </a>
+        {state && state !== 'working' && <span className="connection-status">{state}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -4170,6 +4225,18 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             onAction={onSwitchAction}
+          />
+        )}
+
+        {isEdit && action.entity === 'servers' && (
+          <ServerConnections
+            serverId={form.server_id}
+            serverIp={form.server_ip}
+            user={user}
+            token={token}
+            onLogout={onLogout}
+            onSaved={onSaved}
+            onClose={onClose}
           />
         )}
 

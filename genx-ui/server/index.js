@@ -3981,6 +3981,50 @@ async function deletePhone(req, res) {
   }
 }
 
+// Legacy ADD=611111111111: delete a server (composite server_id+server_ip),
+// gated on ast_delete_phones AND modify_servers like legacy.
+async function deleteServer(req, res) {
+  const user = req.genxUser;
+  const allowed = Number(user?.userLevel || 0) >= 9 || (user?.astDeletePhones && user?.modifyServers);
+  if (!allowed) return res.status(403).json({ ok: false, error: 'permission_denied' });
+  const serverId = cleanId(req.params.id, 20);
+  const serverIp = cleanIp(req.query?.server_ip);
+  if (!serverId || serverId.length < 2 || !serverIp || serverIp.length < 7) return badRequest(res, 'invalid_server');
+  try {
+    const result = await execute('DELETE FROM servers WHERE server_id = ? AND server_ip = ? LIMIT 1', [serverId, serverIp]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'server_not_found' });
+    await adminLog(req, 'SERVERS', 'DELETE', serverId, 'GENX DELETE SERVER', 'DELETE FROM servers', `${serverId}@${serverIp}`);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'server_delete_failed' });
+  }
+}
+
+// Legacy ADD=641111111111: delete a carrier and flag conf rebuilds on its
+// server (or every dialer when the carrier is set to 0.0.0.0 / all servers).
+async function deleteCarrier(req, res) {
+  if (!requireModify(req, res, 'modifyCarriers')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_carrier_id');
+  const [carrier] = await rows('SELECT carrier_id, server_ip FROM vicidial_server_carriers WHERE carrier_id = ? LIMIT 1', [id], []);
+  if (!carrier) return res.status(404).json({ ok: false, error: 'carrier_not_found' });
+  try {
+    await execute('DELETE FROM vicidial_server_carriers WHERE carrier_id = ?', [id]);
+    if (carrier.server_ip === '0.0.0.0') {
+      await execute("UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y'").catch(() => {});
+    } else {
+      await execute(
+        "UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y' AND server_ip = ?",
+        [carrier.server_ip],
+      ).catch(() => {});
+    }
+    await adminLog(req, 'CARRIERS', 'DELETE', id, 'GENX DELETE CARRIER', 'DELETE FROM vicidial_server_carriers + rebuild_conf_files', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'carrier_delete_failed' });
+  }
+}
+
 async function listWithScope(req, listId) {
   const [list] = await rows('SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
   if (!list) return { error: 404 };
@@ -6087,6 +6131,8 @@ app.post('/api/admin/servers', requireAccess, (req, res) => saveServer(req, res,
 app.put('/api/admin/servers/:id', requireAccess, (req, res) => saveServer(req, res, 'update'));
 app.post('/api/admin/carriers', requireAccess, (req, res) => saveCarrier(req, res, 'create'));
 app.put('/api/admin/carriers/:id', requireAccess, (req, res) => saveCarrier(req, res, 'update'));
+app.delete('/api/admin/servers/:id', requireAccess, deleteServer);
+app.delete('/api/admin/carriers/:id', requireAccess, deleteCarrier);
 app.post('/api/admin/scripts', requireAccess, (req, res) => saveScript(req, res, 'create'));
 app.put('/api/admin/scripts/:id', requireAccess, (req, res) => saveScript(req, res, 'update'));
 app.delete('/api/admin/scripts/:id', requireAccess, deleteScript);
