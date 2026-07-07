@@ -12420,6 +12420,9 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [leadInfo, setLeadInfo] = useState(null);
   const [vmExten, setVmExten] = useState('');
   const [ingroupOptions, setIngroupOptions] = useState(null);
+  const [webForms, setWebForms] = useState(null);
+  const [dispoHotkeys, setDispoHotkeys] = useState([]);
+  const [inboundInfo, setInboundInfo] = useState(null);
   const [ingroupPicks, setIngroupPicks] = useState([]);
   const [ingroupBlended, setIngroupBlended] = useState(false);
   const [scriptData, setScriptData] = useState(null);
@@ -12457,18 +12460,66 @@ function AgentConsole({ token, authInfo, onExit }) {
       } else {
         setCustomerGone(0);
       }
+      setInboundInfo(payload.inbound || null);
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
   }, [token, onExit]);
 
-  // Load the dispo grid once the agent is on (or has just had) a lead.
+  // Load the dispo grid + web forms once the agent is on (or has just had) a lead.
   useEffect(() => {
     if (!live || !Number(live.lead_id)) return;
     apiFetch('/agent/dispo-statuses', token)
-      .then((payload) => setDispoStatuses(payload.statuses || []))
+      .then((payload) => {
+        setDispoStatuses(payload.statuses || []);
+        setDispoHotkeys(payload.hotkeys || []);
+      })
       .catch(() => {});
+    if (!webForms) apiFetch('/agent/web-forms', token).then(setWebForms).catch(() => {});
   }, [live && Number(live.lead_id) ? 1 : 0, token]);
+
+  // Legacy merge fields (--A--field--B--) used by scripts and web forms.
+  const mergeFields = useCallback((text) => String(text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
+    const merge = {
+      ...(lead || {}),
+      user: authInfo?.user?.user || '',
+      pass: authInfo?.userPass || '',
+      phone_login: authInfo?.phone?.login || '',
+      campaign: live?.campaign_id || '',
+      group: inboundInfo?.group_id || live?.campaign_id || '',
+      channel_group: inboundInfo?.group_id || live?.campaign_id || '',
+      session_id: live?.conf_exten || '',
+      server_ip: live?.server_ip || '',
+      uniqueid: live?.uniqueid || '',
+      fronter: '',
+      closer: authInfo?.user?.user || '',
+      SQLdate: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      epoch: String(Math.floor(Date.now() / 1000)),
+      script_width: '100%',
+      script_height: '400',
+    };
+    return merge[field] != null ? String(merge[field]) : '';
+  }), [lead, live, authInfo, inboundInfo]);
+
+  // Dispo hotkeys: with the dispo grid open, pressing a mapped key submits.
+  useEffect(() => {
+    if (!showDispo || !dispoHotkeys.length || !lead) return undefined;
+    const onKey = (event) => {
+      if (/input|textarea|select/i.test(event.target?.tagName || '')) return;
+      const hit = dispoHotkeys.find((h) => String(h.hotkey) === event.key);
+      if (!hit) return;
+      event.preventDefault();
+      act('/agent/dispo', { status: hit.status, lead_id: lead.lead_id, comments: dispoComments }).then((payload) => {
+        if (payload) {
+          setShowDispo(false);
+          setLead(null);
+          setMessage(`Dispositioned ${hit.status} (hotkey ${hit.hotkey}) — paused`);
+        }
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showDispo, dispoHotkeys, lead ? lead.lead_id : 0, dispoComments]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -12502,6 +12553,8 @@ function AgentConsole({ token, authInfo, onExit }) {
         channel_not_found: '3-way leg not found (may have already hung up)',
         no_parked_call: 'No parked call to grab',
         not_on_call: 'No customer call in progress',
+        hopper_empty: 'No leads in the hopper for this campaign',
+        alt_number_missing: 'Lead has no usable alternate number',
       };
       setMessage(map[requestError.message] || 'Action failed');
       return null;
@@ -12694,6 +12747,18 @@ function AgentConsole({ token, authInfo, onExit }) {
                   <button type="submit" className="secondary-action" disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}>
                     <PhoneCall size={16} aria-hidden="true" />
                     Dial
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={busy}
+                    onClick={async () => {
+                      const payload = await act('/agent/dial-next', {});
+                      if (payload) setMessage('Dialing next lead from the hopper');
+                    }}
+                  >
+                    <PhoneCall size={16} aria-hidden="true" />
+                    Dial Next Number
                   </button>
                 </div>
               </form>
@@ -12921,33 +12986,19 @@ function AgentConsole({ token, authInfo, onExit }) {
               <iframe
                 title="Campaign script"
                 style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
-                srcDoc={String(scriptData.script.script_text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
-                  const merge = {
-                    ...lead,
-                    user: authInfo?.user?.user || '',
-                    // Legacy merges the agent's password into script URLs;
-                    // it lives in memory for the session only.
-                    pass: authInfo?.userPass || '',
-                    phone_login: authInfo?.phone?.login || '',
-                    campaign: live.campaign_id,
-                    group: live.campaign_id,
-                    channel_group: live.campaign_id,
-                    session_id: live.conf_exten,
-                    server_ip: live.server_ip,
-                    uniqueid: live.uniqueid || '',
-                    fronter: '',
-                    closer: authInfo?.user?.user || '',
-                    script_width: '100%',
-                    script_height: '400',
-                  };
-                  return merge[field] != null ? String(merge[field]) : '';
-                })}
+                srcDoc={mergeFields(scriptData.script.script_text)}
               />
             )}
           </Panel>
         )}
         {live && lead && (
           <Panel eyebrow={`Lead ${lead.lead_id}`} title={`${lead.first_name || ''} ${lead.last_name || ''} — ${lead.phone_code || ''} ${lead.phone_number || ''}`} icon={PhoneCall} className="admin-wide-panel">
+            {inboundInfo && (
+              <div className="connection-actions">
+                <span className="connection-status">Inbound: {inboundInfo.group_id}{inboundInfo.group_name ? ` (${inboundInfo.group_name})` : ''}</span>
+                <span className="connection-status">Queue wait: {formatSeconds(Number(inboundInfo.queue_seconds || 0))}</span>
+              </div>
+            )}
             <div className="connection-actions">
               <span className="connection-status">List: {lead.list_id}</span>
               <span className="connection-status">Status: {lead.status}</span>
@@ -13020,6 +13071,16 @@ function AgentConsole({ token, authInfo, onExit }) {
               <button type="button" className="row-action" onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}>
                 Lead Info
               </button>
+              {(webForms?.forms || []).map((f) => (
+                <button
+                  type="button"
+                  key={f.label}
+                  className="row-action"
+                  onClick={() => window.open(mergeFields(f.url), webForms.target || 'vdcwebform')}
+                >
+                  {f.label}
+                </button>
+              ))}
               {lead.alt_phone && (
                 <button
                   type="button"
@@ -13186,7 +13247,10 @@ function AgentConsole({ token, authInfo, onExit }) {
                         }
                       }}
                     >
-                      {row.status}{row.status_name ? ` - ${row.status_name}` : ''}
+                      {(() => {
+                        const hk = dispoHotkeys.find((h) => h.status === row.status);
+                        return `${hk ? `[${hk.hotkey}] ` : ''}${row.status}${row.status_name ? ` - ${row.status_name}` : ''}`;
+                      })()}
                     </button>
                   ))}
                   {!dispoStatuses.length && <span className="connection-summary">No selectable statuses for this campaign</span>}

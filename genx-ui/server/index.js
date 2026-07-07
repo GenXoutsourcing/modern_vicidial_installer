@@ -7085,6 +7085,19 @@ async function agentStatus(req, res) {
     [req.genxUser.user],
     [],
   );
+  // Inbound closer calls (Y-prefixed callerid): surface in-group + queue info.
+  let inbound = null;
+  if (Number(live.lead_id) > 0 && /^Y/.test(String(live.callerid || ''))) {
+    const [closer] = await rows(
+      `SELECT vc.campaign_id AS group_id, ig.group_name, vc.queue_seconds, vc.xfercount
+       FROM vicidial_closer_log vc
+       LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = vc.campaign_id
+       WHERE vc.lead_id = ? ORDER BY vc.closecallid DESC LIMIT 1`,
+      [live.lead_id],
+      [],
+    );
+    if (closer) inbound = closer;
+  }
   // Customer-leg presence for dead-call detection (legacy custchannellive).
   let customerChannels = null;
   if (live.status === 'INCALL') {
@@ -7100,6 +7113,7 @@ async function agentStatus(req, res) {
     pauseCodes: await agentPauseCodes(live.campaign_id),
     webphoneUrl: sess?.webphone_url || null,
     customerChannels,
+    inbound,
   });
 }
 
@@ -7116,7 +7130,13 @@ async function agentDispoStatuses(req, res) {
     [live.campaign_id],
     [],
   );
-  return res.json({ ok: true, statuses });
+  // Dispo hotkeys: pressing the key on the dispo screen submits that status.
+  const hotkeys = await rows(
+    "SELECT hotkey, status, status_name FROM vicidial_campaign_hotkeys WHERE campaign_id = ? AND active = 'Y' ORDER BY hotkey LIMIT 20",
+    [live.campaign_id],
+    [],
+  ).catch(() => []);
+  return res.json({ ok: true, statuses, hotkeys });
 }
 
 // Port of the updateDISPO core (vdc_db_query.php ~15112): write the lead
@@ -8007,6 +8027,64 @@ async function agentScript(req, res) {
     script: await load(camp?.campaign_script),
     scriptTwo: await load(camp?.campaign_script_two),
   });
+}
+
+// Campaign web-form URLs for the lead card buttons (client merges --A-- vars).
+async function agentWebForms(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [camp] = await rows(
+    'SELECT web_form_address, web_form_address_two, web_form_address_three, web_form_target FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  return res.json({
+    ok: true,
+    target: camp?.web_form_target || 'vdcwebform',
+    forms: [camp?.web_form_address, camp?.web_form_address_two, camp?.web_form_address_three]
+      .map((url, i) => ({ label: i === 0 ? 'Web Form' : `Web Form ${i + 1}`, url: String(url || '').trim() }))
+      .filter((f) => f.url.length > 4),
+  });
+}
+
+// manDiaLnextCaLL core: pull the next READY hopper lead for this campaign and
+// dial it through the manual-dial path.
+async function agentDialNext(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  if (Number(live.lead_id) > 0) return res.status(409).json({ ok: false, error: 'already_on_call' });
+
+  const [hop] = await rows(
+    "SELECT hopper_id, lead_id FROM vicidial_hopper WHERE campaign_id = ? AND status = 'READY' ORDER BY priority DESC, hopper_id LIMIT 1",
+    [live.campaign_id],
+    [],
+  );
+  if (!hop) return res.status(404).json({ ok: false, error: 'hopper_empty' });
+  const claimed = await execute(
+    "UPDATE vicidial_hopper SET status = 'QUEUE', user = ? WHERE hopper_id = ? AND status = 'READY'",
+    [user, hop.hopper_id],
+  );
+  if (!claimed.affectedRows) return res.status(409).json({ ok: false, error: 'hopper_race' });
+
+  req.body = { ...req.body, lead_id: hop.lead_id };
+  // Mark the hopper row DONE once the dial goes out (legacy VDhopper flow).
+  const result = await new Promise((resolve) => {
+    const shim = {
+      ...res,
+      json: (payload) => { resolve(payload); return payload; },
+      status: (code) => ({ json: (payload) => { resolve({ ...payload, httpStatus: code }); return payload; } }),
+    };
+    agentManualDial(req, shim);
+  });
+  if (result?.ok) {
+    await execute("UPDATE vicidial_hopper SET status = 'DONE' WHERE hopper_id = ?", [hop.hopper_id]).catch(() => {});
+    return res.json(result);
+  }
+  await execute("UPDATE vicidial_hopper SET status = 'READY', user = '' WHERE hopper_id = ?", [hop.hopper_id]).catch(() => {});
+  return res.status(result?.httpStatus || 500).json(result || { ok: false, error: 'dial_next_failed' });
 }
 
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
@@ -12146,6 +12224,8 @@ app.get('/api/agent/ingroup-options', requireAgentAccess, agentIngroupOptions);
 app.post('/api/agent/select-ingroups', requireAgentAccess, agentSelectIngroups);
 app.put('/api/agent/lead', requireAgentAccess, agentUpdateLead);
 app.get('/api/agent/script', requireAgentAccess, agentScript);
+app.get('/api/agent/web-forms', requireAgentAccess, agentWebForms);
+app.post('/api/agent/dial-next', requireAgentAccess, agentDialNext);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));
