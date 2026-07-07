@@ -5185,6 +5185,11 @@ function useLiveReport(path, token, intervalMs = 5000) {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!path) {
+      setData(null);
+      setError('');
+      return undefined;
+    }
     let cancelled = false;
     async function load() {
       try {
@@ -5451,6 +5456,103 @@ function AgentMonitorLogReportView({ token }) {
   );
 }
 
+function HopperListReportView({ token }) {
+  const [campaignId, setCampaignId] = useState('');
+  const [status, setStatus] = useState('READY');
+
+  const params = new URLSearchParams({ status });
+  if (campaignId) params.set('campaign_id', campaignId);
+  const { data, error } = useLiveReport(`/reports/hopper-list?${params.toString()}`, token, 5000);
+
+  const campaigns = data?.campaigns || [];
+  const entries = data?.entries;
+  const totals = data?.totals;
+
+  const columns = [
+    { key: 'order', label: '#' },
+    { key: 'priority', label: 'Priority' },
+    { key: 'lead_id', label: 'Lead ID' },
+    { key: 'list_id', label: 'List ID' },
+    { key: 'phone_number', label: 'Phone', render: (row) => (row.phone_code ? `${row.phone_number} (${row.phone_code})` : row.phone_number) },
+    { key: 'state', label: 'State' },
+    { key: 'status', label: 'Lead Status' },
+    { key: 'called_count', label: 'Count' },
+    { key: 'gmt_offset_now', label: 'GMT' },
+    { key: 'rank', label: 'Rank' },
+    { key: 'alt_dial', label: 'Alt' },
+    { key: 'source', label: 'Source' },
+    { key: 'vendor_lead_code', label: 'Vendor Lead Code' },
+    { key: 'age_days', label: 'Age (days)', render: (row) => (row.age_days ?? '—') },
+    {
+      key: 'last_call_hours',
+      label: 'Last Call',
+      render: (row) => {
+        if (row.last_call_hours == null) return 'Never';
+        if (row.last_call_hours < 24) return `${row.last_call_hours} hrs ago`;
+        return `${Math.floor(row.last_call_hours / 24)} days ago`;
+      },
+    },
+    {
+      key: 'hopper_status',
+      label: 'Hopper Status',
+      render: (row) => (row.hopper_status === 'READY' ? row.hopper_status : `${row.hopper_status}${row.hopper_user ? ` (${row.hopper_user})` : ''}`),
+    },
+  ];
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Outbound and Lists</p>
+          <h2>Hopper List</h2>
+          <p className="action-copy">Live snapshot of leads currently loaded in a campaign's dialing hopper. Refreshes every 5 seconds.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Campaign and Status" icon={Search} className="admin-wide-panel">
+        <div className="entity-form report-filter-bar">
+          <div className="field-grid">
+            <label>
+              <span>Campaign</span>
+              <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+                <option value="">Select a campaign...</option>
+                {campaigns.map((campaign) => (
+                  <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.campaign_id} - {campaign.campaign_name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="READY">READY</option>
+                <option value="HOLD">HOLD</option>
+                <option value="READY_AND_HOLD">READY and HOLD</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      {!campaignId && <div className="empty-state">Select a campaign above to view its live hopper list</div>}
+      {campaignId && totals && (
+        <section className="quick-stack">
+          <MetricCard icon={Database} label="Total In Hopper" value={formatNumber(totals.total)} detail={`Campaign ${campaignId}`} accent="#00d9ff" />
+          {totals.ready !== null && <MetricCard icon={Database} label="READY" value={formatNumber(totals.ready)} detail="Ready to dial" accent="#73fbd3" />}
+          {totals.hold !== null && <MetricCard icon={Database} label="HOLD" value={formatNumber(totals.hold)} detail="On hold / queued" accent="#ffd166" />}
+        </section>
+      )}
+      {campaignId && entries && (
+        <Panel eyebrow="Results" title={`Hopper Entries (${formatNumber(entries.length)})`} icon={Database} className="admin-wide-panel">
+          <DataTable
+            emptyLabel="No leads currently in the hopper for that campaign/status"
+            rows={entries.map((row) => ({ ...row, id: row.hopper_id }))}
+            columns={columns}
+          />
+        </Panel>
+      )}
+    </>
+  );
+}
+
 function MapView({ onNavigate }) {
   const [query, setQuery] = useState('');
   const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
@@ -5617,6 +5719,7 @@ function AdminPage({ activeView, dashboard, admin, user, token, onAction, onSave
   if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} />;
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
   if (activeView === 'reportWhiteboard') return <WhiteboardReportView token={token} />;
+  if (activeView === 'reportHopperList') return <HopperListReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;

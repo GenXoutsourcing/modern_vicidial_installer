@@ -196,6 +196,8 @@ function publicUser(row) {
     modifySettingsContainers: ['1', '2', '3', '4', '5', '6'].includes(String(row.modify_settings_containers || '')),
     accessRecordings: row.access_recordings === '1',
     exportReports: row.export_reports === '1',
+    adminHideLeadData: row.admin_hide_lead_data === '1',
+    adminHidePhoneData: row.admin_hide_phone_data || '0',
     permissions: {
       allowedCampaigns,
       allowedReports,
@@ -272,6 +274,8 @@ async function authenticateVicidialUser(username, password) {
             u.export_reports,
             u.access_recordings,
             u.modify_settings_containers,
+            u.admin_hide_lead_data,
+            u.admin_hide_phone_data,
             ug.allowed_campaigns,
             ug.allowed_reports,
             ug.admin_viewable_groups,
@@ -3594,6 +3598,116 @@ async function whiteboardReport(req, res) {
   return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
 }
 
+function maskPhoneNumber(value, mode) {
+  const text = String(value || '');
+  if (!text) return text;
+  const keep = mode === '2_DIGITS' ? 2 : mode === '3_DIGITS' ? 3 : mode === '4_DIGITS' ? 4 : 0;
+  if (!keep) return 'X'.repeat(text.length);
+  return 'X'.repeat(Math.max(text.length - keep, 0)) + text.slice(-keep);
+}
+
+function maskText(value) {
+  const text = String(value || '');
+  return text ? 'X'.repeat(text.length) : text;
+}
+
+const HOPPER_STATUS_OPTIONS = ['READY', 'HOLD', 'READY_AND_HOLD'];
+
+async function hopperListReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const status = cleanChoice(req.query?.status, HOPPER_STATUS_OPTIONS, 'READY');
+
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const campaigns = await rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`,
+    campaignParams,
+    [],
+  );
+
+  const campaignId = cleanId(req.query?.campaign_id, 20);
+  if (!campaignId || !scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
+    return res.json({ ok: true, campaigns, entries: null, totals: null, status });
+  }
+
+  const statusList = status === 'READY_AND_HOLD' ? ['READY', 'RHOLD', 'RQUEUE']
+    : status === 'HOLD' ? ['RHOLD', 'RQUEUE']
+    : ['READY'];
+
+  const [totalRow] = await rows(
+    'SELECT COUNT(*) AS total FROM vicidial_hopper WHERE campaign_id = ?',
+    [campaignId],
+    [{ total: 0 }],
+  );
+
+  let readyCount = null;
+  let holdCount = null;
+  if (status === 'READY_AND_HOLD') {
+    const [readyRow] = await rows(
+      "SELECT COUNT(*) AS n FROM vicidial_hopper WHERE campaign_id = ? AND status = 'READY'",
+      [campaignId],
+      [{ n: 0 }],
+    );
+    const [holdRow] = await rows(
+      "SELECT COUNT(*) AS n FROM vicidial_hopper WHERE campaign_id = ? AND status IN ('RHOLD','RQUEUE')",
+      [campaignId],
+      [{ n: 0 }],
+    );
+    readyCount = Number(readyRow?.n || 0);
+    holdCount = Number(holdRow?.n || 0);
+  }
+
+  const entries = await rows(
+    `SELECT h.hopper_id, h.priority, h.lead_id, h.list_id, l.phone_number, h.state, l.status,
+            l.called_count, h.gmt_offset_now, h.alt_dial, h.source, h.vendor_lead_code,
+            l.phone_code, l.rank, l.owner, h.status AS hopper_status, h.user AS hopper_user,
+            UNIX_TIMESTAMP(l.entry_date) AS entry_epoch, UNIX_TIMESTAMP(l.last_local_call_time) AS last_call_epoch
+     FROM vicidial_hopper h
+     JOIN vicidial_list l ON l.lead_id = h.lead_id
+     WHERE h.campaign_id = ? AND h.status IN (${statusList.map(() => '?').join(',')})
+     ORDER BY h.priority DESC, h.hopper_id ASC
+     LIMIT 3000`,
+    [campaignId, ...statusList],
+    [],
+  );
+
+  const hideLead = Boolean(req.genxUser?.adminHideLeadData);
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const shaped = entries.map((row, index) => ({
+    order: index + 1,
+    hopper_id: row.hopper_id,
+    priority: row.priority,
+    lead_id: row.lead_id,
+    list_id: row.list_id,
+    phone_number: phoneMode !== '0' ? maskPhoneNumber(row.phone_number, phoneMode) : row.phone_number,
+    phone_code: row.phone_code,
+    state: hideLead ? maskText(row.state) : row.state,
+    status: row.status,
+    called_count: row.called_count,
+    gmt_offset_now: row.gmt_offset_now,
+    alt_dial: row.alt_dial,
+    source: row.source,
+    vendor_lead_code: hideLead ? maskText(row.vendor_lead_code) : row.vendor_lead_code,
+    rank: row.rank,
+    owner: row.owner,
+    hopper_status: row.hopper_status,
+    hopper_user: row.hopper_user,
+    age_days: row.entry_epoch ? Math.floor((nowSeconds - row.entry_epoch) / 86400) : null,
+    last_call_hours: row.last_call_epoch ? Math.floor((nowSeconds - row.last_call_epoch) / 3600) : null,
+  }));
+
+  return res.json({
+    ok: true,
+    campaigns,
+    entries: shaped,
+    totals: { total: Number(totalRow?.total || 0), ready: readyCount, hold: holdCount },
+    status,
+    campaignId,
+  });
+}
+
 function inboundPayload(body) {
   const routeCode = (value, max = 255, fallback = '') => codeText(value, max, fallback);
   const longText = (value) => cleanText(value, 12000);
@@ -5243,6 +5357,7 @@ app.get('/api/reports/agent-monitor-log', requireAccess, agentMonitorLogReport);
 app.get('/api/reports/realtime-main', requireAccess, realtimeMainReport);
 app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);
 app.get('/api/reports/whiteboard', requireAccess, whiteboardReport);
+app.get('/api/reports/hopper-list', requireAccess, hopperListReport);
 app.post('/api/admin/inbound', requireAccess, (req, res) => saveInboundGroup(req, res, 'create'));
 app.put('/api/admin/inbound/:id', requireAccess, (req, res) => saveInboundGroup(req, res, 'update'));
 app.delete('/api/admin/inbound/:id', requireAccess, deleteInboundGroup);
