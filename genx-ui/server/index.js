@@ -7012,10 +7012,21 @@ async function agentStatus(req, res) {
     [req.genxUser.user],
     [],
   );
+  // Customer-leg presence for dead-call detection (legacy custchannellive).
+  let customerChannels = null;
+  if (live.status === 'INCALL') {
+    const [cnt] = await rows(
+      'SELECT COUNT(*) AS n FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ?',
+      [live.server_ip, `Local/${live.conf_exten}@%`],
+      [],
+    );
+    customerChannels = Number(cnt?.n || 0);
+  }
   return res.json({
     ok: true, live, lead,
     pauseCodes: await agentPauseCodes(live.campaign_id),
     webphoneUrl: sess?.webphone_url || null,
+    customerChannels,
   });
 }
 
@@ -7778,6 +7789,151 @@ async function agentQueueGrab(req, res) {
     ).catch(() => {});
   }
   return res.json({ ok: true });
+}
+
+// In-group chooser (legacy CloserSelect/regCLOSER): allowed set is the
+// intersection of the user's closer_campaigns, the campaign's
+// closer_campaigns, and active inbound groups.
+function closerListToArray(value) {
+  return String(value || '').replace(/ -$|^ /g, '').trim().split(/\s+/).filter(Boolean);
+}
+
+async function agentIngroupOptions(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [userRow] = await rows(
+    'SELECT closer_campaigns, agent_choose_ingroups, closer_default_blended FROM vicidial_users WHERE user = ? LIMIT 1',
+    [req.genxUser.user],
+    [],
+  );
+  const [camp] = await rows(
+    'SELECT closer_campaigns, allow_closers, dial_method FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const userGroups = closerListToArray(userRow?.closer_campaigns);
+  const campGroups = closerListToArray(camp?.closer_campaigns);
+  let allowed = [];
+  if (userGroups.length && campGroups.length) {
+    const params = [...userGroups, ...campGroups];
+    allowed = await rows(
+      `SELECT group_id, group_name FROM vicidial_inbound_groups
+       WHERE active = 'Y' AND group_id IN (${userGroups.map(() => '?').join(',')})
+         AND group_id IN (${campGroups.map(() => '?').join(',')}) ORDER BY group_id`,
+      params,
+      [],
+    );
+  }
+  const [liveFull] = await rows(
+    'SELECT closer_campaigns, outbound_autodial FROM vicidial_live_agents WHERE user = ? LIMIT 1',
+    [req.genxUser.user],
+    [],
+  );
+  return res.json({
+    ok: true,
+    enabled: camp?.allow_closers === 'Y' && String(userRow?.agent_choose_ingroups || '') === '1',
+    groups: allowed,
+    selected: closerListToArray(liveFull?.closer_campaigns),
+    blended: liveFull?.outbound_autodial === 'Y',
+    dialMethod: camp?.dial_method || '',
+  });
+}
+
+// regCLOSER port: set closer_campaigns + blended autodial on the live agent.
+async function agentSelectIngroups(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const requested = Array.isArray(req.body?.groups) ? req.body.groups.map((g) => cleanId(g, 30)).filter(Boolean) : [];
+  const blended = req.body?.blended === true;
+
+  const [userRow] = await rows(
+    'SELECT closer_campaigns FROM vicidial_users WHERE user = ? LIMIT 1', [user], [],
+  );
+  const [camp] = await rows(
+    'SELECT closer_campaigns, dial_method FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const userGroups = new Set(closerListToArray(userRow?.closer_campaigns));
+  const campGroups = new Set(closerListToArray(camp?.closer_campaigns));
+  const groups = requested.filter((g) => userGroups.has(g) && campGroups.has(g));
+
+  const closerChoice = groups.length ? ` ${groups.join(' ')} -` : ' -';
+  let autodial = blended ? 'Y' : 'N';
+  if (/INBOUND_MAN|MANUAL/.test(String(camp?.dial_method || ''))) autodial = 'N';
+  await execute(
+    'UPDATE vicidial_live_agents SET closer_campaigns = ?, last_state_change = NOW(), outbound_autodial = ? WHERE user = ?',
+    [closerChoice, autodial, user],
+  );
+  return res.json({ ok: true, selected: groups, blended: autodial === 'Y' });
+}
+
+// updateLEAD core: agents may edit the standard lead fields on their current
+// call; phone edits gated by campaign disable_alter_custphone.
+const AGENT_LEAD_FIELDS = ['title', 'first_name', 'middle_initial', 'last_name', 'address1', 'address2',
+  'address3', 'city', 'state', 'province', 'postal_code', 'country_code', 'gender', 'date_of_birth',
+  'alt_phone', 'email', 'security_phrase', 'comments'];
+
+async function agentUpdateLead(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const leadId = Number(live.lead_id || 0);
+  if (!leadId) return res.status(409).json({ ok: false, error: 'no_lead' });
+
+  const sets = [];
+  const params = [];
+  for (const field of AGENT_LEAD_FIELDS) {
+    if (req.body?.[field] !== undefined) {
+      sets.push(`\`${field}\` = ?`);
+      params.push(cleanText(req.body[field], 255));
+    }
+  }
+  if (req.body?.phone_number !== undefined) {
+    const [camp] = await rows(
+      'SELECT disable_alter_custphone FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+      [live.campaign_id],
+      [],
+    );
+    if (String(camp?.disable_alter_custphone || 'N') === 'N') {
+      sets.push('phone_number = ?');
+      params.push(String(req.body.phone_number).replace(/[^0-9]/g, '').slice(0, 18));
+    }
+  }
+  if (!sets.length) return badRequest(res, 'no_fields');
+  params.push(leadId);
+  await execute(`UPDATE vicidial_list SET ${sets.join(', ')}, modify_date = NOW() WHERE lead_id = ?`, params);
+  return res.json({ ok: true });
+}
+
+// Campaign script text for the script tab; the client merges the legacy
+// --A--field--B-- variables from the live lead/session.
+async function agentScript(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const live = await agentLiveRow(req.genxUser.user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const [camp] = await rows(
+    'SELECT campaign_script, campaign_script_two FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const load = async (id) => {
+    if (!id) return null;
+    const [s] = await rows(
+      "SELECT script_id, script_name, script_text FROM vicidial_scripts WHERE script_id = ? AND active = 'Y' LIMIT 1",
+      [id],
+      [],
+    );
+    return s || null;
+  };
+  return res.json({
+    ok: true,
+    script: await load(camp?.campaign_script),
+    scriptTwo: await load(camp?.campaign_script_two),
+  });
 }
 
 // Legacy manDiaLonly: dial a number into the agent's conference. The customer
@@ -11785,6 +11941,10 @@ app.post('/api/agent/xfer-vmail', requireAgentAccess, agentXferVmail);
 app.get('/api/agent/call-log', requireAgentAccess, agentCallLog);
 app.get('/api/agent/lead-info', requireAgentAccess, agentLeadInfo);
 app.post('/api/agent/queue-grab', requireAgentAccess, agentQueueGrab);
+app.get('/api/agent/ingroup-options', requireAgentAccess, agentIngroupOptions);
+app.post('/api/agent/select-ingroups', requireAgentAccess, agentSelectIngroups);
+app.put('/api/agent/lead', requireAgentAccess, agentUpdateLead);
+app.get('/api/agent/script', requireAgentAccess, agentScript);
 app.get('/api/agent/status', requireAgentAccess, agentStatus);
 app.post('/api/agent/ready', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'READY'));
 app.post('/api/agent/pause', requireAgentAccess, (req, res) => agentSetStatus(req, res, 'PAUSED'));

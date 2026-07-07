@@ -12301,6 +12301,12 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [callLogDate, setCallLogDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [leadInfo, setLeadInfo] = useState(null);
   const [vmExten, setVmExten] = useState('');
+  const [ingroupOptions, setIngroupOptions] = useState(null);
+  const [ingroupPicks, setIngroupPicks] = useState([]);
+  const [ingroupBlended, setIngroupBlended] = useState(false);
+  const [scriptData, setScriptData] = useState(null);
+  const [editLead, setEditLead] = useState(null);
+  const [customerGone, setCustomerGone] = useState(0);
   const [xferGroup, setXferGroup] = useState('');
   const [xferExten, setXferExten] = useState('');
   const [threewayNumber, setThreewayNumber] = useState('');
@@ -12327,6 +12333,12 @@ function AgentConsole({ token, authInfo, onExit }) {
         if (!payload.live) return null;
         return payload.webphoneUrl && payload.webphoneUrl !== prev ? payload.webphoneUrl : prev;
       });
+      // Dead-call detection: count consecutive polls with no customer leg.
+      if (payload.live?.status === 'INCALL' && payload.customerChannels === 0) {
+        setCustomerGone((n) => n + 1);
+      } else {
+        setCustomerGone(0);
+      }
     } catch (requestError) {
       if (requestError.status === 401) onExit();
     }
@@ -12396,6 +12408,23 @@ function AgentConsole({ token, authInfo, onExit }) {
       .catch(() => {});
   }, [live && live.status === 'INCALL' ? 1 : 0, token]);
 
+  // One-shot loads for the in-groups chooser and script tab.
+  useEffect(() => {
+    if (!live || sidePanel !== 'ingroups') return;
+    apiFetch('/agent/ingroup-options', token)
+      .then((p) => {
+        setIngroupOptions(p);
+        setIngroupPicks(p.selected || []);
+        setIngroupBlended(Boolean(p.blended));
+      })
+      .catch(() => {});
+  }, [live ? 1 : 0, sidePanel === 'ingroups' ? 1 : 0, token]);
+
+  useEffect(() => {
+    if (!live || sidePanel !== 'script' || scriptData) return;
+    apiFetch('/agent/script', token).then(setScriptData).catch(() => {});
+  }, [live ? 1 : 0, sidePanel === 'script' ? 1 : 0, token]);
+
   // Side panels (legacy AGENTSview / CALLSINQUEUEview / CalLBacKLisT): poll
   // the open panel every 4s while the agent is logged in.
   useEffect(() => {
@@ -12407,6 +12436,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       calllog: [`/agent/call-log?date=${callLogDate}`, setCallLog],
       leadinfo: [`/agent/lead-info${lead ? `?lead_id=${lead.lead_id}` : ''}`, setLeadInfo],
     };
+    if (!paths[sidePanel]) return undefined;
     const [path, setter] = paths[sidePanel];
     let cancelled = false;
     const load = () => apiFetch(path, token).then((p) => { if (!cancelled) setter(p); }).catch(() => {});
@@ -12566,7 +12596,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               </div>
             )}
             <div className="connection-actions">
-              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log']].map(([key, label]) => (
+              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log'], ['ingroups', 'In-Groups'], ['script', 'Script']].map(([key, label]) => (
                 <button
                   type="button"
                   key={key}
@@ -12727,6 +12757,72 @@ function AgentConsole({ token, authInfo, onExit }) {
             </table>
           </Panel>
         )}
+        {live && sidePanel === 'ingroups' && ingroupOptions && (
+          <Panel eyebrow="Inbound" title="In-Group Selection" icon={Headphones} className="admin-wide-panel">
+            {!ingroupOptions.enabled && <p className="connection-summary">In-group choice not enabled (campaign closers or user setting)</p>}
+            {ingroupOptions.enabled && (
+              <>
+                <div className="connection-actions">
+                  {(ingroupOptions.groups || []).map((g) => (
+                    <button
+                      type="button"
+                      key={g.group_id}
+                      className={ingroupPicks.includes(g.group_id) ? 'row-action tool-picker-item selected' : 'row-action'}
+                      onClick={() => setIngroupPicks((cur) => (cur.includes(g.group_id) ? cur.filter((x) => x !== g.group_id) : [...cur, g.group_id]))}
+                    >
+                      {g.group_id}{g.group_name ? ` - ${g.group_name}` : ''}
+                    </button>
+                  ))}
+                  {!(ingroupOptions.groups || []).length && <span className="connection-summary">No in-groups allowed for this user + campaign</span>}
+                </div>
+                <div className="modal-actions">
+                  <label className="checkbox-field">
+                    <input type="checkbox" checked={ingroupBlended} onChange={(event) => setIngroupBlended(event.target.checked)} />
+                    <span>Blended (outbound autodial while waiting)</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    disabled={busy}
+                    onClick={async () => {
+                      const payload = await act('/agent/select-ingroups', { groups: ingroupPicks, blended: ingroupBlended });
+                      if (payload) setMessage(`In-groups set: ${(payload.selected || []).join(', ') || 'none'}`);
+                    }}
+                  >
+                    Save In-Groups
+                  </button>
+                </div>
+              </>
+            )}
+          </Panel>
+        )}
+        {live && sidePanel === 'script' && (
+          <Panel eyebrow="Campaign" title={scriptData?.script?.script_name || 'Script'} icon={Activity} className="admin-wide-panel">
+            {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
+            {scriptData?.script && (
+              <iframe
+                title="Campaign script"
+                sandbox=""
+                style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
+                srcDoc={String(scriptData.script.script_text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
+                  if (field === 'pass') return '';
+                  const merge = {
+                    ...lead,
+                    user: authInfo?.user?.user || '',
+                    campaign: live.campaign_id,
+                    group: live.campaign_id,
+                    session_id: live.conf_exten,
+                    server_ip: live.server_ip,
+                    uniqueid: live.uniqueid || '',
+                    script_width: '100%',
+                    script_height: '400',
+                  };
+                  return merge[field] != null ? String(merge[field]) : '';
+                })}
+              />
+            )}
+          </Panel>
+        )}
         {live && lead && (
           <Panel eyebrow={`Lead ${lead.lead_id}`} title={`${lead.first_name || ''} ${lead.last_name || ''} — ${lead.phone_code || ''} ${lead.phone_number || ''}`} icon={PhoneCall} className="admin-wide-panel">
             <div className="connection-actions">
@@ -12739,6 +12835,60 @@ function AgentConsole({ token, authInfo, onExit }) {
             </div>
             {lead.address1 && <p className="connection-summary">{lead.address1} {lead.address2 || ''} {lead.address3 || ''}</p>}
             {lead.comments && <p className="connection-summary">Comments: {lead.comments}</p>}
+            {customerGone >= 2 && live.status === 'INCALL' && (
+              <p className="form-error">No customer channel in your session — the caller may have hung up</p>
+            )}
+            {editLead ? (
+              <div className="entity-form">
+                <div className="field-grid">
+                  {[['first_name', 'First Name'], ['last_name', 'Last Name'], ['address1', 'Address 1'], ['city', 'City'],
+                    ['state', 'State'], ['postal_code', 'Postal Code'], ['alt_phone', 'Alt Phone'], ['email', 'Email'],
+                    ['comments', 'Comments']].map(([key, label]) => (
+                      <label key={key}>
+                        <span>{label}</span>
+                        <input
+                          type="text"
+                          value={editLead[key] ?? ''}
+                          onChange={(event) => setEditLead((cur) => ({ ...cur, [key]: event.target.value }))}
+                        />
+                      </label>
+                  ))}
+                </div>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="primary-action"
+                    disabled={busy}
+                    onClick={async () => {
+                      try {
+                        await apiFetch('/agent/lead', token, { method: 'PUT', body: JSON.stringify(editLead) });
+                        setEditLead(null);
+                        setMessage('Lead updated');
+                        refresh();
+                      } catch { setMessage('Lead update failed'); }
+                    }}
+                  >
+                    Save Lead
+                  </button>
+                  <button type="button" className="secondary-action" onClick={() => setEditLead(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="row-action"
+                  onClick={() => setEditLead({
+                    first_name: lead.first_name || '', last_name: lead.last_name || '',
+                    address1: lead.address1 || '', city: lead.city || '', state: lead.state || '',
+                    postal_code: lead.postal_code || '', alt_phone: lead.alt_phone || '',
+                    email: lead.email || '', comments: lead.comments || '',
+                  })}
+                >
+                  Edit Lead
+                </button>
+              </div>
+            )}
             <div className="modal-actions">
               <button type="button" className="primary-action" disabled={busy} onClick={() => setShowDispo(true)}>
                 <Activity size={16} aria-hidden="true" />
