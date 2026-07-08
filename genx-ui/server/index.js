@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,10 +26,31 @@ const config = {
     connectionLimit: Number(process.env.GENX_UI_DB_POOL || 6),
     namedPlaceholders: true,
   },
+  // Optional read replica for the Reports section, so heavy analytical queries
+  // never load the primary VICIdial database. Unset by default = no separate
+  // pool, reports keep hitting the primary (safe default for single-DB installs).
+  dbSlave: {
+    host: process.env.GENX_UI_DB_SLAVE_HOST || '',
+    port: Number(process.env.GENX_UI_DB_SLAVE_PORT || process.env.GENX_UI_DB_PORT || 3306),
+    user: process.env.GENX_UI_DB_SLAVE_USER || process.env.GENX_UI_DB_USER || 'cron',
+    password: process.env.GENX_UI_DB_SLAVE_PASS || process.env.GENX_UI_DB_PASS || '',
+    database: process.env.GENX_UI_DB_SLAVE_NAME || process.env.GENX_UI_DB_NAME || 'asterisk',
+    waitForConnections: true,
+    connectionLimit: Number(process.env.GENX_UI_DB_SLAVE_POOL || 4),
+    namedPlaceholders: true,
+  },
 };
 
 const app = express();
 const pool = mysql.createPool(config.db);
+const reportPool = config.dbSlave.host ? mysql.createPool(config.dbSlave) : pool;
+// Lets rows()/requiredRows() transparently target the report replica for the
+// duration of a /api/reports/* request without threading a pool through every
+// one of the ~60 report handlers. Writes (execute()) always use the primary.
+const dbContext = new AsyncLocalStorage();
+function activePool() {
+  return dbContext.getStore() || pool;
+}
 const sessions = new Map();
 const ranges = {
   today: { key: 'today', label: 'Today', days: 1 },
@@ -437,7 +459,7 @@ async function scalar(sql, params = [], fallback = 0) {
 
 async function rows(sql, params = [], fallback = []) {
   try {
-    const [result] = await pool.query(sql, params);
+    const [result] = await activePool().query(sql, params);
     return result;
   } catch (error) {
     return fallback;
@@ -445,10 +467,11 @@ async function rows(sql, params = [], fallback = []) {
 }
 
 async function requiredRows(sql, params = []) {
-  const [result] = await pool.query(sql, params);
+  const [result] = await activePool().query(sql, params);
   return result;
 }
 
+// Writes always go to the primary regardless of the active report-pool context.
 async function execute(sql, params = []) {
   const [result] = await pool.execute(sql, params);
   return result;
@@ -14139,6 +14162,13 @@ app.get('/api/admin/lists/:id/download', requireAccess, downloadList);
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/dnc', requireAccess, bulkDnc);
 app.get('/api/admin/dnc/search', requireAccess, dncSearch);
+
+// Everything under /api/reports/* reads through the replica pool (falls back
+// to the primary if GENX_UI_DB_SLAVE_HOST is unset). Writes inside a report
+// route (e.g. callback-holds/deactivate) still use execute(), which always
+// targets the primary, so this is read-only routing.
+app.use('/api/reports', (req, res, next) => dbContext.run(reportPool, next));
+
 app.get('/api/reports/agent-monitor-log', requireAccess, agentMonitorLogReport);
 app.get('/api/reports/realtime-main', requireAccess, realtimeMainReport);
 app.get('/api/reports/campaign-summary', requireAccess, campaignSummaryReport);

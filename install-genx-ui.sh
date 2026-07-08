@@ -131,6 +131,21 @@ db_port="$(get_conf VARDB_port)"
 [ -n "$db_user" ] || db_user="cron"
 [ -n "$db_port" ] || db_port="3306"
 
+# Auto-discover a replication slave from the cluster's vicibox registry so the
+# Reports section can be routed off the primary database. Falls back to no
+# slave (reports hit the primary, same as before) if none is registered or it
+# is not reachable with the same cron credentials.
+db_slave_host=""
+if command -v mysql >/dev/null 2>&1; then
+  db_slave_host="$(MYSQL_PWD="$db_pass" mysql -h "$db_host" -P "$db_port" -u "$db_user" -N -B \
+    -e "SELECT server_ip FROM vicibox WHERE server_type='Database' AND field3='slave' ORDER BY server_id LIMIT 1;" \
+    "$db_name" 2>/dev/null || true)"
+  if [ -n "$db_slave_host" ] && ! MYSQL_PWD="$db_pass" mysql -h "$db_slave_host" -P "$db_port" -u "$db_user" -N -B -e "SELECT 1;" >/dev/null 2>&1; then
+    echo "WARNING: Slave DB $db_slave_host is registered in vicibox but not reachable from here; Reports will use the primary DB."
+    db_slave_host=""
+  fi
+fi
+
 min_user_level="$DEFAULT_MIN_USER_LEVEL"
 if [ -f "$ENV_FILE" ]; then
   existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_MIN_USER_LEVEL=//; s/^"//; s/"$//' || true)"
@@ -172,6 +187,7 @@ GENX_UI_DB_PORT=$db_port
 GENX_UI_DB_NAME=$(quote_env "$db_name")
 GENX_UI_DB_USER=$(quote_env "$db_user")
 GENX_UI_DB_PASS=$(quote_env "$db_pass")
+GENX_UI_DB_SLAVE_HOST=$(quote_env "$db_slave_host")
 EOF
 
 cat > "$SERVICE_FILE" <<EOF
@@ -222,6 +238,9 @@ preflight_report() {
 
   echo ""
   echo "VICIdial settings preflight for GenX UI:"
+
+  if [ -n "$db_slave_host" ]; then ok "Reports section routed to replica $db_slave_host (primary DB load reduced)"
+  else warn "Reports section is querying the primary DB directly - no reachable slave found in vicibox"; fi
 
   local v d s c c2
   v="$(q 'SELECT webphone_url FROM system_settings')"
