@@ -821,7 +821,7 @@ apply_vicidial_database_defaults() {
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<MYSQLDEFAULTS
-UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0';
+UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0', custom_fields_enabled='1';
 
 UPDATE servers
 SET server_id='${server_id}',
@@ -869,14 +869,15 @@ INSERT INTO vicidial_campaigns
      campaign_allow_inbound, default_xfer_group, dial_statuses, lead_order,
      list_order_mix, lead_filter_id, hopper_level, dial_method,
      auto_dial_level, adaptive_intensity, campaign_script, get_call_launch,
-     campaign_description, campaign_changedate)
+     campaign_description, agent_pause_codes_active, campaign_changedate)
 VALUES
     ('TESTCAMP', 'Test Campaign', 'Y', '---ALL---', 'Y',
      'Y', '---NONE---', ' NEW -', 'DOWN',
      'DISABLED', 'NONE', 100, 'RATIO',
      '1', '0', '', 'NONE',
-     '', NOW())
+     '', 'Y', NOW())
 ON DUPLICATE KEY UPDATE
+    agent_pause_codes_active=VALUES(agent_pause_codes_active),
     campaign_name=VALUES(campaign_name),
     active=VALUES(active),
     user_group=VALUES(user_group),
@@ -895,6 +896,17 @@ ON DUPLICATE KEY UPDATE
     get_call_launch=VALUES(get_call_launch),
     campaign_description=VALUES(campaign_description),
     campaign_changedate=NOW();
+
+INSERT IGNORE INTO vicidial_pause_codes
+    (pause_code, pause_code_name, billable, campaign_id, time_limit, require_mgr_approval)
+VALUES
+    ('BREAK','Break','NO','TESTCAMP',0,'NO'),
+    ('LUNCH','Lunch','NO','TESTCAMP',0,'NO'),
+    ('MTG','Meeting','NO','TESTCAMP',0,'NO'),
+    ('TRAIN','Training','NO','TESTCAMP',0,'NO'),
+    ('COACH','Coaching','NO','TESTCAMP',0,'NO'),
+    ('TECH','Technical Issue','NO','TESTCAMP',0,'NO'),
+    ('RR','Restroom','NO','TESTCAMP',0,'NO');
 
 INSERT INTO vicidial_conf_templates
     (template_id, template_name, user_group, template_contents)
@@ -1016,6 +1028,8 @@ SET vu.phone_login='9176',
     vu.modify_ip_lists='1',
     vu.modify_dial_prefix='1',
     vu.modify_settings_containers='1',
+    vu.custom_fields_modify='1',
+    vu.pause_code_approval='1',
     vu.ignore_ip_list='0',
     vu.admin_hide_lead_data='0',
     vu.admin_hide_phone_data='0'
