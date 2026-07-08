@@ -1030,6 +1030,7 @@ SET vu.phone_login='9176',
     vu.modify_settings_containers='1',
     vu.custom_fields_modify='1',
     vu.pause_code_approval='1',
+    vu.modify_custom_dialplans='1',
     vu.ignore_ip_list='0',
     vu.admin_hide_lead_data='0',
     vu.admin_hide_phone_data='0'
