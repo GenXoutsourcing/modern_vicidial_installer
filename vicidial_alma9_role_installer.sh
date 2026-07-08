@@ -42,6 +42,7 @@ SLAVE_DB_PASS="${SLAVE_DB_PASS:-slave1234}"
 MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
 RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
 RECORDINGS_FTP_LAYOUT="${RECORDINGS_FTP_LAYOUT:-dated}"
+WEB_IS_SOUND_SERVER="${WEB_IS_SOUND_SERVER:-yes}"
 ARCHIVE_RETENTION_DAYS="${ARCHIVE_RETENTION_DAYS:-0}"
 EXTRA_WHITELIST_IPS="${EXTRA_WHITELIST_IPS:-}"
 
@@ -538,11 +539,15 @@ JOINCONF
 
 join_update_cluster_settings() {
     # In a role-split cluster the primary DB install cannot know the web or
-    # telephony servers' addresses, so the FIRST web/telephony server to join
-    # initializes the cluster-wide sound/voicemail settings. Values that are no
-    # longer at install defaults are left alone.
+    # telephony servers' addresses, so joining servers initialize the
+    # cluster-wide sound/voicemail settings. Values that are no longer at
+    # install defaults are left alone.
     if [ "$ROLE_WEB" = "yes" ]; then
-        "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET sounds_web_server='https://${DOMAINNAME}', sounds_central_control_active='1' WHERE sounds_web_server IN ('', '127.0.0.1') OR sounds_web_server IS NULL;"
+        # With split web servers (separate agent web boxes) only the ADMIN web
+        # server hosts the central audio store; a single/only web server is both.
+        if [ "$WEB_IS_SOUND_SERVER" = "yes" ]; then
+            "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET sounds_web_server='https://${DOMAINNAME}', sounds_central_control_active='1' WHERE sounds_web_server IN ('', '127.0.0.1') OR sounds_web_server IS NULL;"
+        fi
         "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET webphone_url='https://phone.viciphone.com/viciphone.php' WHERE webphone_url IS NULL OR webphone_url IN ('', 'X');"
     fi
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
@@ -1169,6 +1174,15 @@ if [ "$CLUSTER_JOIN" = "yes" ]; then
     connect_cluster_db
     fetch_cluster_credentials
     choose_recording_storage
+    if [ "$ROLE_WEB" = "yes" ]; then
+        # Only relevant when a cluster runs split admin/agent web servers; for a
+        # single web server the answer is yes (it hosts the central audio store).
+        if yes_no "Is this the ADMIN web server hosting the central audio store? (yes unless you run split agent web servers)" "yes"; then
+            WEB_IS_SOUND_SERVER="yes"
+        else
+            WEB_IS_SOUND_SERVER="no"
+        fi
+    fi
     if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
         prompt MYSQL_SLAVE_SERVER_ID "Unique MySQL replication server-id for this slave (master is 1)" "$MYSQL_SLAVE_SERVER_ID"
         if [[ ! "$MYSQL_SLAVE_SERVER_ID" =~ ^[0-9]+$ ]] || [ "$MYSQL_SLAVE_SERVER_ID" -lt 2 ]; then
