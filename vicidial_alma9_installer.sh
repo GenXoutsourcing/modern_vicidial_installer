@@ -1087,8 +1087,8 @@ cat <<CRONTAB>> /root/crontab-file
 ### VICIDIAL audio-store web directory helper
 * * * * * /usr/local/bin/vicidial-audio-store-dir >/dev/null 2>&1
 
-###Audio Sync hourly
-* 1 * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl --upload --quiet
+###Audio Sync quarter-hourly
+1,16,31,46 * * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl --upload --quiet
 
 ### Daily Backups ###
 0 2 * * * /usr/share/astguiclient/ADMIN_backup.pl
