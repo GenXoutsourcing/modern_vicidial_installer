@@ -536,6 +536,20 @@ JOINCONF
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "INSERT INTO vicidial_ip_list_entries (ip_list_id, ip_address) SELECT 'ViciWhite', '${ip_address}' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_ip_list_entries WHERE ip_list_id='ViciWhite' AND ip_address='${ip_address}');"
 }
 
+join_update_cluster_settings() {
+    # In a role-split cluster the primary DB install cannot know the web or
+    # telephony servers' addresses, so the FIRST web/telephony server to join
+    # initializes the cluster-wide sound/voicemail settings. Values that are no
+    # longer at install defaults are left alone.
+    if [ "$ROLE_WEB" = "yes" ]; then
+        "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET sounds_web_server='https://${DOMAINNAME}', sounds_central_control_active='1' WHERE sounds_web_server IN ('', '127.0.0.1') OR sounds_web_server IS NULL;"
+        "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET webphone_url='https://phone.viciphone.com/viciphone.php' WHERE webphone_url IS NULL OR webphone_url IN ('', 'X');"
+    fi
+    if [ "$ROLE_TELEPHONY" = "yes" ]; then
+        "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET active_voicemail_server='${ip_address}' WHERE active_voicemail_server IS NULL OR active_voicemail_server IN ('', '127.0.0.1');"
+    fi
+}
+
 setup_database_slave() {
     local MYSQL_LOCAL=(mysql -u root)
     local dump_file=/usr/src/vicidial-cluster-dump.sql
@@ -1140,10 +1154,10 @@ validate_fqdn "$hostname"
 hostnamectl set-hostname "$hostname"
 # Retrieve the Hostname
 hostname=$(hostname | awk '{print $1}')
-echo "Hostname\t: $hostname"
+printf 'Hostname\t: %s\n' "$hostname"
 # Retrieve the IP address
 ip_address=$(hostname -I | awk '{print $1}')
-echo "IP Address\t: $ip_address"
+printf 'IP Address\t: %s\n' "$ip_address"
 echo "**************************************************************************"
 
 choose_vicidial_roles
@@ -1264,13 +1278,10 @@ dnf install -y \
     curl curl-devel perl-libwww-perl ImageMagick
 dnf install -y php-pecl-mcrypt || true
 
-sleep 3
 dnf install -y newt-devel libxml2-devel sqlite-devel libuuid-devel sox sendmail lame-devel htop iftop perl-File-Which
-sleep 2
 dnf install -y php-opcache mariadb-devel
 dnf install -y libss7 'libss7*' 'libopen*' || true
-sleep 1
-dnf install -y initscripts pv python3-pip 
+dnf install -y initscripts pv python3-pip
 python3 -c 'import mysql.connector' 2>/dev/null || python3 -m pip install mysql-connector-python
 dnf copr enable irontec/sngrep -y
 dnf install sngrep bind-utils -y
@@ -1278,17 +1289,11 @@ dnf install sngrep bind-utils -y
 dnf install -y kernel-devel-$(uname -r) kernel-headers-$(uname -r) || dnf install -y kernel-devel kernel-headers
 
 dnf --enablerepo=crb install libsrtp-devel -y
-dnf config-manager --set-enabled crb
-dnf install -y libsrtp-devel vsftpd lftp || dnf install -y libsrtp-devel vsftpd
-
-### Install cockpit
-#dnf -y install cockpit cockpit-storaged cockpit-navigator
-#sed -i s/root/"#root"/g /etc/cockpit/disallowed-users
-#systemctl enable cockpit.socket
+dnf install -y vsftpd lftp || dnf install -y vsftpd
 
 sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 
-dnf install -y sqlite-devel httpd mod_ssl nano chkconfig htop atop mytop iftop
+dnf install -y httpd mod_ssl nano chkconfig atop mytop
 dnf install -y libedit-devel uuid* libxml2* speex-devel speex* postfix dovecot s-nail inxi
 dnf install -y roundcubemail || true
 dnf install -y chrony
@@ -1319,12 +1324,6 @@ EOF
 
 systemctl restart httpd
 
-
-
-dnf -y install dnf-plugins-core
-dnf config-manager --set-enabled crb || true
-
-dnf install sendmail -y
 systemctl start sendmail
 systemctl enable sendmail
 
@@ -1515,7 +1514,6 @@ make all
 make install 
 perl -MAsterisk::AGI -e 1 || { echo "ERROR: Missing required Perl module: Asterisk::AGI"; exit 1; }
 
-dnf install libsrtp-devel -y
 dnf install -y elfutils-libelf-devel libedit-devel
 
 
@@ -1528,19 +1526,6 @@ cd lame-3.99.5
 ./configure
 make
 make install
-
-
-#Install Jansson
-cd /usr/src/
-rm -rf jansson-2.13
-copy_asset jansson-2.13.tar.gz
-tar xvzf jansson-2.13.tar.gz
-cd jansson-2.13
-./configure
-make clean
-make
-make install 
-ldconfig
 
 echo "Install DAHDI"
 
@@ -1629,24 +1614,21 @@ else
     echo "Skipping DAHDI build (no telephony role); Asterisk will use timerfd timing."
 fi # ROLE_TELEPHONY dahdi
 
-#Install Asterisk and LibPRI
+#Install Asterisk
 rm -rf /usr/src/asterisk /usr/src/libsrtp-2.1.0
 mkdir -p /usr/src/asterisk
 cd /usr/src/asterisk
-copy_asset libpri-1.6.1.tar.gz
 copy_asset asterisk-18.21.0-vici.tar.gz
 tar -xvzf asterisk-18.21.0-vici.tar.gz
-tar -xvzf libpri-*
 
 cd /usr/src
 copy_asset libsrtp-2.1.0.tar.gz
 tar xfv libsrtp-2.1.0.tar.gz
 cd libsrtp-2.1.0
 ./configure --prefix=/usr --enable-openssl
-make shared_library && sudo make install
+make shared_library && make install
 ldconfig
 
-# cd /usr/src/asterisk/asterisk-18.18.1/
 cd /usr/src/asterisk/asterisk-18.21.0-vici/
 
 dnf install libuuid-devel libxml2-devel -y
@@ -1828,7 +1810,7 @@ VARfastagi_log_max_requests => 1000
 VARfastagi_log_checkfordead => 30
 VARfastagi_log_checkforwait => 60
 
-# Expected DB Schema version for this install
+# Expected DB Schema version for this install (install.pl rewrites this with the checked-out value)
 ExpectedDBSchema => 1720
 ASTGUI
 
@@ -1871,6 +1853,7 @@ run_vicidial_install_pl no
 
 else
     join_register_server
+    join_update_cluster_settings
 fi
 
 configure_pjsip_external_ip "$ip_address"
@@ -1895,8 +1878,8 @@ cat <<CRONTAB > /root/crontab-file
 ### keepalive script for astguiclient processes
 * * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl --cu3way
 
-## adjust time on the server with ntp
-#30 * * * * /usr/sbin/ntpdate -u pool.ntp.org 2>/dev/null 1>&amp;2
+## adjust time on the server with ntp (chrony is enabled by this installer instead)
+#30 * * * * /usr/sbin/ntpdate -u pool.ntp.org 2>/dev/null 1>&2
 
 ### remove old vicidial logs and asterisk logs more than 2 days old
 28 0 * * * /usr/bin/find /var/log/astguiclient -maxdepth 1 -type f -mtime +2 -print | xargs rm -f
@@ -2173,10 +2156,6 @@ chmod +x /usr/bin/aggregate
 cp -f /home/VB-firewall /usr/bin/
 chmod +x /usr/bin/VB-firewall
 
-
-## mv -f /root/defaults.inc.php /var/www/vhosts/dynportal/inc/defaults.inc.php
-## mv -f /home/viciportal-ssl.conf /etc/httpd/conf.d/viciportal-ssl.conf
-
 firewall-offline-cmd --add-port=446/tcp --zone=public
 
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
@@ -2271,8 +2250,6 @@ rm -f CHANGES*
 rm -f LICENSE*
 rm -f CREDITS*
 
-dnf -y install sox
-
 cd /var/lib/asterisk/quiet-mp3
 sox ../mohmp3/macroform-cold_day.wav macroform-cold_day.wav vol 0.25
 sox ../mohmp3/macroform-cold_day.gsm macroform-cold_day.gsm vol 0.25
@@ -2312,17 +2289,6 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-##fstab entry
-#tee -a /etc/fstab <<EOF
-#none /var/spool/asterisk/monitor tmpfs nodev,nosuid,noexec,nodiratime,size=2G 0 0
-#EOF
-
-## FTP fix
-##tee -a /etc/ssh/sshd_config << EOF
-#Subsystem      sftp    /usr/libexec/openssh/sftp-server
-##Subsystem sftp internal-sftp
-##EOF
-
 ##confbridge fix
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
 cd "$SCRIPT_DIR"
@@ -2331,10 +2297,10 @@ cp -f "$SCRIPT_DIR/confbridge-vicidial.conf" /etc/asterisk/
 
 sed -i '/^#include confbridge-vicidial.conf$/d' /etc/asterisk/confbridge.conf 2>/dev/null || true
 replace_managed_block /etc/asterisk/confbridge.conf GENX_VICIDIAL_CONFBRIDGE <<EOF
-# BEGIN GENX_VICIDIAL_CONFBRIDGE
+; BEGIN GENX_VICIDIAL_CONFBRIDGE
 
 #include confbridge-vicidial.conf
-# END GENX_VICIDIAL_CONFBRIDGE
+; END GENX_VICIDIAL_CONFBRIDGE
 EOF
 fi # ROLE_TELEPHONY confbridge
 
@@ -2348,18 +2314,13 @@ Please Hold while I redirect you!
 WELCOME
 fix_vicidial_web_permissions
 
-#cd "$SCRIPT_DIR"
-#chmod +x confbridges.sh
-#./confbridges.sh
-
-
 chkconfig --list asterisk >/dev/null 2>&1 && chkconfig asterisk off || true
 
 ## add confcron user
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
 sed -i '/^\[confcron\]$/,/^eventfilter=Event: Confbridge$/d' /etc/asterisk/manager.conf 2>/dev/null || true
 replace_managed_block /etc/asterisk/manager.conf GENX_VICIDIAL_CONFCRON <<EOF
-# BEGIN GENX_VICIDIAL_CONFCRON
+; BEGIN GENX_VICIDIAL_CONFCRON
 
 [confcron]
 secret = $CRON_DB_PASS
@@ -2368,7 +2329,7 @@ write = command,reporting
 
 eventfilter=Event: Meetme
 eventfilter=Event: Confbridge
-# END GENX_VICIDIAL_CONFCRON
+; END GENX_VICIDIAL_CONFCRON
 EOF
 fi # ROLE_TELEPHONY confcron
 
