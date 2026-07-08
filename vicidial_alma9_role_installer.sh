@@ -35,6 +35,12 @@ VICIDIAL_ARCHIVE_DIR="${VICIDIAL_ARCHIVE_DIR:-}"
 VICIDIAL_ARCHIVE_URL="${VICIDIAL_ARCHIVE_URL:-http://}"
 ROLE_INSTALL_WEBRTC="${ROLE_INSTALL_WEBRTC:-yes}"
 ROLE_FIREWALL_ENABLED="${ROLE_FIREWALL_ENABLED:-yes}"
+CLUSTER_JOIN="${CLUSTER_JOIN:-no}"
+CLUSTER_DB_USER="${CLUSTER_DB_USER:-cron}"
+SLAVE_DB_USER="${SLAVE_DB_USER:-slave}"
+SLAVE_DB_PASS="${SLAVE_DB_PASS:-slave1234}"
+MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
+RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -102,25 +108,38 @@ choose_vicidial_roles() {
 
     echo
     echo "VICIdial role selection"
-    echo "1) Express/all-in-one: Database + Web + Telephony"
-    echo "2) Custom roles: choose Database, Web, Telephony, Archive"
+    echo "1) Express/all-in-one: Database + Web + Telephony (new system)"
+    echo "2) Custom roles for a NEW system: primary Database plus Web/Telephony/Archive"
+    echo "3) Add this server to an EXISTING cluster: Web, Telephony, Archive, Slave Database"
     read -p "Select install mode [1]: " role_choice
     role_choice="${role_choice:-1}"
 
     if [ "$role_choice" = "1" ]; then
         VICIDIAL_ROLE_MODE="express"
+        CLUSTER_JOIN="no"
         ROLE_DATABASE="yes"
         ROLE_WEB="yes"
         ROLE_TELEPHONY="yes"
         ROLE_ARCHIVE="no"
+        ROLE_DATABASE_SLAVE="no"
+    elif [ "$role_choice" = "3" ]; then
+        VICIDIAL_ROLE_MODE="join"
+        CLUSTER_JOIN="yes"
+        ROLE_DATABASE="no"
+        if yes_no "Will this server be a replication SLAVE database?" "no"; then ROLE_DATABASE_SLAVE="yes"; else ROLE_DATABASE_SLAVE="no"; fi
+        if yes_no "Will this server be used as a Web server?" "no"; then ROLE_WEB="yes"; else ROLE_WEB="no"; fi
+        if yes_no "Will this server be used as a Telephony server?" "no"; then ROLE_TELEPHONY="yes"; else ROLE_TELEPHONY="no"; fi
+        if yes_no "Will this server be used as an Archive server?" "no"; then ROLE_ARCHIVE="yes"; else ROLE_ARCHIVE="no"; fi
+        if [ "$ROLE_DATABASE_SLAVE" != "yes" ] && [ "$ROLE_WEB" != "yes" ] && [ "$ROLE_TELEPHONY" != "yes" ] && [ "$ROLE_ARCHIVE" != "yes" ]; then
+            echo "ERROR: At least one role must be selected."
+            exit 1
+        fi
+        return 0
     else
         VICIDIAL_ROLE_MODE="custom"
+        CLUSTER_JOIN="no"
+        ROLE_DATABASE_SLAVE="no"
         if yes_no "Will this server be used as the Database?" "no"; then ROLE_DATABASE="yes"; else ROLE_DATABASE="no"; fi
-        if [ "$ROLE_DATABASE" = "yes" ] && yes_no "Will this database be a replication slave?" "no"; then
-            ROLE_DATABASE_SLAVE="yes"
-        else
-            ROLE_DATABASE_SLAVE="no"
-        fi
         if yes_no "Will this server be used as a Web server?" "no"; then ROLE_WEB="yes"; else ROLE_WEB="no"; fi
         if yes_no "Will this server be used as a Telephony server?" "no"; then ROLE_TELEPHONY="yes"; else ROLE_TELEPHONY="no"; fi
         if yes_no "Will this server be used as an Archive server?" "no"; then ROLE_ARCHIVE="yes"; else ROLE_ARCHIVE="no"; fi
@@ -150,13 +169,14 @@ derive_role_settings() {
     fi
     if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
         VICIDIAL_DB_HOST="127.0.0.1"
-    else
+    elif [ "$CLUSTER_JOIN" != "yes" ]; then
         prompt VICIDIAL_DB_HOST "Primary database IP/host" "$VICIDIAL_DB_HOST"
     fi
 
     if [ "$ROLE_ARCHIVE" = "yes" ]; then
         VICIDIAL_ARCHIVE_HOST="$local_ip"
-        VICIDIAL_ARCHIVE_URL="http://${fqdn}/archive/"
+        VICIDIAL_ARCHIVE_URL="http://${fqdn}/archive/RECORDINGS/"
+        VICIDIAL_ARCHIVE_DIR="RECORDINGS"
     fi
 }
 
@@ -164,6 +184,15 @@ print_role_summary() {
     echo
     echo "--- VICIdial Role Install Summary ---"
     echo "Mode       : $VICIDIAL_ROLE_MODE"
+    if [ "$CLUSTER_JOIN" = "yes" ]; then
+        echo "Cluster DB : $VICIDIAL_DB_HOST:$VICIDIAL_DB_PORT ($VICIDIAL_DB_NAME as $CLUSTER_DB_USER)"
+        if [ "$ROLE_TELEPHONY" = "yes" ]; then
+            echo "Recordings : $RECORDINGS_STORAGE"
+        fi
+        if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+            echo "Slave srvid: $MYSQL_SLAVE_SERVER_ID"
+        fi
+    fi
     echo "Server ID  : $VICIDIAL_SERVER_ID"
     echo "Local IP   : $ip_address"
     echo "External IP: $VICIDIAL_EXTERNAL_IP"
@@ -288,16 +317,285 @@ validate_db_settings() {
 }
 
 validate_supported_role_set() {
+    if [ "$CLUSTER_JOIN" = "yes" ]; then
+        if [ "$ROLE_DATABASE" = "yes" ]; then
+            echo "ERROR: Cannot add another primary Database to an existing cluster. Use the slave-database role instead."
+            exit 1
+        fi
+        return 0
+    fi
     if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
-        echo "ERROR: Database-slave role is not implemented in this Alma9 role-aware installer yet."
-        echo "This first build supports primary-database installs only: Express, DB-only, DB+Web, DB+Telephony, and DB+Web+Telephony."
+        echo "ERROR: The slave-database role is only available when adding a server to an existing cluster (mode 3)."
         exit 1
     fi
     if [ "$ROLE_DATABASE" != "yes" ]; then
-        echo "ERROR: Remote-only Web/Telephony/Archive installs are not implemented in this Alma9 role-aware installer yet."
-        echo "This first build must include the primary Database role so it does not accidentally create or modify the wrong local DB."
+        echo "ERROR: A new system install must include the primary Database role."
+        echo "To add Web/Telephony/Archive servers to an existing cluster, rerun and choose mode 3 (join existing cluster)."
         exit 1
     fi
+}
+
+cluster_mysql_available() {
+    "${MYSQL[@]}" -Nse "SELECT 1;" >/dev/null 2>&1
+}
+
+connect_cluster_db() {
+    prompt VICIDIAL_DB_HOST "Existing cluster database IP/host" "$VICIDIAL_DB_HOST"
+    prompt VICIDIAL_DB_PORT "Cluster database port" "$VICIDIAL_DB_PORT"
+    prompt CLUSTER_DB_USER "Cluster database user" "$CLUSTER_DB_USER"
+    prompt_secret CRON_DB_PASS "Cluster database password for $CLUSTER_DB_USER (Enter for default $DEFAULT_CRON_DB_PASS)" "$DEFAULT_CRON_DB_PASS"
+    MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+
+    while ! cluster_mysql_available; do
+        echo "ERROR: Cannot connect to MySQL at $VICIDIAL_DB_HOST:$VICIDIAL_DB_PORT as $CLUSTER_DB_USER."
+        echo "Make sure this server's IP ($ip_address) is whitelisted on the cluster (ViciWhite IP list /"
+        echo "firewall) and that port $VICIDIAL_DB_PORT is reachable from here, then retry."
+        if ! yes_no "Retry the connection?" "yes"; then
+            exit 1
+        fi
+        prompt VICIDIAL_DB_HOST "Existing cluster database IP/host" "$VICIDIAL_DB_HOST"
+        prompt_secret CRON_DB_PASS "Cluster database password for $CLUSTER_DB_USER (Enter to keep previous)" "$CRON_DB_PASS"
+        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+    done
+    echo "Cluster database connection OK."
+}
+
+fetch_cluster_credentials() {
+    local row schema_ver
+    prompt VICIDIAL_DB_NAME "Cluster database name" "$VICIDIAL_DB_NAME"
+    validate_db_settings
+
+    row=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT field5, field7, field9 FROM vicibox WHERE server_type='Database' AND field3='local' ORDER BY server_id LIMIT 1;" 2>/dev/null | head -1) || true
+    if [ -n "$row" ]; then
+        IFS=$'\t' read -r CRON_DB_PASS CUSTOM_DB_PASS SLAVE_DB_PASS <<< "$row"
+        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+        if ! cluster_mysql_available; then
+            echo "ERROR: Credentials from the cluster vicibox registry no longer connect. Fix the registry or firewall and rerun."
+            exit 1
+        fi
+        echo "Loaded cron/custom/slave credentials from the cluster vicibox registry."
+    else
+        echo "WARNING: No vicibox registry row found on the cluster DB; keeping the entered cron password."
+        prompt_secret CUSTOM_DB_PASS "custom DB password for this cluster (Enter for default $DEFAULT_CUSTOM_DB_PASS)" "$DEFAULT_CUSTOM_DB_PASS"
+    fi
+
+    schema_ver=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT db_schema_version FROM system_settings LIMIT 1;" | tr -d '\r\n')
+    if [ -z "$schema_ver" ]; then
+        echo "ERROR: Could not read system_settings from the cluster database $VICIDIAL_DB_NAME."
+        exit 1
+    fi
+    echo "Cluster DB schema version: $schema_ver"
+    echo "NOTE: this installer checks out the latest VICIdial svn trunk. If the cluster runs an older"
+    echo "build, agent/admin code on this server may be newer than the cluster schema."
+}
+
+choose_recording_storage() {
+    local storage_input
+    if [ "$CLUSTER_JOIN" != "yes" ] || [ "$ROLE_TELEPHONY" != "yes" ]; then
+        return 0
+    fi
+    read -p "Store call recordings locally or send them to the cluster archive server? (local/archive) [local]: " storage_input
+    storage_input="${storage_input:-local}"
+    if [[ "$storage_input" =~ ^[Aa] ]]; then
+        RECORDINGS_STORAGE="archive"
+        fetch_archive_settings
+    else
+        RECORDINGS_STORAGE="local"
+    fi
+}
+
+fetch_archive_settings() {
+    local row
+    row=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip, field1, field2, field3, field4, field5 FROM vicibox WHERE server_type='Archive' ORDER BY server_id DESC LIMIT 1;" 2>/dev/null | head -1) || true
+    if [ -z "$row" ]; then
+        echo "ERROR: No Archive server is registered in this cluster (vicibox registry)."
+        echo "Build the archive server first, then rerun this install and choose archive recordings."
+        exit 1
+    fi
+    IFS=$'\t' read -r VICIDIAL_ARCHIVE_HOST VICIDIAL_ARCHIVE_USER VICIDIAL_ARCHIVE_PASS VICIDIAL_ARCHIVE_PORT VICIDIAL_ARCHIVE_DIR VICIDIAL_ARCHIVE_URL <<< "$row"
+    echo "Using cluster archive server ${VICIDIAL_ARCHIVE_HOST} (FTP ${VICIDIAL_ARCHIVE_USER}@${VICIDIAL_ARCHIVE_HOST}:${VICIDIAL_ARCHIVE_PORT}, dir '${VICIDIAL_ARCHIVE_DIR}', url ${VICIDIAL_ARCHIVE_URL})"
+}
+
+join_register_server() {
+    local server_name existing src_ip conf_src
+    local ast_active ast_ver agent_login gen_conf websock
+
+    server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-10)
+    if [ "$ROLE_TELEPHONY" = "yes" ]; then
+        ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"
+        websock="wss://${DOMAINNAME}:8089/ws"
+    else
+        ast_active="N"; ast_ver=""; agent_login="N"; gen_conf="N"; websock=""
+    fi
+
+    if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
+        existing=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT COUNT(*) FROM servers WHERE server_ip='${ip_address}';")
+        if [ "$existing" = "0" ]; then
+            src_ip=""
+            if [ "$ROLE_TELEPHONY" = "yes" ]; then
+                src_ip=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip FROM servers WHERE active_asterisk_server='Y' ORDER BY server_id LIMIT 1;")
+            fi
+            if [ -z "$src_ip" ]; then
+                src_ip=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip FROM servers ORDER BY server_id LIMIT 1;")
+            fi
+            if [ -z "$src_ip" ]; then
+                echo "ERROR: The cluster has no existing servers entry to use as a template."
+                exit 1
+            fi
+            "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<JOINSRV
+CREATE TEMPORARY TABLE _new_server AS SELECT * FROM servers WHERE server_ip='${src_ip}' LIMIT 1;
+UPDATE _new_server SET
+    server_id='${server_name}',
+    server_ip='${ip_address}',
+    server_description='${DOMAINNAME}',
+    alt_server_ip='${DOMAINNAME}',
+    active='Y',
+    active_asterisk_server='${ast_active}',
+    active_agent_login_server='${agent_login}',
+    asterisk_version='${ast_ver}',
+    generate_vicidial_conf='${gen_conf}',
+    rebuild_conf_files='${gen_conf}',
+    web_socket_url='${websock}';
+INSERT INTO servers SELECT * FROM _new_server;
+JOINSRV
+            echo "Registered server ${server_name} (${ip_address}) in the cluster (template: ${src_ip})."
+        else
+            echo "A servers entry for ${ip_address} already exists in the cluster; leaving it unchanged."
+        fi
+    fi
+
+    if [ "$ROLE_TELEPHONY" = "yes" ]; then
+        conf_src=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip FROM vicidial_confbridges WHERE server_ip<>'${ip_address}' GROUP BY server_ip ORDER BY COUNT(*) DESC LIMIT 1;")
+        if [ -z "$conf_src" ]; then
+            echo "ERROR: No existing server has vicidial_confbridges rows to copy conference ranges from."
+            exit 1
+        fi
+        # Conference tables key on (conf_exten, server_ip): each server reuses the same
+        # extension ranges under its own IP. INSERT IGNORE keeps reruns safe.
+        "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<JOINCONF
+CREATE TEMPORARY TABLE _c1 AS SELECT * FROM conferences WHERE server_ip='${conf_src}';
+UPDATE _c1 SET server_ip='${ip_address}', extension='';
+INSERT IGNORE INTO conferences SELECT * FROM _c1;
+CREATE TEMPORARY TABLE _c2 AS SELECT * FROM vicidial_conferences WHERE server_ip='${conf_src}';
+UPDATE _c2 SET server_ip='${ip_address}', extension='', leave_3way='0', leave_3way_datetime=NULL;
+INSERT IGNORE INTO vicidial_conferences SELECT * FROM _c2;
+CREATE TEMPORARY TABLE _c3 AS SELECT * FROM vicidial_confbridges WHERE server_ip='${conf_src}';
+UPDATE _c3 SET server_ip='${ip_address}', extension='', leave_3way='0', leave_3way_datetime=NULL;
+INSERT IGNORE INTO vicidial_confbridges SELECT * FROM _c3;
+CREATE TEMPORARY TABLE _p AS SELECT * FROM phones WHERE server_ip='${conf_src}' AND is_webphone='Y' LIMIT 1;
+UPDATE _p SET server_ip='${ip_address}';
+INSERT IGNORE INTO phones SELECT * FROM _p;
+JOINCONF
+        echo "Copied conference ranges and webphone template from ${conf_src} to ${ip_address}."
+    fi
+
+    "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "INSERT INTO vicidial_ip_list_entries (ip_list_id, ip_address) SELECT 'ViciWhite', '${ip_address}' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_ip_list_entries WHERE ip_list_id='ViciWhite' AND ip_address='${ip_address}');"
+}
+
+setup_database_slave() {
+    local MYSQL_LOCAL=(mysql -u root)
+    local dump_file=/usr/src/vicidial-cluster-dump.sql
+    local io_state sql_state
+
+    echo "Configuring this server as a MariaDB replication slave of $VICIDIAL_DB_HOST"
+
+    "${MYSQL_LOCAL[@]}" <<SLAVELOCAL
+CREATE DATABASE IF NOT EXISTS $VICIDIAL_DB_NAME DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci;
+CREATE USER IF NOT EXISTS 'cron'@'localhost' IDENTIFIED BY '$CRON_DB_PASS';
+CREATE USER IF NOT EXISTS 'cron'@'%' IDENTIFIED BY '$CRON_DB_PASS';
+CREATE USER IF NOT EXISTS 'custom'@'localhost' IDENTIFIED BY '$CUSTOM_DB_PASS';
+CREATE USER IF NOT EXISTS 'custom'@'%' IDENTIFIED BY '$CUSTOM_DB_PASS';
+ALTER USER IF EXISTS 'cron'@'localhost' IDENTIFIED BY '$CRON_DB_PASS';
+ALTER USER IF EXISTS 'cron'@'%' IDENTIFIED BY '$CRON_DB_PASS';
+ALTER USER IF EXISTS 'custom'@'localhost' IDENTIFIED BY '$CUSTOM_DB_PASS';
+ALTER USER IF EXISTS 'custom'@'%' IDENTIFIED BY '$CUSTOM_DB_PASS';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES,CREATE TEMPORARY TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'%';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES,CREATE TEMPORARY TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'localhost';
+GRANT RELOAD ON *.* TO 'cron'@'%';
+GRANT RELOAD ON *.* TO 'cron'@'localhost';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'custom'@'%';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'custom'@'localhost';
+FLUSH PRIVILEGES;
+SLAVELOCAL
+
+    echo "Setting replication master before import so the dump's binlog coordinates are kept..."
+    "${MYSQL_LOCAL[@]}" -e "STOP SLAVE;" 2>/dev/null || true
+    "${MYSQL_LOCAL[@]}" -e "CHANGE MASTER TO MASTER_HOST='$VICIDIAL_DB_HOST', MASTER_PORT=$VICIDIAL_DB_PORT, MASTER_USER='$SLAVE_DB_USER', MASTER_PASSWORD='$SLAVE_DB_PASS';"
+
+    echo "Dumping the cluster database from the master. This locks the master's MyISAM tables while it runs."
+    MYSQL_PWD="$SLAVE_DB_PASS" mysqldump -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$SLAVE_DB_USER" \
+        --master-data=1 --quick --add-drop-table "$VICIDIAL_DB_NAME" > "$dump_file"
+
+    echo "Importing dump into local MariaDB..."
+    "${MYSQL_LOCAL[@]}" "$VICIDIAL_DB_NAME" < "$dump_file"
+
+    "${MYSQL_LOCAL[@]}" -e "START SLAVE;"
+    sleep 5
+    io_state=$("${MYSQL_LOCAL[@]}" -e "SHOW SLAVE STATUS\G" | awk -F': ' '/Slave_IO_Running:/{print $2}' | tr -d ' ')
+    sql_state=$("${MYSQL_LOCAL[@]}" -e "SHOW SLAVE STATUS\G" | awk -F': ' '/Slave_SQL_Running:/{print $2}' | tr -d ' ')
+    if [ "$io_state" != "Yes" ] || [ "$sql_state" != "Yes" ]; then
+        echo "ERROR: Replication did not start (IO=$io_state SQL=$sql_state). Check SHOW SLAVE STATUS."
+        "${MYSQL_LOCAL[@]}" -e "SHOW SLAVE STATUS\G" | grep -E "Last_.*Error|Master_Host|Master_Log" || true
+        exit 1
+    fi
+    rm -f "$dump_file"
+    echo "Replication slave is running (IO=Yes SQL=Yes)."
+}
+
+setup_archive_server() {
+    dnf install -y vsftpd
+
+    if ! id "$VICIDIAL_ARCHIVE_USER" >/dev/null 2>&1; then
+        useradd -m -d /archive -s /sbin/nologin "$VICIDIAL_ARCHIVE_USER"
+    fi
+    grep -q '^/sbin/nologin$' /etc/shells || echo /sbin/nologin >> /etc/shells
+    echo "$VICIDIAL_ARCHIVE_USER:$VICIDIAL_ARCHIVE_PASS" | chpasswd
+
+    mkdir -p /archive/RECORDINGS/MP3 /archive/RECORDINGS/ORIG /archive/LOGS /archive/REPORTS
+    chown -R "$VICIDIAL_ARCHIVE_USER":"$VICIDIAL_ARCHIVE_USER" /archive
+    chmod 755 /archive
+    find /archive -type d -exec chmod 755 {} \;
+
+    [ -f /etc/vsftpd/vsftpd.conf.original ] || cp /etc/vsftpd/vsftpd.conf /etc/vsftpd/vsftpd.conf.original
+    cat > /etc/vsftpd/vsftpd.conf <<VSFTPDCONF
+anonymous_enable=NO
+local_enable=YES
+write_enable=YES
+local_umask=022
+dirmessage_enable=YES
+xferlog_enable=YES
+connect_from_port_20=YES
+xferlog_std_format=YES
+listen=YES
+listen_ipv6=NO
+pam_service_name=vsftpd
+userlist_enable=YES
+userlist_deny=YES
+chroot_local_user=YES
+allow_writeable_chroot=YES
+pasv_enable=YES
+pasv_min_port=10090
+pasv_max_port=10190
+seccomp_sandbox=NO
+VSFTPDCONF
+    systemctl enable vsftpd
+    systemctl restart vsftpd
+
+    replace_managed_block /etc/httpd/conf/httpd.conf GENX_VICIDIAL_ARCHIVE <<EOF
+# BEGIN GENX_VICIDIAL_ARCHIVE
+
+Alias /archive "/archive"
+
+<Directory "/archive">
+    Options Indexes MultiViews FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+
+# END GENX_VICIDIAL_ARCHIVE
+EOF
+    systemctl restart httpd
+    echo "Archive server ready: FTP ${VICIDIAL_ARCHIVE_USER}@${ip_address}:${VICIDIAL_ARCHIVE_PORT} dir='${VICIDIAL_ARCHIVE_DIR}' url=${VICIDIAL_ARCHIVE_URL}"
 }
 
 install_certbot_required() {
@@ -671,16 +969,23 @@ MYSQLVBOX
 register_vicibox_role() {
     local role=$1
     shift
-    local server_name server_ip sql
+    local server_name server_ip sql row_type
 
     server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-32)
     server_ip=$ip_address
+    row_type=$role
+    if [ "$role" = "DatabaseSlave" ]; then
+        row_type="Database"
+    fi
 
-    "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "DELETE FROM vicibox WHERE server_ip='${server_ip}' AND server_type='${role}';"
+    "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "DELETE FROM vicibox WHERE server_ip='${server_ip}' AND server_type='${row_type}';"
 
     case "$role" in
         Database)
-            sql="INSERT INTO vicibox (server, server_ip, server_type, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES ('${server_name}', '${server_ip}', 'Database', '0', '${VICIDIAL_DB_NAME}', 'local', 'cron', '${CRON_DB_PASS}', 'custom', '${CUSTOM_DB_PASS}', 'slave', 'slave1234');"
+            sql="INSERT INTO vicibox (server, server_ip, server_type, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES ('${server_name}', '${server_ip}', 'Database', '0', '${VICIDIAL_DB_NAME}', 'local', 'cron', '${CRON_DB_PASS}', 'custom', '${CUSTOM_DB_PASS}', 'slave', '${SLAVE_DB_PASS}');"
+            ;;
+        DatabaseSlave)
+            sql="INSERT INTO vicibox (server, server_ip, server_type, field1, field2, field3, field4, field5, field6, field7, field8, field9) VALUES ('${server_name}', '${server_ip}', 'Database', '${MYSQL_SLAVE_SERVER_ID}', '${VICIDIAL_DB_NAME}', 'slave', 'cron', '${CRON_DB_PASS}', 'custom', '${CUSTOM_DB_PASS}', 'slave', '${SLAVE_DB_PASS}');"
             ;;
         Web)
             sql="INSERT INTO vicibox (server, server_ip, server_type, field1, field2) VALUES ('${server_name}', '${server_ip}', 'Web', '${VICIDIAL_EXTERNAL_IP}', '');"
@@ -704,6 +1009,9 @@ register_selected_vicibox_roles() {
     ensure_vicibox_tracking_table
     if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
         register_vicibox_role Database
+    fi
+    if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+        register_vicibox_role DatabaseSlave
     fi
     if [ "$ROLE_WEB" = "yes" ]; then
         register_vicibox_role Web
@@ -774,23 +1082,43 @@ echo "**************************************************************************
 
 choose_vicidial_roles
 
-prompt_secret MYSQL_ROOT_PASS "MySQL root password, press Enter if root has no password" "${MYSQL_ROOT_PASS:-}"
+if [ "$CLUSTER_JOIN" = "yes" ]; then
+    # Joining servers never need the local MySQL root password: a fresh local
+    # MariaDB (slave role) has passwordless root, and all cluster access uses cron.
+    MYSQL_ROOT_PASS=""
+    connect_cluster_db
+    fetch_cluster_credentials
+    choose_recording_storage
+    if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+        prompt MYSQL_SLAVE_SERVER_ID "Unique MySQL replication server-id for this slave (master is 1)" "$MYSQL_SLAVE_SERVER_ID"
+        if [[ ! "$MYSQL_SLAVE_SERVER_ID" =~ ^[0-9]+$ ]] || [ "$MYSQL_SLAVE_SERVER_ID" -lt 2 ]; then
+            echo "ERROR: Slave server-id must be a number greater than 1."
+            exit 1
+        fi
+    fi
+else
+    prompt_secret MYSQL_ROOT_PASS "MySQL root password, press Enter if root has no password" "${MYSQL_ROOT_PASS:-}"
 
-if [ -z "${CRON_DB_PASS:-}" ] && [ -z "${CUSTOM_DB_PASS:-}" ]; then
-    read -p "Use default VICIdial DB passwords? cron/1234 and custom/custom1234 [yes]: " USE_DEFAULT_DB_PASS
-    USE_DEFAULT_DB_PASS="${USE_DEFAULT_DB_PASS:-yes}"
+    if [ -z "${CRON_DB_PASS:-}" ] && [ -z "${CUSTOM_DB_PASS:-}" ]; then
+        read -p "Use default VICIdial DB passwords? cron/1234 and custom/custom1234 [yes]: " USE_DEFAULT_DB_PASS
+        USE_DEFAULT_DB_PASS="${USE_DEFAULT_DB_PASS:-yes}"
 
-    if [[ "$USE_DEFAULT_DB_PASS" =~ ^[Yy] ]]; then
-        CRON_DB_PASS="$DEFAULT_CRON_DB_PASS"
-        CUSTOM_DB_PASS="$DEFAULT_CUSTOM_DB_PASS"
-    else
-        prompt_secret CRON_DB_PASS "Enter cron DB password" "$DEFAULT_CRON_DB_PASS"
-        prompt_secret CUSTOM_DB_PASS "Enter custom DB password" "$DEFAULT_CUSTOM_DB_PASS"
+        if [[ "$USE_DEFAULT_DB_PASS" =~ ^[Yy] ]]; then
+            CRON_DB_PASS="$DEFAULT_CRON_DB_PASS"
+            CUSTOM_DB_PASS="$DEFAULT_CUSTOM_DB_PASS"
+        else
+            prompt_secret CRON_DB_PASS "Enter cron DB password" "$DEFAULT_CRON_DB_PASS"
+            prompt_secret CUSTOM_DB_PASS "Enter custom DB password" "$DEFAULT_CUSTOM_DB_PASS"
+        fi
     fi
 fi
 
 CRON_DB_PASS="${CRON_DB_PASS:-$DEFAULT_CRON_DB_PASS}"
 CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
+
+if [ "$ROLE_ARCHIVE" = "yes" ]; then
+    prompt_secret VICIDIAL_ARCHIVE_PASS "FTP password for archive user $VICIDIAL_ARCHIVE_USER (Enter for default $VICIDIAL_ARCHIVE_PASS)" "$VICIDIAL_ARCHIVE_PASS"
+fi
 
 prompt DOMAINNAME "Domain name for SSL/WebRTC" "${DOMAINNAME:-$hostname}"
 validate_fqdn "$DOMAINNAME"
@@ -884,7 +1212,14 @@ sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd
 dnf install -y sqlite-devel httpd mod_ssl nano chkconfig htop atop mytop iftop
 dnf install -y libedit-devel uuid* libxml2* speex-devel speex* postfix dovecot s-nail inxi
 dnf install -y roundcubemail || true
-dnf install -y mariadb-server mariadb
+dnf install -y chrony
+systemctl enable chronyd
+systemctl start chronyd || true
+if [ "$ROLE_DATABASE" = "yes" ] || [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+    dnf install -y mariadb-server mariadb
+else
+    dnf install -y mariadb
+fi
 
 replace_managed_block /etc/php.ini GENX_VICIDIAL_PHP <<EOF
 ; BEGIN GENX_VICIDIAL_PHP
@@ -914,7 +1249,14 @@ dnf install sendmail -y
 systemctl start sendmail
 systemctl enable sendmail
 
+if [ "$ROLE_DATABASE" = "yes" ] || [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+
 systemctl enable mariadb
+
+MYSQL_SERVER_ID_VALUE=1
+if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+    MYSQL_SERVER_ID_VALUE=$MYSQL_SLAVE_SERVER_ID
+fi
 
 [ -f /etc/my.cnf.original ] || cp /etc/my.cnf /etc/my.cnf.original
 echo "" > /etc/my.cnf
@@ -950,7 +1292,7 @@ binlog_format=mixed
 binlog_direct_non_transactional_updates=1
 relay_log=/var/lib/mysql/mysql-relay-bin
 datadir = /var/lib/mysql
-server-id = 1 # Master should be 1, and all slaves should have a unique ID number
+server-id = ${MYSQL_SERVER_ID_VALUE} # Master should be 1, and all slaves should have a unique ID number
 slave-skip-errors = 1032,1690,1062
 slave_parallel_threads=20
 slave-parallel-mode=optimistic
@@ -1054,10 +1396,13 @@ touch /var/log/mysqld/slow-queries.log
 chown -R mysql:mysql /var/log/mysqld
 systemctl restart mariadb
 
-systemctl enable httpd.service
 systemctl enable mariadb.service
-systemctl restart httpd.service
 systemctl restart mariadb.service
+
+fi
+
+systemctl enable httpd.service
+systemctl restart httpd.service
 
 #Install Perl Modules
 
@@ -1075,6 +1420,8 @@ copy_asset cpm /usr/local/bin/cpm
 chmod +x /usr/local/bin/cpm
 /usr/local/bin/cpm install -g
 verify_required_perl_modules
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
 
 #Install Asterisk Perl
 cd /usr/src
@@ -1235,6 +1582,8 @@ sed -i 's|noload = chan_sip.so|;noload = chan_sip.so|g' /etc/asterisk/modules.co
 make -j ${JOBS} all
 make install
 
+fi # ROLE_TELEPHONY build
+
 #Install astguiclient
 echo "Installing astguiclient"
 rm -rf /usr/src/astguiclient
@@ -1245,6 +1594,8 @@ cd /usr/src/astguiclient/trunk
 
 #Add mysql users and Databases - rerun safe
 # This block is safe if the installer is run again on a server where the asterisk DB already exists.
+if [ "$CLUSTER_JOIN" != "yes" ]; then
+
 if [ -z "$MYSQL_ROOT_PASS" ]; then
     MYSQL=(mysql -u root)
 else
@@ -1257,18 +1608,22 @@ CREATE USER IF NOT EXISTS 'cron'@'localhost' IDENTIFIED BY '$CRON_DB_PASS';
 CREATE USER IF NOT EXISTS 'cron'@'%' IDENTIFIED BY '$CRON_DB_PASS';
 CREATE USER IF NOT EXISTS 'custom'@'localhost' IDENTIFIED BY '$CUSTOM_DB_PASS';
 CREATE USER IF NOT EXISTS 'custom'@'%' IDENTIFIED BY '$CUSTOM_DB_PASS';
+CREATE USER IF NOT EXISTS '$SLAVE_DB_USER'@'%' IDENTIFIED BY '$SLAVE_DB_PASS';
 ALTER USER IF EXISTS 'cron'@'localhost' IDENTIFIED BY '$CRON_DB_PASS';
 ALTER USER IF EXISTS 'cron'@'%' IDENTIFIED BY '$CRON_DB_PASS';
 ALTER USER IF EXISTS 'custom'@'localhost' IDENTIFIED BY '$CUSTOM_DB_PASS';
 ALTER USER IF EXISTS 'custom'@'%' IDENTIFIED BY '$CUSTOM_DB_PASS';
-GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'%';
-GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'localhost';
+ALTER USER IF EXISTS '$SLAVE_DB_USER'@'%' IDENTIFIED BY '$SLAVE_DB_PASS';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES,CREATE TEMPORARY TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'%';
+GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES,CREATE TEMPORARY TABLES on $VICIDIAL_DB_NAME.* TO 'cron'@'localhost';
 GRANT RELOAD ON *.* TO 'cron'@'%';
 GRANT RELOAD ON *.* TO 'cron'@'localhost';
 GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'custom'@'%';
 GRANT SELECT,CREATE,ALTER,INSERT,UPDATE,DELETE,LOCK TABLES on $VICIDIAL_DB_NAME.* TO 'custom'@'localhost';
 GRANT RELOAD ON *.* TO 'custom'@'%';
 GRANT RELOAD ON *.* TO 'custom'@'localhost';
+GRANT SELECT,LOCK TABLES ON $VICIDIAL_DB_NAME.* TO '$SLAVE_DB_USER'@'%';
+GRANT RELOAD, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '$SLAVE_DB_USER'@'%';
 FLUSH PRIVILEGES;
 SET GLOBAL connect_timeout=60;
 MYSQLCREOF
@@ -1282,12 +1637,20 @@ else
     echo "Existing asterisk DB detected. Skipping VICIdial schema import for rerun safety."
 fi
 
-"${MYSQL[@]}" -e "USE asterisk; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
+"${MYSQL[@]}" -e "USE $VICIDIAL_DB_NAME; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
 secure_vicidial_default_passwords
 apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 
+elif [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+    setup_database_slave
+fi
+
 #Get astguiclient.conf file
-cat <<ASTGUI>> /etc/astguiclient.conf
+ASTGUI_DB_SERVER=$VICIDIAL_DB_HOST
+if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
+    ASTGUI_DB_SERVER=localhost
+fi
+cat <<ASTGUI> /etc/astguiclient.conf
 # astguiclient.conf - configuration elements for the astguiclient package
 # this is the astguiclient configuration file
 # all comments will be lost if you run install.pl again
@@ -1305,13 +1668,13 @@ PATHDONEmonitor => /var/spool/asterisk/monitorDONE
 VARserver_ip => SERVERIP
 
 # Database connection information
-VARDB_server => localhost
+VARDB_server => $ASTGUI_DB_SERVER
 VARDB_database => $VICIDIAL_DB_NAME
 VARDB_user => cron
 VARDB_pass => $CRON_DB_PASS
 VARDB_custom_user => custom
 VARDB_custom_pass => $CUSTOM_DB_PASS
-VARDB_port => 3306
+VARDB_port => $VICIDIAL_DB_PORT
 
 # Alpha-Numeric list of the astGUIclient processes to be kept running
 # (value should be listing of characters with no spaces: 123456)
@@ -1327,7 +1690,7 @@ VARDB_port => 3306
 #  9 - Timeclock auto logout
 #  E - Email processor, (If multi-server system, this must only be on one server)
 #  S - SIP Logger (Patched Asterisk 13 required)
-VARactive_keepalives => 123456789ECS
+VARactive_keepalives => $(role_active_keepalives)
 
 # Asterisk version VICIDIAL is installed for
 VARasterisk_version => 18.X
@@ -1367,15 +1730,20 @@ sed -i s/SERVERIP/"$ip_address"/g /etc/astguiclient.conf
 
 echo "Install VICIDIAL"
 run_vicidial_install_pl yes
-apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
+if [ "$CLUSTER_JOIN" != "yes" ]; then
+    apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
+fi
 fix_vicidial_web_permissions
 configure_agc_options
 
-#Secure Manager 
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+#Secure Manager
 sed -i s/0.0.0.0/127.0.0.1/g /etc/asterisk/manager.conf
 
 sed -i '$ a\ noload => res_timing_timerfd.so\ noload => res_timing_kqueue.so\ noload => res_timing_pthread.so' /etc/asterisk/modules.conf
+fi # ROLE_TELEPHONY manager config
 
+if [ "$CLUSTER_JOIN" != "yes" ]; then
 #Add confbridge conferences to asterisk DB
 "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; INSERT IGNORE INTO vicidial_confbridges VALUES (9600000,'$OLD_SERVER_IP','','0',NULL),(9600001,'$OLD_SERVER_IP','','0',NULL),(9600002,'$OLD_SERVER_IP','','0',NULL),(9600003,'$OLD_SERVER_IP','','0',NULL),(9600004,'$OLD_SERVER_IP','','0',NULL),(9600005,'$OLD_SERVER_IP','','0',NULL),(9600006,'$OLD_SERVER_IP','','0',NULL),(9600007,'$OLD_SERVER_IP','','0',NULL),(9600008,'$OLD_SERVER_IP','','0',NULL),(9600009,'$OLD_SERVER_IP','','0',NULL),(9600010,'$OLD_SERVER_IP','','0',NULL),(9600011,'$OLD_SERVER_IP','','0',NULL),(9600012,'$OLD_SERVER_IP','','0',NULL),(9600013,'$OLD_SERVER_IP','','0',NULL),(9600014,'$OLD_SERVER_IP','','0',NULL),(9600015,'$OLD_SERVER_IP','','0',NULL),(9600016,'$OLD_SERVER_IP','','0',NULL),(9600017,'$OLD_SERVER_IP','','0',NULL),(9600018,'$OLD_SERVER_IP','','0',NULL),(9600019,'$OLD_SERVER_IP','','0',NULL),(9600020,'$OLD_SERVER_IP','','0',NULL),(9600021,'$OLD_SERVER_IP','','0',NULL),(9600022,'$OLD_SERVER_IP','','0',NULL),(9600023,'$OLD_SERVER_IP','','0',NULL),(9600024,'$OLD_SERVER_IP','','0',NULL),(9600025,'$OLD_SERVER_IP','','0',NULL),(9600026,'$OLD_SERVER_IP','','0',NULL),(9600027,'$OLD_SERVER_IP','','0',NULL),(9600028,'$OLD_SERVER_IP','','0',NULL),(9600029,'$OLD_SERVER_IP','','0',NULL),(9600030,'$OLD_SERVER_IP','','0',NULL),(9600031,'$OLD_SERVER_IP','','0',NULL),(9600032,'$OLD_SERVER_IP','','0',NULL),(9600033,'$OLD_SERVER_IP','','0',NULL),(9600034,'$OLD_SERVER_IP','','0',NULL),(9600035,'$OLD_SERVER_IP','','0',NULL),(9600036,'$OLD_SERVER_IP','','0',NULL),(9600037,'$OLD_SERVER_IP','','0',NULL),(9600038,'$OLD_SERVER_IP','','0',NULL),(9600039,'$OLD_SERVER_IP','','0',NULL),(9600040,'$OLD_SERVER_IP','','0',NULL),(9600041,'$OLD_SERVER_IP','','0',NULL),(9600042,'$OLD_SERVER_IP','','0',NULL),(9600043,'$OLD_SERVER_IP','','0',NULL),(9600044,'$OLD_SERVER_IP','','0',NULL),(9600045,'$OLD_SERVER_IP','','0',NULL),(9600046,'$OLD_SERVER_IP','','0',NULL),(9600047,'$OLD_SERVER_IP','','0',NULL),(9600048,'$OLD_SERVER_IP','','0',NULL),(9600049,'$OLD_SERVER_IP','','0',NULL),(9600050,'$OLD_SERVER_IP','','0',NULL),(9600051,'$OLD_SERVER_IP','','0',NULL),(9600052,'$OLD_SERVER_IP','','0',NULL),(9600054,'$OLD_SERVER_IP','','0',NULL),(9600055,'$OLD_SERVER_IP','','0',NULL),(9600056,'$OLD_SERVER_IP','','0',NULL),(9600057,'$OLD_SERVER_IP','','0',NULL),(9600058,'$OLD_SERVER_IP','','0',NULL),(9600059,'$OLD_SERVER_IP','','0',NULL),(9600060,'$OLD_SERVER_IP','','0',NULL),(9600061,'$OLD_SERVER_IP','','0',NULL),
 (9600062,'$OLD_SERVER_IP','','0',NULL),(9600063,'$OLD_SERVER_IP','','0',NULL),(9600064,'$OLD_SERVER_IP','','0',NULL),(9600065,'$OLD_SERVER_IP','','0',NULL),(9600066,'$OLD_SERVER_IP','','0',NULL),(9600067,'$OLD_SERVER_IP','','0',NULL),(9600068,'$OLD_SERVER_IP','','0',NULL),(9600069,'$OLD_SERVER_IP','','0',NULL),(9600070,'$OLD_SERVER_IP','','0',NULL),(9600071,'$OLD_SERVER_IP','','0',NULL),(9600072,'$OLD_SERVER_IP','','0',NULL),(9600073,'$OLD_SERVER_IP','','0',NULL),(9600074,'$OLD_SERVER_IP','','0',NULL),(9600075,'$OLD_SERVER_IP','','0',NULL),(9600076,'$OLD_SERVER_IP','','0',NULL),(9600077,'$OLD_SERVER_IP','','0',NULL),(9600078,'$OLD_SERVER_IP','','0',NULL),(9600079,'$OLD_SERVER_IP','','0',NULL),(9600080,'$OLD_SERVER_IP','','0',NULL),(9600081,'$OLD_SERVER_IP','','0',NULL),(9600082,'$OLD_SERVER_IP','','0',NULL),(9600083,'$OLD_SERVER_IP','','0',NULL),(9600084,'$OLD_SERVER_IP','','0',NULL),(9600085,'$OLD_SERVER_IP','','0',NULL),(9600086,'$OLD_SERVER_IP','','0',NULL),(9600087,'$OLD_SERVER_IP','','0',NULL),(9600088,'$OLD_SERVER_IP','','0',NULL),(9600089,'$OLD_SERVER_IP','','0',NULL),(9600090,'$OLD_SERVER_IP','','0',NULL),(9600091,'$OLD_SERVER_IP','','0',NULL),(9600092,'$OLD_SERVER_IP','','0',NULL),(9600093,'$OLD_SERVER_IP','','0',NULL),(9600094,'$OLD_SERVER_IP','','0',NULL),(9600095,'$OLD_SERVER_IP','','0',NULL),(9600096,'$OLD_SERVER_IP','','0',NULL),(9600097,'$OLD_SERVER_IP','','0',NULL),(9600098,'$OLD_SERVER_IP','','0',NULL),(9600099,'$OLD_SERVER_IP','','0',NULL),(9600100,'$OLD_SERVER_IP','','0',NULL),(9600101,'$OLD_SERVER_IP','','0',NULL),(9600102,'$OLD_SERVER_IP','','0',NULL),(9600103,'$OLD_SERVER_IP','','0',NULL),(9600104,'$OLD_SERVER_IP','','0',NULL),(9600105,'$OLD_SERVER_IP','','0',NULL),(9600106,'$OLD_SERVER_IP','','0',NULL),(9600107,'$OLD_SERVER_IP','','0',NULL),(9600108,'$OLD_SERVER_IP','','0',NULL),(9600109,'$OLD_SERVER_IP','','0',NULL),(9600110,'$OLD_SERVER_IP','','0',NULL),(9600111,'$OLD_SERVER_IP','','0',NULL),(9600112,'$OLD_SERVER_IP','','0',NULL),(9600113,'$OLD_SERVER_IP','','0',NULL),(9600114,'$OLD_SERVER_IP','','0',NULL),(9600115,'$OLD_SERVER_IP','','0',NULL),(9600116,'$OLD_SERVER_IP','','0',NULL),(9600117,'$OLD_SERVER_IP','','0',NULL),(9600118,'$OLD_SERVER_IP','','0',NULL),(9600119,'$OLD_SERVER_IP','','0',NULL),(9600120,'$OLD_SERVER_IP','','0',NULL),(9600121,'$OLD_SERVER_IP','','0',NULL),(9600122,'$OLD_SERVER_IP','','0',NULL),(9600123,'$OLD_SERVER_IP','','0',NULL),(9600124,'$OLD_SERVER_IP','','0',NULL),(9600125,'$OLD_SERVER_IP','','0',NULL),(9600126,'$OLD_SERVER_IP','','0',NULL),(9600127,'$OLD_SERVER_IP','','0',NULL),(9600128,'$OLD_SERVER_IP','','0',NULL),(9600129,'$OLD_SERVER_IP','','0',NULL),(9600130,'$OLD_SERVER_IP','','0',NULL),(9600131,'$OLD_SERVER_IP','','0',NULL),(9600132,'$OLD_SERVER_IP','','0',NULL),(9600133,'$OLD_SERVER_IP','','0',NULL),(9600134,'$OLD_SERVER_IP','','0',NULL),(9600135,'$OLD_SERVER_IP','','0',NULL),(9600136,'$OLD_SERVER_IP','','0',NULL),(9600137,'$OLD_SERVER_IP','','0',NULL),(9600138,'$OLD_SERVER_IP','','0',NULL),(9600139,'$OLD_SERVER_IP','','0',NULL),(9600140,'$OLD_SERVER_IP','','0',NULL),(9600141,'$OLD_SERVER_IP','','0',NULL),(9600142,'$OLD_SERVER_IP','','0',NULL),(9600143,'$OLD_SERVER_IP','','0',NULL),(9600144,'$OLD_SERVER_IP','','0',NULL),(9600145,'$OLD_SERVER_IP','','0',NULL),(9600146,'$OLD_SERVER_IP','','0',NULL),(9600147,'$OLD_SERVER_IP','','0',NULL),(9600148,'$OLD_SERVER_IP','','0',NULL),(9600149,'$OLD_SERVER_IP','','0',NULL),(9600150,'$OLD_SERVER_IP','','0',NULL),(9600151,'$OLD_SERVER_IP','','0',NULL),(9600152,'$OLD_SERVER_IP','','0',NULL),(9600153,'$OLD_SERVER_IP','','0',NULL),(9600154,'$OLD_SERVER_IP','','0',NULL),(9600155,'$OLD_SERVER_IP','','0',NULL),(9600156,'$OLD_SERVER_IP','','0',NULL),(9600157,'$OLD_SERVER_IP','','0',NULL),(9600158,'$OLD_SERVER_IP','','0',NULL),(9600159,'$OLD_SERVER_IP','','0',NULL),(9600160,'$OLD_SERVER_IP','','0',NULL),(9600161,'$OLD_SERVER_IP','','0',NULL),(9600162,'$OLD_SERVER_IP','','0',NULL),(9600163,'$OLD_SERVER_IP','','0',NULL),(9600164,'$OLD_SERVER_IP','','0',NULL),(9600165,'$OLD_SERVER_IP','','0',NULL),(9600166,'$OLD_SERVER_IP','','0',NULL),(9600167,'$OLD_SERVER_IP','','0',NULL),(9600168,'$OLD_SERVER_IP','','0',NULL),(9600169,'$OLD_SERVER_IP','','0',NULL),(9600170,'$OLD_SERVER_IP','','0',NULL),(9600171,'$OLD_SERVER_IP','','0',NULL),(9600172,'$OLD_SERVER_IP','','0',NULL),(9600173,'$OLD_SERVER_IP','','0',NULL),(9600174,'$OLD_SERVER_IP','','0',NULL),(9600175,'$OLD_SERVER_IP','','0',NULL),(9600176,'$OLD_SERVER_IP','','0',NULL),(9600177,'$OLD_SERVER_IP','','0',NULL),(9600178,'$OLD_SERVER_IP','','0',NULL),(9600179,'$OLD_SERVER_IP','','0',NULL),(9600180,'$OLD_SERVER_IP','','0',NULL),(9600181,'$OLD_SERVER_IP','','0',NULL),(9600182,'$OLD_SERVER_IP','','0',NULL),(9600183,'$OLD_SERVER_IP','','0',NULL),(9600184,'$OLD_SERVER_IP','','0',NULL),(9600185,'$OLD_SERVER_IP','','0',NULL),(9600186,'$OLD_SERVER_IP','','0',NULL),(9600187,'$OLD_SERVER_IP','','0',NULL),(9600188,'$OLD_SERVER_IP','','0',NULL),(9600189,'$OLD_SERVER_IP','','0',NULL),(9600190,'$OLD_SERVER_IP','','0',NULL),(9600191,'$OLD_SERVER_IP','','0',NULL),(9600192,'$OLD_SERVER_IP','','0',NULL),(9600193,'$OLD_SERVER_IP','','0',NULL),(9600194,'$OLD_SERVER_IP','','0',NULL),(9600195,'$OLD_SERVER_IP','','0',NULL),(9600196,'$OLD_SERVER_IP','','0',NULL),(9600197,'$OLD_SERVER_IP','','0',NULL),(9600198,'$OLD_SERVER_IP','','0',NULL),(9600199,'$OLD_SERVER_IP','','0',NULL),(9600200,'$OLD_SERVER_IP','','0',NULL),(9600201,'$OLD_SERVER_IP','','0',NULL),(9600202,'$OLD_SERVER_IP','','0',NULL),(9600203,'$OLD_SERVER_IP','','0',NULL),(9600204,'$OLD_SERVER_IP','','0',NULL),(9600205,'$OLD_SERVER_IP','','0',NULL),(9600206,'$OLD_SERVER_IP','','0',NULL),(9600207,'$OLD_SERVER_IP','','0',NULL),(9600208,'$OLD_SERVER_IP','','0',NULL),(9600209,'$OLD_SERVER_IP','','0',NULL),(9600210,'$OLD_SERVER_IP','','0',NULL),(9600211,'$OLD_SERVER_IP','','0',NULL),(9600212,'$OLD_SERVER_IP','','0',NULL),(9600213,'$OLD_SERVER_IP','','0',NULL),(9600214,'$OLD_SERVER_IP','','0',NULL),(9600215,'$OLD_SERVER_IP','','0',NULL),(9600216,'$OLD_SERVER_IP','','0',NULL),(9600217,'$OLD_SERVER_IP','','0',NULL),(9600218,'$OLD_SERVER_IP','','0',NULL),(9600219,'$OLD_SERVER_IP','','0',NULL),(9600220,'$OLD_SERVER_IP','','0',NULL),(9600221,'$OLD_SERVER_IP','','0',NULL),(9600222,'$OLD_SERVER_IP','','0',NULL),(9600223,'$OLD_SERVER_IP','','0',NULL),(9600224,'$OLD_SERVER_IP','','0',NULL),(9600225,'$OLD_SERVER_IP','','0',NULL),(9600226,'$OLD_SERVER_IP','','0',NULL),(9600227,'$OLD_SERVER_IP','','0',NULL),(9600228,'$OLD_SERVER_IP','','0',NULL),(9600229,'$OLD_SERVER_IP','','0',NULL),(9600230,'$OLD_SERVER_IP','','0',NULL),(9600231,'$OLD_SERVER_IP','','0',NULL),(9600232,'$OLD_SERVER_IP','','0',NULL),(9600233,'$OLD_SERVER_IP','','0',NULL),(9600234,'$OLD_SERVER_IP','','0',NULL),(9600235,'$OLD_SERVER_IP','','0',NULL),(9600236,'$OLD_SERVER_IP','','0',NULL),(9600237,'$OLD_SERVER_IP','','0',NULL),(9600238,'$OLD_SERVER_IP','','0',NULL),(9600239,'$OLD_SERVER_IP','','0',NULL),(9600240,'$OLD_SERVER_IP','','0',NULL),(9600241,'$OLD_SERVER_IP','','0',NULL),(9600242,'$OLD_SERVER_IP','','0',NULL),(9600243,'$OLD_SERVER_IP','','0',NULL),(9600244,'$OLD_SERVER_IP','','0',NULL),(9600245,'$OLD_SERVER_IP','','0',NULL),(9600246,'$OLD_SERVER_IP','','0',NULL),(9600247,'$OLD_SERVER_IP','','0',NULL),(9600248,'$OLD_SERVER_IP','','0',NULL),(9600249,'$OLD_SERVER_IP','','0',NULL),(9600250,'$OLD_SERVER_IP','','0',NULL),(9600251,'$OLD_SERVER_IP','','0',NULL),(9600252,'$OLD_SERVER_IP','','0',NULL),(9600253,'$OLD_SERVER_IP','','0',NULL),(9600254,'$OLD_SERVER_IP','','0',NULL),(9600255,'$OLD_SERVER_IP','','0',NULL),(9600256,'$OLD_SERVER_IP','','0',NULL),(9600257,'$OLD_SERVER_IP','','0',NULL),(9600258,'$OLD_SERVER_IP','','0',NULL),(9600259,'$OLD_SERVER_IP','','0',NULL),(9600260,'$OLD_SERVER_IP','','0',NULL),(9600261,'$OLD_SERVER_IP','','0',NULL),(9600262,'$OLD_SERVER_IP','','0',NULL),(9600263,'$OLD_SERVER_IP','','0',NULL),(9600264,'$OLD_SERVER_IP','','0',NULL),(9600265,'$OLD_SERVER_IP','','0',NULL),(9600266,'$OLD_SERVER_IP','','0',NULL),(9600267,'$OLD_SERVER_IP','','0',NULL),(9600268,'$OLD_SERVER_IP','','0',NULL),(9600269,'$OLD_SERVER_IP','','0',NULL),(9600270,'$OLD_SERVER_IP','','0',NULL),(9600271,'$OLD_SERVER_IP','','0',NULL),(9600272,'$OLD_SERVER_IP','','0',NULL),(9600273,'$OLD_SERVER_IP','','0',NULL),(9600274,'$OLD_SERVER_IP','','0',NULL),(9600275,'$OLD_SERVER_IP','','0',NULL),(9600276,'$OLD_SERVER_IP','','0',NULL),(9600277,'$OLD_SERVER_IP','','0',NULL),(9600278,'$OLD_SERVER_IP','','0',NULL),(9600279,'$OLD_SERVER_IP','','0',NULL),(9600280,'$OLD_SERVER_IP','','0',NULL),(9600281,'$OLD_SERVER_IP','','0',NULL),(9600282,'$OLD_SERVER_IP','','0',NULL),(9600283,'$OLD_SERVER_IP','','0',NULL),(9600284,'$OLD_SERVER_IP','','0',NULL),(9600285,'$OLD_SERVER_IP','','0',NULL),(9600286,'$OLD_SERVER_IP','','0',NULL),(9600287,'$OLD_SERVER_IP','','0',NULL),(9600288,'$OLD_SERVER_IP','','0',NULL),(9600289,'$OLD_SERVER_IP','','0',NULL),(9600290,'$OLD_SERVER_IP','','0',NULL),(9600291,'$OLD_SERVER_IP','','0',NULL),(9600292,'$OLD_SERVER_IP','','0',NULL),(9600293,'$OLD_SERVER_IP','','0',NULL),(9600294,'$OLD_SERVER_IP','','0',NULL),(9600295,'$OLD_SERVER_IP','','0',NULL),(9600296,'$OLD_SERVER_IP','','0',NULL),(9600297,'$OLD_SERVER_IP','','0',NULL),(9600298,'$OLD_SERVER_IP','','0',NULL),(9600299,'$OLD_SERVER_IP','','0',NULL);"
@@ -1391,33 +1759,61 @@ echo "Replacing default VICIdial IP $OLD_SERVER_IP with current server IP $ip_ad
 
 run_vicidial_install_pl no
 
+else
+    join_register_server
+fi
+
 configure_pjsip_external_ip "$ip_address"
 install_audio_store_directory_helper
 
-#Install Crontab
+#Install Crontab (assembled per selected roles)
 cat <<CRONTAB > /root/crontab-file
+
+### keepalive script for astguiclient processes
+* * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl --cu3way
+
+## adjust time on the server with ntp
+#30 * * * * /usr/sbin/ntpdate -u pool.ntp.org 2>/dev/null 1>&amp;2
+
+### remove old vicidial logs and asterisk logs more than 2 days old
+28 0 * * * /usr/bin/find /var/log/astguiclient -maxdepth 1 -type f -mtime +2 -print | xargs rm -f
+29 0 * * * /usr/bin/find /var/log/asterisk -maxdepth 3 -type f -mtime +2 -print | xargs rm -f
+30 0 * * * /usr/bin/find / -maxdepth 1 -name "screenlog.0*" -mtime +4 -print | xargs rm -f
+CRONTAB
+
+if [ "$ROLE_WEB" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
+cat <<CRONTAB >> /root/crontab-file
 
 ### VICIDIAL audio-store web directory helper
 * * * * * /usr/local/bin/vicidial-audio-store-dir >/dev/null 2>&1
 
 ###Audio Sync quarter-hourly
 1,16,31,46 * * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl --upload --quiet
+CRONTAB
+fi
 
-### Daily Backups ###
-0 2 * * * /usr/share/astguiclient/ADMIN_backup.pl
+if [ "$ROLE_INSTALL_WEBRTC" = "yes" ]; then
+cat <<CRONTAB >> /root/crontab-file
 
 ###certbot renew
 @weekly $SCRIPT_DIR/certbot.sh
+CRONTAB
+fi
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+# The FTP-to-archive crons are enabled only when this server ships recordings to a cluster archive.
+FTP_CRON_PREFIX="#"
+if [ "$RECORDINGS_STORAGE" = "archive" ]; then
+    FTP_CRON_PREFIX=""
+fi
+cat <<CRONTAB >> /root/crontab-file
 
 ### recording mixing/compressing/ftping scripts
 #0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_mix.pl
 0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_mix.pl --MIX
 0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_VDonly.pl
 1,4,7,10,13,16,19,22,25,28,31,34,37,40,43,46,49,52,55,58 * * * * /usr/share/astguiclient/AST_CRON_audio_2_compress.pl --MP3 --HTTPS
-#2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * * * /usr/share/astguiclient/AST_CRON_audio_3_ftp.pl --MP3 --nodatedir --ftp-validate
-
-### keepalive script for astguiclient processes
-* * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl --cu3way
+${FTP_CRON_PREFIX}2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * * * /usr/share/astguiclient/AST_CRON_audio_3_ftp.pl --MP3 --nodatedir --ftp-validate
 
 ### kill Hangup script for Asterisk updaters
 * * * * * /usr/share/astguiclient/AST_manager_kill_hung_congested.pl
@@ -1427,6 +1823,24 @@ cat <<CRONTAB > /root/crontab-file
 
 ### updater for conference validator
 * * * * * /usr/share/astguiclient/AST_conf_update.pl --no-vc-3way-check
+
+### remove old recordings
+#24 0 * * * /usr/bin/find /var/spool/asterisk/monitorDONE -maxdepth 2 -type f -mtime +7 -print | xargs rm -f
+#26 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/MP3 -maxdepth 2 -type f -mtime +65 -print | xargs rm -f
+${FTP_CRON_PREFIX}25 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/FTP -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
+24 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/ORIG -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
+
+### Daily Reboot
+#30 6 * * * /sbin/reboot
+CRONTAB
+fi
+
+if [ "$CLUSTER_JOIN" != "yes" ]; then
+# Cluster-singleton database/reporting jobs: run only on the primary-DB build.
+cat <<CRONTAB >> /root/crontab-file
+
+### Daily Backups ###
+0 2 * * * /usr/share/astguiclient/ADMIN_backup.pl
 
 ### flush queue DB table every hour for entries older than 1 hour
 11 * * * * /usr/share/astguiclient/AST_flush_DBqueue.pl -q
@@ -1453,9 +1867,6 @@ cat <<CRONTAB > /root/crontab-file
 ### optimize the database tables within the asterisk database
 3 1 * * * /usr/share/astguiclient/AST_DB_optimize.pl
 
-## adjust time on the server with ntp
-#30 * * * * /usr/sbin/ntpdate -u pool.ntp.org 2>/dev/null 1>&amp;2
-
 ### VICIDIAL agent time log weekly and daily summary report generation
 2 0 * * 0 /usr/share/astguiclient/AST_agent_week.pl
 22 0 * * * /usr/share/astguiclient/AST_agent_day.pl
@@ -1464,20 +1875,8 @@ cat <<CRONTAB > /root/crontab-file
 #32 0 * * * /usr/share/astguiclient/AST_VDsales_export.pl
 #42 0 * * * /usr/share/astguiclient/AST_sourceID_summary_export.pl
 
-### remove old recordings
-#24 0 * * * /usr/bin/find /var/spool/asterisk/monitorDONE -maxdepth 2 -type f -mtime +7 -print | xargs rm -f
-#26 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/MP3 -maxdepth 2 -type f -mtime +65 -print | xargs rm -f
-#25 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/FTP -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
-24 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/ORIG -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
-
-
 ### roll logs monthly on high-volume dialing systems
 30 1 1 * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --DAYS=45
-
-### remove old vicidial logs and asterisk logs more than 2 days old
-28 0 * * * /usr/bin/find /var/log/astguiclient -maxdepth 1 -type f -mtime +2 -print | xargs rm -f
-29 0 * * * /usr/bin/find /var/log/asterisk -maxdepth 3 -type f -mtime +2 -print | xargs rm -f
-30 0 * * * /usr/bin/find / -maxdepth 1 -name "screenlog.0*" -mtime +4 -print | xargs rm -f
 
 ### cleanup of the scheduled callback records
 25 0 * * * /usr/share/astguiclient/AST_DB_dead_cb_purge.pl --purge-non-cb -q
@@ -1491,11 +1890,15 @@ cat <<CRONTAB > /root/crontab-file
 ### inbound email parser
 * * * * * /usr/share/astguiclient/AST_inbound_email_parser.pl
 
-### Daily Reboot
-#30 6 * * * /sbin/reboot
+### url log delete
+30 23 * * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --url-log-only --url-log-days=30
 
 ######TILTIX GARBAGE FILES DELETE
 #00 22 * * * root cd /tmp/ && find . -name '*TILTXtmp*' -type f -delete
+CRONTAB
+fi
+
+cat <<CRONTAB >> /root/crontab-file
 
 ### Dynportal
 @reboot /usr/bin/VB-firewall --whitelist=ViciWhite --dynamic --quiet
@@ -1506,23 +1909,15 @@ cat <<CRONTAB > /root/crontab-file
 * * * * * sleep 40; /usr/bin/VB-firewall --white --dynamic --quiet
 * * * * * sleep 50; /usr/bin/VB-firewall --white --dynamic --quiet
 
-### url log delete
-30 23 * * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --url-log-only --url-log-days=30
-
 CRONTAB
 
 crontab /root/crontab-file
 crontab -l
 
-#Install rc.local
+#Install rc.local (assembled per selected roles)
 
 cat > /etc/rc.d/rc.local <<EOF
 #!/bin/bash
-
-
-# OPTIONAL enable ip_relay(for same-machine trunking and blind monitoring)
-
-/usr/share/astguiclient/ip_relay/relay_control start 2>/dev/null 1>&2
 
 
 # Disable console blanking and powersaving
@@ -1533,11 +1928,19 @@ cat > /etc/rc.d/rc.local <<EOF
 
 /usr/bin/setterm -powerdown
 
+EOF
+
+if [ "$ROLE_DATABASE" = "yes" ] || [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
+cat >> /etc/rc.d/rc.local <<EOF
 
 ### start up the MySQL server
 
 systemctl start mariadb.service
 
+EOF
+fi
+
+cat >> /etc/rc.d/rc.local <<EOF
 
 ### start up the apache web server
 
@@ -1552,6 +1955,15 @@ systemctl start httpd.service
 ### clear the server-related records from the database
 
 /usr/share/astguiclient/AST_reset_mysql_vars.pl
+
+EOF
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+cat >> /etc/rc.d/rc.local <<EOF
+
+# OPTIONAL enable ip_relay(for same-machine trunking and blind monitoring)
+
+/usr/share/astguiclient/ip_relay/relay_control start 2>/dev/null 1>&2
 
 
 ### load dahdi drivers
@@ -1570,6 +1982,11 @@ sleep 20
 ### start up asterisk
 
 /usr/share/astguiclient/start_asterisk_boot.pl
+
+EOF
+fi
+
+cat >> /etc/rc.d/rc.local <<EOF
 
 exit 0
 
@@ -1615,6 +2032,8 @@ chmod +x /usr/bin/VB-firewall
 
 firewall-offline-cmd --add-port=446/tcp --zone=public
 
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+
 ##Fix ip_relay
 cd /usr/src/astguiclient/trunk/extras/ip_relay/
 rm -rf ip_relay_1.1
@@ -1633,6 +2052,8 @@ cd /usr/lib64/asterisk/modules
 copy_asset codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so
 cp -f codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so codec_g729.so
 chmod 777 codec_g729.so
+
+fi # ROLE_TELEPHONY ip_relay/g729
 
 replace_managed_block /etc/httpd/conf/httpd.conf GENX_VICIDIAL_RECORDINGS <<EOF
 # BEGIN GENX_VICIDIAL_RECORDINGS
@@ -1658,6 +2079,8 @@ DefaultLimitNOFILE=65536
 EOF
 
 ##Install Sounds
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
 
 cd /usr/src
 copy_asset asterisk-core-sounds-en-ulaw-current.tar.gz
@@ -1720,6 +2143,8 @@ sox ../mohmp3/manolo_camp-morning_coffee.wav manolo_camp-morning_coffee.wav vol 
 sox ../mohmp3/manolo_camp-morning_coffee.gsm manolo_camp-morning_coffee.gsm vol 0.25
 sox -t ul -r 8000 -c 1 ../mohmp3/manolo_camp-morning_coffee.ulaw -t ul manolo_camp-morning_coffee.ulaw vol 0.25
 
+fi # ROLE_TELEPHONY sounds
+
 
 ## Remove debug kernel
 dnf remove kernel-debug* -y
@@ -1752,6 +2177,7 @@ EOF
 ##EOF
 
 ##confbridge fix
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
 cd "$SCRIPT_DIR"
 cp -f "$SCRIPT_DIR/extensions.conf" /etc/asterisk/extensions.conf
 cp -f "$SCRIPT_DIR/confbridge-vicidial.conf" /etc/asterisk/
@@ -1763,15 +2189,18 @@ replace_managed_block /etc/asterisk/confbridge.conf GENX_VICIDIAL_CONFBRIDGE <<E
 #include confbridge-vicidial.conf
 # END GENX_VICIDIAL_CONFBRIDGE
 EOF
+fi # ROLE_TELEPHONY confbridge
 
 systemctl daemon-reload
 systemctl enable rc-local.service
 systemctl start rc-local.service
 
+if [ "$ROLE_WEB" = "yes" ]; then
 cat <<WELCOME > /var/www/html/index.html
 <META HTTP-EQUIV=REFRESH CONTENT="1; URL=/vicidial/welcome.php">
 Please Hold while I redirect you!
 WELCOME
+fi
 fix_vicidial_web_permissions
 
 #cd "$SCRIPT_DIR"
@@ -1782,6 +2211,7 @@ fix_vicidial_web_permissions
 chkconfig --list asterisk >/dev/null 2>&1 && chkconfig asterisk off || true
 
 ## add confcron user
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
 sed -i '/^\[confcron\]$/,/^eventfilter=Event: Confbridge$/d' /etc/asterisk/manager.conf 2>/dev/null || true
 replace_managed_block /etc/asterisk/manager.conf GENX_VICIDIAL_CONFCRON <<EOF
 # BEGIN GENX_VICIDIAL_CONFCRON
@@ -1795,6 +2225,7 @@ eventfilter=Event: Meetme
 eventfilter=Event: Confbridge
 # END GENX_VICIDIAL_CONFCRON
 EOF
+fi # ROLE_TELEPHONY confcron
 
 if [ "$ROLE_INSTALL_WEBRTC" = "yes" ]; then
     install_certbot_required
@@ -1807,12 +2238,20 @@ if [ "$ROLE_INSTALL_WEBRTC" = "yes" ]; then
     cd "$SCRIPT_DIR"
     systemctl enable firewalld
     systemctl start firewalld
-    DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" bash ./vicidial-enable-webrtc.sh || exit 1
+    DOMAINNAME="$DOMAINNAME" MYSQL_ROOT_PASS="$MYSQL_ROOT_PASS" CERTBOT_STAGING="$CERTBOT_STAGING" \
+        CLUSTER_JOIN="$CLUSTER_JOIN" VICIDIAL_DB_HOST="$VICIDIAL_DB_HOST" VICIDIAL_DB_PORT="$VICIDIAL_DB_PORT" \
+        VICIDIAL_DB_NAME="$VICIDIAL_DB_NAME" CLUSTER_DB_USER="$CLUSTER_DB_USER" CRON_DB_PASS="$CRON_DB_PASS" \
+        SERVER_SCOPE_IP="$ip_address" ROLE_TELEPHONY="$ROLE_TELEPHONY" bash ./vicidial-enable-webrtc.sh || exit 1
     configure_dynportal_defaults
 else
     echo "Skipping WebRTC/certificate setup because neither Web nor Telephony role is selected."
 fi
-apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
+if [ "$CLUSTER_JOIN" != "yes" ]; then
+    apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
+fi
+if [ "$ROLE_ARCHIVE" = "yes" ]; then
+    setup_archive_server
+fi
 register_selected_vicibox_roles
 
 if [ "$ROLE_FIREWALL_ENABLED" = "yes" ]; then
@@ -1845,8 +2284,12 @@ chown -R apache:apache /var/spool/asterisk/
 ## sed -i s/DOMAINNAME/"$DOMAINNAME"/g /var/www/vhosts/dynportal/inc/defaults.inc.php
 ## sed -i s/DOMAINNAME/"$DOMAINNAME"/g /home/viciportal-ssl.conf
 
-if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
+# Cluster-wide settings: only the primary-DB install may set these. A joining
+# server must never repoint voicemail/sounds for the whole cluster to itself.
+if [ "$CLUSTER_JOIN" != "yes" ] && { [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; }; then
     "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set active_voicemail_server='$ip_address', webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname', sounds_central_control_active='1';"
+fi
+if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
     configure_audio_store_directory
 fi
 

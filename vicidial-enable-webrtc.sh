@@ -67,10 +67,21 @@ if ! command -v certbot >/dev/null 2>&1; then
 	exit 1
 fi
 
-if [ -z "${MYSQL_ROOT_PASS:-}" ]; then
+VICIDIAL_DB_NAME="${VICIDIAL_DB_NAME:-asterisk}"
+CLUSTER_JOIN="${CLUSTER_JOIN:-no}"
+if [ "$CLUSTER_JOIN" = "yes" ]; then
+	# Joining an existing cluster: talk to the remote cluster DB as cron.
+	MYSQL=(mysql -h "${VICIDIAL_DB_HOST:-127.0.0.1}" -P "${VICIDIAL_DB_PORT:-3306}" -u "${CLUSTER_DB_USER:-cron}" -p"${CRON_DB_PASS:-1234}")
+elif [ -z "${MYSQL_ROOT_PASS:-}" ]; then
 	MYSQL=(mysql -u root)
 else
 	MYSQL=(mysql -u root -p"$MYSQL_ROOT_PASS")
+fi
+
+# When SERVER_SCOPE_IP is set, only this server's row is updated instead of every server in the cluster.
+SERVER_SCOPE=""
+if [ -n "${SERVER_SCOPE_IP:-}" ]; then
+	SERVER_SCOPE=" where server_ip='${SERVER_SCOPE_IP}'"
 fi
 
 copy_asset DOMAINNAME.conf "/etc/httpd/conf.d/$DOMAINNAME.conf"
@@ -122,25 +133,37 @@ if [ ! -s "/etc/letsencrypt/live/$DOMAINNAME/fullchain.pem" ] || [ ! -s "/etc/le
 	exit 1
 fi
 
-echo "Change http.conf in Asterisk"
-copy_asset asterisk-http.conf /etc/asterisk/http.conf
-sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/http.conf
+if [ "${ROLE_TELEPHONY:-yes}" = "yes" ] && [ -d /etc/asterisk ]; then
+	echo "Change http.conf in Asterisk"
+	copy_asset asterisk-http.conf /etc/asterisk/http.conf
+	sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/http.conf
 
-echo "Change sip.conf in Asterisk"
-copy_asset asterisk-sip.conf /etc/asterisk/sip.conf
-sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/sip.conf
+	echo "Change sip.conf in Asterisk"
+	copy_asset asterisk-sip.conf /etc/asterisk/sip.conf
+	sed -i s/DOMAINNAME/"$DOMAINNAME"/g /etc/asterisk/sip.conf
 
-echo "Reloading Asterisk"
-rasterisk -x reload
+	echo "Reloading Asterisk"
+	rasterisk -x reload
+else
+	echo "Skipping Asterisk http/sip WebRTC config (no telephony role on this server)."
+fi
 
-echo "Add DOMAINAME servers web_socket_url"
-"${MYSQL[@]}" -e "use asterisk; update servers set web_socket_url='wss://$DOMAINNAME:8089/ws';"
+if [ "${ROLE_TELEPHONY:-yes}" = "yes" ]; then
+	echo "Add DOMAINAME servers web_socket_url"
+	"${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update servers set web_socket_url='wss://$DOMAINNAME:8089/ws'$SERVER_SCOPE;"
+fi
+
+if [ "$CLUSTER_JOIN" = "yes" ]; then
+	echo "Cluster join: skipping cluster-wide webphone_url/SIP_generic/phones updates (managed by the primary install)."
+fi
+
+if [ "$CLUSTER_JOIN" != "yes" ]; then
 
 echo "Add DOMAINAME system_settings webphone_url"
-"${MYSQL[@]}" -e "use asterisk; update system_settings set webphone_url='https://phone.viciphone.com/viciphone.php';"
+"${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set webphone_url='https://phone.viciphone.com/viciphone.php';"
 
 echo "update the SIP_generic"
-"${MYSQL[@]}" -e "use asterisk; update vicidial_conf_templates set template_contents='type=friend 
+"${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update vicidial_conf_templates set template_contents='type=friend
 host=dynamic 
 context=default 
 host=dynamic 
@@ -165,7 +188,9 @@ dtlsprivatekey=/etc/letsencrypt/live/$DOMAINNAME/privkey.pem
 dtlssetup=actpass' where template_id='SIP_generic';"
 
 echo "update the Phone tables to set is_webphone to Y deffault"
-"${MYSQL[@]}" -e "use asterisk; ALTER TABLE phones MODIFY COLUMN is_webphone ENUM('Y','N','Y_API_LAUNCH') default 'Y';"
+"${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; ALTER TABLE phones MODIFY COLUMN is_webphone ENUM('Y','N','Y_API_LAUNCH') default 'Y';"
+
+fi # CLUSTER_JOIN cluster-wide updates
 
 if [ ! -f "$SCRIPT_DIR/viciportal-ssl.conf" ]; then
 	echo "ERROR: Missing $SCRIPT_DIR/viciportal-ssl.conf"
