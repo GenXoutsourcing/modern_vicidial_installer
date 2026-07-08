@@ -14276,6 +14276,9 @@ function AgentConsole({ token, authInfo, onExit }) {
             >
               <option value="READY">Available</option>
               <option value="PAUSED">Paused</option>
+              {live.pause_code && !pauseCodes.some((row) => row.pause_code === live.pause_code) && (
+                <option value={live.pause_code}>Paused · {live.pause_code}</option>
+              )}
               {pauseCodes.map((row) => (
                 <option key={row.pause_code} value={row.pause_code}>Paused · {row.pause_code_name || row.pause_code}</option>
               ))}
