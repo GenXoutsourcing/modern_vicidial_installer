@@ -433,7 +433,10 @@ join_register_server() {
         ast_active="N"; ast_ver=""; agent_login="N"; gen_conf="N"; websock=""
     fi
 
-    if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
+    # Every cluster member gets a servers-table entry (slave DB and archive
+    # included) so it appears in the admin UI and its keepalive can report
+    # server stats. Only telephony servers get asterisk-active flags.
+    {
         # server_id must be unique cluster-wide. Hostnames often share a first label
         # (e.g. viciboxclone.*), so on collision append the last octet of our IP.
         local dup octet
@@ -476,7 +479,7 @@ JOINSRV
         else
             echo "A servers entry for ${ip_address} already exists in the cluster; leaving it unchanged."
         fi
-    fi
+    }
 
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
         conf_src=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip FROM vicidial_confbridges WHERE server_ip<>'${ip_address}' GROUP BY server_ip ORDER BY COUNT(*) DESC LIMIT 1;")
