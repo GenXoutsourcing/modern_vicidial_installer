@@ -14165,7 +14165,11 @@ async function uploadAudio(req, res) {
   try {
     if (!store.exists) fs.mkdirSync(store.dir, { mode: 0o766 });
     const filePath = path.join(store.dir, name);
+    // The root cron chowns store files to root; unlink first (the 0777 dir
+    // allows it) so re-uploads of an existing prompt never hit EACCES.
+    try { fs.unlinkSync(filePath); } catch { /* new file */ }
     fs.writeFileSync(filePath, req.body, { mode: 0o666 });
+    try { fs.chmodSync(filePath, 0o666); } catch { /* umask-created mode is fine */ }
     const info = await audioAnalyze(filePath, ext);
     await execute(
       `INSERT INTO audio_store_details

@@ -717,17 +717,28 @@ register_selected_vicibox_roles() {
 }
 
 install_audio_store_directory_helper() {
-    cat > /usr/local/bin/vicidial-audio-store-dir <<AUDIOSTOREDIR
+    cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
 #!/bin/bash
-audio_dir=\$(mysql -u root -Nse 'use $VICIDIAL_DB_NAME; select sounds_web_directory from system_settings limit 1;' 2>/dev/null | tr -d '\r\n')
+# Creates/permissions the VICIdial central sound store directory named in
+# system_settings.sounds_web_directory. DB settings come from
+# /etc/astguiclient.conf so this also works on split web/DB topologies where
+# the authoritative database is not the local mysql.
+conf() { awk -v key="$1" '$1 == key && $2 == "=>" { $1=""; $2=""; sub(/^[[:space:]]+/, ""); sub(/[[:space:];]+$/, ""); print; exit }' /etc/astguiclient.conf 2>/dev/null; }
+DB_HOST=$(conf VARDB_server);   [ -n "$DB_HOST" ] || DB_HOST=localhost
+DB_NAME=$(conf VARDB_database); [ -n "$DB_NAME" ] || DB_NAME=asterisk
+DB_USER=$(conf VARDB_user);     [ -n "$DB_USER" ] || DB_USER=cron
+DB_PASS=$(conf VARDB_pass)
+DB_PORT=$(conf VARDB_port);     [ -n "$DB_PORT" ] || DB_PORT=3306
+audio_dir=$(MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -Nse "select sounds_web_directory from $DB_NAME.system_settings limit 1;" 2>/dev/null | tr -d '\r\n')
+case "$audio_dir" in *[!a-zA-Z0-9_-]*) audio_dir='' ;; esac
 chown root:root /var/www/html
 chmod g-s /var/www/html
 chmod 0777 /var/www/html
-if [ -n "\$audio_dir" ]; then
-    mkdir -p "/var/www/html/\$audio_dir"
-    chown -R root:root "/var/www/html/\$audio_dir"
-    chmod g-s "/var/www/html/\$audio_dir"
-    chmod 0777 "/var/www/html/\$audio_dir"
+if [ -n "$audio_dir" ]; then
+    mkdir -p "/var/www/html/$audio_dir"
+    chown -R root:root "/var/www/html/$audio_dir"
+    chmod g-s "/var/www/html/$audio_dir"
+    chmod 0777 "/var/www/html/$audio_dir"
 fi
 AUDIOSTOREDIR
     chmod 755 /usr/local/bin/vicidial-audio-store-dir
