@@ -43,6 +43,7 @@ MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
 RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
 RECORDINGS_FTP_LAYOUT="${RECORDINGS_FTP_LAYOUT:-dated}"
 WEB_IS_SOUND_SERVER="${WEB_IS_SOUND_SERVER:-yes}"
+INSTALL_GENX_UI="${INSTALL_GENX_UI:-yes}"
 ARCHIVE_RETENTION_DAYS="${ARCHIVE_RETENTION_DAYS:-0}"
 EXTRA_WHITELIST_IPS="${EXTRA_WHITELIST_IPS:-}"
 
@@ -211,6 +212,9 @@ print_role_summary() {
     echo "Telephony  : $ROLE_TELEPHONY"
     echo "Archive    : $ROLE_ARCHIVE"
     echo "Firewall   : $ROLE_FIREWALL_ENABLED"
+    if [ "$ROLE_WEB" = "yes" ]; then
+        echo "GenX UI    : $INSTALL_GENX_UI"
+    fi
     echo
     echo "--- Database ---"
     echo "DB Host    : $VICIDIAL_DB_HOST"
@@ -1236,6 +1240,17 @@ validate_supported_role_set
 if [ "$ROLE_WEB" != "yes" ] && [ "$ROLE_TELEPHONY" != "yes" ] && [ "$ROLE_ARCHIVE" != "yes" ]; then
     ROLE_INSTALL_WEBRTC="no"
 fi
+
+if [ "$ROLE_WEB" = "yes" ]; then
+    if yes_no "Install the GenX modern UI (admin + agent) on this web server?" "yes"; then
+        INSTALL_GENX_UI="yes"
+    else
+        INSTALL_GENX_UI="no"
+    fi
+else
+    INSTALL_GENX_UI="no"
+fi
+
 choose_firewall_policy
 
 print_role_summary
@@ -2380,6 +2395,15 @@ fi
 if [ "$ROLE_ARCHIVE" = "yes" ]; then
     setup_archive_server
 fi
+
+# GenX modern UI (admin + agent): Node app proxied at /genx/ plus the PHP
+# overlay for the stock vicidial/agc pages. Web servers only.
+if [ "$ROLE_WEB" = "yes" ] && [ "$INSTALL_GENX_UI" = "yes" ]; then
+    echo "Installing GenX modern UI (admin + agent)..."
+    bash "$SCRIPT_DIR/install-genx-ui.sh"
+    bash "$SCRIPT_DIR/install-genx-overlay.sh"
+fi
+
 register_selected_vicibox_roles
 
 if [ "$ROLE_FIREWALL_ENABLED" = "yes" ]; then
