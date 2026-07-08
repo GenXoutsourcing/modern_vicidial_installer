@@ -14461,7 +14461,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             </div>
             <div className="agn-tiles">
               {[
-                ['Calls Today', formatNumber(live.calls_today), PhoneCall, 'c1'],
+                ['Calls Today', formatNumber(dayStats?.calls ?? live.calls_today), PhoneCall, 'c1'],
                 ['Talk Time', formatSeconds(dayStats?.talkSec || 0), Timer, 'c2'],
                 ['Wait Time', formatSeconds(dayStats?.waitSec || 0), Clock3, 'c3'],
                 ['Pause Time', formatSeconds(dayStats?.pauseSec || 0), Pause, 'c4'],
@@ -15221,7 +15221,13 @@ function AgentApp() {
       .then((payload) => setState({
         checking: false,
         token: stored,
-        authInfo: { campaigns: payload.campaigns || [], live: payload.live, user: null, phone: null },
+        authInfo: {
+          campaigns: payload.campaigns || [],
+          live: payload.live,
+          user: payload.user || null,
+          phone: payload.phone || null,
+          userPass: payload.userPass || '',
+        },
       }))
       .catch(() => {
         window.localStorage.removeItem(AGENT_TOKEN_KEY);

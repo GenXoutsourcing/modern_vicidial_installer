@@ -6886,6 +6886,7 @@ async function requireAgentAccess(req, res, next) {
   if (session?.agentPhone || session?.user?.userLevel >= config.minUserLevel) {
     req.genxUser = session.user;
     req.agentPhone = session.agentPhone || null;
+    req.agentSession = session;
     return next();
   }
   return res.status(401).json({ ok: false, error: 'agent_access_required' });
@@ -7063,6 +7064,9 @@ async function agentAuth(req, res) {
   const agentSession = {
     user: agentUser,
     agentPhone: { ...phone, pass: undefined },
+    // Kept for script/web-form --A--pass--B-- merges after a page reload
+    // (legacy vicidial.php embeds it in the page for the whole session).
+    userPass,
     expiresAt: Date.now() + config.sessionTtlMs,
     persistedAt: Date.now(),
   };
@@ -7109,7 +7113,17 @@ async function agentSetup(req, res) {
     campaignParams,
     [],
   );
-  return res.json({ ok: true, phones, campaigns, live: await agentLiveRow(req.genxUser.user) });
+  return res.json({
+    ok: true,
+    phones,
+    campaigns,
+    live: await agentLiveRow(req.genxUser.user),
+    user: req.genxUser ? { user: req.genxUser.user, fullName: req.genxUser.fullName } : null,
+    phone: req.agentPhone
+      ? { login: req.agentPhone.login, extension: req.agentPhone.extension, server_ip: req.agentPhone.server_ip }
+      : null,
+    userPass: req.agentSession?.userPass || '',
+  });
 }
 
 async function agentPauseCodes(campaignId) {
