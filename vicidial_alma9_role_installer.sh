@@ -340,6 +340,11 @@ cluster_mysql_available() {
 }
 
 connect_cluster_db() {
+    # The connection check runs before the main package phase; make sure the
+    # MariaDB client exists on a fresh minimal install.
+    if ! command -v mysql >/dev/null 2>&1; then
+        dnf install -y mariadb
+    fi
     prompt VICIDIAL_DB_HOST "Existing cluster database IP/host" "$VICIDIAL_DB_HOST"
     prompt VICIDIAL_DB_PORT "Cluster database port" "$VICIDIAL_DB_PORT"
     prompt CLUSTER_DB_USER "Cluster database user" "$CLUSTER_DB_USER"
