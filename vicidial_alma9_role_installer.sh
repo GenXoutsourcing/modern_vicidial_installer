@@ -783,6 +783,12 @@ apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
     local server_id
+    local ast_active="N" ast_ver="" auto_restart="N" agent_login="N"
+
+    # Only mark this server as an asterisk/dialer host when it has the telephony role.
+    if [ "$ROLE_TELEPHONY" = "yes" ]; then
+        ast_active="Y"; ast_ver="18.21.1-vici"; auto_restart="Y"; agent_login="Y"
+    fi
 
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
@@ -792,13 +798,17 @@ UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sou
 UPDATE servers
 SET server_id='${server_id}',
     server_description='${cert_domain}',
-    asterisk_version='18.21.1-vici',
+    asterisk_version='${ast_ver}',
+    active_asterisk_server='${ast_active}',
+    active_agent_login_server='${agent_login}',
+    generate_vicidial_conf='${ast_active}',
+    rebuild_conf_files='${ast_active}',
     max_vicidial_trunks=120,
     outbound_calls_per_second=10,
     recording_web_link='ALT_IP',
     alt_server_ip='${cert_domain}',
     conf_engine='CONFBRIDGE',
-    auto_restart_asterisk='Y'
+    auto_restart_asterisk='${auto_restart}'
 WHERE server_ip='${server_ip}'
    OR server_id='${server_id}'
    OR server_id=LOWER('${server_id}')
