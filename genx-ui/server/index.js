@@ -2192,10 +2192,14 @@ async function adminData(user) {
               l.ip_list_name,
               l.active,
               l.user_group,
-              COALESCE(e.entry_count, 0) AS entry_count
+              COALESCE(e.entry_count, 0) AS entry_count,
+              entries.ip_addresses
        FROM vicidial_ip_lists l
        LEFT JOIN (SELECT ip_list_id, COUNT(*) AS entry_count FROM vicidial_ip_list_entries GROUP BY ip_list_id) e
          ON e.ip_list_id = l.ip_list_id
+       LEFT JOIN (SELECT ip_list_id, GROUP_CONCAT(ip_address ORDER BY ip_address SEPARATOR '\n') AS ip_addresses
+                  FROM vicidial_ip_list_entries GROUP BY ip_list_id) entries
+         ON entries.ip_list_id = l.ip_list_id
        ORDER BY l.ip_list_id ASC
        LIMIT 500`,
       [],
@@ -10216,6 +10220,29 @@ async function deleteConference(req, res, table) {
   }
 }
 
+// Legacy admin.php allows digits/letters plus , : + * # . _ - in an ip_list
+// entry (supports CIDR-ish/wildcard patterns, not just plain dotted-quad IPs).
+function parseIpAddressList(raw) {
+  const lines = String(raw || '').split('\n');
+  const cleaned = lines
+    .map((line) => line.replace(/[^,:+*#.\-_0-9A-Za-z]/g, '').trim())
+    .filter(Boolean)
+    .map((value) => value.slice(0, 45));
+  return [...new Set(cleaned)].slice(0, 5000);
+}
+
+async function syncIpListEntries(listId, rawAddresses) {
+  const addresses = parseIpAddressList(rawAddresses);
+  await execute('DELETE FROM vicidial_ip_list_entries WHERE ip_list_id = ?', [listId]);
+  for (const ipAddress of addresses) {
+    await execute(
+      'INSERT IGNORE INTO vicidial_ip_list_entries (ip_address, ip_list_id) VALUES (?, ?)',
+      [ipAddress, listId],
+    );
+  }
+  return addresses.length;
+}
+
 async function saveIpList(req, res, mode) {
   if (!requireModify(req, res, 'modifyIpLists')) return;
   const payload = {
@@ -10224,20 +10251,23 @@ async function saveIpList(req, res, mode) {
     user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
   };
   try {
+    let id;
     if (mode === 'create') {
-      const id = cleanId(req.body?.ip_list_id, 30);
+      id = cleanId(req.body?.ip_list_id, 30);
       if (!id || id.length < 2) return badRequest(res, 'invalid_ip_list_id');
       const { assignments, values } = dynamicAssignments({ ip_list_id: id, ...payload });
       await execute(`INSERT INTO vicidial_ip_lists SET ${assignments}`, values);
       await adminLog(req, 'IPLISTS', 'ADD', id, 'GENX ADD IP LIST', 'INSERT INTO vicidial_ip_lists', payload.ip_list_name);
     } else {
-      const id = cleanId(req.params.id, 30);
+      id = cleanId(req.params.id, 30);
       if (!id) return badRequest(res, 'invalid_ip_list_id');
       const { assignments, values } = dynamicAssignments(payload);
       const result = await execute(`UPDATE vicidial_ip_lists SET ${assignments} WHERE ip_list_id = ?`, [...values, id]);
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'ip_list_not_found' });
       await adminLog(req, 'IPLISTS', 'MODIFY', id, 'GENX MODIFY IP LIST', 'UPDATE vicidial_ip_lists', payload.ip_list_name);
     }
+    const entryCount = await syncIpListEntries(id, req.body?.ip_addresses);
+    await adminLog(req, 'IPLISTS', 'MODIFY', id, 'GENX SYNC IP LIST ENTRIES', 'REPLACE vicidial_ip_list_entries', `${entryCount} entries`);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'ip_list_save_failed' });

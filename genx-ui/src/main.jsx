@@ -1655,7 +1655,7 @@ function actionDefaults(entity, admin) {
   }
 
   if (entity === 'ipLists') {
-    return { ip_list_id: '', ip_list_name: '', active: 'N', user_group: '---ALL---' };
+    return { ip_list_id: '', ip_list_name: '', active: 'N', user_group: '---ALL---', ip_addresses: '' };
   }
 
   if (entity === 'queueGroups') {
@@ -3339,6 +3339,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'ip_list_name', label: 'Name' },
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'ip_addresses', label: 'IP Addresses (one per line - replaces the full list on save)', type: 'textarea', wide: true },
     ];
   }
 
@@ -8347,6 +8348,7 @@ function AudioStorePanel({ user }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [playing, setPlaying] = useState('');
+  const [open, setOpen] = useState(false);
   const audioRef = useRef(null);
   const token = window.localStorage.getItem(TOKEN_KEY) || '';
 
@@ -8400,8 +8402,8 @@ function AudioStorePanel({ user }) {
   const storeInfo = store?.store;
   const notReady = storeInfo && (!storeInfo.configured || !storeInfo.exists);
 
-  return (
-    <Panel eyebrow="Audio" title={`Audio Store (${formatNumber(store?.files?.length || 0)})`} icon={Activity} className="admin-wide-panel">
+  const body = (
+    <>
       {storeInfo && !storeInfo.configured && (
         <p className="connection-summary">
           The VICIdial central sound store has not been created yet (System Settings → Sounds Web Directory is empty).
@@ -8493,7 +8495,40 @@ function AudioStorePanel({ user }) {
             ) },
         ]}
       />
-    </Panel>
+    </>
+  );
+
+  return (
+    <>
+      <Panel eyebrow="Audio" title={`Audio Store (${formatNumber(store?.files?.length || 0)})`} icon={Activity} className="admin-wide-panel">
+        <p className="connection-summary">
+          {notReady
+            ? (canEdit ? 'Not initialized yet — open Manage Audio Store to set it up.' : 'Not initialized yet — a level 9 admin can set it up.')
+            : `${formatNumber(store?.files?.length || 0)} file${store?.files?.length === 1 ? '' : 's'} in the central sound store.`}
+        </p>
+        <div className="modal-actions">
+          <button type="button" className="secondary-action compact-action" onClick={() => setOpen(true)}>
+            <Activity size={14} aria-hidden="true" /> Manage Audio Store
+          </button>
+        </div>
+      </Panel>
+      {open && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label="Manage Audio Store">
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Audio</p>
+                <h2>{`Audio Store (${formatNumber(store?.files?.length || 0)})`}</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close" title="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            {body}
+          </section>
+        </div>
+      )}
+    </>
   );
 }
 
