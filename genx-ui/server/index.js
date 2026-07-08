@@ -260,9 +260,12 @@ const sessionTableReady = (async () => {
 async function persistSession(token, session) {
   if (!(await sessionTableReady)) return;
   try {
+    // Persist the WHOLE session minus transient bookkeeping — cherry-picking
+    // fields here silently drops extras like userPass across restarts.
+    const { expiresAt, persistedAt, ...data } = session;
     await execute(
       'REPLACE INTO genx_ui_sessions (token_hash, session_data, expires_at) VALUES (?, ?, ?)',
-      [tokenHash(token), JSON.stringify({ user: session.user, agentPhone: session.agentPhone || null }), session.expiresAt],
+      [tokenHash(token), JSON.stringify(data), session.expiresAt],
     );
   } catch { /* memory session still works */ }
 }
@@ -301,9 +304,11 @@ async function sessionFromRequest(req) {
         [],
       );
       if (row && Number(row.expires_at) > Date.now()) {
+        // Spread the whole stored record: rebuilding with an explicit field
+        // list here silently drops session extras (userPass et al.).
         const data = JSON.parse(row.session_data || '{}');
         session = {
-          user: data.user,
+          ...data,
           agentPhone: data.agentPhone || null,
           expiresAt: Number(row.expires_at),
           persistedAt: Date.now(),
