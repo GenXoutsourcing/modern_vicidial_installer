@@ -434,6 +434,15 @@ join_register_server() {
     fi
 
     if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
+        # server_id must be unique cluster-wide. Hostnames often share a first label
+        # (e.g. viciboxclone.*), so on collision append the last octet of our IP.
+        local dup octet
+        dup=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT COUNT(*) FROM servers WHERE server_id='${server_name}' AND server_ip<>'${ip_address}';")
+        if [ "$dup" != "0" ]; then
+            octet=${ip_address##*.}
+            server_name="$(printf '%s' "$server_name" | cut -c1-$((10 - ${#octet})))${octet}"
+            echo "server_id collision in cluster; using ${server_name} for this server."
+        fi
         existing=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT COUNT(*) FROM servers WHERE server_ip='${ip_address}';")
         if [ "$existing" = "0" ]; then
             src_ip=""
