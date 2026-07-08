@@ -2396,12 +2396,11 @@ if [ "$ROLE_ARCHIVE" = "yes" ]; then
     setup_archive_server
 fi
 
-# GenX modern UI (admin + agent): Node app proxied at /genx/ plus the PHP
-# overlay for the stock vicidial/agc pages. Web servers only.
+# GenX modern UI (admin + agent): the React app served behind Apache at /genx/.
+# The legacy PHP overlay (install-genx-overlay.sh) is intentionally NOT installed.
 if [ "$ROLE_WEB" = "yes" ] && [ "$INSTALL_GENX_UI" = "yes" ]; then
     echo "Installing GenX modern UI (admin + agent)..."
     bash "$SCRIPT_DIR/install-genx-ui.sh"
-    bash "$SCRIPT_DIR/install-genx-overlay.sh"
 fi
 
 register_selected_vicibox_roles
