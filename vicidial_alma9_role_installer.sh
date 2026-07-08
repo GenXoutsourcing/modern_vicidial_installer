@@ -1608,7 +1608,22 @@ echo "Installing astguiclient"
 rm -rf /usr/src/astguiclient
 mkdir -p /usr/src/astguiclient
 cd /usr/src/astguiclient
-svn checkout svn://svn.eflo.net/agc_2-X/trunk
+
+# ViciBox-style version matching: joining servers check out the same SVN
+# revision the cluster was built with (system_settings.svn_version, recorded
+# by the primary install) instead of whatever trunk HEAD happens to be.
+SVN_REV_ARGS=()
+if [ "$CLUSTER_JOIN" = "yes" ]; then
+    CLUSTER_SVN_REV=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT svn_version FROM system_settings LIMIT 1;" 2>/dev/null | tr -cd '0-9')
+    if [ -n "$CLUSTER_SVN_REV" ]; then
+        echo "Cluster was built from SVN r${CLUSTER_SVN_REV}; checking out the matching revision."
+        SVN_REV_ARGS=(-r "$CLUSTER_SVN_REV")
+    else
+        echo "WARNING: The cluster has no svn_version recorded in system_settings; using latest trunk."
+        echo "If the cluster runs an older build, set system_settings.svn_version on the primary and rerun."
+    fi
+fi
+svn checkout "${SVN_REV_ARGS[@]}" svn://svn.eflo.net/agc_2-X/trunk
 cd /usr/src/astguiclient/trunk
 
 #Add mysql users and Databases - rerun safe
@@ -1657,6 +1672,13 @@ else
 fi
 
 "${MYSQL[@]}" -e "USE $VICIDIAL_DB_NAME; UPDATE servers SET asterisk_version='18.21.1-vici';" || true
+
+# Record the SVN revision this cluster was built from so added servers can match it.
+LOCAL_SVN_REV=$(svn info --show-item revision /usr/src/astguiclient/trunk 2>/dev/null | tr -cd '0-9')
+if [ -n "$LOCAL_SVN_REV" ]; then
+    "${MYSQL[@]}" -e "USE $VICIDIAL_DB_NAME; UPDATE system_settings SET svn_version='$LOCAL_SVN_REV';" || true
+fi
+
 secure_vicidial_default_passwords
 apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 
