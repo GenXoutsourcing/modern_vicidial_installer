@@ -2236,7 +2236,44 @@ select option:hover {
 .agn-row.agn-row3 > :nth-child(2) { justify-self: center; text-align: center; }
 .agn-row.agn-row3 > :nth-child(3) { justify-self: end; text-align: right; }
 .agn-dim { font-size: 12px; color: rgba(226, 238, 255, 0.5); }
-.agn-automsg { font-size: 13px; font-weight: 600; color: #9fe8ff; }
+
+/* Clickable card rows (Recent Activity → open lead) */
+.agn-rowlink {
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(226, 238, 255, 0.06);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 7px 6px;
+}
+.agn-rowlink:hover { background: rgba(0, 217, 255, 0.08); }
+.agn-rowlink:last-child { border-bottom: none; }
+
+/* Status badge doubles as "change pause reason" when paused */
+.agb-badge.clickable { cursor: pointer; }
+.agb-badge.clickable:hover { filter: brightness(1.2); }
+
+/* Agent modals: pause reasons + manual dial */
+.agn-modal { max-width: 460px; width: min(460px, 92vw); }
+.agn-pausegrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 4px 0 8px; }
+.agn-pausebtn {
+  padding: 14px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e2eeff;
+  background: rgba(9, 26, 51, 0.85);
+  border: 1px solid rgba(0, 217, 255, 0.25);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.agn-pausebtn:hover:not(:disabled) { background: rgba(0, 217, 255, 0.15); }
+.agn-pausebtn:disabled { opacity: 0.4; cursor: default; }
+.agn-pausebtn.plain { grid-column: 1 / -1; border-style: dashed; color: rgba(226, 238, 255, 0.7); }
+.agn-dialform { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 8px; }
+.agn-dialform input { width: 100%; font-size: 18px; padding: 14px 16px; letter-spacing: 0.06em; }
 .agn-pill {
   font-size: 10px;
   font-weight: 700;

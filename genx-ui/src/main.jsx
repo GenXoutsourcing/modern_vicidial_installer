@@ -13947,6 +13947,9 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [webphoneUrl, setWebphoneUrl] = useState(authInfo?.webphoneUrl || null);
   const [showPhone, setShowPhone] = useState(false);
   const [dayStats, setDayStats] = useState(null);
+  const [pauseModal, setPauseModal] = useState(false);
+  const [dialModal, setDialModal] = useState(false);
+  const [viewLeadId, setViewLeadId] = useState(null);
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
   const [callLog, setCallLog] = useState(null);
@@ -14206,7 +14209,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       queue: ['/agent/calls-in-queue', setQueueView],
       callbacks: ['/agent/callbacks', setCallbacks],
       calllog: [`/agent/call-log?date=${callLogDate}`, setCallLog],
-      leadinfo: [`/agent/lead-info${lead ? `?lead_id=${lead.lead_id}` : ''}`, setLeadInfo],
+      leadinfo: [`/agent/lead-info${viewLeadId || lead ? `?lead_id=${viewLeadId || lead.lead_id}` : ''}`, setLeadInfo],
     };
     if (!paths[sidePanel]) return undefined;
     const [path, setter] = paths[sidePanel];
@@ -14215,7 +14218,7 @@ function AgentConsole({ token, authInfo, onExit }) {
     load();
     const timer = window.setInterval(load, 4000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [live ? 1 : 0, sidePanel, token, callLogDate, lead ? lead.lead_id : 0]);
+  }, [live ? 1 : 0, sidePanel, token, callLogDate, lead ? lead.lead_id : 0, viewLeadId]);
 
   // Dashboard data: day stats every 30s (re-pull after each dispo), plus a
   // callbacks snapshot for the "Callbacks Due" card while idle.
@@ -14251,7 +14254,11 @@ function AgentConsole({ token, authInfo, onExit }) {
   const dialManualNumber = async () => {
     const digits = manualNumber.replace(/[^0-9]/g, '');
     const payload = await act('/agent/manual-dial', { phone_number: digits });
-    if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
+    if (payload) {
+      setManualNumber('');
+      setDialModal(false);
+      setMessage(`Dialing ${digits}`);
+    }
   };
 
   return (
@@ -14277,32 +14284,24 @@ function AgentConsole({ token, authInfo, onExit }) {
             <span className={live ? 'agb-dot on' : 'agb-dot'} /> {live ? 'Registered' : 'Off Session'}
           </span>
           {live && (
-            <span className={`agb-badge ${live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused'}`}>
+            <span
+              className={`agb-badge ${live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused clickable'}`}
+              title={live.status === 'PAUSED' ? 'Change pause reason' : undefined}
+              onClick={live.status === 'PAUSED' ? () => setPauseModal(true) : undefined}
+            >
               {live.status === 'INCALL' ? `On Call ${formatSeconds(stateSeconds)}` : live.status === 'READY' ? 'Available' : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''} ${formatSeconds(stateSeconds)}`}
             </span>
           )}
           {live && live.status !== 'INCALL' && (
-            <select
-              className="agb-select"
-              value={live.status === 'READY' ? 'READY' : (live.pause_code || 'PAUSED')}
-              onChange={(event) => {
-                const v = event.target.value;
-                if (v === 'READY') act('/agent/ready');
-                else if (v === 'PAUSED') act('/agent/pause');
-                else act(live.status === 'PAUSED' ? '/agent/pause-code' : '/agent/pause', { pause_code: v }).then(() => {
-                  if (live.status !== 'PAUSED') act('/agent/pause-code', { pause_code: v });
-                });
-              }}
-            >
-              <option value="READY">Available</option>
-              <option value="PAUSED">Paused</option>
-              {live.pause_code && !pauseCodes.some((row) => row.pause_code === live.pause_code) && (
-                <option value={live.pause_code}>Paused · {live.pause_code}</option>
-              )}
-              {pauseCodes.map((row) => (
-                <option key={row.pause_code} value={row.pause_code}>Paused · {row.pause_code_name || row.pause_code}</option>
-              ))}
-            </select>
+            live.status === 'READY' ? (
+              <button type="button" className="agb-act warn" disabled={busy} onClick={() => setPauseModal(true)}>
+                <Pause size={14} aria-hidden="true" /> Pause
+              </button>
+            ) : (
+              <button type="button" className="agb-act call" disabled={busy} onClick={() => act('/agent/ready')}>
+                <Play size={14} aria-hidden="true" /> Go Available
+              </button>
+            )
           )}
           <span className="agb-session">
             {live ? `Session ${live.conf_exten} · ${clock.toLocaleTimeString()}` : clock.toLocaleTimeString()}
@@ -14322,47 +14321,15 @@ function AgentConsole({ token, authInfo, onExit }) {
           </button>
         </div>
       </header>
-      {/* Call action bar: plain-language call state + primary controls in one row */}
-      {live && (
+      {/* Call action bar: only shown when there are call controls to use */}
+      {live && (live.status === 'INCALL' || (Number(live.preview_lead_id) > 0 && lead)) && (
         <div className="agb-callbar">
           <div className="agb-chips">
-            <span className={`agb-state ${live.status === 'INCALL' ? 'incall' : ''}`}>
-              {live.status === 'INCALL'
-                ? `Live call — ${formatSeconds(stateSeconds)}`
-                : Number(live.preview_lead_id) > 0
-                  ? `Previewing lead ${live.lead_id} — dial or skip`
-                  : Number(live.lead_id) > 0
-                    ? `Wrap-up — disposition lead ${live.lead_id}`
-                    : live.status === 'READY'
-                      ? (autoDial ? 'Available — the dialer is placing calls for you…' : 'Waiting for calls…')
-                      : (autoDial ? 'Paused — go Available to start receiving calls' : 'Paused — dial a number or press Dial Next')}
-            </span>
+            {live.status === 'INCALL' && (
+              <span className="agb-state incall">Live call — {formatSeconds(stateSeconds)}</span>
+            )}
             {isRecording && <span className="agb-chip rec">● REC</span>}
           </div>
-          {live.status !== 'INCALL' && !Number(live.lead_id) && (
-            <>
-              <input
-                type="tel"
-                className="agb-dialinput"
-                placeholder="Dial a number"
-                value={manualNumber}
-                onChange={(event) => setManualNumber(event.target.value)}
-              />
-              <button
-                type="button"
-                className="agb-act call"
-                disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
-                onClick={dialManualNumber}
-              >
-                <Phone size={15} aria-hidden="true" /> Dial
-              </button>
-              {!autoDial && (
-                <button type="button" className="agb-act call" disabled={busy} onClick={dialNextLead}>
-                  <PhoneForwarded size={15} aria-hidden="true" /> Dial Next
-                </button>
-              )}
-            </>
-          )}
           {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && lead && (
             <>
               <button type="button" className="agb-act call" disabled={busy} onClick={async () => { const p = await act('/agent/manual-dial', { lead_id: lead.lead_id }); if (p) { setPreviewInfo(null); setMessage('Dialing previewed lead'); } }}>
@@ -14418,13 +14385,15 @@ function AgentConsole({ token, authInfo, onExit }) {
             ['queue', 'Queue', PhoneCall, queueCalls],
             ['callbacks', 'Callbacks', Clock3, callbacks ? callbacks.liveCount : 0],
             ['calllog', 'Call Log', History, 0],
-            ['ingroups', 'In-Groups', Headphones, 0],
           ].map(([key, label, Icon, badge]) => (
             <button
               type="button"
               key={label}
               className={(sidePanel || '') === key ? 'agn-rail-btn active' : 'agn-rail-btn'}
-              onClick={() => setSidePanel(key === '' ? '' : (sidePanel === key ? '' : key))}
+              onClick={() => {
+                if (key === '') setViewLeadId(null);
+                setSidePanel(key === '' ? '' : (sidePanel === key ? '' : key));
+              }}
             >
               <Icon size={18} aria-hidden="true" />
               <span>{label}</span>
@@ -14480,7 +14449,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             </div>
             <div className="agn-dialstrip">
               {live.status === 'READY' ? (
-                <button type="button" className="agn-big pause" disabled={busy} onClick={() => act('/agent/pause')}>
+                <button type="button" className="agn-big pause" disabled={busy} onClick={() => setPauseModal(true)}>
                   <Pause size={18} aria-hidden="true" /> Pause
                 </button>
               ) : (
@@ -14493,30 +14462,9 @@ function AgentConsole({ token, authInfo, onExit }) {
                   <PhoneForwarded size={18} aria-hidden="true" /> Dial Next Lead
                 </button>
               )}
-              {autoDial && (
-                <span className="agn-automsg">
-                  {dialMethod} auto-dial — calls connect automatically while you're Available
-                </span>
-              )}
-              <div className="agn-quickdial">
-                <input
-                  type="tel"
-                  placeholder="Or type a phone number…"
-                  value={manualNumber}
-                  onChange={(event) => setManualNumber(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && manualNumber.replace(/[^0-9]/g, '').length >= 5) dialManualNumber();
-                  }}
-                />
-                <button
-                  type="button"
-                  className="agn-big dial"
-                  disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
-                  onClick={dialManualNumber}
-                >
-                  <Phone size={18} aria-hidden="true" /> Call
-                </button>
-              </div>
+              <button type="button" className="agn-big dial" disabled={busy} onClick={() => setDialModal(true)}>
+                <Phone size={18} aria-hidden="true" /> Manual Dial
+              </button>
             </div>
             <div className="agn-tiles">
               {[
@@ -14535,22 +14483,6 @@ function AgentConsole({ token, authInfo, onExit }) {
               ))}
             </div>
             <div className="agn-duo">
-              <div className="agn-card">
-                <p className="agr-title"><Headphones size={14} aria-hidden="true" /> My Session</p>
-                <div className="agn-row"><span>Campaign</span><span className="agn-dim">{live.campaign_id}</span></div>
-                <div className="agn-row">
-                  <span>Status</span>
-                  <span className="agn-dim">
-                    {live.status === 'READY' ? 'Available' : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''}`} — {formatSeconds(stateSeconds)}
-                  </span>
-                </div>
-                <div className="agn-row"><span>Phone</span><span className="agn-dim">{live.extension}</span></div>
-                <div className="agn-row"><span>Conference</span><span className="agn-dim">{live.conf_exten} @ {live.server_ip}</span></div>
-                <div className="agn-row">
-                  <span>Dialable leads</span>
-                  <span className="agn-dim">{dialableLeads != null ? formatNumber(dialableLeads) : '—'}</span>
-                </div>
-              </div>
               <div className="agn-card">
                 <p className="agr-title"><Clock3 size={14} aria-hidden="true" /> Callbacks Due</p>
                 {(callbacks?.callbacks || []).filter((c) => c.status === 'LIVE').slice(0, 5).map((c) => (
@@ -14577,11 +14509,17 @@ function AgentConsole({ token, authInfo, onExit }) {
               <div className="agn-card">
                 <p className="agr-title"><Activity size={14} aria-hidden="true" /> Recent Activity</p>
                 {(dayStats?.recent || []).map((r, i) => (
-                  <div key={i} className="agn-row agn-row3">
+                  <button
+                    type="button"
+                    key={i}
+                    className="agn-row agn-row3 agn-rowlink"
+                    title="Open this lead"
+                    onClick={() => { setViewLeadId(r.lead_id); setSidePanel('leadinfo'); }}
+                  >
                     <span>{`${r.first_name || ''} ${r.last_name || ''}`.trim() || `Lead ${r.lead_id}`}</span>
                     <span className="agn-pill">{r.status || 'LIVE'}</span>
                     <span className="agn-dim">{formatSeconds(Number(r.talk_sec || 0))} · {formatDateTime(r.event_time)}</span>
-                  </div>
+                  </button>
                 ))}
                 {!(dayStats?.recent || []).length && (
                   <p className="agn-dim">No calls yet today — hit Dial Next to get rolling.</p>
@@ -14719,6 +14657,23 @@ function AgentConsole({ token, authInfo, onExit }) {
               <span className="connection-status">Called: {leadInfo.lead.called_count}x</span>
               <span className="connection-status">Entered: {formatDateTime(leadInfo.lead.entry_date)}</span>
               {leadInfo.callback && <span className="connection-status">Callback {leadInfo.callback.status}: {formatDateTime(leadInfo.callback.callback_time)}</span>}
+              {live.status !== 'INCALL' && !Number(live.lead_id) && (
+                <button
+                  type="button"
+                  className="agb-act call"
+                  disabled={busy}
+                  onClick={async () => {
+                    const payload = await act('/agent/manual-dial', { lead_id: leadInfo.lead.lead_id });
+                    if (payload) {
+                      setSidePanel('');
+                      setViewLeadId(null);
+                      setMessage(`Dialing lead ${leadInfo.lead.lead_id}`);
+                    }
+                  }}
+                >
+                  <Phone size={14} aria-hidden="true" /> Dial This Lead
+                </button>
+              )}
             </div>
             <table className="data-table">
               <thead><tr><th>Date/Time</th><th>Dir</th><th>Length</th><th>Status</th><th>Agent</th><th>Campaign</th></tr></thead>
@@ -14841,7 +14796,10 @@ function AgentConsole({ token, authInfo, onExit }) {
               <button
                 type="button"
                 className={sidePanel === 'leadinfo' ? 'agc-tab active' : 'agc-tab'}
-                onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}
+                onClick={() => {
+                  setViewLeadId(null);
+                  setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'));
+                }}
               >
                 History
               </button>
@@ -15276,6 +15234,109 @@ function AgentConsole({ token, authInfo, onExit }) {
               }
             }}
           />
+        </div>
+      )}
+      {/* Pause modal: pick a pause reason (legacy pause-code panel) */}
+      {pauseModal && live && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPauseModal(false)}>
+          <section
+            className="modal-panel agn-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Pause"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Take a break</p>
+                <h2>Why are you pausing?</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setPauseModal(false)} aria-label="Close" title="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="agn-pausegrid">
+              {pauseCodes.map((row) => (
+                <button
+                  key={row.pause_code}
+                  type="button"
+                  className="agn-pausebtn"
+                  disabled={busy}
+                  onClick={async () => {
+                    const paused = live.status === 'PAUSED' ? { ok: true } : await act('/agent/pause');
+                    if (paused) {
+                      await act('/agent/pause-code', { pause_code: row.pause_code });
+                      setPauseModal(false);
+                      setMessage(`Paused — ${row.pause_code_name || row.pause_code}`);
+                    }
+                  }}
+                >
+                  {row.pause_code_name || row.pause_code}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="agn-pausebtn plain"
+                disabled={busy}
+                onClick={async () => {
+                  const paused = live.status === 'PAUSED' ? { ok: true } : await act('/agent/pause');
+                  if (paused) {
+                    setPauseModal(false);
+                    setMessage('Paused');
+                  }
+                }}
+              >
+                {pauseCodes.length ? 'Pause without a reason' : 'Pause'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {/* Manual dial modal (legacy MANUAL DIAL popup) */}
+      {dialModal && live && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setDialModal(false)}>
+          <section
+            className="modal-panel agn-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Manual dial"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Manual Dial</p>
+                <h2>Place a Call</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setDialModal(false)} aria-label="Close" title="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="agn-dialform">
+              <input
+                autoFocus
+                type="tel"
+                placeholder="Phone number…"
+                value={manualNumber}
+                onChange={(event) => setManualNumber(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && manualNumber.replace(/[^0-9]/g, '').length >= 5) dialManualNumber();
+                }}
+              />
+              <p className="agn-dim">
+                Dials through campaign {live.campaign_id} — dial prefix and caller ID come from the campaign settings.
+              </p>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
+                  onClick={dialManualNumber}
+                >
+                  <Phone size={16} aria-hidden="true" /> Dial Number
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       )}
     </main>
