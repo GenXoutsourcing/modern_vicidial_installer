@@ -43,6 +43,7 @@ MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
 RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
 RECORDINGS_FTP_LAYOUT="${RECORDINGS_FTP_LAYOUT:-dated}"
 ARCHIVE_RETENTION_DAYS="${ARCHIVE_RETENTION_DAYS:-0}"
+EXTRA_WHITELIST_IPS="${EXTRA_WHITELIST_IPS:-}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -1165,6 +1166,12 @@ fi
 
 CRON_DB_PASS="${CRON_DB_PASS:-$DEFAULT_CRON_DB_PASS}"
 CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
+
+if [ "$CLUSTER_JOIN" != "yes" ]; then
+    # Whitelist planned cluster/management IPs now so servers added later can
+    # reach this database before any web UI exists to manage the IP list.
+    prompt EXTRA_WHITELIST_IPS "Additional IPs to whitelist in ViciWhite (future cluster servers/management, space or comma separated, Enter for none)" "$EXTRA_WHITELIST_IPS"
+fi
 
 if [ "$ROLE_ARCHIVE" = "yes" ]; then
     prompt_secret VICIDIAL_ARCHIVE_PASS "FTP password for archive user $VICIDIAL_ARCHIVE_USER (Enter for default $VICIDIAL_ARCHIVE_PASS)" "$VICIDIAL_ARCHIVE_PASS"
@@ -2308,12 +2315,10 @@ systemctl daemon-reload
 systemctl enable rc-local.service
 systemctl start rc-local.service
 
-if [ "$ROLE_WEB" = "yes" ]; then
 cat <<WELCOME > /var/www/html/index.html
 <META HTTP-EQUIV=REFRESH CONTENT="1; URL=/vicidial/welcome.php">
 Please Hold while I redirect you!
 WELCOME
-fi
 fix_vicidial_web_permissions
 
 #cd "$SCRIPT_DIR"
@@ -2361,6 +2366,14 @@ else
 fi
 if [ "$CLUSTER_JOIN" != "yes" ]; then
     apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
+    for wip in $(printf '%s' "$EXTRA_WHITELIST_IPS" | tr ',' ' '); do
+        if [[ "$wip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "INSERT INTO vicidial_ip_list_entries (ip_list_id, ip_address) SELECT 'ViciWhite', '${wip}' FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_ip_list_entries WHERE ip_list_id='ViciWhite' AND ip_address='${wip}');"
+            echo "Whitelisted ${wip} in ViciWhite."
+        elif [ -n "$wip" ]; then
+            echo "WARNING: Skipping invalid whitelist entry: $wip"
+        fi
+    done
 fi
 if [ "$ROLE_ARCHIVE" = "yes" ]; then
     setup_archive_server
