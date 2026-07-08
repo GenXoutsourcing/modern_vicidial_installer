@@ -504,6 +504,7 @@ INSERT IGNORE INTO vicidial_confbridges SELECT * FROM _c3;
 CREATE TEMPORARY TABLE _p AS SELECT * FROM phones WHERE server_ip='${conf_src}' AND is_webphone='Y' LIMIT 1;
 UPDATE _p SET server_ip='${ip_address}';
 INSERT IGNORE INTO phones SELECT * FROM _p;
+INSERT IGNORE INTO server_updater SET server_ip='${ip_address}', last_update=NOW();
 JOINCONF
         echo "Copied conference ranges and webphone template from ${conf_src} to ${ip_address}."
     fi
