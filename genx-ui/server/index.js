@@ -7793,6 +7793,16 @@ async function agentDayStats(req, res) {
     [req.genxUser.user],
     [],
   );
+  // Sales = dispositions whose status is flagged sale='Y' (system or campaign).
+  const [salesRow] = await rows(
+    `SELECT COUNT(*) AS sales FROM vicidial_agent_log
+     WHERE user = ? AND event_time >= CURDATE() AND status IN (
+       SELECT status FROM vicidial_statuses WHERE sale = 'Y'
+       UNION SELECT status FROM vicidial_campaign_statuses WHERE sale = 'Y'
+     )`,
+    [req.genxUser.user],
+    [],
+  );
   return res.json({
     ok: true,
     calls: Number(sums?.calls || 0),
@@ -7800,8 +7810,121 @@ async function agentDayStats(req, res) {
     pauseSec: Number(sums?.pause_sec || 0),
     waitSec: Number(sums?.wait_sec || 0),
     dispoSec: Number(sums?.dispo_sec || 0),
+    sales: Number(salesRow?.sales || 0),
     recent,
   });
+}
+
+// Internal manager/agent chat (legacy chat_db_query.php port): chats live in
+// vicidial_manager_chats; every message is one vicidial_manager_chat_log row
+// PER PARTICIPANT (participant = `user` column), viewed-marking per copy.
+async function agentChatSettings() {
+  const [row] = await rows('SELECT allow_chats FROM system_settings LIMIT 1', [], []);
+  return String(row?.allow_chats || '0') === '1';
+}
+
+async function agentChatList(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  if (!(await agentChatSettings())) return res.json({ ok: true, enabled: false, threads: [] });
+  const user = req.genxUser.user;
+  const threads = await rows(
+    `SELECT vml.manager_chat_id, vml.manager_chat_subid, MAX(vml.message_date) AS last_date,
+            SUM(IF(vml.message_viewed_date IS NULL AND vml.message_posted_by != ?, 1, 0)) AS unread,
+            vmc.manager, vmc.allow_replies, vu.full_name AS manager_name
+     FROM vicidial_manager_chat_log vml
+     JOIN vicidial_manager_chats vmc ON vmc.manager_chat_id = vml.manager_chat_id
+     LEFT JOIN vicidial_users vu ON vu.user = vmc.manager
+     WHERE vml.user = ?
+     GROUP BY vml.manager_chat_id, vml.manager_chat_subid
+     ORDER BY last_date DESC LIMIT 20`,
+    [user, user],
+    [],
+  );
+  const chatId = Number(req.query?.chat_id || 0);
+  const subid = Number(req.query?.subid || 1);
+  let messages;
+  if (chatId > 0) {
+    messages = await rows(
+      `SELECT vml.message, vml.message_date, vml.message_posted_by, vu.full_name AS posted_name
+       FROM vicidial_manager_chat_log vml
+       LEFT JOIN vicidial_users vu ON vu.user = vml.message_posted_by
+       WHERE vml.manager_chat_id = ? AND vml.manager_chat_subid = ? AND vml.user = ?
+       ORDER BY vml.message_date ASC, vml.manager_chat_message_id ASC LIMIT 200`,
+      [chatId, subid, user],
+      [],
+    );
+    await execute(
+      `UPDATE vicidial_manager_chat_log SET message_viewed_date = NOW()
+       WHERE message_viewed_date IS NULL AND manager_chat_id = ? AND manager_chat_subid = ? AND user = ?`,
+      [chatId, subid, user],
+    ).catch(() => {});
+  }
+  return res.json({ ok: true, enabled: true, threads, messages });
+}
+
+async function agentChatManagers(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const managers = await rows(
+    "SELECT user, full_name FROM vicidial_users WHERE user_level >= 8 AND active = 'Y' ORDER BY full_name ASC LIMIT 100",
+    [],
+    [],
+  );
+  return res.json({ ok: true, managers });
+}
+
+async function agentChatSend(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  if (!(await agentChatSettings())) return res.status(403).json({ ok: false, error: 'chat_disabled' });
+  const user = req.genxUser.user;
+  const message = String(req.body?.message || '').trim().slice(0, 2000);
+  if (!message) return badRequest(res, 'message_required');
+  const messageId = `${Math.floor(Date.now() / 1000)}${Math.floor(Math.random() * 900) + 100}`;
+
+  let chatId = Number(req.body?.manager_chat_id || 0);
+  let subid = Number(req.body?.manager_chat_subid || 1);
+  let chatManager;
+  if (chatId > 0) {
+    const [chat] = await rows(
+      'SELECT manager, allow_replies FROM vicidial_manager_chats WHERE manager_chat_id = ? LIMIT 1',
+      [chatId],
+      [],
+    );
+    if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
+    if (chat.allow_replies !== 'Y') return res.status(403).json({ ok: false, error: 'replies_disabled' });
+    chatManager = chat.manager || '';
+  } else {
+    // Agent-initiated chat to a manager (legacy chat_db_query.php line ~258).
+    chatManager = cleanId(req.body?.manager, 20);
+    if (!chatManager) return badRequest(res, 'manager_required');
+    const live = await agentLiveRow(user);
+    const created = await execute(
+      `INSERT INTO vicidial_manager_chats
+         (chat_start_date, manager, selected_agents, selected_user_groups, selected_campaigns, allow_replies, internal_chat_type)
+       VALUES (NOW(), ?, CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), 'Y', 'AGENT')`,
+      [chatManager, user, req.genxUser.userGroup || '', live?.campaign_id || ''],
+    );
+    chatId = created.insertId;
+    subid = 1;
+  }
+
+  // One log row per participant (existing chat members + manager + sender).
+  const participantRows = await rows(
+    'SELECT DISTINCT user FROM vicidial_manager_chat_log WHERE manager_chat_id = ? AND manager_chat_subid = ?',
+    [chatId, subid],
+    [],
+  );
+  const participants = new Set(participantRows.map((r) => r.user).filter(Boolean));
+  if (chatManager) participants.add(chatManager);
+  participants.add(user);
+  for (const participant of participants) {
+    await execute(
+      `INSERT INTO vicidial_manager_chat_log
+         (manager_chat_id, manager_chat_subid, manager, user, message, message_id, message_date, message_posted_by)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
+      [chatId, subid, chatManager, participant, message, messageId, user],
+    );
+  }
+  return res.json({ ok: true, manager_chat_id: chatId, manager_chat_subid: subid });
 }
 
 // Legacy CalLBacKLisT + CalLBacKCounT: USERONLY callbacks for this agent with
@@ -13976,6 +14099,9 @@ app.get('/api/agent/agents-view', requireAgentAccess, agentAgentsView);
 app.get('/api/agent/calls-in-queue', requireAgentAccess, agentCallsInQueue);
 app.get('/api/agent/callbacks', requireAgentAccess, agentCallbacks);
 app.get('/api/agent/day-stats', requireAgentAccess, agentDayStats);
+app.get('/api/agent/chat', requireAgentAccess, agentChatList);
+app.get('/api/agent/chat-managers', requireAgentAccess, agentChatManagers);
+app.post('/api/agent/chat', requireAgentAccess, agentChatSend);
 app.get('/api/agent/xfer-options', requireAgentAccess, agentXferOptions);
 app.post('/api/agent/xfer-blind', requireAgentAccess, agentXferBlind);
 app.post('/api/agent/threeway-dial', requireAgentAccess, agentThreewayDial);

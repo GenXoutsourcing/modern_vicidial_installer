@@ -19,6 +19,7 @@ import {
   LayoutDashboard,
   LockKeyhole,
   LogOut,
+  MessageSquare,
   Mic,
   MicOff,
   Pause,
@@ -13950,6 +13951,13 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [pauseModal, setPauseModal] = useState(false);
   const [dialModal, setDialModal] = useState(false);
   const [viewLeadId, setViewLeadId] = useState(null);
+  const [chatInfo, setChatInfo] = useState(null);
+  const [chatThread, setChatThread] = useState(null);
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatText, setChatText] = useState('');
+  const [chatManagers, setChatManagers] = useState(null);
+  const [chatTo, setChatTo] = useState('');
+  const chatScrollRef = useRef(null);
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
   const [callLog, setCallLog] = useState(null);
@@ -14235,6 +14243,56 @@ function AgentConsole({ token, authInfo, onExit }) {
     apiFetch('/agent/callbacks', token).then(setCallbacks).catch(() => {});
   }, [live ? 1 : 0, lead ? 1 : 0, token]);
 
+  // Team chat: poll threads (+ selected thread messages) while the dashboard
+  // is visible; auto-select the most recent thread.
+  useEffect(() => {
+    if (!live || lead || sidePanel) return undefined;
+    let cancelled = false;
+    const load = () => {
+      const query = chatThread ? `?chat_id=${chatThread.id}&subid=${chatThread.subid}` : '';
+      apiFetch(`/agent/chat${query}`, token)
+        .then((payload) => {
+          if (cancelled) return;
+          setChatInfo(payload);
+          if (payload.messages) setChatMsgs(payload.messages);
+          if (!chatThread && payload.threads?.length) {
+            setChatThread({ id: payload.threads[0].manager_chat_id, subid: payload.threads[0].manager_chat_subid });
+          }
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 4000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [live ? 1 : 0, lead ? 1 : 0, sidePanel, chatThread ? `${chatThread.id}-${chatThread.subid}` : '', token]);
+
+  useEffect(() => {
+    if (!chatInfo?.enabled || chatManagers || chatInfo.threads?.length) return;
+    apiFetch('/agent/chat-managers', token).then((p) => setChatManagers(p.managers || [])).catch(() => {});
+  }, [chatInfo?.enabled ? 1 : 0, chatInfo?.threads?.length || 0, token]);
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMsgs.length]);
+
+  const sendChat = async () => {
+    const msg = chatText.trim();
+    if (!msg) return;
+    const body = chatThread
+      ? { message: msg, manager_chat_id: chatThread.id, manager_chat_subid: chatThread.subid }
+      : { message: msg, manager: chatTo };
+    try {
+      const payload = await apiFetch('/agent/chat', token, { method: 'POST', body: JSON.stringify(body) });
+      setChatText('');
+      if (payload.manager_chat_id && !chatThread) {
+        setChatThread({ id: payload.manager_chat_id, subid: payload.manager_chat_subid || 1 });
+      }
+    } catch (requestError) {
+      setMessage(requestError.message === 'replies_disabled' ? 'This chat does not allow replies' : 'Chat send failed');
+    }
+  };
+
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
   // Campaign dial method drives which controls make sense: RATIO/ADAPT_* are
@@ -14275,7 +14333,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             })()}
           </div>
           <div>
-            <h1>{authInfo?.user?.fullName || authInfo?.user?.user || live?.user || 'Agent'}</h1>
+            <h1>{authInfo?.user?.user || live?.user || 'Agent'}</h1>
             <p className="agn-sub">
               {live ? `Campaign ${live.campaign_id}${dialMethod ? ` (${dialMethod})` : ''} · Phone ${String(live.extension).split('/').pop()}` : 'GenX Agent Console'}
             </p>
@@ -14451,12 +14509,13 @@ function AgentConsole({ token, authInfo, onExit }) {
             <div className="agn-greet">
               <h2>
                 {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
-                {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
+                {authInfo?.user?.fullName || live.user}
               </h2>
             </div>
             <div className="agn-tiles">
               {[
                 ['Calls Today', formatNumber(dayStats?.calls ?? live.calls_today), PhoneCall, 'c1'],
+                ['Sales Today', formatNumber(dayStats?.sales || 0), TrendingUp, 'c7'],
                 ['Talk Time', formatSeconds(dayStats?.talkSec || 0), Timer, 'c2'],
                 ['Wait Time', formatSeconds(dayStats?.waitSec || 0), Clock3, 'c3'],
                 ['Pause Time', formatSeconds(dayStats?.pauseSec || 0), Pause, 'c4'],
@@ -14471,6 +14530,77 @@ function AgentConsole({ token, authInfo, onExit }) {
               ))}
             </div>
             <div className="agn-duo">
+              <div className="agn-card agn-chat">
+                <p className="agr-title">
+                  <MessageSquare size={14} aria-hidden="true" /> Team Chat
+                  {Boolean(chatInfo?.threads?.reduce((n, t) => n + Number(t.unread || 0), 0)) && (
+                    <em className="agn-rail-badge agn-chat-unread">
+                      {chatInfo.threads.reduce((n, t) => n + Number(t.unread || 0), 0)}
+                    </em>
+                  )}
+                </p>
+                {chatInfo && !chatInfo.enabled && (
+                  <p className="agn-dim">Chat is disabled in system settings.</p>
+                )}
+                {chatInfo?.enabled && (
+                  <>
+                    {Boolean(chatInfo.threads?.length) && (
+                      <div className="agn-chat-threads">
+                        {chatInfo.threads.map((t) => (
+                          <button
+                            type="button"
+                            key={`${t.manager_chat_id}-${t.manager_chat_subid}`}
+                            className={chatThread && chatThread.id === t.manager_chat_id && chatThread.subid === t.manager_chat_subid ? 'agn-chip link on' : 'agn-chip link'}
+                            onClick={() => setChatThread({ id: t.manager_chat_id, subid: t.manager_chat_subid })}
+                          >
+                            {t.manager_name || t.manager || `Chat #${t.manager_chat_id}`}
+                            {Number(t.unread) > 0 && <em className="agn-rail-badge agn-chat-unread">{t.unread}</em>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="agn-chat-msgs" ref={chatScrollRef}>
+                      {chatMsgs.map((m, i) => (
+                        <div key={i} className={m.message_posted_by === (authInfo?.user?.user || live.user) ? 'agn-bubble own' : 'agn-bubble'}>
+                          <span className="agn-bubble-meta">{m.posted_name || m.message_posted_by} · {formatDateTime(m.message_date)}</span>
+                          {m.message}
+                        </div>
+                      ))}
+                      {!chatMsgs.length && (
+                        <p className="agn-dim">
+                          {chatInfo.threads?.length ? 'No messages yet.' : 'No chats yet — message a manager below.'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="agn-chat-input">
+                      {!chatThread && (
+                        <select value={chatTo} onChange={(event) => setChatTo(event.target.value)}>
+                          <option value="">To manager…</option>
+                          {(chatManagers || []).map((m) => (
+                            <option key={m.user} value={m.user}>{m.full_name || m.user}</option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        type="text"
+                        placeholder="Type a message…"
+                        value={chatText}
+                        maxLength={2000}
+                        onChange={(event) => setChatText(event.target.value)}
+                        onKeyDown={(event) => { if (event.key === 'Enter') sendChat(); }}
+                      />
+                      <button
+                        type="button"
+                        className="agb-act xfer"
+                        disabled={busy || !chatText.trim() || (!chatThread && !chatTo)}
+                        onClick={sendChat}
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
               <div className="agn-card">
                 <p className="agr-title"><Clock3 size={14} aria-hidden="true" /> Callbacks Due</p>
                 {(callbacks?.callbacks || []).filter((c) => c.status === 'LIVE').slice(0, 5).map((c) => (
