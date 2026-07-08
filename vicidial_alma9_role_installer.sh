@@ -449,7 +449,7 @@ apply_vicidial_database_defaults() {
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<MYSQLDEFAULTS
-UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5;
+UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0';
 
 UPDATE servers
 SET server_id='${server_id}',
