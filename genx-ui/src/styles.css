@@ -1800,7 +1800,11 @@ select option:hover {
   padding: 2px 8px;
   border-radius: 999px;
 }
-.agb-chip.rec { color: #ff8a8a; border-color: rgba(255, 99, 99, 0.5); }
+.agb-chip.rec { color: #ff8a8a; border-color: rgba(255, 99, 99, 0.5); animation: agn-pulse 1.6s ease-in-out infinite; }
+
+/* Plain-language call state in the action bar */
+.agb-state { font-size: 13px; font-weight: 600; color: rgba(226, 238, 255, 0.75); }
+.agb-state.incall { color: #ffb3b3; }
 
 .agb-dialinput { width: 160px; font-size: 13px; }
 

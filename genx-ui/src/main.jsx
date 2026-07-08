@@ -14302,13 +14302,22 @@ function AgentConsole({ token, authInfo, onExit }) {
           </button>
         </div>
       </header>
-      {/* Call action bar: state chips + primary call controls in one row */}
+      {/* Call action bar: plain-language call state + primary controls in one row */}
       {live && (
         <div className="agb-callbar">
           <div className="agb-chips">
-            <span className="agb-chip">callStatus/{live.status}</span>
-            {Number(live.lead_id) > 0 && <span className="agb-chip">lead/{live.lead_id}</span>}
-            {isRecording && <span className="agb-chip rec">REC</span>}
+            <span className={`agb-state ${live.status === 'INCALL' ? 'incall' : ''}`}>
+              {live.status === 'INCALL'
+                ? `Live call — ${formatSeconds(stateSeconds)}`
+                : Number(live.preview_lead_id) > 0
+                  ? `Previewing lead ${live.lead_id} — dial or skip`
+                  : Number(live.lead_id) > 0
+                    ? `Wrap-up — disposition lead ${live.lead_id}`
+                    : live.status === 'READY'
+                      ? 'Waiting for calls…'
+                      : 'Paused — dial a number or press Dial Next'}
+            </span>
+            {isRecording && <span className="agb-chip rec">● REC</span>}
           </div>
           {live.status !== 'INCALL' && !Number(live.lead_id) && (
             <>
