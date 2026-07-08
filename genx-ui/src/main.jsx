@@ -14234,6 +14234,12 @@ function AgentConsole({ token, authInfo, onExit }) {
 
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
+  // Campaign dial method drives which controls make sense: RATIO/ADAPT_* are
+  // auto-dial (agent goes Available, dialer feeds calls); MANUAL/INBOUND_MAN
+  // use Dial Next (legacy manual/preview dialing).
+  const dialMethod = campaigns.find((c) => c.campaign_id === live?.campaign_id)?.dial_method || '';
+  const autoDial = ['RATIO', 'ADAPT_AVERAGE', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED'].includes(dialMethod);
+
   const dialNextLead = async () => {
     const payload = await act('/agent/dial-next', {});
     if (payload?.preview) {
@@ -14328,8 +14334,8 @@ function AgentConsole({ token, authInfo, onExit }) {
                   : Number(live.lead_id) > 0
                     ? `Wrap-up — disposition lead ${live.lead_id}`
                     : live.status === 'READY'
-                      ? 'Waiting for calls…'
-                      : 'Paused — dial a number or press Dial Next'}
+                      ? (autoDial ? 'Available — the dialer is placing calls for you…' : 'Waiting for calls…')
+                      : (autoDial ? 'Paused — go Available to start receiving calls' : 'Paused — dial a number or press Dial Next')}
             </span>
             {isRecording && <span className="agb-chip rec">● REC</span>}
           </div>
@@ -14350,9 +14356,11 @@ function AgentConsole({ token, authInfo, onExit }) {
               >
                 <Phone size={15} aria-hidden="true" /> Dial
               </button>
-              <button type="button" className="agb-act call" disabled={busy} onClick={dialNextLead}>
-                <PhoneForwarded size={15} aria-hidden="true" /> Dial Next
-              </button>
+              {!autoDial && (
+                <button type="button" className="agb-act call" disabled={busy} onClick={dialNextLead}>
+                  <PhoneForwarded size={15} aria-hidden="true" /> Dial Next
+                </button>
+              )}
             </>
           )}
           {Number(live.preview_lead_id) > 0 && live.status !== 'INCALL' && lead && (
@@ -14464,7 +14472,9 @@ function AgentConsole({ token, authInfo, onExit }) {
                   {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
                   {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
                 </h2>
-                <p className="agn-sub">Here's how your day is going on {live.campaign_id}.</p>
+                <p className="agn-sub">
+                  Here's how your day is going on {live.campaign_id}{dialMethod ? ` (${dialMethod})` : ''}.
+                </p>
               </div>
               <span className="agn-clock">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
@@ -14478,9 +14488,16 @@ function AgentConsole({ token, authInfo, onExit }) {
                   <Play size={18} aria-hidden="true" /> Go Available
                 </button>
               )}
-              <button type="button" className="agn-big dial" disabled={busy} onClick={dialNextLead}>
-                <PhoneForwarded size={18} aria-hidden="true" /> Dial Next Lead
-              </button>
+              {!autoDial && (
+                <button type="button" className="agn-big dial" disabled={busy} onClick={dialNextLead}>
+                  <PhoneForwarded size={18} aria-hidden="true" /> Dial Next Lead
+                </button>
+              )}
+              {autoDial && (
+                <span className="agn-automsg">
+                  {dialMethod} auto-dial — calls connect automatically while you're Available
+                </span>
+              )}
               <div className="agn-quickdial">
                 <input
                   type="tel"
@@ -14537,7 +14554,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               <div className="agn-card">
                 <p className="agr-title"><Clock3 size={14} aria-hidden="true" /> Callbacks Due</p>
                 {(callbacks?.callbacks || []).filter((c) => c.status === 'LIVE').slice(0, 5).map((c) => (
-                  <div key={c.callback_id} className="agn-row">
+                  <div key={c.callback_id} className="agn-row agn-row3">
                     <span>{`${c.first_name || ''} ${c.last_name || ''}`.trim() || `Lead ${c.lead_id}`}</span>
                     <span className="agn-dim">{formatDateTime(c.callback_time)}</span>
                     <button
@@ -14560,7 +14577,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               <div className="agn-card">
                 <p className="agr-title"><Activity size={14} aria-hidden="true" /> Recent Activity</p>
                 {(dayStats?.recent || []).map((r, i) => (
-                  <div key={i} className="agn-row">
+                  <div key={i} className="agn-row agn-row3">
                     <span>{`${r.first_name || ''} ${r.last_name || ''}`.trim() || `Lead ${r.lead_id}`}</span>
                     <span className="agn-pill">{r.status || 'LIVE'}</span>
                     <span className="agn-dim">{formatSeconds(Number(r.talk_sec || 0))} · {formatDateTime(r.event_time)}</span>

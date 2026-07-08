@@ -2225,7 +2225,18 @@ select option:hover {
   border-bottom: 1px solid rgba(226, 238, 255, 0.06);
 }
 .agn-row:last-child { border-bottom: none; }
+/* 3-column card rows (name | status/time | detail): fixed grid so the
+   middle and right columns line up straight down the card. */
+.agn-row.agn-row3 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, auto) minmax(150px, auto);
+  align-items: center;
+}
+.agn-row.agn-row3 > :nth-child(1) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agn-row.agn-row3 > :nth-child(2) { justify-self: center; text-align: center; }
+.agn-row.agn-row3 > :nth-child(3) { justify-self: end; text-align: right; }
 .agn-dim { font-size: 12px; color: rgba(226, 238, 255, 0.5); }
+.agn-automsg { font-size: 13px; font-weight: 600; color: #9fe8ff; }
 .agn-pill {
   font-size: 10px;
   font-weight: 700;
