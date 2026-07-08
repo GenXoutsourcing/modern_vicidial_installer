@@ -14276,7 +14276,9 @@ function AgentConsole({ token, authInfo, onExit }) {
           </div>
           <div>
             <h1>{authInfo?.user?.fullName || authInfo?.user?.user || live?.user || 'Agent'}</h1>
-            <p className="agn-sub">{live ? `Campaign ${live.campaign_id} · Phone ${String(live.extension).split('/').pop()}` : 'GenX Agent Console'}</p>
+            <p className="agn-sub">
+              {live ? `Campaign ${live.campaign_id}${dialMethod ? ` (${dialMethod})` : ''} · Phone ${String(live.extension).split('/').pop()}` : 'GenX Agent Console'}
+            </p>
           </div>
         </div>
         <div className="agb-status-group">
@@ -14400,6 +14402,17 @@ function AgentConsole({ token, authInfo, onExit }) {
               {Number(badge) > 0 && <em className="agn-rail-badge">{badge}</em>}
             </button>
           ))}
+          <span className="agn-rail-sep" aria-hidden="true" />
+          {!autoDial && live.status !== 'INCALL' && !Number(live.lead_id) && (
+            <button type="button" className="agn-rail-btn dial" disabled={busy} onClick={dialNextLead}>
+              <PhoneForwarded size={18} aria-hidden="true" />
+              <span>Dial Next</span>
+            </button>
+          )}
+          <button type="button" className="agn-rail-btn dial" disabled={busy} onClick={() => setDialModal(true)}>
+            <Phone size={18} aria-hidden="true" />
+            <span>Manual Dial</span>
+          </button>
         </nav>
       )}
       <div className="agent-body">
@@ -14436,35 +14449,10 @@ function AgentConsole({ token, authInfo, onExit }) {
         {live && !lead && !sidePanel && (
           <div className="agn-dash">
             <div className="agn-greet">
-              <div>
-                <h2>
-                  {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
-                  {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
-                </h2>
-                <p className="agn-sub">
-                  Here's how your day is going on {live.campaign_id}{dialMethod ? ` (${dialMethod})` : ''}.
-                </p>
-              </div>
-              <span className="agn-clock">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            </div>
-            <div className="agn-dialstrip">
-              {live.status === 'READY' ? (
-                <button type="button" className="agn-big pause" disabled={busy} onClick={() => setPauseModal(true)}>
-                  <Pause size={18} aria-hidden="true" /> Pause
-                </button>
-              ) : (
-                <button type="button" className="agn-big go" disabled={busy} onClick={() => act('/agent/ready')}>
-                  <Play size={18} aria-hidden="true" /> Go Available
-                </button>
-              )}
-              {!autoDial && (
-                <button type="button" className="agn-big dial" disabled={busy} onClick={dialNextLead}>
-                  <PhoneForwarded size={18} aria-hidden="true" /> Dial Next Lead
-                </button>
-              )}
-              <button type="button" className="agn-big dial" disabled={busy} onClick={() => setDialModal(true)}>
-                <Phone size={18} aria-hidden="true" /> Manual Dial
-              </button>
+              <h2>
+                {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
+                {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
+              </h2>
             </div>
             <div className="agn-tiles">
               {[

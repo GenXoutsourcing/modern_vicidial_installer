@@ -2123,6 +2123,14 @@ select option:hover {
   background: linear-gradient(135deg, #00d9ff, #3d7bff);
   box-shadow: 0 4px 14px rgba(0, 217, 255, 0.3);
 }
+.agn-rail-sep { border-top: 1px solid rgba(226, 238, 255, 0.1); margin: 4px 8px; }
+.agn-rail-btn.dial {
+  color: #a9f5cf;
+  border: 1px solid rgba(47, 224, 141, 0.35);
+  background: rgba(47, 224, 141, 0.08);
+}
+.agn-rail-btn.dial:hover:not(:disabled) { background: rgba(47, 224, 141, 0.18); color: #d4fbe8; }
+.agn-rail-btn.dial:disabled { opacity: 0.4; cursor: default; }
 .agn-rail-badge {
   position: absolute;
   top: 4px;
