@@ -42,6 +42,7 @@ SLAVE_DB_PASS="${SLAVE_DB_PASS:-slave1234}"
 MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
 RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
 RECORDINGS_FTP_LAYOUT="${RECORDINGS_FTP_LAYOUT:-dated}"
+ARCHIVE_RETENTION_DAYS="${ARCHIVE_RETENTION_DAYS:-0}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -223,6 +224,13 @@ print_role_summary() {
         echo "Port       : $VICIDIAL_ARCHIVE_PORT"
         echo "Directory  : $VICIDIAL_ARCHIVE_DIR"
         echo "URL        : $VICIDIAL_ARCHIVE_URL"
+        if [ "$ROLE_ARCHIVE" = "yes" ]; then
+            if [ "$ARCHIVE_RETENTION_DAYS" -gt 0 ]; then
+                echo "Retention  : $ARCHIVE_RETENTION_DAYS days"
+            else
+                echo "Retention  : keep forever"
+            fi
+        fi
     fi
     echo
 }
@@ -1150,6 +1158,11 @@ CUSTOM_DB_PASS="${CUSTOM_DB_PASS:-$DEFAULT_CUSTOM_DB_PASS}"
 
 if [ "$ROLE_ARCHIVE" = "yes" ]; then
     prompt_secret VICIDIAL_ARCHIVE_PASS "FTP password for archive user $VICIDIAL_ARCHIVE_USER (Enter for default $VICIDIAL_ARCHIVE_PASS)" "$VICIDIAL_ARCHIVE_PASS"
+    prompt ARCHIVE_RETENTION_DAYS "Days to keep recordings on this archive server (0 = keep forever)" "$ARCHIVE_RETENTION_DAYS"
+    if [[ ! "$ARCHIVE_RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: Archive retention days must be a number (0 = keep forever)."
+        exit 1
+    fi
 fi
 
 prompt DOMAINNAME "Domain name for SSL/WebRTC" "${DOMAINNAME:-$hostname}"
@@ -1973,11 +1986,19 @@ CRONTAB
 fi
 
 if [ "$ROLE_ARCHIVE" = "yes" ]; then
+if [ "$ARCHIVE_RETENTION_DAYS" -gt 0 ]; then
 cat <<CRONTAB >> /root/crontab-file
 
-### archive retention - uncomment and adjust mtime days to enable cleanup of old recordings
+### archive retention: delete recordings older than $ARCHIVE_RETENTION_DAYS days
+20 2 * * * /usr/bin/find /archive/RECORDINGS -type f -mtime +$ARCHIVE_RETENTION_DAYS -print | xargs -r rm -f
+CRONTAB
+else
+cat <<CRONTAB >> /root/crontab-file
+
+### archive retention - disabled (keep forever); uncomment and set days to enable cleanup
 #20 2 * * * /usr/bin/find /archive/RECORDINGS -type f -mtime +365 -print | xargs -r rm -f
 CRONTAB
+fi
 fi
 
 cat <<CRONTAB >> /root/crontab-file
