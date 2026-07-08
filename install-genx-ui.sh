@@ -65,6 +65,61 @@ ensure_node() {
 
 ensure_node
 
+# Prerequisites normally laid down by the base installer — added here too so
+# this script is self-sufficient on an EXISTING VICIdial server.
+ensure_audio_store_prereqs() {
+  if [ ! -x /usr/local/bin/vicidial-audio-store-dir ]; then
+    cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
+#!/bin/bash
+# Creates/permissions the VICIdial central sound store directory named in
+# system_settings.sounds_web_directory. DB settings come from
+# /etc/astguiclient.conf so this also works on split web/DB topologies where
+# the authoritative database is not the local mysql.
+conf() { awk -v key="$1" '$1 == key && $2 == "=>" { $1=""; $2=""; sub(/^[[:space:]]+/, ""); sub(/[[:space:];]+$/, ""); print; exit }' /etc/astguiclient.conf 2>/dev/null; }
+DB_HOST=$(conf VARDB_server);   [ -n "$DB_HOST" ] || DB_HOST=localhost
+DB_NAME=$(conf VARDB_database); [ -n "$DB_NAME" ] || DB_NAME=asterisk
+DB_USER=$(conf VARDB_user);     [ -n "$DB_USER" ] || DB_USER=cron
+DB_PASS=$(conf VARDB_pass)
+DB_PORT=$(conf VARDB_port);     [ -n "$DB_PORT" ] || DB_PORT=3306
+audio_dir=$(MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -Nse "select sounds_web_directory from $DB_NAME.system_settings limit 1;" 2>/dev/null | tr -d '\r\n')
+case "$audio_dir" in *[!a-zA-Z0-9_-]*) audio_dir='' ;; esac
+chown root:root /var/www/html
+chmod g-s /var/www/html
+chmod 0777 /var/www/html
+if [ -n "$audio_dir" ]; then
+    mkdir -p "/var/www/html/$audio_dir"
+    chown -R root:root "/var/www/html/$audio_dir"
+    chmod g-s "/var/www/html/$audio_dir"
+    chmod 0777 "/var/www/html/$audio_dir"
+fi
+AUDIOSTOREDIR
+    chmod 755 /usr/local/bin/vicidial-audio-store-dir
+  fi
+
+  if ! crontab -l 2>/dev/null | grep -q 'vicidial-audio-store-dir'; then
+    { crontab -l 2>/dev/null
+      echo ''
+      echo '### VICIDIAL audio-store web directory helper'
+      echo '* * * * * /usr/local/bin/vicidial-audio-store-dir >/dev/null 2>&1'
+    } | crontab -
+  fi
+
+  # Audio store sync cron: fix the broken "hourly" spelling if present, add if missing.
+  if crontab -l 2>/dev/null | grep -q '^\* 1 \* \* \* /usr/share/astguiclient/ADMIN_audio_store_sync.pl'; then
+    crontab -l | sed 's|^\* 1 \* \* \* /usr/share/astguiclient/ADMIN_audio_store_sync.pl|1,16,31,46 * * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl|' | crontab -
+  elif ! crontab -l 2>/dev/null | grep -q 'ADMIN_audio_store_sync.pl'; then
+    if [ -f /usr/share/astguiclient/ADMIN_audio_store_sync.pl ]; then
+      { crontab -l 2>/dev/null
+        echo ''
+        echo '###Audio Sync quarter-hourly'
+        echo '1,16,31,46 * * * * /usr/share/astguiclient/ADMIN_audio_store_sync.pl --upload --quiet'
+      } | crontab -
+    fi
+  fi
+}
+
+ensure_audio_store_prereqs
+
 db_host="$(get_conf VARDB_server)"
 db_name="$(get_conf VARDB_database)"
 db_user="$(get_conf VARDB_user)"
@@ -156,6 +211,76 @@ systemctl reload httpd
 
 sleep 2
 curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null
+
+# Read-only report of the VICIdial settings genx-ui depends on — tells the
+# installer exactly what still needs configuring on a vanilla system.
+preflight_report() {
+  command -v mysql >/dev/null 2>&1 || { echo "(mysql client not found - skipping settings preflight)"; return; }
+  q() { MYSQL_PWD="$db_pass" mysql -h "$db_host" -P "$db_port" -u "$db_user" -N -B -e "$1" "$db_name" 2>/dev/null; }
+  ok()   { printf '  [ OK ] %s\n' "$1"; }
+  warn() { printf '  [WARN] %s\n' "$1"; }
+
+  echo ""
+  echo "VICIdial settings preflight for GenX UI:"
+
+  local v d s c c2
+  v="$(q 'SELECT webphone_url FROM system_settings')"
+  if [ "${#v}" -ge 6 ]; then ok "webphone_url set: $v"
+  else warn "system_settings.webphone_url empty - webphone agents get no phone (Admin > System Settings)"; fi
+
+  v="$(q 'SELECT allow_chats FROM system_settings')"
+  if [ "$v" = "1" ]; then ok "allow_chats=1 (agent Team Chat enabled)"
+  else warn "allow_chats=0 - agent Team Chat disabled (Admin > System Settings)"; fi
+
+  v="$(q 'SELECT sounds_central_control_active FROM system_settings')"
+  d="$(q 'SELECT LENGTH(sounds_web_directory) FROM system_settings')"
+  s="$(q 'SELECT sounds_web_server FROM system_settings')"
+  if [ "$v" = "1" ] && [ "${d:-0}" -ge 30 ]; then ok "central audio store active ($s)"
+  else warn "central audio store incomplete (active=${v:-0}, dir len=${d:-0}) - set Central Sound Control Active=1, point Sounds Web Server at THIS web server, then use Audio Store > Initialize"; fi
+
+  v="$(q 'SELECT custom_fields_enabled FROM system_settings')"
+  if [ "$v" = "1" ]; then ok "custom_fields_enabled=1 (agent FORM tab)"
+  else warn "custom_fields_enabled=0 - per-list custom fields / agent FORM tab disabled"; fi
+
+  while IFS="$(printf '\t')" read -r ip engine; do
+    [ -n "$ip" ] || continue
+    if [ "$engine" = "CONFBRIDGE" ]; then
+      c="$(q "SELECT COUNT(*) FROM vicidial_confbridges WHERE server_ip='$ip'")"
+      if [ "${c:-0}" -gt 0 ]; then ok "server $ip: CONFBRIDGE, $c rooms"
+      else warn "server $ip: conf_engine=CONFBRIDGE but no vicidial_confbridges rooms - agents cannot log in"; fi
+    else
+      c="$(q "SELECT COUNT(*) FROM vicidial_conferences WHERE server_ip='$ip'")"
+      if [ "${c:-0}" -gt 0 ]; then ok "server $ip: MEETME, $c conferences"
+      else warn "server $ip: no vicidial_conferences rooms - agents cannot log in"; fi
+    fi
+  done <<SERVERS
+$(q "SELECT server_ip, conf_engine FROM servers WHERE active_asterisk_server='Y'")
+SERVERS
+
+  c="$(q "SELECT COUNT(*) FROM phones WHERE is_webphone IN ('Y','Y_API_LAUNCH') AND active='Y'")"
+  if [ "${c:-0}" -gt 0 ]; then ok "$c active webphone(s)"
+  else warn "no webphone-enabled phones (phones.is_webphone=Y) - agents need hard phones or webphones"; fi
+
+  c="$(q "SELECT COUNT(*) FROM vicidial_statuses WHERE sale='Y'")"
+  c2="$(q "SELECT COUNT(*) FROM vicidial_campaign_statuses WHERE sale='Y'")"
+  if [ $(( ${c:-0} + ${c2:-0} )) -gt 0 ]; then ok "sale-flagged statuses: $c system, $c2 campaign (Sales Today tile)"
+  else warn "no statuses flagged sale='Y' - Sales Today tile will always read 0"; fi
+
+  c="$(q "SELECT COUNT(*) FROM vicidial_users WHERE user_level >= $min_user_level AND active='Y'")"
+  if [ "${c:-0}" -gt 0 ]; then ok "$c active user(s) at level >= $min_user_level for the Admin UI"
+  else warn "no active users at level >= $min_user_level - nobody can open the Admin UI"; fi
+
+  c="$(q "SHOW TABLES LIKE 'genx_ui_sessions'" | wc -l)"
+  if [ "${c:-0}" -gt 0 ]; then ok "genx_ui_sessions table present (logins survive restarts/deploys)"
+  else warn "genx_ui_sessions missing - auto-created at first start if '$db_user' can CREATE TABLE, otherwise sessions are memory-only"; fi
+
+  c="$(q "SELECT COUNT(*) FROM vicidial_pause_codes")"
+  if [ "${c:-0}" -gt 0 ]; then ok "$c pause code(s) defined"
+  else warn "no pause codes defined - agents can only 'Pause without a reason'"; fi
+
+  echo ""
+}
+preflight_report
 
 echo "GenX UI installed."
 echo "URL path: $BASE_PATH"
