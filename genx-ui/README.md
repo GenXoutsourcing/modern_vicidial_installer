@@ -29,3 +29,16 @@ The current GenX shell includes:
 - a VICIdial page map for admin areas that still need native GenX screens
 
 Write actions require the matching VICIdial permission flag, such as `modify_campaigns`, `modify_users`, `modify_lists`, or `modify_ingroups`; level 9 users are allowed across these first native admin forms.
+
+## Agent Screen (`/genx/agent`)
+
+Full agent console (login, webphone, dialing, dispositions, transfers, chat) that mirrors legacy `/agc` behavior against the same VICIdial tables. Portability notes for new servers:
+
+- **Conference engine** is read per dialer server from `servers.conf_engine` (`CONFBRIDGE` uses `vicidial_confbridges` with the `2` agent-join prefix; anything else falls back to meetme `vicidial_conferences`).
+- **Webphone** URL/key come from `system_settings.webphone_url` / user-group overrides, same as legacy `vicidial.php`.
+- **Team Chat** requires `system_settings.allow_chats = 1`; when disabled the card explains it and all chat endpoints refuse. Chat interoperates with the legacy manager chat panel (`vicidial_manager_chats` / `vicidial_manager_chat_log`).
+- **Sales Today** counts dispositions whose status has `sale = 'Y'` in `vicidial_statuses` or `vicidial_campaign_statuses`.
+- **Pause-code countdowns** use `vicidial_pause_codes.time_limit` (seconds, advisory).
+- **Auto-launch on connect** honors `vicidial_campaigns.get_call_launch` (`SCRIPT*`, `FORM`, `WEBFORM*`, and `PREVIEW_*` variants). Agents pick up campaign setting changes on their next login/reload.
+- **Sessions** persist in a `genx_ui_sessions` table auto-created at service start (falls back to in-memory sessions if the DB user cannot create tables).
+- **Audio store** lives in `/var/www/html/genx-sounds` (override with `GENX_UI_AUDIO_DIR`); the installer creates it owned by the service user. `sox` is optional — without it uploads still work, only format analysis is skipped.

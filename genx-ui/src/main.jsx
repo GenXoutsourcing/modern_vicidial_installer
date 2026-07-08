@@ -13965,7 +13965,6 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [lead, setLead] = useState(null);
   const [pauseCodes, setPauseCodes] = useState(authInfo?.pauseCodes || []);
   const [dispoStatuses, setDispoStatuses] = useState([]);
-  const [showDispo, setShowDispo] = useState(false);
   const [dispoPick, setDispoPick] = useState('');
   const [callbackTime, setCallbackTime] = useState('');
   const [dispoComments, setDispoComments] = useState('');
@@ -14004,7 +14003,6 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [dialableLeads, setDialableLeads] = useState(null);
   const [dialFail, setDialFail] = useState(null);
   const [customFields, setCustomFields] = useState(null);
-  const [showForm, setShowForm] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [altPhones, setAltPhones] = useState(null);
   const [showAltPhones, setShowAltPhones] = useState(false);

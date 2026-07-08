@@ -102,6 +102,13 @@ npm prune --omit=dev
 ln -sfn "$release" "$APP_ROOT/current"
 chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
 
+# Central audio store (admin uploads + agent-side prompts). The service runs
+# as $APP_USER and cannot create this under /var/www/html on its own.
+AUDIO_STORE_DIR="/var/www/html/genx-sounds"
+mkdir -p "$AUDIO_STORE_DIR"
+chown "$APP_USER:$APP_USER" "$AUDIO_STORE_DIR"
+chmod 755 "$AUDIO_STORE_DIR"
+
 umask 077
 cat > "$ENV_FILE" <<EOF
 GENX_UI_PORT=$PORT

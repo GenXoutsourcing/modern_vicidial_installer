@@ -7936,51 +7936,55 @@ async function agentChatSend(req, res) {
   if (!message) return badRequest(res, 'message_required');
   const messageId = `${Math.floor(Date.now() / 1000)}${Math.floor(Math.random() * 900) + 100}`;
 
-  let chatId = Number(req.body?.manager_chat_id || 0);
-  let subid = Number(req.body?.manager_chat_subid || 1);
-  let chatManager;
-  if (chatId > 0) {
-    const [chat] = await rows(
-      'SELECT manager, allow_replies FROM vicidial_manager_chats WHERE manager_chat_id = ? LIMIT 1',
-      [chatId],
+  try {
+    let chatId = Number(req.body?.manager_chat_id || 0);
+    let subid = Number(req.body?.manager_chat_subid || 1);
+    let chatManager;
+    if (chatId > 0) {
+      const [chat] = await rows(
+        'SELECT manager, allow_replies FROM vicidial_manager_chats WHERE manager_chat_id = ? LIMIT 1',
+        [chatId],
+        [],
+      );
+      if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
+      if (chat.allow_replies !== 'Y') return res.status(403).json({ ok: false, error: 'replies_disabled' });
+      chatManager = chat.manager || '';
+    } else {
+      // Agent-initiated chat to a manager (legacy chat_db_query.php line ~258).
+      chatManager = cleanId(req.body?.manager, 20);
+      if (!chatManager) return badRequest(res, 'manager_required');
+      const live = await agentLiveRow(user);
+      const created = await execute(
+        `INSERT INTO vicidial_manager_chats
+           (chat_start_date, manager, selected_agents, selected_user_groups, selected_campaigns, allow_replies, internal_chat_type)
+         VALUES (NOW(), ?, CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), 'Y', 'AGENT')`,
+        [chatManager, user, req.genxUser.userGroup || '', live?.campaign_id || ''],
+      );
+      chatId = created.insertId;
+      subid = 1;
+    }
+
+    // One log row per participant (existing chat members + manager + sender).
+    const participantRows = await rows(
+      'SELECT DISTINCT user FROM vicidial_manager_chat_log WHERE manager_chat_id = ? AND manager_chat_subid = ?',
+      [chatId, subid],
       [],
     );
-    if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
-    if (chat.allow_replies !== 'Y') return res.status(403).json({ ok: false, error: 'replies_disabled' });
-    chatManager = chat.manager || '';
-  } else {
-    // Agent-initiated chat to a manager (legacy chat_db_query.php line ~258).
-    chatManager = cleanId(req.body?.manager, 20);
-    if (!chatManager) return badRequest(res, 'manager_required');
-    const live = await agentLiveRow(user);
-    const created = await execute(
-      `INSERT INTO vicidial_manager_chats
-         (chat_start_date, manager, selected_agents, selected_user_groups, selected_campaigns, allow_replies, internal_chat_type)
-       VALUES (NOW(), ?, CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), CONCAT('|', ?, '|'), 'Y', 'AGENT')`,
-      [chatManager, user, req.genxUser.userGroup || '', live?.campaign_id || ''],
-    );
-    chatId = created.insertId;
-    subid = 1;
+    const participants = new Set(participantRows.map((r) => r.user).filter(Boolean));
+    if (chatManager) participants.add(chatManager);
+    participants.add(user);
+    for (const participant of participants) {
+      await execute(
+        `INSERT INTO vicidial_manager_chat_log
+           (manager_chat_id, manager_chat_subid, manager, user, message, message_id, message_date, message_posted_by)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
+        [chatId, subid, chatManager, participant, message, messageId, user],
+      );
+    }
+    return res.json({ ok: true, manager_chat_id: chatId, manager_chat_subid: subid });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'chat_send_failed' });
   }
-
-  // One log row per participant (existing chat members + manager + sender).
-  const participantRows = await rows(
-    'SELECT DISTINCT user FROM vicidial_manager_chat_log WHERE manager_chat_id = ? AND manager_chat_subid = ?',
-    [chatId, subid],
-    [],
-  );
-  const participants = new Set(participantRows.map((r) => r.user).filter(Boolean));
-  if (chatManager) participants.add(chatManager);
-  participants.add(user);
-  for (const participant of participants) {
-    await execute(
-      `INSERT INTO vicidial_manager_chat_log
-         (manager_chat_id, manager_chat_subid, manager, user, message, message_id, message_date, message_posted_by)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
-      [chatId, subid, chatManager, participant, message, messageId, user],
-    );
-  }
-  return res.json({ ok: true, manager_chat_id: chatId, manager_chat_subid: subid });
 }
 
 // Legacy CalLBacKLisT + CalLBacKCounT: USERONLY callbacks for this agent with

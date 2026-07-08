@@ -1781,7 +1781,6 @@ select option:hover {
 .agb-badge.paused { background: rgba(255, 205, 71, 0.15); color: #ffe08a; border: 1px solid rgba(255, 205, 71, 0.4); }
 .agb-badge.incall { background: rgba(255, 99, 99, 0.18); color: #ffb3b3; border: 1px solid rgba(255, 99, 99, 0.5); }
 
-.agb-select { font-size: 12px; padding: 4px 8px; max-width: 190px; }
 .agb-session { font-size: 12px; color: rgba(226, 238, 255, 0.55); }
 
 .agb-callbar {
@@ -1810,7 +1809,6 @@ select option:hover {
 .agb-state { font-size: 13px; font-weight: 600; color: rgba(226, 238, 255, 0.75); }
 .agb-state.incall { color: #ffb3b3; }
 
-.agb-dialinput { width: 160px; font-size: 13px; }
 
 .agb-act {
   display: inline-flex;
@@ -1875,38 +1873,7 @@ select option:hover {
 .agr-note span { display: block; font-size: 11px; color: rgba(226, 238, 255, 0.6); margin-bottom: 3px; }
 .agr-note textarea, .agr-note input { width: 100%; }
 
-/* Legacy agc chrome: top line, tab header, left button column */
-.agc-topline {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: rgba(226, 238, 255, 0.75);
-  padding: 2px 6px;
-}
-
-.agc-link {
-  background: none;
-  border: none;
-  color: #4dd7ff;
-  cursor: pointer;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-}
-
-.agc-link:disabled { opacity: 0.4; cursor: default; }
-
-.agc-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 6px 10px;
-  border: 1px solid rgba(0, 217, 255, 0.16);
-  border-radius: 10px;
-  background: rgba(4, 14, 30, 0.6);
-}
-
+/* Lead-card tab row: Contact | Script | Form | History */
 .agc-tabs { display: flex; gap: 4px; }
 
 .agc-tab {
@@ -1927,79 +1894,6 @@ select option:hover {
   border-color: #00d9ff;
 }
 
-.agc-session {
-  font-size: 12px;
-  color: rgba(226, 238, 255, 0.7);
-  margin-left: auto;
-}
-
-.agc-livecall {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 4px 12px;
-  border-radius: 8px;
-  color: rgba(226, 238, 255, 0.45);
-  border: 1px solid rgba(226, 238, 255, 0.15);
-}
-
-.agc-livecall.active {
-  color: #052013;
-  background: #2fe08d;
-  border-color: #2fe08d;
-}
-
-.agc-left {
-  flex: 0 0 190px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.agc-btn {
-  width: 100%;
-  padding: 7px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #e2eeff;
-  background: rgba(9, 26, 51, 0.85);
-  border: 1px solid rgba(0, 217, 255, 0.22);
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: center;
-}
-
-.agc-btn:hover:not(:disabled) { background: rgba(0, 217, 255, 0.16); }
-.agc-btn:disabled { opacity: 0.35; cursor: default; }
-.agc-btn.danger { border-color: rgba(255, 99, 99, 0.5); color: #ffb3b3; }
-.agc-btn.dial { border-color: rgba(47, 224, 141, 0.5); color: #a9f5cf; }
-.agc-btn.dispo { border-color: rgba(0, 217, 255, 0.6); background: rgba(0, 217, 255, 0.18); }
-.agc-btn.record { border-color: rgba(255, 128, 237, 0.5); color: #ffc7f5; }
-.agc-btn.recording { background: rgba(255, 64, 96, 0.3); border-color: #ff6363; color: #fff; }
-.agc-btn.active { background: rgba(0, 217, 255, 0.25); }
-
-.agc-btn.agc-status {
-  padding: 10px 8px;
-  font-size: 12px;
-}
-
-.agc-btn.agc-status.paused { background: rgba(255, 205, 71, 0.22); border-color: #ffcd47; color: #ffe9ad; }
-.agc-btn.agc-status.ready { background: rgba(47, 224, 141, 0.2); border-color: #2fe08d; color: #c6f7e0; }
-.agc-btn.agc-status.incall { background: rgba(255, 99, 99, 0.22); border-color: #ff6363; color: #ffd1d1; }
-
-.agc-timer { display: block; font-size: 11px; font-weight: 400; opacity: 0.8; margin-top: 2px; }
-
-.agc-select {
-  width: 100%;
-  font-size: 11px;
-  padding: 5px;
-}
-
-.agc-dtmf { display: flex; gap: 4px; }
-.agc-dtmf input { width: 70px; font-size: 12px; }
-.agc-dtmf .agc-btn { flex: 1; }
-
 .agc-custform .field-grid label span { font-size: 11px; }
 .agc-comments { display: block; margin-top: 8px; }
 .agc-comments textarea { width: 100%; }
@@ -2016,47 +1910,6 @@ select option:hover {
   flex: 1 1 560px;
   min-width: 0;
   margin: 0;
-}
-
-.agent-webphone {
-  flex: 0 0 auto;
-  border-radius: 14px;
-  overflow: hidden;
-  border: 1px solid rgba(0, 217, 255, 0.18);
-  background: rgba(4, 14, 30, 0.55);
-}
-
-.agent-webphone iframe {
-  display: block;
-  width: 460px;
-  max-width: 92vw;
-  height: 500px;
-  border: 0;
-  background-color: transparent;
-}
-
-.webphone-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 10px;
-  border-bottom: 1px solid rgba(0, 217, 255, 0.12);
-}
-
-/* Keep the iframe mounted while hidden so the SIP session and audio persist */
-.agent-webphone.webphone-hidden {
-  border-color: rgba(0, 217, 255, 0.08);
-}
-
-.agent-webphone.webphone-hidden .webphone-toolbar {
-  border-bottom: none;
-}
-
-.agent-webphone.webphone-hidden iframe {
-  width: 0;
-  height: 0;
-  visibility: hidden;
 }
 
 /* ===== Agent workspace v3: rail + dashboard + contact header + floating phone ===== */
@@ -2156,7 +2009,6 @@ select option:hover {
 .agn-dash { display: flex; flex-direction: column; gap: 16px; }
 .agn-greet { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 4px 2px; }
 .agn-greet h2 { font-size: 24px; margin: 0; color: #eef6ff; }
-.agn-clock { font-size: 30px; font-weight: 800; color: rgba(226, 238, 255, 0.85); letter-spacing: 0.04em; }
 
 .agn-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
 .agn-tile {
@@ -2170,38 +2022,6 @@ select option:hover {
 }
 .agn-tile strong { font-size: 30px; color: #eef6ff; line-height: 1; }
 
-/* Primary action strip on the idle dashboard */
-.agn-dialstrip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  padding: 16px 18px;
-  border: 1px solid rgba(0, 217, 255, 0.18);
-  border-radius: 16px;
-  background: rgba(4, 14, 30, 0.65);
-}
-.agn-big {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 13px 26px;
-  font-size: 15px;
-  font-weight: 800;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  color: #041325;
-  transition: transform 0.1s ease, filter 0.15s ease;
-}
-.agn-big:hover:not(:disabled) { filter: brightness(1.12); }
-.agn-big:active:not(:disabled) { transform: scale(0.97); }
-.agn-big:disabled { opacity: 0.4; cursor: default; }
-.agn-big.dial { background: linear-gradient(135deg, #2fe08d, #17b370); box-shadow: 0 6px 20px rgba(47, 224, 141, 0.3); }
-.agn-big.go { background: linear-gradient(135deg, #00d9ff, #3d7bff); box-shadow: 0 6px 20px rgba(0, 217, 255, 0.3); }
-.agn-big.pause { background: linear-gradient(135deg, #ffcd47, #ff9f47); box-shadow: 0 6px 20px rgba(255, 205, 71, 0.25); }
-.agn-quickdial { display: flex; gap: 10px; flex: 1 1 280px; min-width: 260px; }
-.agn-quickdial input { flex: 1; font-size: 15px; padding: 12px 14px; }
 .agn-tile-label { font-size: 11px; color: rgba(226, 238, 255, 0.55); letter-spacing: 0.05em; text-transform: uppercase; }
 .agn-tile-ico {
   width: 32px;
