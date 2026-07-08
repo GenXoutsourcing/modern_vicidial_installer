@@ -142,6 +142,13 @@ export const REPORT_GROUPS = [
     ],
   },
   {
+    title: 'Time Clock',
+    items: [
+      { label: 'User Timeclock Report', href: '/vicidial/AST_timeclock_report.php', view: 'reportTimeclock' },
+      { label: 'Timeclock Status', href: '/vicidial/timeclock_status.php', view: 'reportTimeclockStatus' },
+    ],
+  },
+  {
     title: 'Exports',
     items: [
       { label: 'Export Calls', href: '/vicidial/call_report_export.php', view: 'reportExports' },

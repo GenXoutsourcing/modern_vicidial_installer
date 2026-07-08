@@ -221,6 +221,7 @@ function publicUser(row) {
     modifyAutoReports: row.modify_auto_reports === '1',
     modifyMoh: row.modify_moh === '1',
     modifyTts: row.modify_tts === '1',
+    modifyEmailAccounts: row.modify_email_accounts === '1',
     modifyLabels: row.modify_labels === '1',
     modifyColors: row.modify_colors === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
@@ -397,6 +398,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_auto_reports,
             u.modify_moh,
             u.modify_tts,
+            u.modify_email_accounts,
             u.modify_labels,
             u.modify_colors,
             u.admin_hide_lead_data,
@@ -1042,6 +1044,8 @@ async function adminData(user) {
     statusCategories,
     extensionGroups,
     confTemplates,
+    emailAccounts,
+    userTerritories,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -2428,6 +2432,20 @@ async function adminData(user) {
       [],
       [],
     ),
+    rows(
+      `SELECT email_account_id, email_account_name, email_account_description, user_group, protocol,
+              email_replyto_address, email_account_server, email_account_user, pop3_auth_mode, active,
+              email_frequency_check_mins, group_id, default_list_id, email_account_type
+       FROM vicidial_email_accounts ORDER BY email_account_id ASC LIMIT 500`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT user, territory, level FROM vicidial_user_territories
+       ORDER BY territory ASC, user ASC LIMIT 1000`,
+      [],
+      [],
+    ),
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
@@ -2536,6 +2554,8 @@ async function adminData(user) {
     statusCategories,
     extensionGroups,
     confTemplates,
+    emailAccounts,
+    userTerritories,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -6489,6 +6509,65 @@ async function carrierLogReport(req, res) {
   return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
 }
 
+async function timeclockReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const { beginDate, endDate } = parseReportDateRange(req);
+  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const user = cleanId(req.query?.user, 20);
+  let filterSql = '';
+  if (user) {
+    filterSql = ' AND user = ?';
+    params.push(user);
+  }
+  const [entries, summary] = await Promise.all([
+    rows(
+      `SELECT timeclock_id, event_date, event, user, user_group, ip_address, login_sec, notes, manager_user
+       FROM vicidial_timeclock_log WHERE event_date >= ? AND event_date <= ?${filterSql}
+       ORDER BY user ASC, event_date ASC LIMIT 2000`,
+      params,
+      [],
+    ),
+    rows(
+      `SELECT user, user_group,
+              SUM(CASE WHEN event = 'LOGOUT' AND login_sec < 65000 THEN login_sec ELSE 0 END) AS total_sec,
+              SUM(CASE WHEN event = 'LOGIN' THEN 1 ELSE 0 END) AS logins
+       FROM vicidial_timeclock_log WHERE event_date >= ? AND event_date <= ?${filterSql}
+       GROUP BY user, user_group ORDER BY user ASC LIMIT 500`,
+      params,
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+}
+
+async function timeclockStatusReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const [users, groups] = await Promise.all([
+    rows(
+      `SELECT t.user, t.user_group, t.event, t.event_date, u.full_name
+       FROM vicidial_timeclock_log t
+       JOIN (SELECT user, MAX(event_epoch) AS max_epoch FROM vicidial_timeclock_log GROUP BY user) m
+         ON m.user = t.user AND m.max_epoch = t.event_epoch
+       LEFT JOIN vicidial_users u ON u.user = t.user
+       ORDER BY t.user_group ASC, t.user ASC LIMIT 1000`,
+      [],
+      [],
+    ),
+    rows(
+      `SELECT t.user_group,
+              SUM(CASE WHEN t.event = 'LOGIN' THEN 1 ELSE 0 END) AS logged_in,
+              SUM(CASE WHEN t.event <> 'LOGIN' THEN 1 ELSE 0 END) AS logged_out
+       FROM vicidial_timeclock_log t
+       JOIN (SELECT user, MAX(event_epoch) AS max_epoch FROM vicidial_timeclock_log GROUP BY user) m
+         ON m.user = t.user AND m.max_epoch = t.event_epoch
+       GROUP BY t.user_group ORDER BY t.user_group ASC LIMIT 200`,
+      [],
+      [],
+    ),
+  ]);
+  return res.json({ ok: true, users, groups });
+}
+
 async function hangupCauseReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
@@ -10364,6 +10443,107 @@ async function deleteLanguage(req, res) {
   }
 }
 
+const EMAIL_ACCOUNT_PROTOCOLS = ['POP3', 'IMAP', 'SMTP'];
+const EMAIL_ACCOUNT_AUTH_MODES = ['BEST', 'PASS', 'APOP', 'CRAM-MD5'];
+
+async function saveEmailAccount(req, res, mode) {
+  if (!requireModify(req, res, 'modifyEmailAccounts')) return;
+  const payload = {
+    email_account_name: cleanText(req.body?.email_account_name, 100),
+    email_account_description: cleanText(req.body?.email_account_description, 255),
+    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
+    protocol: EMAIL_ACCOUNT_PROTOCOLS.includes(req.body?.protocol) ? req.body.protocol : 'IMAP',
+    email_replyto_address: cleanText(req.body?.email_replyto_address, 255),
+    email_account_server: cleanText(req.body?.email_account_server, 255),
+    email_account_user: cleanText(req.body?.email_account_user, 255),
+    pop3_auth_mode: EMAIL_ACCOUNT_AUTH_MODES.includes(req.body?.pop3_auth_mode) ? req.body.pop3_auth_mode : 'BEST',
+    active: ynFlag(req.body?.active, 'N'),
+    email_frequency_check_mins: Math.max(1, Math.min(255, Number(req.body?.email_frequency_check_mins) || 5)),
+    group_id: cleanId(req.body?.group_id, 20),
+    default_list_id: Number(req.body?.default_list_id) || 0,
+    email_account_type: req.body?.email_account_type === 'OUTBOUND' ? 'OUTBOUND' : 'INBOUND',
+  };
+  // Keep the stored password when the field is left blank on edit (voicemail pattern).
+  const emailPass = cleanText(req.body?.email_account_pass, 100);
+  if (emailPass || mode === 'create') payload.email_account_pass = emailPass;
+  try {
+    if (mode === 'create') {
+      const id = cleanId(req.body?.email_account_id, 20);
+      if (!id || id.length < 2) return badRequest(res, 'invalid_email_account_id');
+      const { assignments, values } = dynamicAssignments({ email_account_id: id, ...payload });
+      await execute(`INSERT INTO vicidial_email_accounts SET ${assignments}`, values);
+      await adminLog(req, 'EMAIL_ACCOUNTS', 'ADD', id, 'GENX ADD EMAIL ACCOUNT', 'INSERT INTO vicidial_email_accounts', payload.email_account_name);
+    } else {
+      const id = cleanId(req.params.id, 20);
+      if (!id) return badRequest(res, 'invalid_email_account_id');
+      const { assignments, values } = dynamicAssignments(payload);
+      const result = await execute(`UPDATE vicidial_email_accounts SET ${assignments} WHERE email_account_id = ?`, [...values, id]);
+      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'email_account_not_found' });
+      await adminLog(req, 'EMAIL_ACCOUNTS', 'MODIFY', id, 'GENX MODIFY EMAIL ACCOUNT', 'UPDATE vicidial_email_accounts', payload.email_account_name);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'email_account_save_failed' });
+  }
+}
+
+async function deleteEmailAccount(req, res) {
+  if (!requireModify(req, res, 'modifyEmailAccounts')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_email_account_id');
+  try {
+    const result = await execute('DELETE FROM vicidial_email_accounts WHERE email_account_id = ? LIMIT 1', [id]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'email_account_not_found' });
+    await adminLog(req, 'EMAIL_ACCOUNTS', 'DELETE', id, 'GENX DELETE EMAIL ACCOUNT', 'DELETE FROM vicidial_email_accounts', id);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'email_account_delete_failed' });
+  }
+}
+
+const USER_TERRITORY_LEVELS = ['TOP_AGENT', 'STANDARD_AGENT', 'BOTTOM_AGENT'];
+
+async function saveUserTerritory(req, res, mode) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const user = cleanId(req.body?.user, 20);
+  const territory = cleanText(req.body?.territory, 100).trim();
+  const level = USER_TERRITORY_LEVELS.includes(req.body?.level) ? req.body.level : 'STANDARD_AGENT';
+  if (!user || !territory) return badRequest(res, 'invalid_user_territory');
+  try {
+    if (mode === 'create') {
+      const existing = await rows('SELECT user FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory], []);
+      if (existing.length) return badRequest(res, 'user_territory_exists');
+      await execute('INSERT INTO vicidial_user_territories SET user = ?, territory = ?, level = ?', [user, territory, level]);
+      await adminLog(req, 'USERS', 'ADD', user, 'GENX ADD USER TERRITORY', 'INSERT INTO vicidial_user_territories', `${territory} ${level}`);
+    } else {
+      const result = await execute('UPDATE vicidial_user_territories SET level = ? WHERE user = ? AND territory = ?', [level, user, territory]);
+      if (result.affectedRows < 1 && result.changedRows < 1) {
+        const [found] = await rows('SELECT user FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory], []);
+        if (!found) return res.status(404).json({ ok: false, error: 'user_territory_not_found' });
+      }
+      await adminLog(req, 'USERS', 'MODIFY', user, 'GENX MODIFY USER TERRITORY', 'UPDATE vicidial_user_territories', `${territory} ${level}`);
+    }
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'user_territory_save_failed' });
+  }
+}
+
+async function deleteUserTerritory(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const user = cleanId(req.params.id, 20);
+  const territory = cleanText(req.query?.territory, 100).trim();
+  if (!user || !territory) return badRequest(res, 'invalid_user_territory');
+  try {
+    const result = await execute('DELETE FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory]);
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'user_territory_not_found' });
+    await adminLog(req, 'USERS', 'DELETE', user, 'GENX DELETE USER TERRITORY', 'DELETE FROM vicidial_user_territories', territory);
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'user_territory_delete_failed' });
+  }
+}
+
 async function saveVoicemailBox(req, res, mode) {
   if (!requireModify(req, res, 'modifyVoicemail')) return;
   const payload = {
@@ -13974,6 +14154,8 @@ app.get('/api/reports/callback-holds', requireAccess, callbackHoldsReport);
 app.post('/api/reports/callback-holds/deactivate', requireAccess, callbackHoldsDeactivate);
 app.get('/api/reports/dial-log', requireAccess, dialLogReport);
 app.get('/api/reports/carrier-log', requireAccess, carrierLogReport);
+app.get('/api/reports/timeclock', requireAccess, timeclockReport);
+app.get('/api/reports/timeclock-status', requireAccess, timeclockStatusReport);
 app.get('/api/reports/hangup-cause', requireAccess, hangupCauseReport);
 app.get('/api/reports/sip-event', requireAccess, sipEventReport);
 app.get('/api/reports/amd-log', requireAccess, amdLogReport);
@@ -14329,6 +14511,12 @@ app.delete('/api/admin/contacts/:id', requireAccess, deleteContact);
 app.post('/api/admin/languages', requireAccess, (req, res) => saveLanguage(req, res, 'create'));
 app.put('/api/admin/languages/:id', requireAccess, (req, res) => saveLanguage(req, res, 'update'));
 app.delete('/api/admin/languages/:id', requireAccess, deleteLanguage);
+app.post('/api/admin/email-accounts', requireAccess, (req, res) => saveEmailAccount(req, res, 'create'));
+app.put('/api/admin/email-accounts/:id', requireAccess, (req, res) => saveEmailAccount(req, res, 'update'));
+app.delete('/api/admin/email-accounts/:id', requireAccess, deleteEmailAccount);
+app.post('/api/admin/user-territories', requireAccess, (req, res) => saveUserTerritory(req, res, 'create'));
+app.put('/api/admin/user-territories/:id', requireAccess, (req, res) => saveUserTerritory(req, res, 'update'));
+app.delete('/api/admin/user-territories/:id', requireAccess, deleteUserTerritory);
 app.post('/api/admin/voicemail-boxes', requireAccess, (req, res) => saveVoicemailBox(req, res, 'create'));
 app.put('/api/admin/voicemail-boxes/:id', requireAccess, (req, res) => saveVoicemailBox(req, res, 'update'));
 app.delete('/api/admin/voicemail-boxes/:id', requireAccess, deleteVoicemailBox);

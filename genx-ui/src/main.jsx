@@ -16,6 +16,7 @@ import {
   Hash,
   Headphones,
   History,
+  Mail,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
@@ -465,6 +466,7 @@ function userCan(user, entity) {
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
+  if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
@@ -480,7 +482,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -507,6 +509,7 @@ function userCanDelete(user, entity) {
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
+  if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
   if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
@@ -623,6 +626,17 @@ function scopeText(values, allValue, suffix = ' -') {
 function viciGroupText(values) {
   const cleanValues = values.filter(Boolean);
   return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
+}
+
+// Legacy pipe-delimited multi-value format used by vicidial_call_times
+// ct_state_call_times / ct_holidays: stored as |ID|ID| (matched with LIKE "%|id|%").
+function pipeValues(rawValue) {
+  return String(rawValue || '').split('|').map((item) => item.trim()).filter(Boolean);
+}
+
+function pipeText(values) {
+  const cleanValues = (values || []).filter(Boolean);
+  return cleanValues.length ? `|${cleanValues.join('|')}|` : '';
 }
 
 function reportOptions() {
@@ -1714,6 +1728,15 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'languages') {
     return { language_id: '', language_code: '', language_description: '', user_group: '---ALL---', active: 'N' };
+  }
+
+  if (entity === 'emailAccounts') {
+    return {
+      email_account_id: '', email_account_name: '', email_account_description: '', user_group: '---ALL---',
+      email_account_type: 'INBOUND', protocol: 'IMAP', email_account_server: '', email_account_user: '',
+      email_account_pass: '', email_replyto_address: '', pop3_auth_mode: 'BEST', active: 'N',
+      email_frequency_check_mins: '5', group_id: '', default_list_id: '0',
+    };
   }
 
   if (entity === 'cidGroups') {
@@ -2976,8 +2999,32 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'ct_saturday_stop', label: 'Saturday Stop', type: 'number' },
       audioField('saturday_afterhours_filename_override', 'Saturday Audio', form?.saturday_afterhours_filename_override),
       { section: 'States and Holidays' },
-      { key: 'ct_state_call_times', label: 'State Call Times', type: 'textarea', wide: true },
-      { key: 'ct_holidays', label: 'Holidays', type: 'textarea', wide: true },
+      {
+        key: 'ct_state_call_times',
+        label: 'State Call Times (select the state rules that apply to this call time)',
+        type: 'checkboxGroupText',
+        options: (admin?.stateCallTimes || []).map((row) => ({
+          value: row.state_call_time_id,
+          label: `${row.state_call_time_id} - ${row.state_call_time_state || ''} ${row.state_call_time_name || ''}`.replace(/\s+/g, ' ').trim(),
+        })),
+        values: pipeValues,
+        serialize: pipeText,
+        emptyHint: 'No state call time rules defined yet - add them in the State Call Times panel on this page.',
+        wide: true,
+      },
+      {
+        key: 'ct_holidays',
+        label: 'Holidays (select the holidays that apply to this call time)',
+        type: 'checkboxGroupText',
+        options: (admin?.holidays || []).map((row) => ({
+          value: row.holiday_id,
+          label: `${row.holiday_id} - ${row.holiday_name || ''} (${row.holiday_date ? String(row.holiday_date).slice(0, 10) : 'no date'}${row.holiday_status && row.holiday_status !== 'ACTIVE' ? `, ${row.holiday_status}` : ''})`,
+        })),
+        values: pipeValues,
+        serialize: pipeText,
+        emptyHint: 'No holidays defined yet - add them in the Holidays panel on this page.',
+        wide: true,
+      },
     ];
   }
 
@@ -3260,6 +3307,29 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'language_description', label: 'Description' },
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+    ];
+  }
+
+  if (entity === 'emailAccounts') {
+    const inboundGroupOptions = [{ value: '', label: '---NONE---' }, ...lookupOptions(admin?.lookups?.inboundGroups, 'group_id', 'group_name')];
+    return [
+      { key: 'email_account_id', label: 'Email Account ID', disabled: mode === 'edit' },
+      { key: 'email_account_name', label: 'Account Name' },
+      { key: 'email_account_description', label: 'Description', wide: true },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      { key: 'email_account_type', label: 'Account Type', type: 'select', options: [{ value: 'INBOUND', label: 'INBOUND' }, { value: 'OUTBOUND', label: 'OUTBOUND' }] },
+      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+      { section: 'Server' },
+      { key: 'protocol', label: 'Protocol', type: 'select', options: ['POP3', 'IMAP', 'SMTP'].map((v) => ({ value: v, label: v })) },
+      { key: 'email_account_server', label: 'Mail Server' },
+      { key: 'email_account_user', label: 'Login User' },
+      { key: 'email_account_pass', label: mode === 'edit' ? 'Password (blank = keep current)' : 'Password' },
+      { key: 'pop3_auth_mode', label: 'POP3 Auth Mode', type: 'select', options: ['BEST', 'PASS', 'APOP', 'CRAM-MD5'].map((v) => ({ value: v, label: v })) },
+      { key: 'email_replyto_address', label: 'Reply-To Address' },
+      { key: 'email_frequency_check_mins', label: 'Check Frequency (mins)', type: 'number' },
+      { section: 'Routing' },
+      { key: 'group_id', label: 'Inbound Group', type: 'select', options: inboundGroupOptions },
+      { key: 'default_list_id', label: 'Default List ID', type: 'number' },
     ];
   }
 
@@ -3621,6 +3691,7 @@ function entityLabel(entity) {
     queueGroups: 'Queue Group',
     contacts: 'Contact',
     languages: 'Language',
+    emailAccounts: 'Email Account',
     voicemailBoxes: 'Voicemail Box',
     vmMessageGroups: 'VM Message Group',
     automatedReports: 'Automated Report',
@@ -3675,6 +3746,7 @@ function entityId(entity, row) {
     queueGroups: row.queue_group,
     contacts: row.contact_id,
     languages: row.language_id,
+    emailAccounts: row.email_account_id,
     voicemailBoxes: row.voicemail_id,
     vmMessageGroups: row.leave_vm_message_group_id,
     automatedReports: row.report_id,
@@ -3718,6 +3790,7 @@ function entityPath(entity) {
     voicemailBoxes: 'voicemail-boxes',
     vmMessageGroups: 'vm-message-groups',
     automatedReports: 'automated-reports',
+    emailAccounts: 'email-accounts',
     stateCallTimes: 'state-call-times',
     statusGroups: 'status-groups',
     statusCategories: 'status-categories',
@@ -3742,6 +3815,7 @@ function CheckboxTextGroup({ field, value, onChange }) {
 
   return (
     <div className="check-grid" role="group" aria-label={field.label}>
+      {!options.length && <em className="check-grid-empty">{field.emptyHint || 'No options available yet.'}</em>}
       {options.map((option) => {
         const optionValue = String(option.value);
         const checked = selectedSet.has(optionValue);
@@ -8674,6 +8748,32 @@ function MediaToolsView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
+        <Panel
+          eyebrow="Inbound"
+          title={`Email Accounts (${formatNumber((admin?.emailAccounts || []).length)})`}
+          icon={Mail}
+          className="admin-wide-panel"
+          headerActions={userCan(user, 'emailAccounts') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('emailAccounts', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No email accounts (inbound/outbound email in-group mailboxes)"
+            rows={(admin?.emailAccounts || []).map((row) => ({ ...row, id: row.email_account_id }))}
+            columns={[
+              { key: 'email_account_id', label: 'ID' },
+              { key: 'email_account_name', label: 'Name' },
+              { key: 'email_account_type', label: 'Type' },
+              { key: 'protocol', label: 'Protocol' },
+              { key: 'email_account_server', label: 'Server' },
+              { key: 'group_id', label: 'In-Group', render: (row) => row.group_id || '---' },
+              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              ...(userCan(user, 'emailAccounts') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('emailAccounts', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
       </section>
     </>
   );
@@ -12930,6 +13030,142 @@ function DialLogReportView({ token, onLogout }) {
   );
 }
 
+function TimeclockReportView({ token, onLogout }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [userFilter, setUserFilter] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (begin, end, userText) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (userText) params.set('user', userText);
+      const payload = await apiFetch(`/reports/timeclock?${params.toString()}`, token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) { onLogout?.(); return; }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => { load(today, today, ''); }, [load, today]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Time Clock</p>
+          <h2>User Timeclock Report</h2>
+          <p className="action-copy">Time clock login/logout events and total clocked time per user.</p>
+        </div>
+      </section>
+      <Panel eyebrow="Filters" title="Dates and User" icon={Search} className="admin-wide-panel">
+        <form className="entity-form report-filter-bar" onSubmit={(event) => { event.preventDefault(); load(beginDate, endDate, userFilter); }}>
+          <div className="field-grid">
+            <label><span>Begin Date</span><input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} /></label>
+            <label><span>End Date</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+            <label><span>User (blank = all)</span><input type="text" value={userFilter} onChange={(event) => setUserFilter(event.target.value)} /></label>
+          </div>
+          <div className="modal-actions"><button type="submit" className="primary-action" disabled={loading}><Search size={16} aria-hidden="true" />{loading ? 'Loading' : 'Run Report'}</button></div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+      </Panel>
+      <Panel eyebrow="Summary" title="Clocked Time by User" icon={Clock3} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No timeclock activity in the date range"
+          rows={(data?.summary || []).map((row, index) => ({ ...row, id: `${row.user}-${index}` }))}
+          columns={[
+            { key: 'user', label: 'User' },
+            { key: 'user_group', label: 'Group' },
+            { key: 'logins', label: 'Logins', render: (row) => formatNumber(row.logins) },
+            { key: 'total_sec', label: 'Total Time', render: (row) => formatSeconds(row.total_sec) },
+          ]}
+        />
+      </Panel>
+      <Panel eyebrow="Detail" title={`Events (${formatNumber((data?.entries || []).length)} rows${(data?.entries || []).length === 2000 ? ', capped' : ''})`} icon={History} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No timeclock events in the date range"
+          rows={(data?.entries || []).map((row) => ({ ...row, id: row.timeclock_id }))}
+          columns={[
+            { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
+            { key: 'user', label: 'User' },
+            { key: 'event', label: 'Event' },
+            { key: 'login_sec', label: 'Session', render: (row) => (row.event === 'LOGOUT' && row.login_sec < 65000 ? formatSeconds(row.login_sec) : '') },
+            { key: 'ip_address', label: 'IP' },
+            { key: 'manager_user', label: 'Manager', render: (row) => row.manager_user || '' },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+}
+
+function TimeclockStatusReportView({ token, onLogout }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiFetch('/reports/timeclock-status', token);
+      setData(payload);
+    } catch (requestError) {
+      if (requestError.status === 401) { onLogout?.(); return; }
+      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, onLogout]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Time Clock</p>
+          <h2>Timeclock Status</h2>
+          <p className="action-copy">Current clocked-in / clocked-out status per user, from each user's latest event.</p>
+        </div>
+        <button type="button" className="primary-action" onClick={load} disabled={loading}><RefreshCcw size={16} aria-hidden="true" />{loading ? 'Loading' : 'Refresh'}</button>
+      </section>
+      {error && <p className="form-error">{error}</p>}
+      <Panel eyebrow="Summary" title="By User Group" icon={Users} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No timeclock data"
+          rows={(data?.groups || []).map((row, index) => ({ ...row, id: `${row.user_group}-${index}` }))}
+          columns={[
+            { key: 'user_group', label: 'Group' },
+            { key: 'logged_in', label: 'Clocked In', render: (row) => formatNumber(row.logged_in) },
+            { key: 'logged_out', label: 'Clocked Out', render: (row) => formatNumber(row.logged_out) },
+          ]}
+        />
+      </Panel>
+      <Panel eyebrow="Detail" title="User Status" icon={Clock3} className="admin-wide-panel">
+        <DataTable
+          emptyLabel="No timeclock data"
+          rows={(data?.users || []).map((row, index) => ({ ...row, id: `${row.user}-${index}` }))}
+          columns={[
+            { key: 'user', label: 'User', render: (row) => (<><strong>{row.user}</strong><span>{row.full_name || ''}</span></>) },
+            { key: 'user_group', label: 'Group' },
+            { key: 'event', label: 'Status', render: (row) => <StatusPill ok={row.event === 'LOGIN'}>{row.event === 'LOGIN' ? 'Clocked In' : 'Clocked Out'}</StatusPill> },
+            { key: 'event_date', label: 'Since', render: (row) => formatDateTime(row.event_date) },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+}
+
 // Generic Logs-and-QA raw-log viewer: date range + optional text filter,
 // summary panels and a capped detail table, driven by a config object.
 function LogReportView({ token, onLogout, config }) {
@@ -15977,6 +16213,8 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportCalledCounts') return <CalledCountsReportView token={token} />;
   if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} initialSection={viewParams?.section} initialRecord={viewParams?.record} />;
   if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
+  if (activeView === 'reportTimeclock') return <TimeclockReportView token={token} />;
+  if (activeView === 'reportTimeclockStatus') return <TimeclockStatusReportView token={token} />;
   if (LOG_REPORT_CONFIGS[activeView]) return <LogReportView token={token} config={LOG_REPORT_CONFIGS[activeView]} />;
   if (activeView === 'reportServerPerformance') return <ServerPerformanceReportView token={token} />;
   if (activeView === 'reportPhoneStats') return <PhoneStatsReportView token={token} />;
