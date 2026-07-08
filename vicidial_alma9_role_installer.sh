@@ -175,7 +175,9 @@ derive_role_settings() {
 
     if [ "$ROLE_ARCHIVE" = "yes" ]; then
         VICIDIAL_ARCHIVE_HOST="$local_ip"
-        VICIDIAL_ARCHIVE_URL="http://${fqdn}/archive/RECORDINGS/"
+        # No trailing slash: AST_CRON_audio_3_ftp builds location as "$VARHTTP_path/$file".
+        # https so recording links are not blocked as mixed content in the https admin UI.
+        VICIDIAL_ARCHIVE_URL="https://${fqdn}/archive/RECORDINGS"
         VICIDIAL_ARCHIVE_DIR="RECORDINGS"
     fi
 }
@@ -1146,7 +1148,9 @@ derive_role_settings "$ip_address" "$DOMAINNAME"
 validate_db_settings
 validate_supported_role_set
 
-if [ "$ROLE_WEB" != "yes" ] && [ "$ROLE_TELEPHONY" != "yes" ]; then
+# Web/Telephony need certs for WebRTC and recording links; Archive needs one so
+# its recording URLs are https (mixed-content-safe in the admin UI).
+if [ "$ROLE_WEB" != "yes" ] && [ "$ROLE_TELEPHONY" != "yes" ] && [ "$ROLE_ARCHIVE" != "yes" ]; then
     ROLE_INSTALL_WEBRTC="no"
 fi
 choose_firewall_policy
@@ -1806,6 +1810,19 @@ else
 fi
 
 configure_pjsip_external_ip "$ip_address"
+
+# Point the REPORT/backup FTP target at the cluster archive when one is configured,
+# so ADMIN_backup.pl --ftp and report exports land on the archive server.
+if [ "$VICIDIAL_ARCHIVE_HOST" != "X" ]; then
+    sed -i \
+        -e "s|^VARREPORT_host => .*|VARREPORT_host => $VICIDIAL_ARCHIVE_HOST|" \
+        -e "s|^VARREPORT_user => .*|VARREPORT_user => $VICIDIAL_ARCHIVE_USER|" \
+        -e "s|^VARREPORT_pass => .*|VARREPORT_pass => $VICIDIAL_ARCHIVE_PASS|" \
+        -e "s|^VARREPORT_port => .*|VARREPORT_port => $VICIDIAL_ARCHIVE_PORT|" \
+        -e "s|^VARREPORT_dir => .*|VARREPORT_dir => REPORTS|" \
+        /etc/astguiclient.conf
+fi
+
 install_audio_store_directory_helper
 
 #Install Crontab (assembled per selected roles)
@@ -1937,6 +1954,14 @@ cat <<CRONTAB >> /root/crontab-file
 
 ######TILTIX GARBAGE FILES DELETE
 #00 22 * * * root cd /tmp/ && find . -name '*TILTXtmp*' -type f -delete
+CRONTAB
+fi
+
+if [ "$ROLE_ARCHIVE" = "yes" ]; then
+cat <<CRONTAB >> /root/crontab-file
+
+### archive retention - uncomment and adjust mtime days to enable cleanup of old recordings
+#20 2 * * * /usr/bin/find /archive/RECORDINGS -type f -mtime +365 -print | xargs -r rm -f
 CRONTAB
 fi
 
@@ -2286,7 +2311,7 @@ if [ "$ROLE_INSTALL_WEBRTC" = "yes" ]; then
         SERVER_SCOPE_IP="$ip_address" ROLE_TELEPHONY="$ROLE_TELEPHONY" bash ./vicidial-enable-webrtc.sh || exit 1
     configure_dynportal_defaults
 else
-    echo "Skipping WebRTC/certificate setup because neither Web nor Telephony role is selected."
+    echo "Skipping WebRTC/certificate setup because no Web, Telephony, or Archive role is selected."
 fi
 if [ "$CLUSTER_JOIN" != "yes" ]; then
     apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
