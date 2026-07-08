@@ -1002,18 +1002,28 @@ CREATE TABLE IF NOT EXISTS vicibox (
   server varchar(32) NOT NULL,
   server_ip varchar(32) NOT NULL,
   server_type enum('Database','Web','Telephony','Archive') NOT NULL DEFAULT 'Telephony',
-  field1 varchar(64) DEFAULT NULL,
-  field2 varchar(64) DEFAULT NULL,
-  field3 varchar(64) DEFAULT NULL,
-  field4 varchar(64) DEFAULT NULL,
-  field5 varchar(64) DEFAULT NULL,
-  field6 varchar(64) DEFAULT NULL,
-  field7 varchar(64) DEFAULT NULL,
-  field8 varchar(64) DEFAULT NULL,
-  field9 varchar(64) DEFAULT NULL,
+  field1 varchar(255) DEFAULT NULL,
+  field2 varchar(255) DEFAULT NULL,
+  field3 varchar(255) DEFAULT NULL,
+  field4 varchar(255) DEFAULT NULL,
+  field5 varchar(255) DEFAULT NULL,
+  field6 varchar(255) DEFAULT NULL,
+  field7 varchar(255) DEFAULT NULL,
+  field8 varchar(255) DEFAULT NULL,
+  field9 varchar(255) DEFAULT NULL,
   PRIMARY KEY (server_id),
   KEY server_ip_type (server_ip, server_type)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+ALTER TABLE vicibox
+  MODIFY field1 varchar(255) DEFAULT NULL,
+  MODIFY field2 varchar(255) DEFAULT NULL,
+  MODIFY field3 varchar(255) DEFAULT NULL,
+  MODIFY field4 varchar(255) DEFAULT NULL,
+  MODIFY field5 varchar(255) DEFAULT NULL,
+  MODIFY field6 varchar(255) DEFAULT NULL,
+  MODIFY field7 varchar(255) DEFAULT NULL,
+  MODIFY field8 varchar(255) DEFAULT NULL,
+  MODIFY field9 varchar(255) DEFAULT NULL;
 MYSQLVBOX
 }
 
