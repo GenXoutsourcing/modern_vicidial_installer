@@ -1955,7 +1955,18 @@ function actionDefaults(entity, admin) {
   };
 }
 
-function actionFields(entity, mode, admin, form = {}) {
+function actionFields(entity, mode, admin, form = {}, user = null) {
+  // Legacy admin.php only saves custom_dialplan_entry when the editor has
+  // modify_custom_dialplans, independent of modify_servers/modify_ingroups.
+  const canEditCustomDialplan = Number(user?.userLevel || 0) >= 9 || Boolean(user?.modifyCustomDialplans);
+  const customDialplanField = (extra = {}) => ({
+    key: 'custom_dialplan_entry',
+    label: canEditCustomDialplan ? 'Custom Dialplan Entry' : 'Custom Dialplan Entry (requires the Custom Dialplans permission)',
+    type: 'textarea',
+    wide: true,
+    disabled: !canEditCustomDialplan,
+    ...extra,
+  });
   const callTimeOptions = lookupOptions(admin?.lookups?.callTimes, 'call_time_id', 'call_time_name');
   const campaignOptions = lookupOptions(admin?.lookups?.campaigns, 'campaign_id', 'campaign_name');
   const userGroupOptions = lookupOptions(admin?.lookups?.userGroups, 'user_group', 'group_name');
@@ -2883,7 +2894,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'agi_output', label: 'AGI Output', type: 'select', options: enumOptions(['NONE', 'STDERR', 'FILE', 'BOTH']) },
       { key: 'generate_vicidial_conf', label: 'Generate VICIdial Conf', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'rebuild_conf_files', label: 'Rebuild Conf Files', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'custom_dialplan_entry', label: 'Custom Dialplan Entry', type: 'textarea', wide: true },
+      customDialplanField(),
       { key: 'routing_prefix', label: 'Routing Prefix' },
       { key: 'conf_engine', label: 'Conference Engine', type: 'select', options: enumOptions(['MEETME', 'CONFBRIDGE']) },
       { key: 'conf_secret', label: 'Conference File Secret', type: 'password' },
@@ -3085,7 +3096,7 @@ function actionFields(entity, mode, admin, form = {}) {
       { key: 'alt_dtmf_log', label: 'Alt DTMF Log', type: 'select', options: yesNoOptions('1', '0', 'Yes', 'No') },
       { key: 'answer_signal', label: 'Answer Signal', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { section: 'Advanced' },
-      { key: 'custom_dialplan_entry', label: 'Custom Dialplan Entry', type: 'textarea', wide: true },
+      customDialplanField(),
       { key: 'qualify_sql', label: 'Qualify SQL', type: 'textarea', wide: true },
     ];
   }
@@ -4986,7 +4997,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const mode = action.mode || 'create';
-  const fields = actionFields(action.entity, mode, admin, form);
+  const fields = actionFields(action.entity, mode, admin, form, user);
   const label = entityLabel(action.entity);
   const isEdit = mode === 'edit' || mode === 'editDetail';
   const isDetail = mode === 'editDetail';

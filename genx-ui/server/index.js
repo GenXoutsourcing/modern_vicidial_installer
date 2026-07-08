@@ -244,6 +244,7 @@ function publicUser(row) {
     modifyMoh: row.modify_moh === '1',
     modifyTts: row.modify_tts === '1',
     modifyEmailAccounts: row.modify_email_accounts === '1',
+    modifyCustomDialplans: row.modify_custom_dialplans === '1',
     modifyLabels: row.modify_labels === '1',
     modifyColors: row.modify_colors === '1',
     adminHideLeadData: row.admin_hide_lead_data === '1',
@@ -421,6 +422,7 @@ async function authenticateVicidialUser(username, password) {
             u.modify_moh,
             u.modify_tts,
             u.modify_email_accounts,
+            u.modify_custom_dialplans,
             u.modify_labels,
             u.modify_colors,
             u.admin_hide_lead_data,
@@ -576,6 +578,14 @@ function requireModify(req, res, permission) {
   if (canModify(req.genxUser, permission)) return true;
   res.status(403).json({ ok: false, error: 'permission_denied' });
   return false;
+}
+
+// Legacy admin.php only includes custom_dialplan_entry in the Servers/Call
+// Menus UPDATE when modify_custom_dialplans is set (LOGmodify_custom_dialplans
+// > 0), independent of modify_servers/modify_ingroups. Mirror that: strip the
+// field from the payload (silent no-op on save) if the user lacks the flag.
+function canModifyCustomDialplan(user) {
+  return Number(user?.userLevel || 0) >= 9 || Boolean(user?.modifyCustomDialplans);
 }
 
 function cleanText(value, max = 255) {
@@ -13234,6 +13244,7 @@ async function saveServer(req, res, mode) {
     return res.status(403).json({ ok: false, error: 'server_not_allowed' });
   }
   const payload = serverPayload(req.body || {});
+  if (!canModifyCustomDialplan(req.genxUser)) delete payload.custom_dialplan_entry;
   if (!payload.server_ip) return badRequest(res, 'server_ip_required');
   if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'server_scope_required' });
   const { assignments, values } = dynamicAssignments(payload);
@@ -13608,6 +13619,7 @@ async function saveCallMenu(req, res, mode) {
     return res.status(403).json({ ok: false, error: 'call_menu_not_allowed' });
   }
   const payload = callMenuPayload(req.body || {});
+  if (!canModifyCustomDialplan(req.genxUser)) delete payload.custom_dialplan_entry;
   if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'call_menu_scope_required' });
   const { assignments, values } = dynamicAssignments(payload);
 
