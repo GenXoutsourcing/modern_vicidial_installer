@@ -1901,7 +1901,7 @@ ${FTP_CRON_PREFIX}2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * *
 ### remove old recordings
 #24 0 * * * /usr/bin/find /var/spool/asterisk/monitorDONE -maxdepth 2 -type f -mtime +7 -print | xargs rm -f
 #26 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/MP3 -maxdepth 2 -type f -mtime +65 -print | xargs rm -f
-${FTP_CRON_PREFIX}25 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/FTP -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
+${FTP_CRON_PREFIX}25 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/FTP -maxdepth 2 -type f -mtime +30 -print | xargs rm -f
 24 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/ORIG -maxdepth 2 -type f -mtime +1 -print | xargs rm -f
 
 ### Daily Reboot
