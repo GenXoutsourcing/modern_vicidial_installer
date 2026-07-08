@@ -16051,7 +16051,7 @@ function SystemView({ admin, user, onAction }) {
               { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
               { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
               { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
-              { key: 'cpu_idle_percent', label: 'CPU Idle', render: (row) => row.cpu_idle_percent ? `${row.cpu_idle_percent}%` : 'Unknown' },
+              { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
               { key: 'conf_engine', label: 'Conf', render: (row) => row.conf_engine || 'Default' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(canManageServers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('servers', 'edit', row)} /> }] : []),
@@ -16078,49 +16078,6 @@ function SystemView({ admin, user, onAction }) {
               { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(canManageCarriers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('carriers', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
-          eyebrow="Telephony"
-          title={`Conferences (${formatNumber((admin?.conferences || []).length)})`}
-          icon={Headphones}
-          headerActions={userCan(user, 'conferences') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('conferences', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No monitoring/admin conferences"
-            rows={(admin?.conferences || []).map((row) => ({ ...row, id: `${row.conf_exten}-${row.server_ip}` }))}
-            columns={[
-              { key: 'conf_exten', label: 'Extension' },
-              { key: 'server_ip', label: 'Server' },
-              { key: 'extension', label: 'In Use By', render: (row) => row.extension || 'Empty' },
-              ...(userCan(user, 'conferences') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('conferences', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
-          eyebrow="Telephony"
-          title={`Agent Conferences (${formatNumber((admin?.agentConferences || []).length)})`}
-          icon={Headphones}
-          headerActions={userCan(user, 'agentConferences') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('agentConferences', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No agent conferences"
-            rows={(admin?.agentConferences || []).map((row) => ({ ...row, id: `${row.conf_exten}-${row.server_ip}` }))}
-            columns={[
-              { key: 'conf_exten', label: 'Extension' },
-              { key: 'server_ip', label: 'Server' },
-              { key: 'extension', label: 'In Use By', render: (row) => row.extension || 'Empty' },
-              { key: 'leave_3way', label: '3-Way Left', render: (row) => (row.leave_3way === '1' ? 'Yes' : 'No') },
-              ...(userCan(user, 'agentConferences') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('agentConferences', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
