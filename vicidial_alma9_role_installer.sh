@@ -496,6 +496,8 @@ UPDATE _new_server SET
     generate_vicidial_conf='${gen_conf}',
     rebuild_conf_files='${gen_conf}',
     auto_restart_asterisk='${auto_restart}',
+    vicidial_balance_active='${ast_active}',
+    max_vicidial_trunks=125,
     web_socket_url='${websock}';
 INSERT INTO servers SELECT * FROM _new_server;
 JOINSRV
@@ -806,7 +808,8 @@ SET server_id='${server_id}',
     active_agent_login_server='${agent_login}',
     generate_vicidial_conf='${ast_active}',
     rebuild_conf_files='${ast_active}',
-    max_vicidial_trunks=120,
+    vicidial_balance_active='${ast_active}',
+    max_vicidial_trunks=125,
     outbound_calls_per_second=10,
     recording_web_link='ALT_IP',
     alt_server_ip='${cert_domain}',
