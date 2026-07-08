@@ -251,14 +251,16 @@ choose_firewall_policy() {
 }
 
 role_active_keepalives() {
+    # Every server runs at least '1' (AST_update) against its local Asterisk so
+    # the admin Reports page shows load/up status for the whole cluster.
     if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
         printf '123456789ES'
     elif [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
-        printf '579E'
+        printf '1579E'
     elif [ "$ROLE_TELEPHONY" = "yes" ]; then
         printf '123468S'
     else
-        printf 'X'
+        printf '1'
     fi
 }
 
@@ -448,11 +450,13 @@ join_register_server() {
 
     server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-10)
     local auto_restart
+    # Asterisk runs on every role (server-stats reporting); only telephony
+    # servers are dialers/agent-login hosts with generated conf files.
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
         ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"; auto_restart="Y"
         websock="wss://${DOMAINNAME}:8089/ws"
     else
-        ast_active="N"; ast_ver=""; agent_login="N"; gen_conf="N"; auto_restart="N"; websock=""
+        ast_active="N"; ast_ver="18.21.1-vici"; agent_login="N"; gen_conf="N"; auto_restart="Y"; websock=""
     fi
 
     # Every cluster member gets a servers-table entry (slave DB and archive
@@ -784,11 +788,12 @@ apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
     local server_id
-    local ast_active="N" ast_ver="" auto_restart="N" agent_login="N"
+    local ast_active="N" ast_ver="18.21.1-vici" auto_restart="Y" agent_login="N"
 
-    # Only mark this server as an asterisk/dialer host when it has the telephony role.
+    # Asterisk runs on every role for server-stats reporting; only the telephony
+    # role makes this server an active dialer/agent-login host.
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
-        ast_active="Y"; ast_ver="18.21.1-vici"; auto_restart="Y"; agent_login="Y"
+        ast_active="Y"; agent_login="Y"
     fi
 
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
@@ -1495,7 +1500,9 @@ chmod +x /usr/local/bin/cpm
 /usr/local/bin/cpm install -g
 verify_required_perl_modules
 
-if [ "$ROLE_TELEPHONY" = "yes" ]; then
+# Asterisk is built on EVERY role (ViciBox parity): non-telephony servers run an
+# idle Asterisk so AST_update reports load/liveness to the admin Reports page.
+# DAHDI, sounds, and dialing config remain telephony-only.
 
 #Install Asterisk Perl
 cd /usr/src
@@ -1536,6 +1543,8 @@ make install
 ldconfig
 
 echo "Install DAHDI"
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
 
 ln -sf /usr/lib/modules/$(uname -r)/vmlinux.xz /boot/
 
@@ -1616,6 +1625,10 @@ systemctl enable dahdi
 systemctl restart dahdi || service dahdi start
 systemctl status dahdi --no-pager || service dahdi status
 
+else
+    echo "Skipping DAHDI build (no telephony role); Asterisk will use timerfd timing."
+fi # ROLE_TELEPHONY dahdi
+
 #Install Asterisk and LibPRI
 rm -rf /usr/src/asterisk /usr/src/libsrtp-2.1.0
 mkdir -p /usr/src/asterisk
@@ -1644,8 +1657,10 @@ copy_asset pjproject-2.13.1.tar.bz2 /tmp/pjproject-2.13.1.tar.bz2
 ./configure --libdir=/usr/lib64 --with-gsm=internal --enable-opus --enable-srtp --with-ssl --enable-asteriskssl --with-pjproject-bundled --with-jansson-bundled
 
 make menuselect/menuselect menuselect-tree menuselect.makeopts
-#enable app_meetme
-menuselect/menuselect --enable app_meetme menuselect.makeopts
+#enable app_meetme (requires DAHDI, telephony servers only)
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+    menuselect/menuselect --enable app_meetme menuselect.makeopts
+fi
 #enable res_http_websocket
 menuselect/menuselect --enable res_http_websocket menuselect.makeopts
 #enable res_srtp
@@ -1655,8 +1670,6 @@ make samples
 sed -i 's|noload = chan_sip.so|;noload = chan_sip.so|g' /etc/asterisk/modules.conf
 make -j ${JOBS} all
 make install
-
-fi # ROLE_TELEPHONY build
 
 #Install astguiclient
 echo "Installing astguiclient"
@@ -1832,12 +1845,13 @@ fi
 fix_vicidial_web_permissions
 configure_agc_options
 
-if [ "$ROLE_TELEPHONY" = "yes" ]; then
 #Secure Manager
-sed -i s/0.0.0.0/127.0.0.1/g /etc/asterisk/manager.conf
+[ -f /etc/asterisk/manager.conf ] && sed -i s/0.0.0.0/127.0.0.1/g /etc/asterisk/manager.conf
 
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+# Force DAHDI timing on telephony servers only; other roles rely on res_timing_timerfd.
 sed -i '$ a\ noload => res_timing_timerfd.so\ noload => res_timing_kqueue.so\ noload => res_timing_pthread.so' /etc/asterisk/modules.conf
-fi # ROLE_TELEPHONY manager config
+fi # ROLE_TELEPHONY timing config
 
 if [ "$CLUSTER_JOIN" != "yes" ]; then
 #Add confbridge conferences to asterisk DB
@@ -2103,18 +2117,21 @@ modprobe dahdi_dummy || true
 
 /usr/sbin/dahdi_cfg -vvvvvvvvvvvvv
 
+EOF
+fi
+
+cat >> /etc/rc.d/rc.local <<EOF
 
 ### sleep for 20 seconds before launching Asterisk
 
 sleep 20
 
 
-### start up asterisk
+### start up asterisk (all roles run Asterisk so AST_update reports server stats)
 
 /usr/share/astguiclient/start_asterisk_boot.pl
 
 EOF
-fi
 
 cat >> /etc/rc.d/rc.local <<EOF
 
