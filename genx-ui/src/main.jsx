@@ -42,6 +42,8 @@ import {
   Trash2,
   TrendingUp,
   Users,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { LEGACY_ADMIN_GROUPS, REPORT_GROUPS } from './catalog';
@@ -13931,6 +13933,31 @@ function AgentLoginPage({ onAuthed }) {
 }
 
 // Campaign pick + live console (phase 1: status/ready/pause/pause codes/logout).
+// WebAudio chimes for call/chat alerts — no audio assets needed.
+function agentChime(kind) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    agentChime.ctx = agentChime.ctx || new Ctx();
+    const ctx = agentChime.ctx;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const seq = kind === 'call' ? [[880, 0, 0.16], [1174, 0.2, 0.22]] : [[659, 0, 0.12], [880, 0.14, 0.12]];
+    seq.forEach(([freq, at, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + dur);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + dur + 0.05);
+    });
+  } catch { /* audio unavailable */ }
+}
+
 function AgentConsole({ token, authInfo, onExit }) {
   const [campaigns, setCampaigns] = useState(authInfo?.campaigns || []);
   const [campaignId, setCampaignId] = useState('');
@@ -13958,6 +13985,11 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [chatManagers, setChatManagers] = useState(null);
   const [chatTo, setChatTo] = useState('');
   const chatScrollRef = useRef(null);
+  const [lastNote, setLastNote] = useState(null);
+  const [soundOn, setSoundOn] = useState(() => window.localStorage.getItem('genx-agent-sound') !== '0');
+  const prevStatusRef = useRef('');
+  const prevUnreadRef = useRef(0);
+  const launchFiredRef = useRef('');
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
   const [callLog, setCallLog] = useState(null);
@@ -14016,6 +14048,12 @@ function AgentConsole({ token, authInfo, onExit }) {
       const payload = await apiFetch('/agent/status', token);
       setLive(payload.live);
       setLead(payload.lead || null);
+      setLastNote(payload.lastNote || null);
+      if (payload.externalAction) {
+        setMessage(payload.externalAction === 'PAUSED_BY_MANAGER'
+          ? 'A supervisor paused you'
+          : 'A supervisor set you Available');
+      }
       if (payload.pauseCodes) setPauseCodes(payload.pauseCodes);
       setWebphoneUrl((prev) => {
         if (!payload.live) return null;
@@ -14293,7 +14331,69 @@ function AgentConsole({ token, authInfo, onExit }) {
     }
   };
 
+  // Alerts: chime + desktop notification when a call connects or chat arrives.
+  useEffect(() => {
+    const status = live?.status || '';
+    if (status === 'INCALL' && prevStatusRef.current !== 'INCALL') {
+      if (soundOn) agentChime('call');
+      if (document.hidden && window.Notification?.permission === 'granted') {
+        try {
+          new Notification('GenX Agent — call connected', {
+            body: lead ? `${lead.first_name || ''} ${lead.last_name || ''} ${lead.phone_number || ''}`.trim() : 'Live call',
+          });
+        } catch { /* notifications unavailable */ }
+      }
+    }
+    prevStatusRef.current = status;
+  }, [live?.status]);
+
+  useEffect(() => {
+    const unread = (chatInfo?.threads || []).reduce((n, t) => n + Number(t.unread || 0), 0);
+    if (unread > prevUnreadRef.current) {
+      if (soundOn) agentChime('chat');
+      if (document.hidden && window.Notification?.permission === 'granted') {
+        try { new Notification('GenX Agent — new chat message'); } catch { /* ignore */ }
+      }
+    }
+    prevUnreadRef.current = unread;
+  }, [chatInfo]);
+
+  // Browser tab title reflects call state / unread chat.
+  useEffect(() => {
+    const unread = (chatInfo?.threads || []).reduce((n, t) => n + Number(t.unread || 0), 0);
+    document.title = live?.status === 'INCALL' ? '● ON CALL — GenX Agent' : unread > 0 ? `(${unread}) GenX Agent` : 'GenX Agent';
+  }, [live?.status, chatInfo]);
+
+  // Legacy get_call_launch: auto-open script/form/web form when a call
+  // connects; PREVIEW_* variants fire when the preview lead attaches.
+  useEffect(() => {
+    if (!live || !lead) { launchFiredRef.current = ''; return; }
+    const launch = campaigns.find((c) => c.campaign_id === live.campaign_id)?.get_call_launch || 'NONE';
+    if (launch === 'NONE') return;
+    const isPreviewLaunch = /^PREVIEW_/.test(launch);
+    const inPreview = Number(live.preview_lead_id) > 0 && live.status !== 'INCALL';
+    if (!(isPreviewLaunch ? inPreview : live.status === 'INCALL')) return;
+    const base = launch.replace('PREVIEW_', '');
+    const wantsWebform = /^WEBFORM/.test(base);
+    if (wantsWebform && !webForms) return; // wait until web forms are loaded
+    const key = `${lead.lead_id}-${isPreviewLaunch ? 'P' : 'C'}`;
+    if (launchFiredRef.current === key) return;
+    launchFiredRef.current = key;
+    if (base === 'SCRIPT' || base === 'SCRIPTTWO') setMainTab('script');
+    else if (base === 'FORM') setMainTab('form');
+    else if (wantsWebform) {
+      const wanted = base === 'WEBFORMTWO' ? 'Web Form 2' : base === 'WEBFORMTHREE' ? 'Web Form 3' : 'Web Form';
+      const form = (webForms.forms || []).find((f) => f.label === wanted);
+      if (form) window.open(mergeFields(form.url), webForms.target || '_blank');
+    }
+  }, [live?.status, lead ? lead.lead_id : 0, Number(live?.preview_lead_id || 0) > 0 ? 1 : 0, webForms ? 1 : 0]);
+
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
+
+  // Pause-code time limits (seconds): drive the countdown on the Paused badge.
+  const pauseCodeRow = live && live.pause_code ? pauseCodes.find((r) => r.pause_code === live.pause_code) : null;
+  const pauseLimit = Number(pauseCodeRow?.time_limit || 0);
+  const pauseRemain = live && live.status === 'PAUSED' && pauseLimit > 0 ? pauseLimit - stateSeconds : null;
 
   // Campaign dial method drives which controls make sense: RATIO/ADAPT_* are
   // auto-dial (agent goes Available, dialer feeds calls); MANUAL/INBOUND_MAN
@@ -14345,11 +14445,17 @@ function AgentConsole({ token, authInfo, onExit }) {
           </span>
           {live && (
             <span
-              className={`agb-badge ${live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused clickable'}`}
+              className={`agb-badge ${live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : `paused clickable${pauseRemain != null && pauseRemain < 0 ? ' over' : ''}`}`}
               title={live.status === 'PAUSED' ? 'Change pause reason' : undefined}
               onClick={live.status === 'PAUSED' ? () => setPauseModal(true) : undefined}
             >
-              {live.status === 'INCALL' ? `On Call ${formatSeconds(stateSeconds)}` : live.status === 'READY' ? 'Available' : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''} ${formatSeconds(stateSeconds)}`}
+              {live.status === 'INCALL'
+                ? `On Call ${formatSeconds(stateSeconds)}`
+                : live.status === 'READY'
+                  ? 'Available'
+                  : pauseRemain != null
+                    ? `Paused · ${live.pause_code} · ${pauseRemain >= 0 ? `${formatSeconds(pauseRemain)} left` : `over by ${formatSeconds(-pauseRemain)}`}`
+                    : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''} ${formatSeconds(stateSeconds)}`}
             </span>
           )}
           {live && live.status !== 'INCALL' && (
@@ -14366,6 +14472,25 @@ function AgentConsole({ token, authInfo, onExit }) {
           <span className="agb-session">
             {live ? `Session ${live.conf_exten} · ${clock.toLocaleTimeString()}` : clock.toLocaleTimeString()}
           </span>
+          <button
+            type="button"
+            className="row-action"
+            title={soundOn ? 'Mute alert sounds' : 'Enable alert sounds'}
+            onClick={() => {
+              const next = !soundOn;
+              setSoundOn(next);
+              window.localStorage.setItem('genx-agent-sound', next ? '1' : '0');
+              if (next) {
+                agentChime('chat');
+                if (window.Notification && Notification.permission === 'default') {
+                  Notification.requestPermission().catch(() => {});
+                }
+              }
+              apiFetch('/agent/alert-control', token, { method: 'POST', body: JSON.stringify({ enabled: next }) }).catch(() => {});
+            }}
+          >
+            {soundOn ? <Volume2 size={14} aria-hidden="true" /> : <VolumeX size={14} aria-hidden="true" />}
+          </button>
           <button
             type="button"
             className="row-action"
@@ -14483,6 +14608,9 @@ function AgentConsole({ token, authInfo, onExit }) {
               className="agn-hero-form"
               onSubmit={async (event) => {
                 event.preventDefault();
+                if (window.Notification && Notification.permission === 'default') {
+                  Notification.requestPermission().catch(() => {});
+                }
                 const payload = await act('/agent/login', { campaign_id: campaignId });
                 if (payload) {
                   setMessage(payload.webphoneUrl
@@ -14892,6 +15020,11 @@ function AgentConsole({ token, authInfo, onExit }) {
                 ))}
               </div>
             </div>
+            {lastNote && (
+              <p className="agn-lastnote">
+                <History size={13} aria-hidden="true" /> Last note ({formatDateTime(lastNote.date)}): {lastNote.note}
+              </p>
+            )}
             {dialFail && (
               <p className="form-error">
                 Call failed: {dialFail.dialstatus}{dialFail.sip_hangup_reason ? ` — ${dialFail.sip_hangup_reason}` : ''} — hang up and disposition
@@ -15288,10 +15421,29 @@ function AgentConsole({ token, authInfo, onExit }) {
             {!dispoStatuses.length && <span className="connection-summary">No selectable statuses</span>}
           </div>
           {dispoPick === 'CALLBK' && (
-            <label className="agr-note">
-              <span>Callback Date/Time</span>
-              <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
-            </label>
+            <>
+              <div className="agn-cbpresets">
+                {[['+1 Hour', 3600000], ['+4 Hours', 14400000], ['Tomorrow 9 AM', 'tomorrow9'], ['Next Week', 604800000]].map(([label, offset]) => (
+                  <button
+                    type="button"
+                    key={label}
+                    className="row-action"
+                    onClick={() => {
+                      const d = new Date();
+                      if (offset === 'tomorrow9') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
+                      else d.setTime(d.getTime() + offset);
+                      setCallbackTime(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <label className="agr-note">
+                <span>Callback Date/Time</span>
+                <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
+              </label>
+            </>
           )}
           <label className="agr-note">
             <span>Add a note:</span>

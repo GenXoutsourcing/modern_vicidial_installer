@@ -7045,7 +7045,7 @@ async function agentAuth(req, res) {
   const campaignParams = [];
   const campaignWhere = scopeWhere(allowed, 'campaign_id', campaignParams);
   const campaigns = await rows(
-    `SELECT campaign_id, campaign_name, dial_method FROM vicidial_campaigns
+    `SELECT campaign_id, campaign_name, dial_method, get_call_launch FROM vicidial_campaigns
      WHERE active = 'Y' AND ${campaignWhere} ORDER BY campaign_id ASC LIMIT 200`,
     campaignParams,
     [],
@@ -7089,7 +7089,7 @@ async function agentAuth(req, res) {
 async function agentLiveRow(user) {
   const [row] = await rows(
     `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid, uniqueid,
-            calls_today, pause_code, agent_log_id, preview_lead_id,
+            calls_today, pause_code, agent_log_id, preview_lead_id, external_pause,
             UNIX_TIMESTAMP(last_state_change) AS state_epoch
      FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
     [user],
@@ -7108,7 +7108,7 @@ async function agentSetup(req, res) {
   const campaignParams = [];
   const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
   const campaigns = await rows(
-    `SELECT campaign_id, campaign_name, dial_method FROM vicidial_campaigns
+    `SELECT campaign_id, campaign_name, dial_method, get_call_launch FROM vicidial_campaigns
      WHERE active = 'Y' AND ${campaignWhere} ORDER BY campaign_id ASC LIMIT 200`,
     campaignParams,
     [],
@@ -7128,7 +7128,7 @@ async function agentSetup(req, res) {
 
 async function agentPauseCodes(campaignId) {
   return rows(
-    'SELECT pause_code, pause_code_name FROM vicidial_pause_codes WHERE campaign_id = ? ORDER BY pause_code ASC LIMIT 100',
+    'SELECT pause_code, pause_code_name, time_limit FROM vicidial_pause_codes WHERE campaign_id = ? ORDER BY pause_code ASC LIMIT 100',
     [campaignId],
     [],
   );
@@ -7343,9 +7343,28 @@ async function agentWebphoneCall(req, res) {
 
 async function agentStatus(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
-  const live = await agentLiveRow(req.genxUser.user);
+  let live = await agentLiveRow(req.genxUser.user);
   if (!live) return res.json({ ok: true, live: null });
   await execute('UPDATE vicidial_live_agents SET last_update_time = NOW() WHERE user = ?', [req.genxUser.user]).catch(() => {});
+
+  // Supervisor external_pause (agent_api port): 'PAUSE!epoch' / 'RESUME!epoch'
+  // set by the admin UI; apply when not on a call, then clear the flag —
+  // mirrors legacy vicidial.php polling behavior.
+  let externalAction = null;
+  if (live.external_pause) {
+    const [extAction, extEpoch] = String(live.external_pause).split('!');
+    const fresh = Math.abs(Math.floor(Date.now() / 1000) - Number(extEpoch || 0)) < 300;
+    if (live.status !== 'INCALL') {
+      await execute("UPDATE vicidial_live_agents SET external_pause = '' WHERE user = ?", [req.genxUser.user]).catch(() => {});
+      if (fresh && extAction === 'PAUSE' && live.status === 'READY') {
+        live = (await applyAgentStatus(req.genxUser.user, req.genxUser.userGroup, 'PAUSED', 'API')) || live;
+        externalAction = 'PAUSED_BY_MANAGER';
+      } else if (fresh && extAction === 'RESUME' && live.status === 'PAUSED' && !Number(live.lead_id)) {
+        live = (await applyAgentStatus(req.genxUser.user, req.genxUser.userGroup, 'READY')) || live;
+        externalAction = 'RESUMED_BY_MANAGER';
+      }
+    }
+  }
 
   // When the dialer has attached a lead, ship its details for the lead card
   // (masked like everywhere else per the admin hide flags).
@@ -7373,6 +7392,22 @@ async function agentStatus(req, res) {
         lead.security_phrase = maskText(lead.security_phrase);
         lead.comments = maskText(lead.comments);
       }
+    }
+  }
+  // "Last note first": most recent per-call note for this lead (written by
+  // agentDispo), shown in the lead header at call start.
+  let lastNote = null;
+  if (lead) {
+    const [note] = await rows(
+      'SELECT call_notes, call_date FROM vicidial_call_notes WHERE lead_id = ? ORDER BY notesid DESC LIMIT 1',
+      [live.lead_id],
+      [],
+    );
+    if (note && note.call_notes) {
+      lastNote = {
+        note: req.genxUser?.adminHideLeadData ? maskText(note.call_notes) : String(note.call_notes),
+        date: note.call_date,
+      };
     }
   }
   // Webphone URL is persisted in session_data so a page reload can restore
@@ -7436,7 +7471,7 @@ async function agentStatus(req, res) {
     [],
   );
   return res.json({
-    ok: true, live, lead,
+    ok: true, live, lead, lastNote, externalAction,
     pauseCodes: await agentPauseCodes(live.campaign_id),
     webphoneUrl: sess?.webphone_url || null,
     customerChannels,
@@ -7521,6 +7556,14 @@ async function agentDispo(req, res) {
     }
     await execute('UPDATE vicidial_campaigns SET campaign_calldate = NOW() WHERE campaign_id = ?', [live.campaign_id]).catch(() => {});
 
+    // Per-call note (vicidial_call_notes) so the next call shows "last note".
+    if (comments) {
+      await execute(
+        'INSERT INTO vicidial_call_notes (lead_id, vicidial_id, call_date, call_notes) VALUES (?, ?, NOW(), ?)',
+        [leadId, String(live.uniqueid || '').slice(0, 20), comments],
+      ).catch(() => {});
+    }
+
     // Scheduled callback support (legacy CALLBK path).
     if (dispo === 'CALLBK' || Number(req.body?.is_callback) === 1) {
       const callbackTime = cleanText(req.body?.callback_datetime, 19).replace('T', ' ');
@@ -7555,47 +7598,55 @@ async function agentDispo(req, res) {
 
 // Legacy VDADready/VDADpause: close the open agent_log segment, flip status;
 // PAUSE opens a fresh agent_log row that becomes the live agent_log_id.
+// Core READY/PAUSED flip shared by the agent buttons and the supervisor
+// external_pause processing in agentStatus.
+async function applyAgentStatus(user, userGroup, target, pauseType = 'AGENT') {
+  const live = await agentLiveRow(user);
+  if (!live) return null;
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const [log] = await rows(
+    'SELECT agent_log_id, pause_epoch, pause_sec, wait_epoch, wait_sec, dispo_epoch FROM vicidial_agent_log WHERE agent_log_id = ? LIMIT 1',
+    [live.agent_log_id],
+    [],
+  );
+  if (target === 'READY') {
+    if (log && (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch))) {
+      const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
+      await execute('UPDATE vicidial_agent_log SET pause_sec = ?, wait_epoch = ? WHERE agent_log_id = ?', [Math.max(pauseSec, 0), nowEpoch, log.agent_log_id]);
+    }
+    await execute(
+      "UPDATE vicidial_live_agents SET status = 'READY', uniqueid = 0, callerid = '', channel = '', comments = '', pause_code = '', external_pause_code = '', last_state_change = NOW() WHERE user = ?",
+      [user],
+    );
+    return agentLiveRow(user);
+  }
+
+  // PAUSE
+  if (log && Number(log.wait_epoch) && !Number(log.wait_sec)) {
+    const waitSec = nowEpoch - Number(log.wait_epoch || nowEpoch);
+    await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(waitSec, 0), log.agent_log_id]);
+  }
+  const inserted = await execute(
+    `INSERT INTO vicidial_agent_log
+       (user, server_ip, event_time, campaign_id, pause_epoch, pause_sec, wait_epoch, user_group, pause_type)
+     VALUES (?, ?, NOW(), ?, ?, 0, ?, ?, ?)`,
+    [user, live.server_ip, live.campaign_id, nowEpoch, nowEpoch, userGroup || '', pauseType],
+  );
+  await execute(
+    "UPDATE vicidial_live_agents SET status = 'PAUSED', agent_log_id = ?, last_state_change = NOW() WHERE user = ?",
+    [inserted.insertId, user],
+  );
+  return agentLiveRow(user);
+}
+
 async function agentSetStatus(req, res, target) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
   const user = req.genxUser.user;
   const live = await agentLiveRow(user);
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
-  const nowEpoch = Math.floor(Date.now() / 1000);
-
   try {
-    const [log] = await rows(
-      'SELECT agent_log_id, pause_epoch, pause_sec, wait_epoch, wait_sec, dispo_epoch FROM vicidial_agent_log WHERE agent_log_id = ? LIMIT 1',
-      [live.agent_log_id],
-      [],
-    );
-    if (target === 'READY') {
-      if (log && (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch))) {
-        const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
-        await execute('UPDATE vicidial_agent_log SET pause_sec = ?, wait_epoch = ? WHERE agent_log_id = ?', [Math.max(pauseSec, 0), nowEpoch, log.agent_log_id]);
-      }
-      await execute(
-        "UPDATE vicidial_live_agents SET status = 'READY', uniqueid = 0, callerid = '', channel = '', comments = '', pause_code = '', external_pause_code = '', last_state_change = NOW() WHERE user = ?",
-        [user],
-      );
-      return res.json({ ok: true, live: await agentLiveRow(user) });
-    }
-
-    // PAUSE
-    if (log && Number(log.wait_epoch) && !Number(log.wait_sec)) {
-      const waitSec = nowEpoch - Number(log.wait_epoch || nowEpoch);
-      await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(waitSec, 0), log.agent_log_id]);
-    }
-    const inserted = await execute(
-      `INSERT INTO vicidial_agent_log
-         (user, server_ip, event_time, campaign_id, pause_epoch, pause_sec, wait_epoch, user_group, pause_type)
-       VALUES (?, ?, NOW(), ?, ?, 0, ?, ?, 'AGENT')`,
-      [user, live.server_ip, live.campaign_id, nowEpoch, nowEpoch, req.genxUser.userGroup || ''],
-    );
-    await execute(
-      "UPDATE vicidial_live_agents SET status = 'PAUSED', agent_log_id = ?, last_state_change = NOW() WHERE user = ?",
-      [inserted.insertId, user],
-    );
-    return res.json({ ok: true, live: await agentLiveRow(user) });
+    const updated = await applyAgentStatus(user, req.genxUser.userGroup, target);
+    return res.json({ ok: true, live: updated });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'agent_status_failed' });
   }

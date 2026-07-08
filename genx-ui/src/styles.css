@@ -1767,6 +1767,12 @@ select option:hover {
   letter-spacing: 0.02em;
 }
 .agb-badge.incall { animation: agn-pulse 1.6s ease-in-out infinite; }
+.agb-badge.over {
+  background: rgba(255, 71, 87, 0.2);
+  color: #ffb3b3;
+  border: 1px solid rgba(255, 71, 87, 0.55);
+  animation: agn-pulse 1.6s ease-in-out infinite;
+}
 @keyframes agn-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 99, 99, 0.35); }
   50% { box-shadow: 0 0 0 6px rgba(255, 99, 99, 0); }
@@ -2423,6 +2429,24 @@ select option:hover {
 .agn-chip.link { color: #a8dfff; border-color: rgba(0, 170, 255, 0.4); cursor: pointer; }
 .agn-chip.link:hover { background: rgba(0, 170, 255, 0.15); }
 .agn-script { border-radius: 10px; overflow: hidden; }
+
+/* "Last note" banner at the top of the lead card */
+.agn-lastnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #ffe9ad;
+  border: 1px solid rgba(255, 205, 71, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 205, 71, 0.08);
+}
+.agn-lastnote svg { flex: 0 0 auto; margin-top: 1px; }
+
+/* Callback quick presets in the dispo card */
+.agn-cbpresets { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Floating softphone widget */
 .agn-phone {
