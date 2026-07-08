@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity,
+  ArrowRightLeft,
   BarChart3,
   CalendarDays,
+  CircleDot,
   Clock3,
   Compass,
   Copy,
@@ -11,12 +13,21 @@ import {
   ExternalLink,
   FileText,
   Gauge,
+  Hash,
   Headphones,
+  History,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
+  Mic,
+  MicOff,
+  Pause,
   Pencil,
+  Phone,
   PhoneCall,
+  PhoneForwarded,
+  PhoneOff,
+  Play,
   Plus,
   RefreshCcw,
   Radio,
@@ -13934,7 +13945,8 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [webphoneUrl, setWebphoneUrl] = useState(authInfo?.webphoneUrl || null);
-  const [showPhone, setShowPhone] = useState(true);
+  const [showPhone, setShowPhone] = useState(false);
+  const [dayStats, setDayStats] = useState(null);
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
   const [callLog, setCallLog] = useState(null);
@@ -14205,18 +14217,39 @@ function AgentConsole({ token, authInfo, onExit }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [live ? 1 : 0, sidePanel, token, callLogDate, lead ? lead.lead_id : 0]);
 
+  // Dashboard data: day stats every 30s (re-pull after each dispo), plus a
+  // callbacks snapshot for the "Callbacks Due" card while idle.
+  useEffect(() => {
+    if (!live) { setDayStats(null); return undefined; }
+    const load = () => apiFetch('/agent/day-stats', token).then(setDayStats).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 30000);
+    return () => window.clearInterval(timer);
+  }, [live ? 1 : 0, lead ? lead.lead_id : 0, token]);
+
+  useEffect(() => {
+    if (!live || lead) return;
+    apiFetch('/agent/callbacks', token).then(setCallbacks).catch(() => {});
+  }, [live ? 1 : 0, lead ? 1 : 0, token]);
+
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
   return (
     <main className="app-shell agent-shell">
       {/* Legacy agc top line: logged-in summary + LOGOUT */}
       {/* Agent status bar: identity + registered/status + session info + logout */}
-      <header className="agb-topbar">
-        <div className="brand-lock">
-          <div className="brand-mark">GX</div>
+      <header className={`agb-topbar state-${live ? (live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused') : 'off'}`}>
+        <div className="agn-id">
+          <div className="agn-avatar">
+            {(() => {
+              const n = authInfo?.user?.fullName || authInfo?.user?.user || live?.user || 'A';
+              const parts = String(n).trim().split(/\s+/);
+              return (parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : String(n).slice(0, 2)).toUpperCase();
+            })()}
+          </div>
           <div>
-            <p className="eyebrow">GenX Agent</p>
             <h1>{authInfo?.user?.fullName || authInfo?.user?.user || live?.user || 'Agent'}</h1>
+            <p className="agn-sub">{live ? `Campaign ${live.campaign_id} · Phone ${String(live.extension).split('/').pop()}` : 'GenX Agent Console'}</p>
           </div>
         </div>
         <div className="agb-status-group">
@@ -14249,7 +14282,7 @@ function AgentConsole({ token, authInfo, onExit }) {
             </select>
           )}
           <span className="agb-session">
-            {live ? `Session ${live.conf_exten} · Queue ${queueCalls} · Phone ${String(live.extension).split('/').pop()}` : clock.toLocaleTimeString()}
+            {live ? `Session ${live.conf_exten} · ${clock.toLocaleTimeString()}` : clock.toLocaleTimeString()}
           </span>
           <button
             type="button"
@@ -14293,7 +14326,7 @@ function AgentConsole({ token, authInfo, onExit }) {
                   if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
                 }}
               >
-                Dial
+                <Phone size={15} aria-hidden="true" /> Dial
               </button>
               <button
                 type="button"
@@ -14307,7 +14340,7 @@ function AgentConsole({ token, authInfo, onExit }) {
                   } else if (payload) setMessage('Dialing next lead');
                 }}
               >
-                Dial Next
+                <PhoneForwarded size={15} aria-hidden="true" /> Dial Next
               </button>
             </>
           )}
@@ -14325,16 +14358,20 @@ function AgentConsole({ token, authInfo, onExit }) {
           )}
           {live.status === 'INCALL' && (
             <>
-              <button type="button" className="agb-act hangup" disabled={busy} onClick={() => act('/agent/hangup')}>Hangup</button>
-              <button type="button" className={parked ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/park', { grab: parked }); if (p) setParked(!parked); }}>
-                {parked ? 'Unpark' : 'Hold'}
+              <button type="button" className="agb-act hangup" disabled={busy} onClick={() => act('/agent/hangup')}>
+                <PhoneOff size={15} aria-hidden="true" /> Hangup
               </button>
-              <button type="button" className={xferOpen ? 'agb-act xfer on' : 'agb-act xfer'} onClick={() => setXferOpen((v) => !v)}>Transfer</button>
+              <button type="button" className={parked ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/park', { grab: parked }); if (p) setParked(!parked); }}>
+                {parked ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />} {parked ? 'Unpark' : 'Hold'}
+              </button>
+              <button type="button" className={xferOpen ? 'agb-act xfer on' : 'agb-act xfer'} onClick={() => setXferOpen((v) => !v)}>
+                <ArrowRightLeft size={15} aria-hidden="true" /> Transfer
+              </button>
               <button type="button" className={agentMuted ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
-                {agentMuted ? 'Unmute' : 'Mute'}
+                {agentMuted ? <MicOff size={15} aria-hidden="true" /> : <Mic size={15} aria-hidden="true" />} {agentMuted ? 'Unmute' : 'Mute'}
               </button>
               <button type="button" className={isRecording ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' }); if (p) setMessage(isRecording ? 'Recording stopped' : 'Recording started'); }}>
-                {isRecording ? 'Stop Rec' : 'Record'}
+                <CircleDot size={15} aria-hidden="true" /> {isRecording ? 'Stop Rec' : 'Record'}
               </button>
               <span className="agb-dtmf">
                 <input
@@ -14345,19 +14382,46 @@ function AgentConsole({ token, authInfo, onExit }) {
                   onChange={(event) => setDtmfDigits(event.target.value.replace(/[^0-9*#]/g, ''))}
                 />
                 <button type="button" className="agb-act" disabled={busy || !dtmfDigits} onClick={async () => { const p = await act('/agent/send-dtmf', { digits: dtmfDigits }); if (p) setDtmfDigits(''); }}>
-                  Send
+                  <Hash size={14} aria-hidden="true" /> Send
                 </button>
               </span>
             </>
           )}
         </div>
       )}
+      {message && <p className="agn-msg">{message}</p>}
       <div className="agent-layout">
+      {live && (
+        <nav className="agn-rail" aria-label="Agent panels">
+          {[
+            ['', 'Home', LayoutDashboard, 0],
+            ['agents', 'Agents', Users, 0],
+            ['queue', 'Queue', PhoneCall, queueCalls],
+            ['callbacks', 'Callbacks', Clock3, callbacks ? callbacks.liveCount : 0],
+            ['calllog', 'Call Log', History, 0],
+            ['ingroups', 'In-Groups', Headphones, 0],
+          ].map(([key, label, Icon, badge]) => (
+            <button
+              type="button"
+              key={label}
+              className={(sidePanel || '') === key ? 'agn-rail-btn active' : 'agn-rail-btn'}
+              onClick={() => setSidePanel(key === '' ? '' : (sidePanel === key ? '' : key))}
+            >
+              <Icon size={18} aria-hidden="true" />
+              <span>{label}</span>
+              {Number(badge) > 0 && <em className="agn-rail-badge">{badge}</em>}
+            </button>
+          ))}
+        </nav>
+      )}
       <div className="agent-body">
         {!live && (
-          <Panel eyebrow="Campaign" title="Select a Campaign" icon={Headphones} className="admin-wide-panel">
+          <div className="agn-hero">
+            <div className="agn-hero-icon"><Headphones size={30} aria-hidden="true" /></div>
+            <h2>Ready to take calls?</h2>
+            <p className="agn-sub">Pick your campaign to join the floor.</p>
             <form
-              className="entity-form report-filter-bar"
+              className="agn-hero-form"
               onSubmit={async (event) => {
                 event.preventDefault();
                 const payload = await act('/agent/login', { campaign_id: campaignId });
@@ -14368,55 +14432,88 @@ function AgentConsole({ token, authInfo, onExit }) {
                 }
               }}
             >
-              <div className="field-grid">
-                <label>
-                  <span>Campaign</span>
-                  <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-                    <option value="">Select a campaign</option>
-                    {campaigns.map((row) => (
-                      <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || ''} ({row.dial_method})</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="modal-actions">
-                <button type="submit" className="primary-action" disabled={busy || !campaignId}>
-                  <Headphones size={16} aria-hidden="true" />
-                  {busy ? 'Logging in' : 'Login to Campaign'}
-                </button>
-              </div>
+              <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+                <option value="">Select a campaign</option>
+                {campaigns.map((row) => (
+                  <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || ''} ({row.dial_method})</option>
+                ))}
+              </select>
+              <button type="submit" className="primary-action" disabled={busy || !campaignId}>
+                <Headphones size={16} aria-hidden="true" />
+                {busy ? 'Logging in' : 'Login to Campaign'}
+              </button>
             </form>
-            {message && <p className="connection-summary">{message}</p>}
-          </Panel>
+          </div>
         )}
-        {live && (
-          <Panel
-            eyebrow={`Campaign ${live.campaign_id}`}
-            title={`${live.status}${live.pause_code ? ` (${live.pause_code})` : ''} — ${formatSeconds(stateSeconds)} in state`}
-            icon={live.status === 'READY' ? Radio : Clock3}
-            className="admin-wide-panel"
-          >
-            <div className="connection-actions">
-              <span className="connection-status">Phone: {live.extension} @ {live.server_ip}</span>
-              <span className="connection-status">Conference: {live.conf_exten}</span>
-              <span className="connection-status">Calls today: {formatNumber(live.calls_today)}</span>
-              {dialableLeads != null && <span className="connection-status">Dialable leads: {formatNumber(dialableLeads)}</span>}
-              {Number(live.lead_id) > 0 && <span className="connection-status">On lead: {live.lead_id} ({live.callerid})</span>}
+        {live && !lead && !sidePanel && (
+          <div className="agn-dash">
+            <div className="agn-greet">
+              <div>
+                <h2>
+                  {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
+                  {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
+                </h2>
+                <p className="agn-sub">
+                  Campaign {live.campaign_id} · Conference {live.conf_exten} · {live.extension} @ {live.server_ip}
+                </p>
+              </div>
+              <span className="agn-clock">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
-            <div className="connection-actions">
-              {[['agents', 'Agents View'], ['queue', 'Calls in Queue'], ['callbacks', `Callbacks${callbacks ? ` (${callbacks.count})` : ''}`], ['calllog', 'Call Log'], ['ingroups', 'In-Groups']].map(([key, label]) => (
-                <button
-                  type="button"
-                  key={key}
-                  className={sidePanel === key ? 'row-action tool-picker-item selected' : 'row-action'}
-                  onClick={() => setSidePanel((current) => (current === key ? '' : key))}
-                >
-                  {label}
-                </button>
+            <div className="agn-tiles">
+              {[
+                ['Calls Today', formatNumber(live.calls_today), PhoneCall, 'c1'],
+                ['Talk Time', formatSeconds(dayStats?.talkSec || 0), Timer, 'c2'],
+                ['Wait Time', formatSeconds(dayStats?.waitSec || 0), Clock3, 'c3'],
+                ['Pause Time', formatSeconds(dayStats?.pauseSec || 0), Pause, 'c4'],
+                ['Dialable Leads', dialableLeads != null ? formatNumber(dialableLeads) : '—', Database, 'c5'],
+                ['Calls in Queue', formatNumber(queueCalls), Users, 'c6'],
+              ].map(([label, value, Icon, tone]) => (
+                <div key={label} className={`agn-tile ${tone}`}>
+                  <span className="agn-tile-ico"><Icon size={18} aria-hidden="true" /></span>
+                  <strong>{value}</strong>
+                  <span className="agn-tile-label">{label}</span>
+                </div>
               ))}
             </div>
-            {message && <p className="connection-summary">{message}</p>}
-          </Panel>
+            <div className="agn-duo">
+              <div className="agn-card">
+                <p className="agr-title"><Clock3 size={14} aria-hidden="true" /> Callbacks Due</p>
+                {(callbacks?.callbacks || []).filter((c) => c.status === 'LIVE').slice(0, 5).map((c) => (
+                  <div key={c.callback_id} className="agn-row">
+                    <span>{`${c.first_name || ''} ${c.last_name || ''}`.trim() || `Lead ${c.lead_id}`}</span>
+                    <span className="agn-dim">{formatDateTime(c.callback_time)}</span>
+                    <button
+                      type="button"
+                      className="row-action"
+                      disabled={busy}
+                      onClick={async () => {
+                        const p = await act('/agent/manual-dial', { lead_id: c.lead_id, callback_id: c.callback_id });
+                        if (p) setMessage(`Dialing callback lead ${c.lead_id}`);
+                      }}
+                    >
+                      Dial
+                    </button>
+                  </div>
+                ))}
+                {!(callbacks?.callbacks || []).some((c) => c.status === 'LIVE') && (
+                  <p className="agn-dim">No callbacks due — you're all caught up.</p>
+                )}
+              </div>
+              <div className="agn-card">
+                <p className="agr-title"><Activity size={14} aria-hidden="true" /> Recent Activity</p>
+                {(dayStats?.recent || []).map((r, i) => (
+                  <div key={i} className="agn-row">
+                    <span>{`${r.first_name || ''} ${r.last_name || ''}`.trim() || `Lead ${r.lead_id}`}</span>
+                    <span className="agn-pill">{r.status || 'LIVE'}</span>
+                    <span className="agn-dim">{formatSeconds(Number(r.talk_sec || 0))} · {formatDateTime(r.event_time)}</span>
+                  </div>
+                ))}
+                {!(dayStats?.recent || []).length && (
+                  <p className="agn-dim">No calls yet today — hit Dial Next to get rolling.</p>
+                )}
+              </div>
+            </div>
+          </div>
         )}
         {live && sidePanel === 'agents' && (
           <Panel eyebrow="Live" title="Agents View" icon={Users} className="admin-wide-panel">
@@ -14605,36 +14702,47 @@ function AgentConsole({ token, authInfo, onExit }) {
             )}
           </Panel>
         )}
-        {live && mainTab === 'script' && (
-          <Panel eyebrow="Campaign" title={scriptData?.script?.script_name || 'Script'} icon={Activity} className="admin-wide-panel">
-            {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
-            {scriptData?.script && (
-              <iframe
-                title="Campaign script"
-                style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
-                srcDoc={mergeFields(scriptData.script.script_text)}
-              />
-            )}
-          </Panel>
-        )}
         {live && lead && (
-          <Panel eyebrow={`Lead ${lead.lead_id}`} title={`${lead.first_name || ''} ${lead.last_name || ''} — ${lead.phone_code || ''} ${lead.phone_number || ''}`} icon={PhoneCall} className="admin-wide-panel">
-            {inboundInfo && (
-              <div className="connection-actions">
-                <span className="connection-status">Inbound: {inboundInfo.group_id}{inboundInfo.group_name ? ` (${inboundInfo.group_name})` : ''}</span>
-                <span className="connection-status">Queue wait: {formatSeconds(Number(inboundInfo.queue_seconds || 0))}</span>
+          <div className="agn-lead">
+            <div className="agn-lead-head">
+              <div className="agn-lead-ava">
+                {(`${(lead.first_name || '')[0] || ''}${(lead.last_name || '')[0] || ''}`.toUpperCase()) || '?'}
               </div>
-            )}
-            <div className="connection-actions">
-              <span className="connection-status">List: {lead.list_id}</span>
-              <span className="connection-status">Status: {lead.status}</span>
-              <span className="connection-status">Called: {lead.called_count}x</span>
-              {lead.gmt_offset_now != null && (
-                <span className="connection-status">
-                  Customer Time: {new Date(Date.now() + new Date().getTimezoneOffset() * 60000 + Number(lead.gmt_offset_now) * 3600000).toLocaleTimeString()}
-                </span>
-              )}
-              {Number(live.lead_id) > 0 && <span className="connection-status">Channel: {live.callerid || ''}</span>}
+              <div className="agn-lead-who">
+                <h2>{`${lead.title || ''} ${lead.first_name || ''} ${lead.last_name || ''}`.replace(/\s+/g, ' ').trim() || 'Unknown Caller'}</h2>
+                <p className="agn-lead-num">
+                  <PhoneCall size={14} aria-hidden="true" /> {lead.phone_code ? `+${lead.phone_code} ` : ''}{lead.phone_number}
+                </p>
+              </div>
+              <div className="agn-lead-chips">
+                {inboundInfo && (
+                  <span className="agn-chip in">
+                    Inbound {inboundInfo.group_id}{inboundInfo.group_name ? ` (${inboundInfo.group_name})` : ''} · waited {formatSeconds(Number(inboundInfo.queue_seconds || 0))}
+                  </span>
+                )}
+                <span className="agn-chip">Lead #{lead.lead_id}</span>
+                <span className="agn-chip">List {lead.list_id}</span>
+                <span className="agn-chip">Status {lead.status}</span>
+                <span className="agn-chip">Called {lead.called_count}x</span>
+                {(lead.city || lead.state) && (
+                  <span className="agn-chip">{[lead.city, lead.state].filter(Boolean).join(', ')}</span>
+                )}
+                {lead.gmt_offset_now != null && (
+                  <span className="agn-chip time">
+                    <Clock3 size={11} aria-hidden="true" /> Local {new Date(Date.now() + new Date().getTimezoneOffset() * 60000 + Number(lead.gmt_offset_now) * 3600000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                {(webForms?.forms || []).map((f) => (
+                  <button
+                    type="button"
+                    key={f.label}
+                    className="agn-chip link"
+                    onClick={() => window.open(mergeFields(f.url), webForms.target || '_blank')}
+                  >
+                    <ExternalLink size={11} aria-hidden="true" /> {f.label}
+                  </button>
+                ))}
+              </div>
             </div>
             {dialFail && (
               <p className="form-error">
@@ -14643,6 +14751,37 @@ function AgentConsole({ token, authInfo, onExit }) {
             )}
             {!dialFail && customerGone >= 2 && live.status === 'INCALL' && (
               <p className="form-error">No customer channel in your session — the caller may have hung up</p>
+            )}
+            <div className="agc-tabs">
+              {[['main', 'Contact'], ['script', 'Script'], ['form', 'Form']].map(([key, label]) => (
+                <button
+                  type="button"
+                  key={key}
+                  className={mainTab === key ? 'agc-tab active' : 'agc-tab'}
+                  onClick={() => setMainTab(key)}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={sidePanel === 'leadinfo' ? 'agc-tab active' : 'agc-tab'}
+                onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}
+              >
+                History
+              </button>
+            </div>
+            {mainTab === 'script' && (
+              <div className="agn-script">
+                {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
+                {scriptData?.script && (
+                  <iframe
+                    title="Campaign script"
+                    style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
+                    srcDoc={mergeFields(scriptData.script.script_text)}
+                  />
+                )}
+              </div>
             )}
             {showAltPhones && altPhones && (
               <table className="data-table">
@@ -14762,25 +14901,6 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
               </div>
             )}
-            <div className="agc-tabs">
-              {[['main', 'Contact'], ['script', 'Script'], ['form', 'Form']].map(([key, label]) => (
-                <button
-                  type="button"
-                  key={key}
-                  className={mainTab === key ? 'agc-tab active' : 'agc-tab'}
-                  onClick={() => setMainTab(key)}
-                >
-                  {label}
-                </button>
-              ))}
-              <button
-                type="button"
-                className={sidePanel === 'leadinfo' ? 'agc-tab active' : 'agc-tab'}
-                onClick={() => setSidePanel((c) => (c === 'leadinfo' ? '' : 'leadinfo'))}
-              >
-                History
-              </button>
-            </div>
             {mainTab === 'main' && editLead && (
               <div className="entity-form agc-custform">
                 <p className="connection-summary">Customer Information:</p>
@@ -14991,14 +15111,14 @@ function AgentConsole({ token, authInfo, onExit }) {
                 </div>
               </div>
             )}
-          </Panel>
+          </div>
         )}
       </div>
-      {/* Right rail: disposition radios + note, then the webphone */}
+      {/* Right rail: disposition radios + note */}
       <div className="agent-right">
       {live && lead && (
         <div className="agr-card">
-          <p className="agr-title">Update Disposition:</p>
+          <p className="agr-title"><Pencil size={14} aria-hidden="true" /> Update Disposition</p>
           <div className="agr-radios">
             {dispoStatuses.map((row) => {
               const hk = dispoHotkeys.find((h) => h.status === row.status);
@@ -15050,18 +15170,21 @@ function AgentConsole({ token, authInfo, onExit }) {
           </button>
         </div>
       )}
+      </div>
+      </div>
+      {/* Floating softphone widget (CRM style): header pill + collapsible iframe.
+          The iframe stays mounted while minimized so SIP/audio persist. */}
       {live && webphoneUrl && (
-        <div className={showPhone ? 'agent-webphone' : 'agent-webphone webphone-hidden'}>
-          <div className="webphone-toolbar">
-            <span className="connection-status">Webphone</span>
-            <div className="connection-actions">
-              <button type="button" className="row-action" onClick={callWebphone}>
-                Call Phone
-              </button>
-              <button type="button" className="row-action" onClick={() => setShowPhone((v) => !v)}>
-                {showPhone ? 'Hide' : 'Show'}
-              </button>
-            </div>
+        <div className={showPhone ? 'agn-phone' : 'agn-phone min'}>
+          <div className="agn-phone-head">
+            <span className="agb-dot on" aria-hidden="true" />
+            <span className="agn-phone-title">
+              <Phone size={13} aria-hidden="true" /> Phone · {String(live.extension).split('/').pop()}
+            </span>
+            <button type="button" className="row-action" onClick={callWebphone}>Ring</button>
+            <button type="button" className="row-action" onClick={() => setShowPhone((v) => !v)}>
+              {showPhone ? 'Hide' : 'Open'}
+            </button>
           </div>
           <iframe
             src={webphoneUrl}
@@ -15080,8 +15203,6 @@ function AgentConsole({ token, authInfo, onExit }) {
           />
         </div>
       )}
-      </div>
-      </div>
     </main>
   );
 }

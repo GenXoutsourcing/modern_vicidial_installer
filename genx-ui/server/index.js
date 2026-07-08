@@ -7757,6 +7757,39 @@ async function agentCallsInQueue(req, res) {
   return res.json({ ok: true, enabled: true, calls: ordered });
 }
 
+// Dashboard tiles: today's activity sums plus recent per-call rows for this
+// agent from vicidial_agent_log (own activity only, no phone numbers).
+async function agentDayStats(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const [sums] = await rows(
+    `SELECT COUNT(IF(lead_id > 0, 1, NULL)) AS calls, COALESCE(SUM(talk_sec), 0) AS talk_sec,
+            COALESCE(SUM(pause_sec), 0) AS pause_sec, COALESCE(SUM(wait_sec), 0) AS wait_sec,
+            COALESCE(SUM(dispo_sec), 0) AS dispo_sec
+     FROM vicidial_agent_log WHERE user = ? AND event_time >= CURDATE()`,
+    [req.genxUser.user],
+    [],
+  );
+  const recent = await rows(
+    `SELECT val.event_time, val.status, val.talk_sec, val.campaign_id, val.lead_id,
+            vl.first_name, vl.last_name
+     FROM vicidial_agent_log val
+     LEFT JOIN vicidial_list vl ON vl.lead_id = val.lead_id
+     WHERE val.user = ? AND val.event_time >= CURDATE() AND val.lead_id > 0
+     ORDER BY val.event_time DESC LIMIT 8`,
+    [req.genxUser.user],
+    [],
+  );
+  return res.json({
+    ok: true,
+    calls: Number(sums?.calls || 0),
+    talkSec: Number(sums?.talk_sec || 0),
+    pauseSec: Number(sums?.pause_sec || 0),
+    waitSec: Number(sums?.wait_sec || 0),
+    dispoSec: Number(sums?.dispo_sec || 0),
+    recent,
+  });
+}
+
 // Legacy CalLBacKLisT + CalLBacKCounT: USERONLY callbacks for this agent with
 // the campaign hours-block/display-days windows (dialable flag omitted v1).
 async function agentCallbacks(req, res) {
@@ -13928,6 +13961,7 @@ app.post('/api/agent/webphone-call', requireAgentAccess, agentWebphoneCall);
 app.get('/api/agent/agents-view', requireAgentAccess, agentAgentsView);
 app.get('/api/agent/calls-in-queue', requireAgentAccess, agentCallsInQueue);
 app.get('/api/agent/callbacks', requireAgentAccess, agentCallbacks);
+app.get('/api/agent/day-stats', requireAgentAccess, agentDayStats);
 app.get('/api/agent/xfer-options', requireAgentAccess, agentXferOptions);
 app.post('/api/agent/xfer-blind', requireAgentAccess, agentXferBlind);
 app.post('/api/agent/threeway-dial', requireAgentAccess, agentThreewayDial);
