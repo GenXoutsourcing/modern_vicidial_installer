@@ -264,7 +264,7 @@ run_vicidial_install_pl() {
 replace_managed_block() {
     local file=$1
     local marker=$2
-    sed -i "/# BEGIN ${marker}/,/# END ${marker}/d" "$file" 2>/dev/null || true
+    sed -i "/[#;] BEGIN ${marker}/,/[#;] END ${marker}/d" "$file" 2>/dev/null || true
     cat >> "$file"
 }
 
@@ -887,7 +887,7 @@ dnf install -y roundcubemail || true
 dnf install -y mariadb-server mariadb
 
 replace_managed_block /etc/php.ini GENX_VICIDIAL_PHP <<EOF
-# BEGIN GENX_VICIDIAL_PHP
+; BEGIN GENX_VICIDIAL_PHP
 
 error_reporting  =  E_ALL & ~E_NOTICE
 memory_limit = 448M
@@ -899,7 +899,7 @@ upload_max_filesize = 442M
 default_socket_timeout = 3360
 date.timezone = America/New_York
 max_input_vars = 50000
-# END GENX_VICIDIAL_PHP
+; END GENX_VICIDIAL_PHP
 EOF
 
 
@@ -1017,7 +1017,6 @@ default-storage-engine=MyISAM
 
 ### Yes, we need this for system tables, so no need to tune anything here for ViciDial settings, these are just for the mysql tables and internal stuff
 innodb_buffer_pool_size = 128M
-innodb_file_format = Barracuda # Deprecated in future releases as this is the only supported format, eventually
 innodb_file_per_table = ON
 innodb_flush_method=O_DIRECT
 innodb_flush_log_at_trx_commit=2
