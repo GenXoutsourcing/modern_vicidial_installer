@@ -251,16 +251,13 @@ choose_firewall_policy() {
 }
 
 role_active_keepalives() {
-    # Every server runs at least '1' (AST_update) against its local Asterisk so
-    # the admin Reports page shows load/up status for the whole cluster.
-    if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
-        printf '123456789ES'
-    elif [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
-        printf '1579E'
-    elif [ "$ROLE_TELEPHONY" = "yes" ]; then
-        printf '123468S'
+    # Every server runs Asterisk + the full per-server keepalive set; the
+    # cluster-singleton processes (5 VDadapt, 7 VDauto_dial_FILL, 9 timeclock,
+    # E email) run only on the primary database server.
+    if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
+        printf '123456789ECS'
     else
-        printf '1'
+        printf '123468CS'
     fi
 }
 
