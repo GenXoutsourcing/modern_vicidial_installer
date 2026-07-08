@@ -8323,9 +8323,51 @@ function AudioStorePanel({ user }) {
     }
   }
 
+  const storeInfo = store?.store;
+  const notReady = storeInfo && (!storeInfo.configured || !storeInfo.exists);
+
   return (
     <Panel eyebrow="Audio" title={`Audio Store (${formatNumber(store?.files?.length || 0)})`} icon={Activity} className="admin-wide-panel">
-      {canEdit && (
+      {storeInfo && !storeInfo.configured && (
+        <p className="connection-summary">
+          The VICIdial central sound store has not been created yet (System Settings → Sounds Web Directory is empty).
+          {canEdit ? ' Initialize it to generate the directory the VICIdial way.' : ' A level 9 admin can initialize it.'}
+        </p>
+      )}
+      {storeInfo?.configured && !storeInfo.exists && (
+        <p className="connection-summary">
+          Waiting for the server to create the sounds directory — it is created automatically within a minute. Refresh shortly.
+        </p>
+      )}
+      {storeInfo?.configured && storeInfo.exists && storeInfo.active === false && (
+        <p className="connection-summary">
+          Central Sound Control is INACTIVE in System Settings — uploads are stored but will not sync to dialer servers until it is set to 1.
+        </p>
+      )}
+      {canEdit && notReady && !storeInfo?.override && (
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={busy || (storeInfo?.configured && !storeInfo?.exists)}
+            onClick={async () => {
+              setBusy(true);
+              setNote('');
+              try {
+                const payload = await apiFetch('/admin/audio-store/init', token, { method: 'POST', body: '{}' });
+                setNote(payload.store?.exists
+                  ? 'Audio store directory created'
+                  : 'Directory name generated — the server will create it within a minute');
+                load();
+              } catch { setNote('Initialize failed'); } finally { setBusy(false); }
+            }}
+          >
+            Initialize Audio Store
+          </button>
+          <button type="button" className="row-action" onClick={load}>Refresh</button>
+        </div>
+      )}
+      {canEdit && !notReady && (
         <div className="modal-actions">
           <input
             type="file"
@@ -8341,7 +8383,7 @@ function AudioStorePanel({ user }) {
       )}
       {note && <p className="connection-summary">{note}</p>}
       <DataTable
-        emptyLabel={store?.dirMissing ? `Audio directory not initialized (${store?.dir})` : 'No audio files uploaded'}
+        emptyLabel={notReady ? 'Audio store not initialized' : 'No audio files uploaded'}
         rows={(store?.files || []).map((f) => ({ ...f, id: f.name }))}
         columns={[
           { key: 'name', label: 'File' },

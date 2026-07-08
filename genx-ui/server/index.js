@@ -13991,7 +13991,69 @@ app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
 // ---- Audio store (legacy vicidial/audio_store.php port) ----
 // Files live in a webroot dir (central-control compatible); rows mirror to
 // audio_store_details. Playback is served through an authenticated route.
-const AUDIO_STORE_DIR = process.env.GENX_UI_AUDIO_DIR || '/var/www/html/genx-sounds';
+//
+// The store location is VICIdial's own central sound store: the random
+// directory name in system_settings.sounds_web_directory under the web root
+// (legacy audio_store.php). GENX_UI_AUDIO_DIR only overrides for non-standard
+// layouts. The installer's root cron helper (vicidial-audio-store-dir)
+// creates/permissions whatever directory name appears in system_settings.
+const GENX_WEB_ROOT = process.env.GENX_UI_WEB_ROOT || '/var/www/html';
+const AUDIO_DIR_OVERRIDE = process.env.GENX_UI_AUDIO_DIR || '';
+
+async function audioStoreInfo() {
+  if (AUDIO_DIR_OVERRIDE) {
+    return {
+      active: true, configured: true, override: true,
+      webDir: path.basename(AUDIO_DIR_OVERRIDE),
+      dir: AUDIO_DIR_OVERRIDE,
+      exists: fs.existsSync(AUDIO_DIR_OVERRIDE),
+    };
+  }
+  const [sys] = await rows(
+    'SELECT sounds_central_control_active, sounds_web_server, sounds_web_directory FROM system_settings LIMIT 1',
+    [],
+    [],
+  );
+  const webDir = String(sys?.sounds_web_directory || '').trim();
+  // Legacy validity rule: audio_store.php regenerates any name under 30 chars.
+  const configured = webDir.length >= 30 && audioNameOk(`${webDir}.wav`);
+  const dir = configured ? path.join(GENX_WEB_ROOT, webDir) : '';
+  return {
+    active: String(sys?.sounds_central_control_active || '0') === '1',
+    webServer: String(sys?.sounds_web_server || ''),
+    webDir,
+    configured,
+    dir,
+    exists: configured ? fs.existsSync(dir) : false,
+  };
+}
+
+// Legacy audio_store.php directory generation port: 30 chars from the same
+// restricted charset, saved to system_settings. Creation is attempted here and
+// otherwise guaranteed by the installer's root cron within a minute.
+async function initAudioStore(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  if (!(Number(req.genxUser.userLevel || 0) >= 9 || Boolean(req.genxUser.modifyAudiostore))) {
+    return res.status(403).json({ ok: false, error: 'audiostore_permission_required' });
+  }
+  let store = await audioStoreInfo();
+  if (store.override) return badRequest(res, 'audio_dir_override_set');
+  if (!store.configured) {
+    const possible = '0123456789cdfghjkmnpqrstvwxyz';
+    let webDir = '';
+    for (let i = 0; i < 30; i += 1) webDir += possible[crypto.randomInt(possible.length)];
+    await execute('UPDATE system_settings SET sounds_web_directory = ?', [webDir]);
+    await adminLog(req, 'AUDIOSTORE', 'INIT', webDir, 'GENX AUDIO STORE INIT',
+      'sounds_web_directory generated (audio_store.php port)', webDir);
+    store = await audioStoreInfo();
+  }
+  if (store.configured && !store.exists) {
+    try { fs.mkdirSync(store.dir, { mode: 0o766 }); } catch { /* root cron helper creates it */ }
+    store = await audioStoreInfo();
+  }
+  return res.json({ ok: true, store });
+}
+
 const AUDIO_MIME = {
   wav: 'audio/wav', gsm: 'audio/gsm', mp3: 'audio/mpeg', ogg: 'audio/ogg',
   ulaw: 'audio/basic', sln: 'application/octet-stream', sln16: 'application/octet-stream',
@@ -14024,7 +14086,8 @@ async function listAudioChoices(req, res) {
       if (!choices.has(base)) choices.set(base, { name: base, source });
     }
   };
-  addDir(AUDIO_STORE_DIR, 'store');
+  const store = await audioStoreInfo();
+  if (store.exists) addDir(store.dir, 'store');
   addDir(ASTERISK_SOUNDS_DIR, 'server');
   const files = [...choices.values()].sort((a, b) => a.name.localeCompare(b.name));
   return res.json({ ok: true, files });
@@ -14059,16 +14122,18 @@ async function audioAnalyze(filePath, ext) {
 
 async function listAudioStore(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
+  const store = await audioStoreInfo();
+  if (!store.configured || !store.exists) return res.json({ ok: true, store, files: [] });
   let files = [];
   try {
-    files = fs.readdirSync(AUDIO_STORE_DIR).filter(audioNameOk);
+    files = fs.readdirSync(store.dir).filter(audioNameOk);
   } catch {
-    return res.json({ ok: true, dir: AUDIO_STORE_DIR, dirMissing: true, files: [] });
+    return res.json({ ok: true, store: { ...store, exists: false }, files: [] });
   }
   const details = await rows('SELECT * FROM audio_store_details LIMIT 2000', [], []);
   const byName = new Map(details.map((d) => [d.audio_filename, d]));
   const list = files.map((name) => {
-    const stat = fs.statSync(path.join(AUDIO_STORE_DIR, name));
+    const stat = fs.statSync(path.join(store.dir, name));
     const d = byName.get(name);
     return {
       name,
@@ -14080,7 +14145,7 @@ async function listAudioStore(req, res) {
       wav_asterisk_valid: d ? d.wav_asterisk_valid : '',
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
-  return res.json({ ok: true, dir: AUDIO_STORE_DIR, files: list });
+  return res.json({ ok: true, store, files: list });
 }
 
 async function uploadAudio(req, res) {
@@ -14095,9 +14160,11 @@ async function uploadAudio(req, res) {
   if (!AUDIO_MIME[ext]) return badRequest(res, 'unsupported_format');
   if (!Buffer.isBuffer(req.body) || !req.body.length) return badRequest(res, 'empty_body');
 
+  const store = await audioStoreInfo();
+  if (!store.configured) return res.status(409).json({ ok: false, error: 'audio_store_not_initialized' });
   try {
-    fs.mkdirSync(AUDIO_STORE_DIR, { recursive: true });
-    const filePath = path.join(AUDIO_STORE_DIR, name);
+    if (!store.exists) fs.mkdirSync(store.dir, { mode: 0o766 });
+    const filePath = path.join(store.dir, name);
     fs.writeFileSync(filePath, req.body, { mode: 0o666 });
     const info = await audioAnalyze(filePath, ext);
     await execute(
@@ -14117,11 +14184,13 @@ async function uploadAudio(req, res) {
   }
 }
 
-function streamAudio(req, res) {
+async function streamAudio(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
   const name = String(req.params?.name || '');
   if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
-  const filePath = path.join(AUDIO_STORE_DIR, name);
+  const store = await audioStoreInfo();
+  if (!store.exists) return res.status(404).json({ ok: false, error: 'not_found' });
+  const filePath = path.join(store.dir, name);
   if (!fs.existsSync(filePath)) return res.status(404).json({ ok: false, error: 'not_found' });
   res.setHeader('Content-Type', AUDIO_MIME[name.split('.').pop().toLowerCase()] || 'application/octet-stream');
   return res.sendFile(filePath);
@@ -14134,7 +14203,9 @@ async function deleteAudio(req, res) {
   }
   const name = String(req.params?.name || '');
   if (!audioNameOk(name)) return badRequest(res, 'bad_filename');
-  const filePath = path.join(AUDIO_STORE_DIR, name);
+  const store = await audioStoreInfo();
+  if (!store.configured) return res.status(409).json({ ok: false, error: 'audio_store_not_initialized' });
+  const filePath = path.join(store.dir, name);
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     await execute('DELETE FROM audio_store_details WHERE audio_filename = ? LIMIT 1', [name]);
@@ -14146,6 +14217,7 @@ async function deleteAudio(req, res) {
 }
 
 app.get('/api/admin/audio-store', requireAccess, listAudioStore);
+app.post('/api/admin/audio-store/init', requireAccess, initAudioStore);
 app.get('/api/admin/audio-files', requireAccess, listAudioChoices);
 app.post('/api/admin/audio-store', requireAccess, express.raw({ type: () => true, limit: '25mb' }), uploadAudio);
 app.get('/api/admin/audio-store/file/:name', requireAccess, streamAudio);
