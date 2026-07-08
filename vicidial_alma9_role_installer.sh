@@ -41,6 +41,7 @@ SLAVE_DB_USER="${SLAVE_DB_USER:-slave}"
 SLAVE_DB_PASS="${SLAVE_DB_PASS:-slave1234}"
 MYSQL_SLAVE_SERVER_ID="${MYSQL_SLAVE_SERVER_ID:-2}"
 RECORDINGS_STORAGE="${RECORDINGS_STORAGE:-local}"
+RECORDINGS_FTP_LAYOUT="${RECORDINGS_FTP_LAYOUT:-dated}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -190,6 +191,9 @@ print_role_summary() {
         echo "Cluster DB : $VICIDIAL_DB_HOST:$VICIDIAL_DB_PORT ($VICIDIAL_DB_NAME as $CLUSTER_DB_USER)"
         if [ "$ROLE_TELEPHONY" = "yes" ]; then
             echo "Recordings : $RECORDINGS_STORAGE"
+            if [ "$RECORDINGS_STORAGE" = "archive" ]; then
+                echo "FTP layout : $RECORDINGS_FTP_LAYOUT"
+            fi
         fi
         if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
             echo "Slave srvid: $MYSQL_SLAVE_SERVER_ID"
@@ -406,6 +410,12 @@ choose_recording_storage() {
     if [[ "$storage_input" =~ ^[Aa] ]]; then
         RECORDINGS_STORAGE="archive"
         fetch_archive_settings
+        read -p "Archive layout: dated subdirectories (YYYY/MM/DD) or one flat directory? (dated/flat) [dated]: " layout_input
+        if [[ "${layout_input:-dated}" =~ ^[Ff] ]]; then
+            RECORDINGS_FTP_LAYOUT="flat"
+        else
+            RECORDINGS_FTP_LAYOUT="dated"
+        fi
     else
         RECORDINGS_STORAGE="local"
     fi
@@ -1865,6 +1875,11 @@ FTP_CRON_PREFIX="#"
 if [ "$RECORDINGS_STORAGE" = "archive" ]; then
     FTP_CRON_PREFIX=""
 fi
+# Flat layout adds --nodatedir; dated layout (default) files into YYYY/MM/DD subdirectories.
+FTP_DATEDIR_FLAG=""
+if [ "$RECORDINGS_FTP_LAYOUT" = "flat" ]; then
+    FTP_DATEDIR_FLAG=" --nodatedir"
+fi
 cat <<CRONTAB >> /root/crontab-file
 
 ### recording mixing/compressing/ftping scripts
@@ -1872,7 +1887,7 @@ cat <<CRONTAB >> /root/crontab-file
 0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_mix.pl --MIX
 0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57 * * * * /usr/share/astguiclient/AST_CRON_audio_1_move_VDonly.pl
 1,4,7,10,13,16,19,22,25,28,31,34,37,40,43,46,49,52,55,58 * * * * /usr/share/astguiclient/AST_CRON_audio_2_compress.pl --MP3 --HTTPS
-${FTP_CRON_PREFIX}2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * * * /usr/share/astguiclient/AST_CRON_audio_3_ftp.pl --MP3 --nodatedir --ftp-validate
+${FTP_CRON_PREFIX}2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * * * /usr/share/astguiclient/AST_CRON_audio_3_ftp.pl --MP3${FTP_DATEDIR_FLAG} --ftp-validate
 
 ### kill Hangup script for Asterisk updaters
 * * * * * /usr/share/astguiclient/AST_manager_kill_hung_congested.pl
