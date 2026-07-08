@@ -426,11 +426,12 @@ join_register_server() {
     local ast_active ast_ver agent_login gen_conf websock
 
     server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-10)
+    local auto_restart
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
-        ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"
+        ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"; auto_restart="Y"
         websock="wss://${DOMAINNAME}:8089/ws"
     else
-        ast_active="N"; ast_ver=""; agent_login="N"; gen_conf="N"; websock=""
+        ast_active="N"; ast_ver=""; agent_login="N"; gen_conf="N"; auto_restart="N"; websock=""
     fi
 
     # Every cluster member gets a servers-table entry (slave DB and archive
@@ -472,6 +473,7 @@ UPDATE _new_server SET
     asterisk_version='${ast_ver}',
     generate_vicidial_conf='${gen_conf}',
     rebuild_conf_files='${gen_conf}',
+    auto_restart_asterisk='${auto_restart}',
     web_socket_url='${websock}';
 INSERT INTO servers SELECT * FROM _new_server;
 JOINSRV
