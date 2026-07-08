@@ -133,6 +133,14 @@ if [ ! -s "/etc/letsencrypt/live/$DOMAINNAME/fullchain.pem" ] || [ ! -s "/etc/le
 	exit 1
 fi
 
+# Standardized cert path: /etc/vicidial-ssl points at this server's own cert, so
+# shared cluster templates (WEBRTC, SIP_generic) reference the same path on every server.
+mkdir -p /etc/vicidial-ssl
+ln -sfn "/etc/letsencrypt/live/$DOMAINNAME/cert.pem" /etc/vicidial-ssl/cert.pem
+ln -sfn "/etc/letsencrypt/live/$DOMAINNAME/privkey.pem" /etc/vicidial-ssl/privkey.pem
+ln -sfn "/etc/letsencrypt/live/$DOMAINNAME/fullchain.pem" /etc/vicidial-ssl/fullchain.pem
+ln -sfn "/etc/letsencrypt/live/$DOMAINNAME/chain.pem" /etc/vicidial-ssl/chain.pem
+
 if [ "${ROLE_TELEPHONY:-yes}" = "yes" ] && [ -d /etc/asterisk ]; then
 	echo "Change http.conf in Asterisk"
 	copy_asset asterisk-http.conf /etc/asterisk/http.conf
@@ -183,8 +191,8 @@ nat=yes
 directmedia=no 
 dtlsenable=yes
 dtlsverify=no
-dtlscertfile=/etc/letsencrypt/live/$DOMAINNAME/cert.pem
-dtlsprivatekey=/etc/letsencrypt/live/$DOMAINNAME/privkey.pem
+dtlscertfile=/etc/vicidial-ssl/cert.pem
+dtlsprivatekey=/etc/vicidial-ssl/privkey.pem
 dtlssetup=actpass' where template_id='SIP_generic';"
 
 echo "update the Phone tables to set is_webphone to Y deffault"

@@ -841,8 +841,8 @@ nat=yes
 directmedia=no
 dtlsenable=yes
 dtlsverify=no
-dtlscertfile=/etc/letsencrypt/live/${cert_domain}/cert.pem
-dtlsprivatekey=/etc/letsencrypt/live/${cert_domain}/privkey.pem
+dtlscertfile=/etc/vicidial-ssl/cert.pem
+dtlsprivatekey=/etc/vicidial-ssl/privkey.pem
 dtlssetup=actpass')
 ON DUPLICATE KEY UPDATE
     template_name=VALUES(template_name),
