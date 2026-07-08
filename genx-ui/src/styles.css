@@ -1738,9 +1738,7 @@ select option:hover {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  max-width: 980px;
   width: 100%;
-  margin: 0 auto;
 }
 
 /* Agent status bar + call action bar (Newfies-style organized controls) */
@@ -1840,7 +1838,7 @@ select option:hover {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  width: 300px;
+  width: 340px;
   max-width: 94vw;
 }
 
@@ -2000,13 +1998,12 @@ select option:hover {
 .agc-comments { display: block; margin-top: 8px; }
 .agc-comments textarea { width: 100%; }
 
-/* Legacy-style webphone iframe docked on the right of the agent screen */
+/* Full-width desktop layout: icon rail | main workspace | dispo rail */
 .agent-layout {
   display: flex;
   flex-wrap: wrap;
   gap: 18px;
   align-items: flex-start;
-  justify-content: center;
 }
 
 .agent-layout .agent-body {
@@ -2147,17 +2144,50 @@ select option:hover {
 .agn-greet h2 { font-size: 24px; margin: 0; color: #eef6ff; }
 .agn-clock { font-size: 30px; font-weight: 800; color: rgba(226, 238, 255, 0.85); letter-spacing: 0.04em; }
 
-.agn-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; }
+.agn-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
 .agn-tile {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 14px;
+  gap: 8px;
+  padding: 18px;
   border: 1px solid rgba(226, 238, 255, 0.1);
   border-radius: 14px;
   background: rgba(6, 18, 38, 0.75);
 }
-.agn-tile strong { font-size: 24px; color: #eef6ff; line-height: 1; }
+.agn-tile strong { font-size: 30px; color: #eef6ff; line-height: 1; }
+
+/* Primary action strip on the idle dashboard */
+.agn-dialstrip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border: 1px solid rgba(0, 217, 255, 0.18);
+  border-radius: 16px;
+  background: rgba(4, 14, 30, 0.65);
+}
+.agn-big {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 26px;
+  font-size: 15px;
+  font-weight: 800;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: #041325;
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+.agn-big:hover:not(:disabled) { filter: brightness(1.12); }
+.agn-big:active:not(:disabled) { transform: scale(0.97); }
+.agn-big:disabled { opacity: 0.4; cursor: default; }
+.agn-big.dial { background: linear-gradient(135deg, #2fe08d, #17b370); box-shadow: 0 6px 20px rgba(47, 224, 141, 0.3); }
+.agn-big.go { background: linear-gradient(135deg, #00d9ff, #3d7bff); box-shadow: 0 6px 20px rgba(0, 217, 255, 0.3); }
+.agn-big.pause { background: linear-gradient(135deg, #ffcd47, #ff9f47); box-shadow: 0 6px 20px rgba(255, 205, 71, 0.25); }
+.agn-quickdial { display: flex; gap: 10px; flex: 1 1 280px; min-width: 260px; }
+.agn-quickdial input { flex: 1; font-size: 15px; padding: 12px 14px; }
 .agn-tile-label { font-size: 11px; color: rgba(226, 238, 255, 0.55); letter-spacing: 0.05em; text-transform: uppercase; }
 .agn-tile-ico {
   width: 32px;
@@ -2189,13 +2219,13 @@ select option:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(226, 238, 255, 0.85);
-  padding: 5px 0;
+  padding: 7px 0;
   border-bottom: 1px solid rgba(226, 238, 255, 0.06);
 }
 .agn-row:last-child { border-bottom: none; }
-.agn-dim { font-size: 11px; color: rgba(226, 238, 255, 0.45); }
+.agn-dim { font-size: 12px; color: rgba(226, 238, 255, 0.5); }
 .agn-pill {
   font-size: 10px;
   font-weight: 700;

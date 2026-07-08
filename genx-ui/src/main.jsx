@@ -14234,6 +14234,20 @@ function AgentConsole({ token, authInfo, onExit }) {
 
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
+  const dialNextLead = async () => {
+    const payload = await act('/agent/dial-next', {});
+    if (payload?.preview) {
+      setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
+      setMessage('Previewing lead — Dial or Skip');
+    } else if (payload) setMessage('Dialing next lead');
+  };
+
+  const dialManualNumber = async () => {
+    const digits = manualNumber.replace(/[^0-9]/g, '');
+    const payload = await act('/agent/manual-dial', { phone_number: digits });
+    if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
+  };
+
   return (
     <main className="app-shell agent-shell">
       {/* Legacy agc top line: logged-in summary + LOGOUT */}
@@ -14332,26 +14346,11 @@ function AgentConsole({ token, authInfo, onExit }) {
                 type="button"
                 className="agb-act call"
                 disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
-                onClick={async () => {
-                  const digits = manualNumber.replace(/[^0-9]/g, '');
-                  const payload = await act('/agent/manual-dial', { phone_number: digits });
-                  if (payload) { setManualNumber(''); setMessage(`Dialing ${digits}`); }
-                }}
+                onClick={dialManualNumber}
               >
                 <Phone size={15} aria-hidden="true" /> Dial
               </button>
-              <button
-                type="button"
-                className="agb-act call"
-                disabled={busy}
-                onClick={async () => {
-                  const payload = await act('/agent/dial-next', {});
-                  if (payload?.preview) {
-                    setPreviewInfo({ allowSkip: payload.allowSkip, prevStatus: payload.prevStatus });
-                    setMessage('Previewing lead — Dial or Skip');
-                  } else if (payload) setMessage('Dialing next lead');
-                }}
-              >
+              <button type="button" className="agb-act call" disabled={busy} onClick={dialNextLead}>
                 <PhoneForwarded size={15} aria-hidden="true" /> Dial Next
               </button>
             </>
@@ -14465,11 +14464,42 @@ function AgentConsole({ token, authInfo, onExit }) {
                   {clock.getHours() < 12 ? 'Good morning' : clock.getHours() < 18 ? 'Good afternoon' : 'Good evening'},{' '}
                   {(authInfo?.user?.fullName || live.user || '').split(' ')[0] || live.user}
                 </h2>
-                <p className="agn-sub">
-                  Campaign {live.campaign_id} · Conference {live.conf_exten} · {live.extension} @ {live.server_ip}
-                </p>
+                <p className="agn-sub">Here's how your day is going on {live.campaign_id}.</p>
               </div>
               <span className="agn-clock">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+            <div className="agn-dialstrip">
+              {live.status === 'READY' ? (
+                <button type="button" className="agn-big pause" disabled={busy} onClick={() => act('/agent/pause')}>
+                  <Pause size={18} aria-hidden="true" /> Pause
+                </button>
+              ) : (
+                <button type="button" className="agn-big go" disabled={busy} onClick={() => act('/agent/ready')}>
+                  <Play size={18} aria-hidden="true" /> Go Available
+                </button>
+              )}
+              <button type="button" className="agn-big dial" disabled={busy} onClick={dialNextLead}>
+                <PhoneForwarded size={18} aria-hidden="true" /> Dial Next Lead
+              </button>
+              <div className="agn-quickdial">
+                <input
+                  type="tel"
+                  placeholder="Or type a phone number…"
+                  value={manualNumber}
+                  onChange={(event) => setManualNumber(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && manualNumber.replace(/[^0-9]/g, '').length >= 5) dialManualNumber();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="agn-big dial"
+                  disabled={busy || manualNumber.replace(/[^0-9]/g, '').length < 5}
+                  onClick={dialManualNumber}
+                >
+                  <Phone size={18} aria-hidden="true" /> Call
+                </button>
+              </div>
             </div>
             <div className="agn-tiles">
               {[
@@ -14488,6 +14518,22 @@ function AgentConsole({ token, authInfo, onExit }) {
               ))}
             </div>
             <div className="agn-duo">
+              <div className="agn-card">
+                <p className="agr-title"><Headphones size={14} aria-hidden="true" /> My Session</p>
+                <div className="agn-row"><span>Campaign</span><span className="agn-dim">{live.campaign_id}</span></div>
+                <div className="agn-row">
+                  <span>Status</span>
+                  <span className="agn-dim">
+                    {live.status === 'READY' ? 'Available' : `Paused${live.pause_code ? ` · ${live.pause_code}` : ''}`} — {formatSeconds(stateSeconds)}
+                  </span>
+                </div>
+                <div className="agn-row"><span>Phone</span><span className="agn-dim">{live.extension}</span></div>
+                <div className="agn-row"><span>Conference</span><span className="agn-dim">{live.conf_exten} @ {live.server_ip}</span></div>
+                <div className="agn-row">
+                  <span>Dialable leads</span>
+                  <span className="agn-dim">{dialableLeads != null ? formatNumber(dialableLeads) : '—'}</span>
+                </div>
+              </div>
               <div className="agn-card">
                 <p className="agr-title"><Clock3 size={14} aria-hidden="true" /> Callbacks Due</p>
                 {(callbacks?.callbacks || []).filter((c) => c.status === 'LIVE').slice(0, 5).map((c) => (
