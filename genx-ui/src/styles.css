@@ -2248,6 +2248,7 @@ select option:hover {
   cursor: pointer;
   border-radius: 8px;
   padding: 7px 6px;
+  text-align: left;
 }
 .agn-rowlink:hover { background: rgba(0, 217, 255, 0.08); }
 .agn-rowlink:last-child { border-bottom: none; }
