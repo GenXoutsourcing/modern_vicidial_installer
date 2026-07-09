@@ -256,13 +256,22 @@ choose_firewall_policy() {
 }
 
 role_active_keepalives() {
-    # Every server runs Asterisk + the full per-server keepalive set; the
-    # cluster-singleton processes (5 VDadapt, 7 VDauto_dial_FILL, 9 timeclock,
-    # E email) run only on the primary database server.
+    # ViciBox parity (vicibox-install.pl): DB-primary=579E (5 VDadapt,
+    # 7 VDauto_dial_FILL, 9 timeclock auto-logout, E email — cluster
+    # singletons), telephony=123468S (per-dialer processes), a server with
+    # both roles=123456789ES, and everything else (web/archive/slave-only)=X.
+    local db_primary=no
     if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
-        printf '123456789ECS'
+        db_primary=yes
+    fi
+    if [ "$db_primary" = "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
+        printf '123456789ES'
+    elif [ "$db_primary" = "yes" ]; then
+        printf '579E'
+    elif [ "$ROLE_TELEPHONY" = "yes" ]; then
+        printf '123468S'
     else
-        printf '123468CS'
+        printf 'X'
     fi
 }
 
@@ -1928,11 +1937,14 @@ fi
 
 install_audio_store_directory_helper
 
-#Install Crontab (assembled per selected roles)
-cat <<CRONTAB > /root/crontab-file
+#Install Crontab (assembled per selected roles, ViciBox parity: keepalive only
+#runs on DB-primary and Telephony servers; web/archive/slave get keepalives=X)
+ROLE_DB_PRIMARY="no"
+if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
+    ROLE_DB_PRIMARY="yes"
+fi
 
-### keepalive script for astguiclient processes
-* * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl --cu3way
+cat <<CRONTAB > /root/crontab-file
 
 ## adjust time on the server with ntp (chrony is enabled by this installer instead)
 #30 * * * * /usr/sbin/ntpdate -u pool.ntp.org 2>/dev/null 1>&2
@@ -1943,7 +1955,22 @@ cat <<CRONTAB > /root/crontab-file
 30 0 * * * /usr/bin/find / -maxdepth 1 -name "screenlog.0*" -mtime +4 -print | xargs rm -f
 CRONTAB
 
-if [ "$ROLE_WEB" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
+if [ "$ROLE_DB_PRIMARY" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
+# The 3way conference checker (--cu3way) is only useful where Asterisk runs.
+KEEPALIVE_FLAGS=""
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+    KEEPALIVE_FLAGS=" --cu3way"
+fi
+cat <<CRONTAB >> /root/crontab-file
+
+### keepalive script for astguiclient processes
+* * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl${KEEPALIVE_FLAGS}
+CRONTAB
+fi
+
+if [ "$ROLE_WEB" = "yes" ]; then
+# Web role hosts the central audio store; telephony servers sync sounds down
+# via ADMIN_keepalive_ALL.pl (sounds_central_control_active), not cron.
 cat <<CRONTAB >> /root/crontab-file
 
 ### VICIDIAL audio-store web directory helper
@@ -1991,6 +2018,9 @@ ${FTP_CRON_PREFIX}2,5,8,11,14,17,20,23,26,29,32,35,38,41,44,47,50,53,56,59 * * *
 ### updater for conference validator
 * * * * * /usr/share/astguiclient/AST_conf_update.pl --no-vc-3way-check
 
+### reset several temporary-info tables in the database
+2 1 * * * /usr/share/astguiclient/AST_reset_mysql_vars.pl
+
 ### remove old recordings
 #24 0 * * * /usr/bin/find /var/spool/asterisk/monitorDONE -maxdepth 2 -type f -mtime +7 -print | xargs rm -f
 #26 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/MP3 -maxdepth 2 -type f -mtime +65 -print | xargs rm -f
@@ -2002,8 +2032,9 @@ ${FTP_CRON_PREFIX}25 1 * * * /usr/bin/find /var/spool/asterisk/monitorDONE/FTP -
 CRONTAB
 fi
 
-if [ "$CLUSTER_JOIN" != "yes" ]; then
-# Cluster-singleton database/reporting jobs: run only on the primary-DB build.
+if [ "$ROLE_DB_PRIMARY" = "yes" ]; then
+# Cluster-singleton database/reporting jobs: run only on the primary-DB server
+# (ViciBox dbcron parity — never on slaves, web, telephony or archive boxes).
 cat <<CRONTAB >> /root/crontab-file
 
 ### Daily Backups ###
@@ -2027,9 +2058,6 @@ cat <<CRONTAB >> /root/crontab-file
 
 ### adjust the GMT offset for the leads in the vicidial_list table
 1 1,7 * * * /usr/share/astguiclient/ADMIN_adjust_GMTnow_on_leads.pl --debug
-
-### reset several temporary-info tables in the database
-2 1 * * * /usr/share/astguiclient/AST_reset_mysql_vars.pl
 
 ### optimize the database tables within the asterisk database
 3 1 * * * /usr/share/astguiclient/AST_DB_optimize.pl
@@ -2129,6 +2157,13 @@ cat >> /etc/rc.d/rc.local <<EOF
 
 systemctl start httpd.service
 
+EOF
+
+if [ "$ROLE_TELEPHONY" = "yes" ]; then
+# ViciBox parity: only telephony servers run Asterisk, roll its logs, and
+# reset their live DB records at boot. A non-telephony box running
+# AST_reset_mysql_vars at boot would wipe live cluster state.
+cat >> /etc/rc.d/rc.local <<EOF
 
 ### roll the Asterisk logs upon reboot
 
@@ -2139,10 +2174,6 @@ systemctl start httpd.service
 
 /usr/share/astguiclient/AST_reset_mysql_vars.pl
 
-EOF
-
-if [ "$ROLE_TELEPHONY" = "yes" ]; then
-cat >> /etc/rc.d/rc.local <<EOF
 
 # OPTIONAL enable ip_relay(for same-machine trunking and blind monitoring)
 
@@ -2156,21 +2187,18 @@ modprobe dahdi_dummy || true
 
 /usr/sbin/dahdi_cfg -vvvvvvvvvvvvv
 
-EOF
-fi
-
-cat >> /etc/rc.d/rc.local <<EOF
 
 ### sleep for 20 seconds before launching Asterisk
 
 sleep 20
 
 
-### start up asterisk (all roles run Asterisk so AST_update reports server stats)
+### start up asterisk (telephony role only)
 
 /usr/share/astguiclient/start_asterisk_boot.pl
 
 EOF
+fi
 
 cat >> /etc/rc.d/rc.local <<EOF
 
