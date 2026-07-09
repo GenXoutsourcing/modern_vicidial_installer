@@ -5439,28 +5439,6 @@ function Panel({ eyebrow, title, icon: Icon, children, className = '', headerAct
   );
 }
 
-function AgentList({ agents }) {
-  return (
-    <Panel eyebrow="Live Agents" title="Floor State" icon={Headphones} className="agent-panel">
-      <div className="agent-list">
-        {agents.map((agent) => (
-          <article className="agent-row" key={`${agent.user}-${agent.campaign_id}`}>
-            <div className="agent-avatar">{String(agent.user || '?').slice(0, 2).toUpperCase()}</div>
-            <div className="agent-copy">
-              <strong>{agent.user}</strong>
-              <span>{agent.campaign_id || 'No campaign'} | {durationLabel(agent.last_call_time)}</span>
-            </div>
-            <StatusPill ok={agent.status !== 'PAUSED'}>
-              {agent.status || agent.pause_code || 'Ready'}
-            </StatusPill>
-          </article>
-        ))}
-        {!agents.length && <div className="empty-state">No agents are live right now</div>}
-      </div>
-    </Panel>
-  );
-}
-
 function CampaignPerformance({ rows }) {
   return (
     <Panel eyebrow="Performance" title="Campaign Throughput" icon={TrendingUp} className="performance-panel">
@@ -5532,27 +5510,6 @@ function CommandView({ dashboard, admin }) {
       detail: `${formatSeconds(metrics.averageSeconds)} avg call`,
       accent: '#7bb7ff',
     },
-    {
-      icon: LayoutDashboard,
-      label: 'Campaigns',
-      value: formatNumber(metrics.campaignsActive),
-      detail: `${formatNumber(metrics.campaignsTotal)} configured`,
-      accent: '#73fbd3',
-    },
-    {
-      icon: Database,
-      label: 'Lead Pool',
-      value: formatNumber(metrics.leadsTotal),
-      detail: `${formatNumber(metrics.listsActive)} active lists`,
-      accent: '#a8c7ff',
-    },
-    {
-      icon: Activity,
-      label: 'Inbound Groups',
-      value: formatNumber(metrics.inboundGroupsActive),
-      detail: `${formatNumber(metrics.recordingsToday)} recordings today`,
-      accent: '#ffd166',
-    },
   ];
 
   return (
@@ -5567,17 +5524,7 @@ function CommandView({ dashboard, admin }) {
 
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
-        <AgentList agents={dashboard?.agents || []} />
         <CampaignPerformance rows={dashboard?.campaignPerformance || []} />
-        <BreakdownPanel
-          eyebrow="Call Outcomes"
-          title="Status Mix"
-          icon={Gauge}
-          items={dashboard?.statusBreakdown || []}
-          valueKey="calls"
-          labelKey="status"
-          emptyLabel="No call statuses in this range"
-        />
         <BreakdownPanel
           eyebrow="Lead Inventory"
           title="Lead Status"
@@ -5596,18 +5543,11 @@ function CommandView({ dashboard, admin }) {
 function AdminSummary({ admin }) {
   const counts = admin?.counts || {};
   const cards = [
-    { icon: Radio, label: 'Campaigns', value: counts.activeCampaigns, detail: `${formatNumber(counts.campaigns)} total`, accent: '#00d9ff' },
     { icon: Users, label: 'Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total`, accent: '#73fbd3' },
-    { icon: ShieldCheck, label: 'Groups', value: counts.userGroups, detail: 'Permission scopes', accent: '#ff8bd1' },
     { icon: Database, label: 'Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total`, accent: '#a8c7ff' },
-    { icon: Headphones, label: 'Inbound', value: counts.activeInboundGroups, detail: `${formatNumber(counts.inboundGroups)} total`, accent: '#ffd166' },
     { icon: PhoneCall, label: 'DIDs', value: counts.activeDids, detail: `${formatNumber(counts.dids)} total`, accent: '#00ffa8' },
     { icon: PhoneCall, label: 'Phones', value: counts.activePhones, detail: `${formatNumber(counts.phones)} total`, accent: '#b9f2ff' },
-    { icon: FileText, label: 'Scripts', value: counts.activeScripts, detail: `${formatNumber(counts.scripts)} total`, accent: '#c7a8ff' },
-    { icon: SlidersHorizontal, label: 'Filters', value: counts.leadFilters, detail: 'Lead filter rules', accent: '#ffdf7b' },
-    { icon: Timer, label: 'Call Times', value: counts.callTimes, detail: 'Dialing windows', accent: '#ff9f7b' },
     { icon: Server, label: 'Servers', value: counts.activeServers, detail: `${formatNumber(counts.servers)} total`, accent: '#7bb7ff' },
-    { icon: PhoneCall, label: 'Carriers', value: counts.activeCarriers, detail: `${formatNumber(counts.carriers)} total`, accent: '#2d7dff' },
   ];
 
   return (
