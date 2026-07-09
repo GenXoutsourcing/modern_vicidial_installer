@@ -214,6 +214,8 @@ def main():
     conn = connect()
     with conn.cursor() as cur:
         cur.execute(TABLE_SQL)
+        # Requeue anything stranded mid-file by a restart.
+        cur.execute("UPDATE genx_transcripts SET status='QUEUED' WHERE status='PROCESSING'")
 
     while True:
         try:

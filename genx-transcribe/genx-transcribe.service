@@ -10,6 +10,7 @@ ExecStart=/opt/genx-transcribe/venv/bin/python /opt/genx-transcribe/genx_transcr
 Restart=always
 RestartSec=15
 Nice=10
+CPUQuota=500%
 User=root
 
 [Install]
