@@ -2516,7 +2516,12 @@ chown -R apache:apache /var/spool/asterisk/
 # Cluster-wide settings: only the primary-DB install may set these. A joining
 # server must never repoint voicemail/sounds for the whole cluster to itself.
 if [ "$CLUSTER_JOIN" != "yes" ] && { [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; }; then
-    "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set active_voicemail_server='$ip_address', webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname', sounds_central_control_active='1';"
+    "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname', sounds_central_control_active='1';"
+fi
+# Voicemail must live on a box that runs Asterisk: a non-telephony primary
+# (DB+Web combo) leaves it unset so the first telephony join claims it.
+if [ "$CLUSTER_JOIN" != "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
+    "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set active_voicemail_server='$ip_address';"
 fi
 if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
     configure_audio_store_directory
