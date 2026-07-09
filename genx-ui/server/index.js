@@ -1714,7 +1714,10 @@ async function adminData(user) {
               conf_update_interval,
               web_socket_url,
               external_web_socket_url,
-              ara_url
+              ara_url,
+              (SELECT TIMESTAMPDIFF(SECOND, u.last_update, NOW())
+                 FROM server_updater u
+                WHERE u.server_ip = servers.server_ip) AS heartbeat_age_sec
        FROM servers
        WHERE ${serverWhere}
        ORDER BY active DESC, server_id ASC

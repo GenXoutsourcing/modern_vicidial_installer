@@ -16062,8 +16062,31 @@ function SystemView({ admin, user, onAction }) {
               { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
               { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
               { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
-              { key: 'conf_engine', label: 'Conf', render: (row) => row.conf_engine || 'Default' },
-              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+              {
+                key: 'disk_usage',
+                label: 'HD Usage',
+                render: (row) => {
+                  // disk_usage is AST_update's "N pct|" string per df row; show the fullest partition.
+                  const pcts = String(row.disk_usage || '').split('|')
+                    .map((part) => Number(part.trim().split(' ')[1]))
+                    .filter((n) => Number.isFinite(n));
+                  if (!pcts.length) return 'Unknown';
+                  const worst = Math.max(...pcts);
+                  return worst >= 85 ? <StatusPill ok={false}>{worst}%</StatusPill> : `${worst}%`;
+                },
+              },
+              {
+                key: 'active',
+                label: 'Status',
+                render: (row) => {
+                  if (row.active !== 'Y') return <StatusPill ok={false}>Off</StatusPill>;
+                  // Stats heartbeat is written every minute (AST_update on telephony,
+                  // genx-server-stats elsewhere); 2 missed beats = unreachable/unusable.
+                  const age = Number(row.heartbeat_age_sec);
+                  const down = !Number.isFinite(age) || age > 120;
+                  return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Active</StatusPill>;
+                },
+              },
               ...(canManageServers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('servers', 'edit', row)} /> }] : []),
             ]}
           />
