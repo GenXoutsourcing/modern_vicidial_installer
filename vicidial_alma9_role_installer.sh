@@ -1937,6 +1937,12 @@ fi
 
 install_audio_store_directory_helper
 
+# Stats reporter for non-Asterisk roles: AST_update.pl (keepalive flag 1, telephony
+# only) is the only stock writer of servers.sysload/cpu_idle_percent/disk_usage and
+# the server_updater heartbeat, so DB/web/archive/slave boxes would show RED with
+# frozen load/disk in the legacy Reports page and the GenX UI without this.
+install -m 755 "$SCRIPT_DIR/tools/genx-server-stats.pl" /usr/local/bin/genx-server-stats.pl
+
 #Install Crontab (assembled per selected roles, ViciBox parity: keepalive only
 #runs on DB-primary and Telephony servers; web/archive/slave get keepalives=X)
 ROLE_DB_PRIMARY="no"
@@ -1965,6 +1971,14 @@ cat <<CRONTAB >> /root/crontab-file
 
 ### keepalive script for astguiclient processes
 * * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl${KEEPALIVE_FLAGS}
+CRONTAB
+fi
+
+if [ "$ROLE_TELEPHONY" != "yes" ]; then
+cat <<CRONTAB >> /root/crontab-file
+
+### GenX server stats reporter (telephony servers get this via AST_update.pl)
+* * * * * /usr/local/bin/genx-server-stats.pl >/dev/null 2>&1
 CRONTAB
 fi
 
