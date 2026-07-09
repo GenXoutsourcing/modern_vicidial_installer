@@ -5875,7 +5875,13 @@ async function blindMonitor(req, res) {
     const prefix = mode === 'BARGE' ? (confbridge ? '6' : '') : (confbridge ? '4' : '0');
     const sessionExists = await scalar(`SELECT COUNT(*) AS value FROM ${quoteId(confTable)} WHERE conf_exten = ? AND server_ip = ?`, [sessionId, serverIp], 0);
     if (Number(sessionExists) < 1) return res.status(404).json({ ok: false, error: 'invalid_session_id' });
-    const [phone] = await rows('SELECT login, dialplan_number, server_ip, outbound_cid FROM phones WHERE login = ? LIMIT 1', [phoneLogin], []);
+    const [phone] = await rows(
+      `SELECT login, dialplan_number, server_ip, outbound_cid FROM phones WHERE login = ?
+       ORDER BY (server_ip IN (SELECT server_ip FROM servers WHERE active_asterisk_server = 'Y')) DESC, server_ip ASC
+       LIMIT 1`,
+      [phoneLogin],
+      [],
+    );
     if (!phone) return res.status(404).json({ ok: false, error: 'invalid_phone_login' });
 
     const dialstring = monitorIpDialstring(serverIp);
@@ -7154,7 +7160,9 @@ async function agentAuth(req, res) {
 
   const [phone] = await rows(
     `SELECT ${AGENT_PHONE_COLUMNS}
-     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
+     FROM phones WHERE login = ? AND active = 'Y'
+     ORDER BY (server_ip IN (SELECT server_ip FROM servers WHERE active_asterisk_server = 'Y')) DESC, server_ip ASC
+     LIMIT 1`,
     [phoneLogin],
     [],
   );
@@ -7276,7 +7284,9 @@ async function agentLogin(req, res) {
 
   const phone = req.agentPhone || (await rows(
     `SELECT ${AGENT_PHONE_COLUMNS}
-     FROM phones WHERE login = ? AND active = 'Y' LIMIT 1`,
+     FROM phones WHERE login = ? AND active = 'Y'
+     ORDER BY (server_ip IN (SELECT server_ip FROM servers WHERE active_asterisk_server = 'Y')) DESC, server_ip ASC
+     LIMIT 1`,
     [phoneLogin],
     [],
   ))[0];
