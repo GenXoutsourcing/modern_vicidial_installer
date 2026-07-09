@@ -219,6 +219,36 @@ ProxyPassReverse /genx/ http://127.0.0.1:$PORT/
 RedirectMatch 302 ^/genx$ /genx/
 EOF
 
+# A slave DB that joins the cluster AFTER this web install would never be
+# picked up (discovery only ran at install time). This cron re-runs the same
+# vicibox discovery every 5 minutes and repoints GENX_UI_DB_SLAVE_HOST when a
+# reachable slave appears or changes. Update-only: it never clears the value,
+# so a briefly unreachable slave cannot flap reports back and forth.
+cat > /usr/local/bin/genx-ui-slave-sync.sh <<'SLAVESYNC'
+#!/bin/bash
+ENV_FILE=/etc/genx-ui.env
+[ -f "$ENV_FILE" ] || exit 0
+val() { grep -E "^$1=" "$ENV_FILE" | head -1 | sed -E "s/^$1=//; s/^\"//; s/\"\$//"; }
+H=$(val GENX_UI_DB_HOST); P=$(val GENX_UI_DB_PORT); U=$(val GENX_UI_DB_USER)
+PW=$(val GENX_UI_DB_PASS); N=$(val GENX_UI_DB_NAME); CUR=$(val GENX_UI_DB_SLAVE_HOST)
+[ -n "$H" ] || exit 0
+SLAVE=$(MYSQL_PWD="$PW" mysql -h "$H" -P "${P:-3306}" -u "${U:-cron}" -N -B \
+  -e "SELECT server_ip FROM vicibox WHERE server_type='Database' AND field3='slave' ORDER BY server_id LIMIT 1;" \
+  "${N:-asterisk}" 2>/dev/null || true)
+[ -n "$SLAVE" ] || exit 0
+[ "$SLAVE" = "$CUR" ] && exit 0
+MYSQL_PWD="$PW" mysql -h "$SLAVE" -P "${P:-3306}" -u "${U:-cron}" -N -B -e "SELECT 1;" >/dev/null 2>&1 || exit 0
+if grep -qE '^GENX_UI_DB_SLAVE_HOST=' "$ENV_FILE"; then
+    sed -i "s|^GENX_UI_DB_SLAVE_HOST=.*|GENX_UI_DB_SLAVE_HOST=\"$SLAVE\"|" "$ENV_FILE"
+else
+    echo "GENX_UI_DB_SLAVE_HOST=\"$SLAVE\"" >> "$ENV_FILE"
+fi
+systemctl restart genx-ui
+logger -t genx-ui-slave-sync "Reports slave DB set to $SLAVE (was '$CUR'), genx-ui restarted"
+SLAVESYNC
+chmod +x /usr/local/bin/genx-ui-slave-sync.sh
+echo "*/5 * * * * root /usr/local/bin/genx-ui-slave-sync.sh" > /etc/cron.d/genx-ui-slave-sync
+
 httpd -t
 systemctl daemon-reload
 systemctl enable --now genx-ui

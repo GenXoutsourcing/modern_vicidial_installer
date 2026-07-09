@@ -16177,10 +16177,17 @@ function AdminShell({ token, user, onLogout }) {
     refreshAll();
   }, [refreshAll]);
 
+  // Mission Control tiles poll fast so live dialing is visible; the heavier
+  // admin catalog stays on the slower cycle.
   useEffect(() => {
-    const timer = window.setInterval(refreshAll, 30000);
+    const timer = window.setInterval(loadDashboard, 5000);
     return () => window.clearInterval(timer);
-  }, [refreshAll]);
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const timer = window.setInterval(loadAdmin, 30000);
+    return () => window.clearInterval(timer);
+  }, [loadAdmin]);
 
   // Report views (reportHopperList etc.) live under the Reports nav entry:
   // highlight Reports in the sidebar and show its heading for all of them.
