@@ -461,13 +461,13 @@ join_register_server() {
 
     server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-10)
     local auto_restart
-    # Asterisk runs on every role (server-stats reporting); only telephony
-    # servers are dialers/agent-login hosts with generated conf files.
+    # Only telephony servers run Asterisk (ViciBox parity); non-tel roles get
+    # auto_restart_asterisk=N so keepalive never tries to start an idle build.
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
         ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"; auto_restart="Y"
         websock="wss://${DOMAINNAME}:8089/ws"
     else
-        ast_active="N"; ast_ver="18.21.1-vici"; agent_login="N"; gen_conf="N"; auto_restart="Y"; websock=""
+        ast_active="N"; ast_ver="18.21.1-vici"; agent_login="N"; gen_conf="N"; auto_restart="N"; websock=""
     fi
 
     # Every cluster member gets a servers-table entry (slave DB and archive
@@ -830,12 +830,12 @@ apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
     local server_id
-    local ast_active="N" ast_ver="18.21.1-vici" auto_restart="Y" agent_login="N"
+    local ast_active="N" ast_ver="18.21.1-vici" auto_restart="N" agent_login="N"
 
-    # Asterisk runs on every role for server-stats reporting; only the telephony
-    # role makes this server an active dialer/agent-login host.
+    # Only telephony servers run Asterisk (ViciBox parity); non-tel roles keep
+    # auto_restart_asterisk=N so keepalive never tries to start an idle build.
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
-        ast_active="Y"; agent_login="Y"
+        ast_active="Y"; agent_login="Y"; auto_restart="Y"
     fi
 
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
