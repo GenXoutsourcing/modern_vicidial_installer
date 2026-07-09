@@ -104,5 +104,16 @@ if (defined $perf_log && $perf_log eq 'Y') {
         undef, $server_ip, $sysload, $memfree, ($memtotal - $memfree), $processes, $cpu_idle);
 }
 
+# The legacy Reports server list turns a server RED once server_updater is
+# more than 10 seconds stale (and at 90+ seconds admin.php may clear the
+# server's live calls/agents). AST_update.pl refreshes every second on
+# telephony boxes; emulate that here by re-touching the heartbeat every 5
+# seconds for the rest of this cron minute.
+my $started = time();
+while (time() - $started < 53) {
+    sleep(5);
+    $dbh->do("UPDATE server_updater SET last_update=NOW() WHERE server_ip=?", undef, $server_ip);
+}
+
 $dbh->disconnect;
 exit 0;
