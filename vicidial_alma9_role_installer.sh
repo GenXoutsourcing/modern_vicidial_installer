@@ -2265,6 +2265,13 @@ chmod +x /usr/bin/VB-firewall
 
 firewall-offline-cmd --add-port=446/tcp --zone=public
 
+# If firewalld is already running it still has the distro-default zones loaded,
+# and the next firewall-cmd --permanent would write that stale config back over
+# the shipped zone/ipset files above. Restart so the daemon reads them first.
+if systemctl is-active firewalld >/dev/null 2>&1; then
+    systemctl restart firewalld
+fi
+
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
 
 ##Fix ip_relay
