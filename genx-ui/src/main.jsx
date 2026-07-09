@@ -5561,7 +5561,6 @@ function AdminSummary({ admin }) {
 
 function CampaignsView({ admin, user, onAction }) {
   const campaigns = admin?.campaigns || [];
-  const totalLeads = campaigns.reduce((sum, row) => sum + Number(row.lead_count || 0), 0);
   const canManage = userCan(user, 'campaigns');
   const canDetail = Number(user?.userLevel || 0) >= 9 || Boolean(user?.campaignDetail);
 
@@ -5617,43 +5616,6 @@ function CampaignsView({ admin, user, onAction }) {
               }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Campaign Tools" title="Campaign Subsections" icon={SlidersHorizontal}>
-          <div className="tool-grid">
-            {[
-              ['Statuses', 'status_count'],
-              ['HotKeys', 'hotkey_count'],
-              ['Lead Recycle', 'recycle_count'],
-              ['Auto Alt Dial', 'auto_alt_dial'],
-              ['List Mix', 'mix_count'],
-              ['Pause Codes', 'pause_count'],
-              ['Presets', 'enable_xfer_presets'],
-              ['AC-CID', 'use_custom_cid'],
-            ].map(([label, key]) => (
-              <div className="tool-tile" key={label}>
-                <span>{label}</span>
-                <strong>{formatNumber(typeof campaigns[0]?.[key] === 'number' ? campaigns.reduce((sum, row) => sum + Number(row[key] || 0), 0) : campaigns.filter((row) => row[key] && row[key] !== 'N' && row[key] !== 'NONE' && row[key] !== 'DISABLED').length)}</strong>
-              </div>
-            ))}
-          </div>
-        </Panel>
-        <Panel eyebrow="Inventory" title="Lead Distribution" icon={Database}>
-          <div className="breakdown-list">
-            {campaigns.slice(0, 10).map((row) => {
-              const pct = percent(row.lead_count, totalLeads);
-              return (
-                <div className="breakdown-row" key={row.campaign_id}>
-                  <div className="breakdown-copy">
-                    <strong>{row.campaign_id}</strong>
-                    <span>{formatNumber(row.lead_count)} | {pct}%</span>
-                  </div>
-                  <div className="breakdown-track" aria-hidden="true">
-                    <div className="breakdown-fill" style={{ width: `${Math.max(4, pct)}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         </Panel>
       </section>
     </>
@@ -5813,12 +5775,6 @@ function UsersView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('users', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Access" title="Permission Mix" icon={ShieldCheck}>
-          <div className="quick-stack">
-            <MetricCard icon={ShieldCheck} label="Report Access" value={formatNumber(users.filter((row) => row.view_reports === '1').length)} detail="Users can view reports" accent="#00d9ff" />
-            <MetricCard icon={Radio} label="Campaign Editors" value={formatNumber(users.filter((row) => row.modify_campaigns === '1').length)} detail="Can modify campaigns" accent="#73fbd3" />
-          </div>
         </Panel>
       </section>
     </>
@@ -7061,12 +7017,6 @@ function DidsView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Routing" title="DID Mix" icon={Gauge}>
-          <div className="quick-stack">
-            <MetricCard icon={PhoneCall} label="Active DIDs" value={formatNumber(dids.filter((row) => row.did_active === 'Y').length)} detail={`${formatNumber(dids.length)} configured`} accent="#00d9ff" />
-            <MetricCard icon={Headphones} label="Group Routes" value={formatNumber(dids.filter((row) => row.did_route === 'IN_GROUP').length)} detail="Route into inbound groups" accent="#73fbd3" />
-          </div>
-        </Panel>
       </section>
     </>
   );
@@ -7106,12 +7056,6 @@ function PhonesView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('phones', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Endpoints" title="Phone Mix" icon={Activity}>
-          <div className="quick-stack">
-            <MetricCard icon={PhoneCall} label="Active Phones" value={formatNumber(phones.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(phones.length)} configured`} accent="#00d9ff" />
-            <MetricCard icon={Headphones} label="Webphones" value={formatNumber(phones.filter((row) => row.is_webphone === 'Y').length)} detail="Browser phone endpoints" accent="#73fbd3" />
-          </div>
         </Panel>
         <Panel
           eyebrow="Aliases"
@@ -7194,12 +7138,6 @@ function ScriptsView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Usage" title="Script Mix" icon={Activity}>
-          <div className="quick-stack">
-            <MetricCard icon={FileText} label="Active Scripts" value={formatNumber(scripts.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(scripts.length)} configured`} accent="#00d9ff" />
-            <MetricCard icon={ShieldCheck} label="Scoped Scripts" value={formatNumber(scripts.filter((row) => row.user_group && row.user_group !== '---ALL---').length)} detail="Assigned to a group" accent="#73fbd3" />
-          </div>
-        </Panel>
       </section>
     </>
   );
@@ -7237,12 +7175,6 @@ function LeadFiltersView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Rules" title="Filter Mix" icon={Database}>
-          <div className="quick-stack">
-            <MetricCard icon={SlidersHorizontal} label="Lead Filters" value={formatNumber(filters.length)} detail="Configured filters" accent="#00d9ff" />
-            <MetricCard icon={ShieldCheck} label="Scoped Filters" value={formatNumber(filters.filter((row) => row.user_group && row.user_group !== '---ALL---').length)} detail="Assigned to a group" accent="#73fbd3" />
-          </div>
-        </Panel>
       </section>
     </>
   );
@@ -7279,12 +7211,6 @@ function FilterPhoneGroupsView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('filterPhoneGroups', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Filters" title="Group Mix" icon={Database}>
-          <div className="quick-stack">
-            <MetricCard icon={SlidersHorizontal} label="Filter Groups" value={formatNumber(groups.length)} detail="Configured groups" accent="#00d9ff" />
-            <MetricCard icon={PhoneCall} label="Total Numbers" value={formatNumber(groups.reduce((sum, row) => sum + Number(row.phone_count || 0), 0))} detail="Across all groups" accent="#73fbd3" />
-          </div>
         </Panel>
       </section>
     </>
@@ -7324,12 +7250,6 @@ function CallTimesView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('callTimes', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Windows" title="Call Time Mix" icon={Clock3}>
-          <div className="quick-stack">
-            <MetricCard icon={Timer} label="Call Times" value={formatNumber(callTimes.length)} detail="Configured windows" accent="#00d9ff" />
-            <MetricCard icon={CalendarDays} label="Holiday Rules" value={formatNumber(callTimes.filter((row) => String(row.ct_holidays || '').trim()).length)} detail="Call times with holidays" accent="#73fbd3" />
-          </div>
         </Panel>
         <Panel
           eyebrow="Schedule"
@@ -7447,13 +7367,6 @@ function CallMenusView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Routing" title="Call Menu Mix" icon={PhoneCall}>
-          <div className="quick-stack">
-            <MetricCard icon={Compass} label="Call Menus" value={formatNumber(menus.length)} detail="Configured menus" accent="#00d9ff" />
-            <MetricCard icon={SlidersHorizontal} label="Menu Options" value={formatNumber(menuOptions.length)} detail="DTMF routes" accent="#b9f2ff" />
-            <MetricCard icon={Clock3} label="Time Checked" value={formatNumber(menus.filter((row) => row.menu_time_check === '1').length)} detail="Menus with call-time logic" accent="#73fbd3" />
-          </div>
-        </Panel>
       </section>
     </>
   );
@@ -7491,12 +7404,6 @@ function ShiftsView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('shifts', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Coverage" title="Shift Mix" icon={CalendarDays}>
-          <div className="quick-stack">
-            <MetricCard icon={Clock3} label="Shifts" value={formatNumber(shifts.length)} detail="Configured windows" accent="#00d9ff" />
-            <MetricCard icon={ShieldCheck} label="Scoped Shifts" value={formatNumber(shifts.filter((row) => row.user_group && row.user_group !== '---ALL---').length)} detail="Assigned to a group" accent="#73fbd3" />
-          </div>
         </Panel>
       </section>
     </>
@@ -15910,12 +15817,6 @@ function RecordingsView({ admin, token }) {
             { key: 'lead_id', label: 'Lead', render: (row) => row.lead_id || 'None' },
           ]}
         />
-      </Panel>
-      <Panel eyebrow="Audio" title="Recording Totals" icon={Timer}>
-        <div className="quick-stack">
-          <MetricCard icon={Activity} label="Recent Files" value={formatNumber(recordings.length)} detail="Latest rows shown" accent="#00d9ff" />
-          <MetricCard icon={Timer} label="Captured Time" value={formatSeconds(recordings.reduce((sum, row) => sum + Number(row.length_in_sec || 0), 0))} detail="Across visible recordings" accent="#73fbd3" />
-        </div>
       </Panel>
       <Panel eyebrow="QA" title={`Transcripts (${formatNumber(transcripts.length)})`} icon={FileText} className="admin-wide-panel">
         <form
