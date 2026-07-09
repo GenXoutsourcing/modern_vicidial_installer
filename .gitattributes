@@ -7,3 +7,7 @@
 *.conf text eol=lf
 assets/* binary
 assets/python-wheels/* binary
+*.sh text eol=lf
+*.pl text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
