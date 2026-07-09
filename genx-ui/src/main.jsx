@@ -16018,8 +16018,39 @@ function MapView({ onNavigate }) {
   );
 }
 
-function RecordingsView({ admin }) {
+function RecordingsView({ admin, token }) {
   const recordings = admin?.recordings || [];
+  const [transcripts, setTranscripts] = useState([]);
+  const [transcriptQuery, setTranscriptQuery] = useState('');
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
+  const [transcriptsError, setTranscriptsError] = useState('');
+  const [openTranscript, setOpenTranscript] = useState(null);
+
+  const loadTranscripts = useCallback(async (query) => {
+    setTranscriptsLoading(true);
+    setTranscriptsError('');
+    try {
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      const payload = await apiFetch(`/reports/transcripts?${params.toString()}`, token);
+      setTranscripts(payload?.transcripts || []);
+    } catch (requestError) {
+      setTranscriptsError('Transcripts failed to load');
+    } finally {
+      setTranscriptsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { loadTranscripts(''); }, [loadTranscripts]);
+
+  const viewTranscript = useCallback(async (row) => {
+    try {
+      const payload = await apiFetch(`/reports/transcripts?id=${row.transcript_id}`, token);
+      setOpenTranscript(payload?.transcript || null);
+    } catch (requestError) {
+      setTranscriptsError('The transcript could not be loaded');
+    }
+  }, [token]);
 
   return (
     <section className="admin-grid">
@@ -16052,6 +16083,105 @@ function RecordingsView({ admin }) {
           <MetricCard icon={Timer} label="Captured Time" value={formatSeconds(recordings.reduce((sum, row) => sum + Number(row.length_in_sec || 0), 0))} detail="Across visible recordings" accent="#73fbd3" />
         </div>
       </Panel>
+      <Panel eyebrow="QA" title={`Transcripts (${formatNumber(transcripts.length)})`} icon={FileText} className="admin-wide-panel">
+        <form
+          className="entity-form report-filter-bar"
+          onSubmit={(event) => { event.preventDefault(); loadTranscripts(transcriptQuery.trim()); }}
+        >
+          <div className="field-grid">
+            <label>
+              <span>Search transcripts (blank = latest)</span>
+              <input
+                type="text"
+                value={transcriptQuery}
+                placeholder="e.g. cancel OR refund"
+                onChange={(event) => setTranscriptQuery(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="modal-actions">
+            <button type="submit" className="primary-action" disabled={transcriptsLoading}>
+              <Search size={16} aria-hidden="true" />
+              {transcriptsLoading ? 'Loading' : 'Search'}
+            </button>
+          </div>
+        </form>
+        {transcriptsError && <p className="form-error">{transcriptsError}</p>}
+        <DataTable
+          emptyLabel="No transcripts yet - the worker processes new recordings automatically"
+          rows={transcripts.map((row) => ({ ...row, id: row.transcript_id }))}
+          columns={[
+            { key: 'transcript_id', label: 'ID', render: (row) => <strong>{row.transcript_id}</strong> },
+            {
+              key: 'filename',
+              label: 'File',
+              render: (row) => (
+                <>
+                  <strong>{row.filename}</strong>
+                  <span>{row.source === 'INBOX' ? 'Inbox drop' : `Recording ${row.recording_id}`}</span>
+                </>
+              ),
+            },
+            { key: 'user', label: 'User', render: (row) => row.user || '' },
+            { key: 'length_in_sec', label: 'Length', render: (row) => formatSeconds(row.length_in_sec) },
+            { key: 'language', label: 'Lang', render: (row) => (row.language || '').toUpperCase() },
+            { key: 'channels', label: 'Audio', render: (row) => (Number(row.channels) >= 2 ? 'Stereo' : 'Mono') },
+            {
+              key: 'status',
+              label: 'Status',
+              render: (row) => (
+                <span className={`status-pill ${row.status === 'DONE' ? 'pill-active' : (row.status === 'ERROR' ? 'pill-alert' : 'pill-muted')}`}>
+                  {row.status}
+                </span>
+              ),
+            },
+            { key: 'process_seconds', label: 'Proc', render: (row) => (row.process_seconds > 0 ? `${Math.round(row.process_seconds)}s` : '') },
+            {
+              key: 'actions',
+              label: 'Action',
+              render: (row) => (row.status === 'DONE' ? (
+                <button type="button" className="secondary-action compact-action" onClick={() => viewTranscript(row)}>
+                  <FileText size={15} aria-hidden="true" />
+                  View
+                </button>
+              ) : (row.status === 'ERROR' ? <span title={row.error}>{(row.error || '').slice(0, 30)}</span> : null)),
+            },
+          ]}
+        />
+      </Panel>
+      {openTranscript && (
+        <div className="modal-backdrop" onClick={() => setOpenTranscript(null)}>
+          <div className="modal-panel detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Transcript</p>
+                <h3>{openTranscript.filename}</h3>
+              </div>
+              <button type="button" className="icon-action" onClick={() => setOpenTranscript(null)} aria-label="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <p className="action-copy">
+              {Number(openTranscript.channels) >= 2 ? 'Stereo: customer right channel, agent left channel.' : 'Mono recording - single mixed channel.'}
+              {' '}Model {openTranscript.model}, language {(openTranscript.language || '').toUpperCase() || 'unknown'},
+              {' '}processed in {Math.round(openTranscript.process_seconds || 0)}s.
+            </p>
+            <div className="transcript-body">
+              {(openTranscript.segments || []).length ? (openTranscript.segments || []).map((segment, index) => (
+                <p key={index} className="transcript-line">
+                  <span className="transcript-time">{formatSeconds(Math.round(segment.start))}</span>
+                  {segment.speaker && (
+                    <strong className={segment.speaker === 'CUSTOMER' ? 'transcript-customer' : 'transcript-agent'}>
+                      {segment.speaker}
+                    </strong>
+                  )}
+                  <span>{segment.text}</span>
+                </p>
+              )) : <p>{openTranscript.transcript || 'No speech detected'}</p>}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -16224,7 +16354,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
   if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
-  if (activeView === 'recordings') return <RecordingsView admin={admin} />;
+  if (activeView === 'recordings') return <RecordingsView admin={admin} token={token} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
   return <CommandView dashboard={dashboard} admin={admin} />;

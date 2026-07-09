@@ -2321,3 +2321,33 @@ input:-webkit-autofill:focus {
   caret-color: #e6f7ff;
   transition: background-color 9999s ease-in-out 0s;
 }
+
+/* Transcript viewer (Recordings page QA panel) */
+.transcript-body {
+  max-height: 55vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 4px 4px;
+}
+.transcript-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 0;
+  line-height: 1.45;
+}
+.transcript-time {
+  flex: 0 0 44px;
+  font-size: 11px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+.transcript-line strong {
+  flex: 0 0 84px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.transcript-customer { color: #73fbd3; }
+.transcript-agent { color: #00d9ff; }

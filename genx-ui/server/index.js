@@ -6611,6 +6611,49 @@ async function timeclockStatusReport(req, res) {
   return res.json({ ok: true, users, groups });
 }
 
+async function transcriptsReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const id = Number(req.query?.id || 0);
+  if (id > 0) {
+    const [row] = await rows(
+      `SELECT transcript_id, recording_id, filename, source, lead_id, user,
+              length_in_sec, language, model, channels, transcript, segments,
+              process_seconds, status, error, created_at, completed_at
+       FROM genx_transcripts WHERE transcript_id = ? LIMIT 1`,
+      [id],
+      [],
+    );
+    if (!row) return res.status(404).json({ ok: false, error: 'transcript_not_found' });
+    let segments = [];
+    try {
+      segments = JSON.parse(row.segments || '[]');
+    } catch (error) {
+      segments = [];
+    }
+    return res.json({ ok: true, transcript: { ...row, segments } });
+  }
+  const q = String(req.query?.q || '').trim().slice(0, 200);
+  const params = [];
+  let where = '1=1';
+  if (q) {
+    where = 'MATCH(t.transcript) AGAINST (? IN BOOLEAN MODE)';
+    params.push(q);
+  }
+  const list = await rows(
+    `SELECT t.transcript_id, t.recording_id, t.filename, t.source, t.lead_id,
+            t.user, t.length_in_sec, t.language, t.model, t.channels,
+            t.process_seconds, t.status, t.error, t.created_at, t.completed_at,
+            r.location
+     FROM genx_transcripts t
+     LEFT JOIN recording_log r ON r.recording_id = t.recording_id
+     WHERE ${where}
+     ORDER BY t.transcript_id DESC LIMIT 200`,
+    params,
+    [],
+  ).catch(() => []);
+  return res.json({ ok: true, transcripts: list, query: q });
+}
+
 async function hangupCauseReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
@@ -14238,6 +14281,7 @@ app.get('/api/reports/dial-log', requireAccess, dialLogReport);
 app.get('/api/reports/carrier-log', requireAccess, carrierLogReport);
 app.get('/api/reports/timeclock', requireAccess, timeclockReport);
 app.get('/api/reports/timeclock-status', requireAccess, timeclockStatusReport);
+app.get('/api/reports/transcripts', requireAccess, transcriptsReport);
 app.get('/api/reports/hangup-cause', requireAccess, hangupCauseReport);
 app.get('/api/reports/sip-event', requireAccess, sipEventReport);
 app.get('/api/reports/amd-log', requireAccess, amdLogReport);
