@@ -127,8 +127,8 @@ const TRANSFER_PRESET_OPTIONS = ['N', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESE
 const QUICK_TRANSFER_OPTIONS = ['N', 'IN_GROUP', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'LOCKED_IN_GROUP', 'LOCKED_PRESET_1', 'LOCKED_PRESET_2', 'LOCKED_PRESET_3', 'LOCKED_PRESET_4', 'LOCKED_PRESET_5'];
 const TRANSFER_NO_DISPO_OPTIONS = ['DISABLED', 'EXTERNAL_ONLY', 'LOCAL_ONLY', 'LEAVE3WAY_ONLY', 'LOCAL_AND_EXTERNAL', 'LOCAL_AND_LEAVE3WAY', 'LEAVE3WAY_AND_EXTERNAL', 'LOCAL_AND_EXTERNAL_AND_LEAVE3WAY'];
 const CUSTOM_3WAY_OPTIONS = ['DISABLED', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'FIELD_address3', 'FIELD_province', 'FIELD_security_phrase', 'FIELD_vendor_lead_code', 'FIELD_email', 'FIELD_owner', 'PARK_PRESET_1', 'PARK_PRESET_2', 'PARK_PRESET_3', 'PARK_PRESET_4', 'PARK_PRESET_5', 'PARK_FIELD_address3', 'PARK_FIELD_province', 'PARK_FIELD_security_phrase', 'PARK_FIELD_vendor_lead_code', 'PARK_FIELD_email', 'PARK_FIELD_owner', 'VIEW_PRESET', 'VIEW_CONTACTS'];
-const AGENT_LEAD_SEARCH_METHOD_OPTIONS = ['SYSTEM', 'CAMPAIGNLISTS', 'CAMPLISTS_ALL', 'LIST', 'USER_CAMPAIGNLISTS', 'USER_CAMPLISTS_ALL', 'USER_LIST', 'GROUP_SYSTEM', 'GROUP_CAMPAIGNLISTS', 'GROUP_CAMPLISTS_ALL', 'GROUP_LIST', 'TERRITORY_SYSTEM', 'TERRITORY_CAMPAIGNLISTS', 'TERRITORY_CAMPLISTS_ALL', 'TERRITORY_LIST'];
-const AGENT_OWNER_ONLY_OPTIONS = ['NONE', 'USER', 'TERRITORY', 'USER_GROUP', 'USER_BLANK', 'TERRITORY_BLANK', 'USER_GROUP_BLANK'];
+const AGENT_LEAD_SEARCH_METHOD_OPTIONS = ['SYSTEM', 'CAMPAIGNLISTS', 'CAMPLISTS_ALL', 'LIST', 'USER_CAMPAIGNLISTS', 'USER_CAMPLISTS_ALL', 'USER_LIST', 'GROUP_SYSTEM', 'GROUP_CAMPAIGNLISTS', 'GROUP_CAMPLISTS_ALL', 'GROUP_LIST'];
+const AGENT_OWNER_ONLY_OPTIONS = ['NONE', 'USER', 'USER_GROUP', 'USER_BLANK', 'USER_GROUP_BLANK'];
 const STATUS_DISPLAY_FIELD_OPTIONS = ['NAME', 'CALLID', 'LEADID', 'LISTID', 'CALLID_LEADID', 'CALLID_LISTID', 'CALLID_LEADID_LISTID', 'NAME_CALLID', 'NAME_CALLID_LEADID', 'NAME_CALLID_LISTID', 'NAME_CALLID_LEADID_LISTID', '---NONE---'];
 const AGENT_SCREEN_TIME_OPTIONS = ['DISABLED', 'ENABLED_BASIC', 'ENABLED_FULL', 'ENABLED_BILL_BREAK_LUNCH_COACH', 'ENABLED_BASIC_RANGE', 'ENABLED_FULL_RANGE', 'ENABLED_EXTENDED_RANGE', 'ENABLED_BILL_BREAK_LUNCH_COACH_RANGE'];
 const MANUAL_DIAL_FILTER_OPTIONS = ['NONE', 'DNC_ONLY', 'CAMPDNC_ONLY', 'INTERNALDNC_ONLY', 'DNC_AND_CAMPDNC', 'CAMPLISTS_ONLY', 'CAMPLISTS_ALL', 'SYSTEM', 'DNC_AND_CAMPLISTS', 'CAMPDNC_ONLY_AND_CAMPLISTS', 'INTERNALDNC_ONLY_AND_CAMPLISTS', 'DNC_AND_CAMPDNC_AND_CAMPLISTS', 'DNC_AND_CAMPLISTS_ALL', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL', 'DNC_AND_SYSTEM', 'CAMPDNC_ONLY_AND_SYSTEM', 'INTERNALDNC_ONLY_AND_SYSTEM', 'DNC_AND_CAMPDNC_AND_SYSTEM', 'NONE_WITH_ALT', 'DNC_ONLY_WITH_ALT', 'CAMPDNC_ONLY_WITH_ALT', 'INTERNALDNC_ONLY_WITH_ALT', 'DNC_AND_CAMPDNC_WITH_ALT', 'CAMPLISTS_ONLY_WITH_ALT', 'CAMPLISTS_ALL_WITH_ALT', 'SYSTEM_WITH_ALT', 'DNC_AND_CAMPLISTS_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_SYSTEM_WITH_ALT', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT', 'NONE_WITH_ALT_ADDR3', 'DNC_ONLY_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3', 'CAMPLISTS_ONLY_WITH_ALT_ADDR3', 'CAMPLISTS_ALL_WITH_ALT_ADDR3', 'SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CALLBACK', 'DNC_AND_CALLBACK', 'CAMPDNC_ONLY_AND_CALLBACK', 'INTERNALDNC_ONLY_AND_CALLBACK', 'DNC_AND_CAMPDNC_AND_CALLBACK', 'NONE_WITH_ALT_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_AND_CALLBACK', 'NONE_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3_AND_CALLBACK'];
@@ -1057,8 +1057,6 @@ async function adminData(user) {
     dropLists,
     phoneAliases,
     groupAliases,
-    conferences,
-    agentConferences,
     queueGroups,
     contacts,
     languages,
@@ -1067,7 +1065,6 @@ async function adminData(user) {
     automatedReports,
     mohFull,
     ttsPrompts,
-    soundboards,
     stateCallTimes,
     holidays,
     statusGroups,
@@ -1078,7 +1075,6 @@ async function adminData(user) {
     extensionGroups,
     confTemplates,
     emailAccounts,
-    userTerritories,
   ] = await Promise.all([
     rows(
       `SELECT c.campaign_id,
@@ -1193,7 +1189,6 @@ async function adminData(user) {
               c.pause_after_next_call,
               c.owner_populate,
               c.allow_emails,
-              c.allow_chats,
               c.max_inbound_calls,
               c.hide_call_log_info,
               c.wrapup_bypass,
@@ -1506,16 +1501,13 @@ async function adminData(user) {
               alter_custphone_override,
               alert_enabled,
               allow_alerts,
-              agent_choose_territories,
               download_lists,
               agent_shift_enforcement_override,
               manager_shift_enforcement_override,
               shift_override_flag,
               user_code,
-              territory,
               voicemail_id,
               agent_call_log_view_override,
-              callcard_admin,
               agent_choose_blended,
               realtime_block_user_info,
               custom_fields_modify,
@@ -1525,7 +1517,6 @@ async function adminData(user) {
               admin_hide_lead_data,
               admin_hide_phone_data,
               agentcall_email,
-              agentcall_chat,
               max_inbound_calls,
               wrapup_seconds_override,
               selected_language,
@@ -1561,7 +1552,6 @@ async function adminData(user) {
               download_invalid_files,
               user_group_two,
               inbound_credits,
-              hci_enabled,
               manual_dial_lead_id,
               qc_enabled,
               qc_user_level,
@@ -1776,7 +1766,6 @@ async function adminData(user) {
               admin_viewable_groups,
               admin_viewable_call_times,
               allowed_custom_reports,
-              agent_allowed_chat_groups,
               allowed_queue_groups,
               webphone_url_override,
               webphone_systemkey_override,
@@ -2344,17 +2333,6 @@ async function adminData(user) {
       [],
     ),
     rows(
-      'SELECT conf_exten, server_ip, extension FROM conferences ORDER BY server_ip ASC, conf_exten ASC LIMIT 1000',
-      [],
-      [],
-    ),
-    rows(
-      `SELECT conf_exten, server_ip, extension, leave_3way FROM vicidial_conferences
-       ORDER BY server_ip ASC, conf_exten ASC LIMIT 1000`,
-      [],
-      [],
-    ),
-    rows(
       `SELECT queue_group, queue_group_name, included_campaigns, included_inbound_groups, user_group, active
        FROM vicidial_queue_groups ORDER BY queue_group ASC LIMIT 500`,
       [],
@@ -2406,12 +2384,6 @@ async function adminData(user) {
     rows(
       `SELECT tts_id, tts_name, active, tts_text, tts_voice, user_group
        FROM vicidial_tts_prompts ORDER BY tts_id ASC LIMIT 500`,
-      [],
-      [],
-    ),
-    rows(
-      `SELECT avatar_id, avatar_name, avatar_notes, active, user_group, soundboard_layout, columns_limit
-       FROM vicidial_avatars ORDER BY avatar_id ASC LIMIT 500`,
       [],
       [],
     ),
@@ -2474,12 +2446,6 @@ async function adminData(user) {
               email_replyto_address, email_account_server, email_account_user, pop3_auth_mode, active,
               email_frequency_check_mins, group_id, default_list_id, email_account_type
        FROM vicidial_email_accounts ORDER BY email_account_id ASC LIMIT 500`,
-      [],
-      [],
-    ),
-    rows(
-      `SELECT user, territory, level FROM vicidial_user_territories
-       ORDER BY territory ASC, user ASC LIMIT 1000`,
       [],
       [],
     ),
@@ -2571,8 +2537,6 @@ async function adminData(user) {
     dropLists,
     phoneAliases,
     groupAliases,
-    conferences,
-    agentConferences,
     queueGroups,
     contacts,
     languages,
@@ -2581,7 +2545,6 @@ async function adminData(user) {
     automatedReports,
     mohFull,
     ttsPrompts,
-    soundboards,
     stateCallTimes,
     holidays,
     statusGroups,
@@ -2592,7 +2555,6 @@ async function adminData(user) {
     extensionGroups,
     confTemplates,
     emailAccounts,
-    userTerritories,
     lookups: {
       campaigns: campaigns.map((item) => ({
         campaign_id: item.campaign_id,
@@ -2767,7 +2729,6 @@ function campaignPayload(body, currentUser) {
     pause_after_next_call: cleanChoice(body.pause_after_next_call, ['ENABLED', 'DISABLED'], 'DISABLED'),
     owner_populate: cleanChoice(body.owner_populate, ['ENABLED', 'DISABLED'], 'DISABLED'),
     allow_emails: ynFlag(body.allow_emails, 'N'),
-    allow_chats: ynFlag(body.allow_chats, 'N'),
     max_inbound_calls: cleanInt(body.max_inbound_calls, 0, 0, 99999),
     hide_call_log_info: cleanText(body.hide_call_log_info, 20) || 'N',
     wrapup_bypass: cleanChoice(body.wrapup_bypass, ['ENABLED', 'DISABLED'], 'ENABLED'),
@@ -3285,16 +3246,13 @@ function userPayload(body, currentUser) {
     alter_custphone_override: cleanExactChoice(body.alter_custphone_override, ['NOT_ACTIVE', 'ALLOW_ALTER'], 'NOT_ACTIVE'),
     alert_enabled: boolFlag(body.alert_enabled),
     allow_alerts: boolFlag(body.allow_alerts),
-    agent_choose_territories: boolFlag(body.agent_choose_territories),
     download_lists: boolFlag(body.download_lists),
     agent_shift_enforcement_override: cleanExactChoice(body.agent_shift_enforcement_override, ['DISABLED', 'OFF', 'START', 'ALL'], 'DISABLED'),
     manager_shift_enforcement_override: boolFlag(body.manager_shift_enforcement_override),
     shift_override_flag: boolFlag(body.shift_override_flag),
     user_code: cleanText(body.user_code, 100),
-    territory: cleanText(body.territory, 100),
     voicemail_id: cleanId(body.voicemail_id, 10),
     agent_call_log_view_override: cleanExactChoice(body.agent_call_log_view_override, ['DISABLED', 'Y', 'N'], 'DISABLED'),
-    callcard_admin: boolFlag(body.callcard_admin),
     agent_choose_blended: boolFlag(body.agent_choose_blended),
     realtime_block_user_info: boolFlag(body.realtime_block_user_info),
     custom_fields_modify: boolFlag(body.custom_fields_modify),
@@ -3304,7 +3262,6 @@ function userPayload(body, currentUser) {
     admin_hide_lead_data: boolFlag(body.admin_hide_lead_data),
     admin_hide_phone_data: cleanExactChoice(body.admin_hide_phone_data, ['0', '1', '2_DIGITS', '3_DIGITS', '4_DIGITS'], '0'),
     agentcall_email: boolFlag(body.agentcall_email),
-    agentcall_chat: boolFlag(body.agentcall_chat),
     max_inbound_calls: cleanInt(body.max_inbound_calls, 0, 0, 65000),
     wrapup_seconds_override: cleanInt(body.wrapup_seconds_override, -1, -1, 65000),
     selected_language: cleanText(body.selected_language, 100) || 'default English',
@@ -3340,7 +3297,6 @@ function userPayload(body, currentUser) {
     download_invalid_files: boolFlag(body.download_invalid_files),
     user_group_two: cleanId(body.user_group_two, 20),
     inbound_credits: cleanInt(body.inbound_credits, -1, -1, 9999999),
-    hci_enabled: cleanInt(body.hci_enabled, 0, 0, 6),
     manual_dial_lead_id: cleanExactChoice(body.manual_dial_lead_id, ['Y', 'N', 'ONLY', 'DISABLED'], 'DISABLED'),
     qc_enabled: boolFlag(body.qc_enabled),
     qc_user_level: cleanInt(body.qc_user_level, 1, 1, 9),
@@ -10252,60 +10208,6 @@ async function deleteGroupAlias(req, res) {
   }
 }
 
-function conferenceKey(raw) {
-  const [confExten = '', serverIp = ''] = String(raw || '').split('__');
-  return { conf_exten: cleanDigits(confExten, 7), server_ip: cleanIp(serverIp) };
-}
-
-// conferences (admin/monitoring) and vicidial_conferences (agent sessions)
-// share the same composite key and legacy gating (ast_delete_phones for
-// deletes, modify_servers for adds like legacy's conference pages).
-async function saveConference(req, res, table, mode) {
-  if (!requireModify(req, res, 'modifyServers')) return;
-  const key = mode === 'create'
-    ? { conf_exten: cleanDigits(req.body?.conf_exten, 7), server_ip: cleanIp(req.body?.server_ip) }
-    : conferenceKey(req.params.id);
-  if (!key.conf_exten || !key.server_ip) return badRequest(res, 'invalid_conference_key');
-  const extension = cleanText(req.body?.extension, 100);
-  const section = table === 'conferences' ? 'CONFERENCES' : 'AGENT CONFERENCES';
-  try {
-    if (mode === 'create') {
-      await execute(
-        `INSERT INTO ${quoteId(table)} (conf_exten, server_ip, extension) VALUES (?, ?, ?)`,
-        [key.conf_exten, key.server_ip, extension],
-      );
-      await adminLog(req, 'SERVERS', 'ADD', key.conf_exten, `GENX ADD ${section}`, `INSERT INTO ${table}`, `${key.conf_exten}@${key.server_ip}`);
-    } else {
-      const result = await execute(
-        `UPDATE ${quoteId(table)} SET extension = ? WHERE conf_exten = ? AND server_ip = ? LIMIT 1`,
-        [extension, key.conf_exten, key.server_ip],
-      );
-      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conference_not_found' });
-      await adminLog(req, 'SERVERS', 'MODIFY', key.conf_exten, `GENX MODIFY ${section}`, `UPDATE ${table}`, `${key.conf_exten}@${key.server_ip}`);
-    }
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'conference_save_failed' });
-  }
-}
-
-async function deleteConference(req, res, table) {
-  if (!requireModify(req, res, 'astDeletePhones')) return;
-  const key = conferenceKey(req.params.id);
-  if (!key.conf_exten || !key.server_ip) return badRequest(res, 'invalid_conference_key');
-  try {
-    const result = await execute(
-      `DELETE FROM ${quoteId(table)} WHERE conf_exten = ? AND server_ip = ? LIMIT 1`,
-      [key.conf_exten, key.server_ip],
-    );
-    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'conference_not_found' });
-    await adminLog(req, 'SERVERS', 'DELETE', key.conf_exten, `GENX DELETE ${table === 'conferences' ? 'CONFERENCE' : 'AGENT CONFERENCE'}`, `DELETE FROM ${table}`, `${key.conf_exten}@${key.server_ip}`);
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'conference_delete_failed' });
-  }
-}
-
 // Legacy admin.php allows digits/letters plus , : + * # . _ - in an ip_list
 // entry (supports CIDR-ish/wildcard patterns, not just plain dotted-quad IPs).
 function parseIpAddressList(raw) {
@@ -10617,49 +10519,6 @@ async function deleteEmailAccount(req, res) {
   }
 }
 
-const USER_TERRITORY_LEVELS = ['TOP_AGENT', 'STANDARD_AGENT', 'BOTTOM_AGENT'];
-
-async function saveUserTerritory(req, res, mode) {
-  if (!requireModify(req, res, 'modifyUsers')) return;
-  const user = cleanId(req.body?.user, 20);
-  const territory = cleanText(req.body?.territory, 100).trim();
-  const level = USER_TERRITORY_LEVELS.includes(req.body?.level) ? req.body.level : 'STANDARD_AGENT';
-  if (!user || !territory) return badRequest(res, 'invalid_user_territory');
-  try {
-    if (mode === 'create') {
-      const existing = await rows('SELECT user FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory], []);
-      if (existing.length) return badRequest(res, 'user_territory_exists');
-      await execute('INSERT INTO vicidial_user_territories SET user = ?, territory = ?, level = ?', [user, territory, level]);
-      await adminLog(req, 'USERS', 'ADD', user, 'GENX ADD USER TERRITORY', 'INSERT INTO vicidial_user_territories', `${territory} ${level}`);
-    } else {
-      const result = await execute('UPDATE vicidial_user_territories SET level = ? WHERE user = ? AND territory = ?', [level, user, territory]);
-      if (result.affectedRows < 1 && result.changedRows < 1) {
-        const [found] = await rows('SELECT user FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory], []);
-        if (!found) return res.status(404).json({ ok: false, error: 'user_territory_not_found' });
-      }
-      await adminLog(req, 'USERS', 'MODIFY', user, 'GENX MODIFY USER TERRITORY', 'UPDATE vicidial_user_territories', `${territory} ${level}`);
-    }
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'user_territory_save_failed' });
-  }
-}
-
-async function deleteUserTerritory(req, res) {
-  if (!requireModify(req, res, 'modifyUsers')) return;
-  const user = cleanId(req.params.id, 20);
-  const territory = cleanText(req.query?.territory, 100).trim();
-  if (!user || !territory) return badRequest(res, 'invalid_user_territory');
-  try {
-    const result = await execute('DELETE FROM vicidial_user_territories WHERE user = ? AND territory = ? LIMIT 1', [user, territory]);
-    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'user_territory_not_found' });
-    await adminLog(req, 'USERS', 'DELETE', user, 'GENX DELETE USER TERRITORY', 'DELETE FROM vicidial_user_territories', territory);
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'user_territory_delete_failed' });
-  }
-}
-
 async function saveVoicemailBox(req, res, mode) {
   if (!requireModify(req, res, 'modifyVoicemail')) return;
   const payload = {
@@ -10819,7 +10678,7 @@ async function deleteAutomatedReport(req, res) {
 }
 
 // Generic save/delete for the simple single-key media entities. Audio file
-// management (MOH files, soundboard audio) is a follow-up; this is metadata.
+// management (MOH files) is a follow-up; this is metadata.
 const SIMPLE_MEDIA_ENTITIES = {
   moh: {
     table: 'vicidial_music_on_hold',
@@ -10846,21 +10705,6 @@ const SIMPLE_MEDIA_ENTITIES = {
       tts_text: cleanText(body.tts_text, 12000),
       tts_voice: cleanText(body.tts_voice, 100),
       user_group: cleanId(body.user_group, 20) || '---ALL---',
-    }),
-  },
-  soundboards: {
-    table: 'vicidial_avatars',
-    idColumn: 'avatar_id',
-    idMax: 100,
-    permission: 'modifyMoh',
-    section: 'SOUNDBOARDS',
-    payload: (body) => ({
-      avatar_name: cleanText(body.avatar_name, 100) || 'New Soundboard',
-      avatar_notes: cleanText(body.avatar_notes, 2000),
-      active: ynFlag(body.active, 'N'),
-      user_group: cleanId(body.user_group, 20) || '---ALL---',
-      soundboard_layout: cleanText(body.soundboard_layout, 40),
-      columns_limit: cleanInt(body.columns_limit, 0, 0, 99),
     }),
   },
 };
@@ -12759,9 +12603,6 @@ function inboundPayload(body) {
     populate_lead_comments: cleanText(body.populate_lead_comments, 255),
     populate_lead_owner: routeCode(body.populate_lead_owner, 50),
     add_lead_timezone: cleanChoice(body.add_lead_timezone, INGROUP_ADD_LEAD_TIMEZONE_OPTIONS, 'SERVER'),
-    customer_chat_screen_colors: cleanText(body.customer_chat_screen_colors, 50),
-    customer_chat_survey_link: longText(body.customer_chat_survey_link),
-    customer_chat_survey_text: cleanText(body.customer_chat_survey_text, 1000),
     agent_alert_exten: routeCode(body.agent_alert_exten, 20),
     agent_alert_delay: cleanInt(body.agent_alert_delay, 0, 0, 9999),
     browser_alert_sound: routeCode(body.browser_alert_sound, 255),
@@ -12876,7 +12717,6 @@ function userGroupPayload(body) {
     admin_viewable_groups: cleanText(body.admin_viewable_groups, 1000) || '---ALL---',
     admin_viewable_call_times: cleanText(body.admin_viewable_call_times, 1000) || '---ALL---',
     allowed_custom_reports: cleanText(body.allowed_custom_reports, 1000) || 'ALL REPORTS',
-    agent_allowed_chat_groups: cleanText(body.agent_allowed_chat_groups, 1000) || '---ALL---',
     allowed_queue_groups: cleanText(body.allowed_queue_groups, 1000) || '---ALL---',
     webphone_url_override: cleanText(body.webphone_url_override, 255),
     webphone_systemkey_override: cleanText(body.webphone_systemkey_override, 100),
@@ -14616,12 +14456,6 @@ app.delete('/api/admin/phone-aliases/:id', requireAccess, deletePhoneAlias);
 app.post('/api/admin/group-aliases', requireAccess, (req, res) => saveGroupAlias(req, res, 'create'));
 app.put('/api/admin/group-aliases/:id', requireAccess, (req, res) => saveGroupAlias(req, res, 'update'));
 app.delete('/api/admin/group-aliases/:id', requireAccess, deleteGroupAlias);
-app.post('/api/admin/conferences', requireAccess, (req, res) => saveConference(req, res, 'conferences', 'create'));
-app.put('/api/admin/conferences/:id', requireAccess, (req, res) => saveConference(req, res, 'conferences', 'update'));
-app.delete('/api/admin/conferences/:id', requireAccess, (req, res) => deleteConference(req, res, 'conferences'));
-app.post('/api/admin/agent-conferences', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'create'));
-app.put('/api/admin/agent-conferences/:id', requireAccess, (req, res) => saveConference(req, res, 'vicidial_conferences', 'update'));
-app.delete('/api/admin/agent-conferences/:id', requireAccess, (req, res) => deleteConference(req, res, 'vicidial_conferences'));
 app.post('/api/admin/ip-lists', requireAccess, (req, res) => saveIpList(req, res, 'create'));
 app.put('/api/admin/ip-lists/:id', requireAccess, (req, res) => saveIpList(req, res, 'update'));
 app.delete('/api/admin/ip-lists/:id', requireAccess, deleteIpList);
@@ -14640,9 +14474,6 @@ app.delete('/api/admin/languages/:id', requireAccess, deleteLanguage);
 app.post('/api/admin/email-accounts', requireAccess, (req, res) => saveEmailAccount(req, res, 'create'));
 app.put('/api/admin/email-accounts/:id', requireAccess, (req, res) => saveEmailAccount(req, res, 'update'));
 app.delete('/api/admin/email-accounts/:id', requireAccess, deleteEmailAccount);
-app.post('/api/admin/user-territories', requireAccess, (req, res) => saveUserTerritory(req, res, 'create'));
-app.put('/api/admin/user-territories/:id', requireAccess, (req, res) => saveUserTerritory(req, res, 'update'));
-app.delete('/api/admin/user-territories/:id', requireAccess, deleteUserTerritory);
 app.post('/api/admin/voicemail-boxes', requireAccess, (req, res) => saveVoicemailBox(req, res, 'create'));
 app.put('/api/admin/voicemail-boxes/:id', requireAccess, (req, res) => saveVoicemailBox(req, res, 'update'));
 app.delete('/api/admin/voicemail-boxes/:id', requireAccess, deleteVoicemailBox);
@@ -14658,9 +14489,6 @@ app.delete('/api/admin/moh/:id', requireAccess, (req, res) => deleteSimpleMedia(
 app.post('/api/admin/tts', requireAccess, (req, res) => saveSimpleMedia(req, res, 'tts', 'create'));
 app.put('/api/admin/tts/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'tts', 'update'));
 app.delete('/api/admin/tts/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'tts'));
-app.post('/api/admin/soundboards', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'create'));
-app.put('/api/admin/soundboards/:id', requireAccess, (req, res) => saveSimpleMedia(req, res, 'soundboards', 'update'));
-app.delete('/api/admin/soundboards/:id', requireAccess, (req, res) => deleteSimpleMedia(req, res, 'soundboards'));
 app.post('/api/admin/state-call-times', requireAccess, (req, res) => saveStateCallTime(req, res, 'create'));
 app.put('/api/admin/state-call-times/:id', requireAccess, (req, res) => saveStateCallTime(req, res, 'update'));
 app.delete('/api/admin/state-call-times/:id', requireAccess, deleteStateCallTime);

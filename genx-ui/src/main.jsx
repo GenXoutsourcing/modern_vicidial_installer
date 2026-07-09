@@ -47,7 +47,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { LEGACY_ADMIN_GROUPS, REPORT_GROUPS } from './catalog';
+import { REPORT_GROUPS } from './catalog';
 import './styles.css';
 
 const API_BASE = `${import.meta.env.BASE_URL}api`;
@@ -92,7 +92,7 @@ const NEXT_AGENT_CALL_OPTIONS = [
 const TALLY_THRESHOLD_OPTIONS = ['DISABLED', 'LOGGED-IN_AGENTS', 'NON-PAUSED_AGENTS', 'WAITING_AGENTS'];
 const TALLY_AGENT_OPTIONS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '25', '30', '35', '40', '50'];
 const CONCURRENT_TRANSFER_OPTIONS = ['AUTO', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '15', '20', '25', '30', '40', '50', '60', '80', '100', '1000', '10000'];
-const INBOUND_QUEUE_NO_DIAL_OPTIONS = ['DISABLED', 'ENABLED', 'ALL_SERVERS', 'ENABLED_WITH_CHAT', 'ALL_SERVERS_WITH_CHAT'];
+const INBOUND_QUEUE_NO_DIAL_OPTIONS = ['DISABLED', 'ENABLED', 'ALL_SERVERS'];
 const INGROUP_DROP_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
 const INGROUP_AFTER_HOURS_ACTION_OPTIONS = ['HANGUP', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'IN_GROUP', 'CALLMENU', 'VMAIL_NO_INST'];
 const INGROUP_NO_AGENT_ACTION_OPTIONS = ['CALLMENU', 'INGROUP', 'DID', 'MESSAGE', 'EXTENSION', 'VOICEMAIL', 'VMAIL_NO_INST'];
@@ -154,8 +154,8 @@ const TRANSFER_PRESET_OPTIONS = ['N', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESE
 const QUICK_TRANSFER_OPTIONS = ['N', 'IN_GROUP', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'LOCKED_IN_GROUP', 'LOCKED_PRESET_1', 'LOCKED_PRESET_2', 'LOCKED_PRESET_3', 'LOCKED_PRESET_4', 'LOCKED_PRESET_5'];
 const TRANSFER_NO_DISPO_OPTIONS = ['DISABLED', 'EXTERNAL_ONLY', 'LOCAL_ONLY', 'LEAVE3WAY_ONLY', 'LOCAL_AND_EXTERNAL', 'LOCAL_AND_LEAVE3WAY', 'LEAVE3WAY_AND_EXTERNAL', 'LOCAL_AND_EXTERNAL_AND_LEAVE3WAY'];
 const CUSTOM_3WAY_OPTIONS = ['DISABLED', 'PRESET_1', 'PRESET_2', 'PRESET_3', 'PRESET_4', 'PRESET_5', 'FIELD_address3', 'FIELD_province', 'FIELD_security_phrase', 'FIELD_vendor_lead_code', 'FIELD_email', 'FIELD_owner', 'PARK_PRESET_1', 'PARK_PRESET_2', 'PARK_PRESET_3', 'PARK_PRESET_4', 'PARK_PRESET_5', 'PARK_FIELD_address3', 'PARK_FIELD_province', 'PARK_FIELD_security_phrase', 'PARK_FIELD_vendor_lead_code', 'PARK_FIELD_email', 'PARK_FIELD_owner', 'VIEW_PRESET', 'VIEW_CONTACTS'];
-const AGENT_LEAD_SEARCH_METHOD_OPTIONS = ['SYSTEM', 'CAMPAIGNLISTS', 'CAMPLISTS_ALL', 'LIST', 'USER_CAMPAIGNLISTS', 'USER_CAMPLISTS_ALL', 'USER_LIST', 'GROUP_SYSTEM', 'GROUP_CAMPAIGNLISTS', 'GROUP_CAMPLISTS_ALL', 'GROUP_LIST', 'TERRITORY_SYSTEM', 'TERRITORY_CAMPAIGNLISTS', 'TERRITORY_CAMPLISTS_ALL', 'TERRITORY_LIST'];
-const AGENT_OWNER_ONLY_OPTIONS = ['NONE', 'USER', 'TERRITORY', 'USER_GROUP', 'USER_BLANK', 'TERRITORY_BLANK', 'USER_GROUP_BLANK'];
+const AGENT_LEAD_SEARCH_METHOD_OPTIONS = ['SYSTEM', 'CAMPAIGNLISTS', 'CAMPLISTS_ALL', 'LIST', 'USER_CAMPAIGNLISTS', 'USER_CAMPLISTS_ALL', 'USER_LIST', 'GROUP_SYSTEM', 'GROUP_CAMPAIGNLISTS', 'GROUP_CAMPLISTS_ALL', 'GROUP_LIST'];
+const AGENT_OWNER_ONLY_OPTIONS = ['NONE', 'USER', 'USER_GROUP', 'USER_BLANK', 'USER_GROUP_BLANK'];
 const STATUS_DISPLAY_FIELD_OPTIONS = ['NAME', 'CALLID', 'LEADID', 'LISTID', 'CALLID_LEADID', 'CALLID_LISTID', 'CALLID_LEADID_LISTID', 'NAME_CALLID', 'NAME_CALLID_LEADID', 'NAME_CALLID_LISTID', 'NAME_CALLID_LEADID_LISTID', '---NONE---'];
 const AGENT_SCREEN_TIME_OPTIONS = ['DISABLED', 'ENABLED_BASIC', 'ENABLED_FULL', 'ENABLED_BILL_BREAK_LUNCH_COACH', 'ENABLED_BASIC_RANGE', 'ENABLED_FULL_RANGE', 'ENABLED_EXTENDED_RANGE', 'ENABLED_BILL_BREAK_LUNCH_COACH_RANGE'];
 const MANUAL_DIAL_FILTER_OPTIONS = ['NONE', 'DNC_ONLY', 'CAMPDNC_ONLY', 'INTERNALDNC_ONLY', 'DNC_AND_CAMPDNC', 'CAMPLISTS_ONLY', 'CAMPLISTS_ALL', 'SYSTEM', 'DNC_AND_CAMPLISTS', 'CAMPDNC_ONLY_AND_CAMPLISTS', 'INTERNALDNC_ONLY_AND_CAMPLISTS', 'DNC_AND_CAMPDNC_AND_CAMPLISTS', 'DNC_AND_CAMPLISTS_ALL', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL', 'DNC_AND_SYSTEM', 'CAMPDNC_ONLY_AND_SYSTEM', 'INTERNALDNC_ONLY_AND_SYSTEM', 'DNC_AND_CAMPDNC_AND_SYSTEM', 'NONE_WITH_ALT', 'DNC_ONLY_WITH_ALT', 'CAMPDNC_ONLY_WITH_ALT', 'INTERNALDNC_ONLY_WITH_ALT', 'DNC_AND_CAMPDNC_WITH_ALT', 'CAMPLISTS_ONLY_WITH_ALT', 'CAMPLISTS_ALL_WITH_ALT', 'SYSTEM_WITH_ALT', 'DNC_AND_CAMPLISTS_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT', 'DNC_AND_SYSTEM_WITH_ALT', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT', 'NONE_WITH_ALT_ADDR3', 'DNC_ONLY_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3', 'CAMPLISTS_ONLY_WITH_ALT_ADDR3', 'CAMPLISTS_ALL_WITH_ALT_ADDR3', 'SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_WITH_ALT_ADDR3', 'DNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_CAMPLISTS_ALL_WITH_ALT_ADDR3', 'DNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CAMPDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'INTERNALDNC_ONLY_AND_SYSTEM_WITH_ALT_ADDR3', 'DNC_AND_CAMPDNC_AND_SYSTEM_WITH_ALT_ADDR3', 'CALLBACK', 'DNC_AND_CALLBACK', 'CAMPDNC_ONLY_AND_CALLBACK', 'INTERNALDNC_ONLY_AND_CALLBACK', 'DNC_AND_CAMPDNC_AND_CALLBACK', 'NONE_WITH_ALT_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_AND_CALLBACK', 'NONE_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'CAMPDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'INTERNALDNC_ONLY_WITH_ALT_ADDR3_AND_CALLBACK', 'DNC_AND_CAMPDNC_WITH_ALT_ADDR3_AND_CALLBACK'];
@@ -223,7 +223,6 @@ const NAV_ITEMS = [
   { key: 'reports', label: 'Reports', eyebrow: 'Reporting', title: 'Reporting Center', icon: FileText },
   { key: 'recordings', label: 'Recordings', eyebrow: 'Reports', title: 'Recent Recordings', icon: Activity },
   { key: 'system', label: 'System', eyebrow: 'Platform', title: 'Servers and Carriers', icon: Server },
-  { key: 'map', label: 'Map', eyebrow: 'Coverage', title: 'VICIdial Page Map', icon: Compass },
   { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
   { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
@@ -241,7 +240,7 @@ const NAV_GROUPS = [
   { title: 'Lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display', 'map'] },
+  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
   { title: 'Reports', keys: ['reports', 'recordings'] },
 ];
 
@@ -460,7 +459,6 @@ function userCan(user, entity) {
   if (entity === 'dropLists') return Boolean(user?.modifyLists);
   if (entity === 'phoneAliases') return Boolean(user?.modifyPhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
-  if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.modifyServers);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
@@ -469,7 +467,7 @@ function userCan(user, entity) {
   if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
-  if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
+  if (entity === 'moh') return Boolean(user?.modifyMoh);
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.deleteCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
@@ -482,7 +480,7 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'conferences', 'agentConferences', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'soundboards', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -503,7 +501,6 @@ function userCanDelete(user, entity) {
   if (entity === 'dropLists') return Boolean(user?.deleteLists);
   if (entity === 'phoneAliases') return Boolean(user?.astDeletePhones);
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
-  if (entity === 'conferences' || entity === 'agentConferences') return Boolean(user?.astDeletePhones);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
   if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
@@ -512,7 +509,7 @@ function userCanDelete(user, entity) {
   if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);
   if (entity === 'voicemailBoxes' || entity === 'vmMessageGroups') return Boolean(user?.modifyVoicemail);
   if (entity === 'automatedReports') return Boolean(user?.modifyAutoReports);
-  if (entity === 'moh' || entity === 'soundboards') return Boolean(user?.modifyMoh);
+  if (entity === 'moh') return Boolean(user?.modifyMoh);
   if (entity === 'tts') return Boolean(user?.modifyTts);
   if (entity === 'stateCallTimes' || entity === 'holidays') return Boolean(user?.modifyCallTimes);
   if (entity === 'statusGroups') return Boolean(user?.modifyStatuses);
@@ -871,7 +868,6 @@ function actionDefaults(entity, admin) {
       pause_after_next_call: 'DISABLED',
       owner_populate: 'DISABLED',
       allow_emails: 'N',
-      allow_chats: 'N',
       max_inbound_calls: '0',
       max_inbound_calls_outcome: 'DEFAULT',
       hide_call_log_info: 'N',
@@ -1167,16 +1163,13 @@ function actionDefaults(entity, admin) {
       vdc_agent_api_access: '0',
       alert_enabled: '0',
       allow_alerts: '0',
-      agent_choose_territories: '1',
       download_lists: '0',
       agent_shift_enforcement_override: 'DISABLED',
       manager_shift_enforcement_override: '0',
       shift_override_flag: '0',
       user_code: '',
-      territory: '',
       voicemail_id: '',
       agent_call_log_view_override: 'DISABLED',
-      callcard_admin: '0',
       agent_choose_blended: '1',
       realtime_block_user_info: '0',
       custom_fields_modify: '0',
@@ -1186,7 +1179,6 @@ function actionDefaults(entity, admin) {
       admin_hide_lead_data: '0',
       admin_hide_phone_data: '0',
       agentcall_email: '0',
-      agentcall_chat: '0',
       max_inbound_calls: '0',
       wrapup_seconds_override: '-1',
       selected_language: 'default English',
@@ -1222,7 +1214,6 @@ function actionDefaults(entity, admin) {
       download_invalid_files: '0',
       user_group_two: '',
       inbound_credits: '-1',
-      hci_enabled: '0',
       manual_dial_lead_id: 'DISABLED',
       qc_enabled: '0',
       qc_user_level: '1',
@@ -1309,7 +1300,6 @@ function actionDefaults(entity, admin) {
       agent_xfer_park_customer_dial: 'Y',
       agent_xfer_park_3way: 'Y',
       allowed_custom_reports: 'ALL REPORTS',
-      agent_allowed_chat_groups: '---ALL---',
       webphone_url_override: '',
       webphone_systemkey_override: '',
       webphone_dialpad_override: 'DISABLED',
@@ -1650,10 +1640,6 @@ function actionDefaults(entity, admin) {
     };
   }
 
-  if (entity === 'conferences' || entity === 'agentConferences') {
-    return { conf_exten: '', server_ip: admin?.servers?.[0]?.server_ip || '', extension: '' };
-  }
-
   if (entity === 'ipLists') {
     return { ip_list_id: '', ip_list_name: '', active: 'N', user_group: '---ALL---', ip_addresses: '' };
   }
@@ -1710,9 +1696,6 @@ function actionDefaults(entity, admin) {
     return { tts_id: '', tts_name: '', active: 'N', tts_text: '', tts_voice: '', user_group: '---ALL---' };
   }
 
-  if (entity === 'soundboards') {
-    return { avatar_id: '', avatar_name: '', avatar_notes: '', active: 'N', user_group: '---ALL---', soundboard_layout: '', columns_limit: '0' };
-  }
 
   if (entity === 'vmMessageGroups') {
     return { leave_vm_message_group_id: '', leave_vm_message_group_notes: '', active: 'N', user_group: '---ALL---' };
@@ -2347,7 +2330,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'comments_callback_screen', label: 'Comments Callback Screen', type: 'select', options: enumOptions(['ENABLED', 'DISABLED', 'REPLACE_CB_NOTES']) },
       { key: 'qc_comment_history', label: 'QC Comments History', type: 'select', options: enumOptions(['CLICK', 'AUTO_OPEN', 'CLICK_ALLOW_MINIMIZE', 'AUTO_OPEN_ALLOW_MINIMIZE']) },
       { key: 'allow_emails', label: 'Allow Emails', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'allow_chats', label: 'Allow Chats', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'max_inbound_calls', label: 'Max Inbound Calls', type: 'number' },
       { key: 'max_inbound_calls_outcome', label: 'Max Inbound Calls Outcome', type: 'select', options: enumOptions(['DEFAULT', 'ALLOW_AGENTDIRECT', 'ALLOW_MI_PAUSE', 'ALLOW_AGENTDIRECT_AND_MI_PAUSE']) },
       { key: 'hide_call_log_info', label: 'Hide Call Log Info', type: 'select', options: enumOptions(ensureOption(HIDE_CALL_LOG_OPTIONS, form?.hide_call_log_info)) },
@@ -2461,7 +2443,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'voicemail_id', label: 'Voicemail ID' },
       { key: 'user_code', label: 'User Code' },
       { key: 'user_nickname', label: 'Nickname' },
-      { key: 'territory', label: 'Territory' },
       { key: 'user_location', label: 'User Location' },
       { section: 'Admin Permissions' },
       { key: 'campaign_detail', label: 'Campaign Detail', type: 'select', options: flagOptions() },
@@ -2523,19 +2504,16 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
       { key: 'agent_choose_blended', label: 'Agent Choose Blended', type: 'select', options: flagOptions() },
       { key: 'closer_default_blended', label: 'Closer Default Blended', type: 'select', options: flagOptions() },
-      { key: 'agent_choose_territories', label: 'Agent Choose Territories', type: 'select', options: flagOptions() },
       { section: 'Agent Call Behavior' },
       { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
       { key: 'agentonly_callbacks', label: 'Agent-Only Callbacks', type: 'select', options: flagOptions() },
       { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
       { key: 'agentcall_email', label: 'Agent Email Calls', type: 'select', options: flagOptions() },
-      { key: 'agentcall_chat', label: 'Agent Chat Calls', type: 'select', options: flagOptions() },
       { key: 'vicidial_recording', label: 'Agent Recording', type: 'select', options: flagOptions() },
       { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
       { key: 'alter_agent_interface_options', label: 'Agent UI Options', type: 'select', options: flagOptions() },
       { key: 'custom_fields_modify', label: 'Custom Fields Modify', type: 'select', options: flagOptions() },
       { key: 'force_change_password', label: 'Force Password Change', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'callcard_admin', label: 'CallCard Admin', type: 'select', options: flagOptions('1', '0') },
       { key: 'realtime_block_user_info', label: 'Realtime Block User Info', type: 'select', options: flagOptions() },
       { section: 'Recording and Data Overrides' },
       { key: 'vicidial_recording_override', label: 'Recording Override', type: 'select', options: enumOptions(['DISABLED', 'NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE']) },
@@ -2595,7 +2573,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'user_hide_realtime', label: 'Hide Realtime User', type: 'select', options: flagOptions() },
       { key: 'ignore_ip_list', label: 'Ignore IP List', type: 'select', options: flagOptions() },
       { key: 'two_factor_override', label: '2FA Override', type: 'select', options: enumOptions(['NOT_ACTIVE', 'ENABLED', 'DISABLED']) },
-      { key: 'hci_enabled', label: 'HCI Enabled', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5', '6']) },
       { key: 'user_admin_redirect_url', label: 'Admin Redirect URL', type: 'textarea', wide: true },
       { section: 'Custom Fields' },
       { key: 'custom_one', label: 'Custom 1' },
@@ -2665,7 +2642,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'admin_viewable_groups', label: 'Admin Viewable Groups', type: 'multiSelectText', options: userGroupScopeOptions, allValue: '---ALL---', wide: true },
       { key: 'allowed_queue_groups', label: 'Allowed Queue Groups', type: 'multiSelectText', options: inboundScopeOptions, allValue: '---ALL---', wide: true },
       { key: 'admin_viewable_call_times', label: 'Admin Viewable Call Times', type: 'multiSelectText', options: callTimeScopeOptions, allValue: '---ALL---', wide: true },
-      { key: 'agent_allowed_chat_groups', label: 'Agent Allowed Chat Groups', type: 'multiSelectText', options: inboundScopeOptions, allValue: '---ALL---', wide: true },
       { section: 'Quality and Agent Scope' },
       { key: 'qc_allowed_campaigns', label: 'QC Allowed Campaigns', type: 'multiSelectText', options: campaignScopeOptions, allValue: '-ALL-CAMPAIGNS-', wide: true },
       { key: 'qc_allowed_inbound_groups', label: 'QC Allowed Inbound Groups', type: 'multiSelectText', options: inboundScopeOptions, allValue: '---ALL---', wide: true },
@@ -3225,18 +3201,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     ];
   }
 
-  if (entity === 'soundboards') {
-    return [
-      { key: 'avatar_id', label: 'Soundboard ID', disabled: mode === 'edit' },
-      { key: 'avatar_name', label: 'Name' },
-      { key: 'avatar_notes', label: 'Notes', type: 'textarea', wide: true },
-      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-      { key: 'soundboard_layout', label: 'Layout' },
-      { key: 'columns_limit', label: 'Columns Limit', type: 'number' },
-      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
-    ];
-  }
-
   if (entity === 'voicemailBoxes') {
     return [
       { key: 'voicemail_id', label: 'Voicemail ID (digits)', disabled: mode === 'edit' },
@@ -3366,15 +3330,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     ];
   }
 
-  if (entity === 'conferences' || entity === 'agentConferences') {
-    const serverOptions = (admin?.servers || []).map((row) => ({ value: row.server_ip, label: `${row.server_id || row.server_ip} - ${row.server_ip}` }));
-    return [
-      { key: 'conf_exten', label: 'Conference Extension', disabled: mode === 'edit' },
-      { key: 'server_ip', label: 'Server', type: serverOptions.length ? 'select' : 'text', options: serverOptions, disabled: mode === 'edit' },
-      { key: 'extension', label: 'Current Channel/Extension' },
-    ];
-  }
-
   if (entity === 'phoneAliases') {
     return [
       { key: 'alias_id', label: 'Alias ID', disabled: mode === 'edit' },
@@ -3451,7 +3406,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     { key: 'group_name', label: 'Group Name' },
     { key: 'group_color', label: 'Color', type: 'select', options: enumOptions(ensureOption(ADMIN_COLOR_OPTIONS, form?.group_color)) },
     { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-    { key: 'group_handling', label: 'Handling', type: 'select', options: enumOptions(['PHONE', 'EMAIL', 'CHAT']) },
+    { key: 'group_handling', label: 'Handling', type: 'select', options: enumOptions(['PHONE', 'EMAIL']) },
     { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
     { key: 'call_time_id', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
     voicemailField('voicemail_ext', 'Voicemail', form?.voicemail_ext),
@@ -3631,7 +3586,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     audioField('cid_cb_invalid_filename', 'CID Callback Invalid Prompt', form?.cid_cb_invalid_filename),
     audioField('cid_cb_reenter_filename', 'CID Callback Re-enter Prompt', form?.cid_cb_reenter_filename),
     audioField('cid_cb_error_filename', 'CID Callback Error Prompt', form?.cid_cb_error_filename),
-    { section: 'Lead Population and Chat' },
+    { section: 'Lead Population' },
     { key: 'populate_lead_ingroup', label: 'Populate Lead In-Group', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
     { key: 'populate_lead_province', label: 'Populate Lead Province' },
     { key: 'populate_state_areacode', label: 'Populate State From Area Code', type: 'select', options: enumOptions(ensureOption(INGROUP_POPULATE_STATE_OPTIONS, form?.populate_state_areacode)) },
@@ -3640,9 +3595,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     { key: 'populate_lead_comments', label: 'Populate Lead Comments', type: 'textarea', wide: true },
     { key: 'populate_lead_owner', label: 'Populate Lead Owner' },
     { key: 'add_lead_timezone', label: 'Add Lead Timezone', type: 'select', options: enumOptions(INGROUP_ADD_LEAD_TIMEZONE_OPTIONS) },
-    { key: 'customer_chat_screen_colors', label: 'Chat Screen Colors' },
-    { key: 'customer_chat_survey_link', label: 'Chat Survey Link', type: 'textarea', wide: true },
-    { key: 'customer_chat_survey_text', label: 'Chat Survey Text', type: 'textarea', wide: true },
     { section: 'Alerts and Custom Fields' },
     { key: 'agent_alert_exten', label: 'Agent Alert Extension' },
     { key: 'agent_alert_delay', label: 'Agent Alert Delay', type: 'number' },
@@ -3696,8 +3648,6 @@ function entityLabel(entity) {
     dropLists: 'Drop List',
     phoneAliases: 'Phone Alias',
     groupAliases: 'Group Alias',
-    conferences: 'Conference',
-    agentConferences: 'Agent Conference',
     ipLists: 'IP List',
     cidGroups: 'CID Group',
     queueGroups: 'Queue Group',
@@ -3709,7 +3659,6 @@ function entityLabel(entity) {
     automatedReports: 'Automated Report',
     moh: 'Music On Hold Group',
     tts: 'TTS Prompt',
-    soundboards: 'Soundboard',
     stateCallTimes: 'State Call Time',
     holidays: 'Holiday',
     statusGroups: 'Status Group',
@@ -3751,8 +3700,6 @@ function entityId(entity, row) {
     dropLists: row.dl_id,
     phoneAliases: row.alias_id,
     groupAliases: row.group_alias_id,
-    conferences: `${row.conf_exten}__${row.server_ip}`,
-    agentConferences: `${row.conf_exten}__${row.server_ip}`,
     ipLists: row.ip_list_id,
     cidGroups: row.cid_group_id,
     queueGroups: row.queue_group,
@@ -3764,7 +3711,6 @@ function entityId(entity, row) {
     automatedReports: row.report_id,
     moh: row.moh_id,
     tts: row.tts_id,
-    soundboards: row.avatar_id,
     stateCallTimes: row.state_call_time_id,
     holidays: row.holiday_id,
     statusGroups: row.status_group_id,
@@ -3794,8 +3740,6 @@ function entityPath(entity) {
     dropLists: 'drop-lists',
     phoneAliases: 'phone-aliases',
     groupAliases: 'group-aliases',
-    conferences: 'conferences',
-    agentConferences: 'agent-conferences',
     ipLists: 'ip-lists',
     cidGroups: 'cid-groups',
     queueGroups: 'queue-groups',
@@ -7027,7 +6971,6 @@ const INBOUND_HANDLING_TABS = [
   { key: 'ALL', label: 'All' },
   { key: 'PHONE', label: 'Phone' },
   { key: 'EMAIL', label: 'Email' },
-  { key: 'CHAT', label: 'Chat' },
 ];
 
 function InboundView({ admin, user, onAction }) {
@@ -8744,28 +8687,6 @@ function MediaToolsView({ admin, user, onAction }) {
               { key: 'tts_voice', label: 'Voice' },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
               ...(userCan(user, 'tts') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('tts', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
-          eyebrow="Audio"
-          title={`Soundboards (${formatNumber((admin?.soundboards || []).length)})`}
-          icon={Headphones}
-          headerActions={userCan(user, 'soundboards') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('soundboards', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No soundboards (agent audio-drop boards; audio upload is a follow-up)"
-            rows={(admin?.soundboards || []).map((row) => ({ ...row, id: row.avatar_id }))}
-            columns={[
-              { key: 'avatar_id', label: 'ID' },
-              { key: 'avatar_name', label: 'Name' },
-              { key: 'soundboard_layout', label: 'Layout' },
-              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-              ...(userCan(user, 'soundboards') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('soundboards', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -15991,33 +15912,6 @@ function AgentApp() {
   return <AgentConsole token={state.token} authInfo={state.authInfo} onExit={exit} />;
 }
 
-function MapView({ onNavigate }) {
-  const [query, setQuery] = useState('');
-  const pageCount = LEGACY_ADMIN_GROUPS.reduce((sum, group) => sum + group.items.length, 0);
-
-  return (
-    <>
-      <section className="metric-grid admin-metric-grid" aria-label="VICIdial route coverage">
-        <MetricCard icon={Compass} label="Route Groups" value={formatNumber(LEGACY_ADMIN_GROUPS.length)} detail="Admin areas reviewed" accent="#00d9ff" />
-        <MetricCard icon={ExternalLink} label="Page Entrypoints" value={formatNumber(pageCount)} detail="Accessible from GenX" accent="#73fbd3" />
-        <MetricCard icon={SlidersHorizontal} label="Native Forms" value="21" detail="Campaigns, campaign tools, users, groups, lists, inbound, DIDs, call menus, phones, scripts, filters, call times, shifts, statuses, servers, carriers" accent="#a8c7ff" />
-        <MetricCard icon={ShieldCheck} label="Auth Layer" value="VICIdial" detail="GenX session required first" accent="#ffd166" />
-      </section>
-
-      <section className="report-hero">
-        <div>
-          <p className="eyebrow">Coverage</p>
-          <h2>VICIdial Page Map</h2>
-          <p className="action-copy">This is the coverage checklist for converting the classic admin surface into native GenX pages.</p>
-        </div>
-        <CatalogSearch value={query} onChange={setQuery} placeholder="Search admin pages" />
-      </section>
-
-      <CatalogPanels groups={LEGACY_ADMIN_GROUPS} query={query} emptyLabel="No admin pages match that search" onNavigate={onNavigate} />
-    </>
-  );
-}
-
 function RecordingsView({ admin, token }) {
   const recordings = admin?.recordings || [];
   const [transcripts, setTranscripts] = useState([]);
@@ -16356,7 +16250,6 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} token={token} />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'map') return <MapView onNavigate={onNavigate} />;
   return <CommandView dashboard={dashboard} admin={admin} />;
 }
 

@@ -1,88 +1,3 @@
-export const LEGACY_ADMIN_GROUPS = [
-  {
-    title: 'Users and Access',
-    items: [
-      { label: 'Users', href: '/vicidial/admin.php?ADD=0A', view: 'users' },
-      { label: 'Add User', href: '/vicidial/admin.php?ADD=1', view: 'users' },
-      { label: 'User Groups', href: '/vicidial/admin.php?ADD=100000', view: 'userGroups' },
-      { label: 'Add User Group', href: '/vicidial/admin.php?ADD=111111', view: 'userGroups' },
-      { label: 'Remote Agents', href: '/vicidial/admin.php?ADD=10000', view: 'remoteAgents' },
-      { label: 'Extension Groups', href: '/vicidial/admin.php?ADD=12000', view: 'remoteAgents' },
-    ],
-  },
-  {
-    title: 'Campaigns and Leads',
-    items: [
-      { label: 'Campaigns', href: '/vicidial/admin.php?ADD=10', view: 'campaigns' },
-      { label: 'Add Campaign', href: '/vicidial/admin.php?ADD=11', view: 'campaigns' },
-      { label: 'Lists', href: '/vicidial/admin.php?ADD=100', view: 'lists' },
-      { label: 'Lead Search', href: '/vicidial/admin_search_lead.php', view: 'leadSearch' },
-      { label: 'Add List', href: '/vicidial/admin.php?ADD=111', view: 'lists' },
-      { label: 'Drop Lists', href: '/vicidial/admin.php?ADD=130', view: 'dropLists' },
-      { label: 'DNC', href: '/vicidial/admin.php?ADD=121', view: 'dnc' },
-      { label: 'Scripts', href: '/vicidial/admin.php?ADD=1000000', view: 'scripts' },
-      { label: 'Filters', href: '/vicidial/admin.php?ADD=10000000', view: 'leadFilters' },
-    ],
-  },
-  {
-    title: 'Inbound Routing',
-    items: [
-      { label: 'In-Groups', href: '/vicidial/admin.php?ADD=1000', view: 'inbound' },
-      { label: 'Add In-Group', href: '/vicidial/admin.php?ADD=1111', view: 'inbound' },
-      { label: 'DIDs', href: '/vicidial/admin.php?ADD=1300', view: 'dids' },
-      { label: 'Add DID', href: '/vicidial/admin.php?ADD=1311', view: 'dids' },
-      { label: 'Call Menus', href: '/vicidial/admin.php?ADD=1500', view: 'callMenus' },
-      { label: 'Add Call Menu', href: '/vicidial/admin.php?ADD=1511', view: 'callMenus' },
-      { label: 'Filter Phone Groups', href: '/vicidial/admin.php?ADD=1700', view: 'filterPhoneGroups' },
-      { label: 'Email In-Groups', href: '/vicidial/admin.php?ADD=1800' },
-      { label: 'Chat In-Groups', href: '/vicidial/admin.php?ADD=1900' },
-    ],
-  },
-  {
-    title: 'Platform',
-    items: [
-      { label: 'Phones', href: '/vicidial/admin.php?ADD=10000000000', view: 'phones' },
-      { label: 'Phone Aliases', href: '/vicidial/admin.php?ADD=12000000000', view: 'phones' },
-      { label: 'Group Aliases', href: '/vicidial/admin.php?ADD=13000000000', view: 'phones' },
-      { label: 'Servers', href: '/vicidial/admin.php?ADD=100000000000', view: 'system' },
-      { label: 'Carriers', href: '/vicidial/admin.php?ADD=140000000000', view: 'system' },
-      { label: 'Conferences', href: '/vicidial/admin.php?ADD=1000000000000', view: 'system' },
-      { label: 'Agent Conferences', href: '/vicidial/admin.php?ADD=10000000000000', view: 'system' },
-      { label: 'Conf Templates', href: '/vicidial/admin.php?ADD=130000000000', view: 'system' },
-    ],
-  },
-  {
-    title: 'System Configuration',
-    items: [
-      { label: 'Call Times', href: '/vicidial/admin.php?ADD=100000000', view: 'callTimes' },
-      { label: 'State Call Times', href: '/vicidial/admin.php?ADD=1000000000', view: 'callTimes' },
-      { label: 'Shifts', href: '/vicidial/admin.php?ADD=130000000', view: 'shifts' },
-      { label: 'System Settings', href: '/vicidial/admin.php?ADD=311111111111111', view: 'systemSettings' },
-      { label: 'System Statuses', href: '/vicidial/admin.php?ADD=321111111111111', view: 'statuses' },
-      { label: 'Status Groups', href: '/vicidial/admin.php?ADD=193000000000', view: 'statuses' },
-      { label: 'Screen Labels', href: '/vicidial/admin.php?ADD=180000000000', view: 'display' },
-      { label: 'Screen Colors', href: '/vicidial/admin.php?ADD=182000000000', view: 'display' },
-      { label: 'Settings Containers', href: '/vicidial/admin.php?ADD=192000000000', view: 'display' },
-    ],
-  },
-  {
-    title: 'Media and Tools',
-    items: [
-      { label: 'Music On Hold', href: '/vicidial/admin.php?ADD=160000000000', view: 'mediaTools' },
-      { label: 'Text To Speech', href: '/vicidial/admin.php?ADD=150000000000', view: 'mediaTools' },
-      { label: 'Voicemail', href: '/vicidial/admin.php?ADD=170000000000', view: 'mediaTools' },
-      { label: 'VM Message Groups', href: '/vicidial/admin.php?ADD=197000000000', view: 'mediaTools' },
-      { label: 'CID Groups', href: '/vicidial/admin.php?ADD=196000000000', view: 'mediaTools' },
-      { label: 'Queue Groups', href: '/vicidial/admin.php?ADD=198000000000', view: 'mediaTools' },
-      { label: 'Contacts', href: '/vicidial/admin.php?ADD=190000000000', view: 'mediaTools' },
-      { label: 'Automated Reports', href: '/vicidial/admin.php?ADD=194000000000', view: 'mediaTools' },
-      { label: 'IP Lists', href: '/vicidial/admin.php?ADD=195000000000', view: 'mediaTools' },
-      { label: 'Languages', href: '/vicidial/admin_languages.php?ADD=163000000000', view: 'mediaTools' },
-      { label: 'Audio Soundboards', href: '/vicidial/admin_soundboard.php?ADD=162000000000', view: 'mediaTools' },
-    ],
-  },
-];
-
 export const REPORT_GROUPS = [
   {
     title: 'Real-Time',
@@ -155,7 +70,6 @@ export const REPORT_GROUPS = [
       { label: 'Export Calls by Carrier', href: '/vicidial/call_report_export_carrier.php', view: 'reportExports' },
       { label: 'Export Leads', href: '/vicidial/lead_report_export.php', view: 'reportExports' },
       { label: 'Callbacks Export', href: '/vicidial/callbacks_export.php', view: 'reportExports' },
-      { label: 'CallCard Export', href: '/vicidial/callcard_report_export.php' },
       { label: 'Called Counts List IDs', href: '/vicidial/called_counts_multilist_report.php', view: 'reportCalledCounts' },
     ],
   },
@@ -173,7 +87,6 @@ export const REPORT_GROUPS = [
       { label: 'AMD Log', href: '/vicidial/AST_AMD_log_report.php', view: 'reportAmdLog' },
       { label: '3-Way Press Log', href: '/vicidial/AST_3way_press_log_report.php', view: 'reportThreewayPressLog' },
       { label: 'Quality Control', href: '/vicidial/AST_quality_control_report.php' },
-      { label: 'Agent Chat Log', href: '/vicidial/AST_chat_log_report.php' },
     ],
   },
   {
@@ -185,11 +98,9 @@ export const REPORT_GROUPS = [
       { label: 'Phone Stats', href: '/vicidial/phone_stats.php', view: 'reportPhoneStats' },
       { label: 'Process Report', href: '/vicidial/process_report.php', view: 'reportProcess' },
       { label: 'SPH Report', href: '/vicidial/sph_report.php', view: 'reportSph' },
-      { label: 'Medialog Inventory', href: '/vicidial/medialog_inventory_report.php' },
       { label: 'Webserver URL', href: '/vicidial/AST_webserver_url_report.php', view: 'reportWebserverUrl' },
       { label: 'URL Log', href: '/vicidial/AST_url_log_report.php', view: 'reportUrlLog' },
       { label: 'Demographic Quotas', href: '/vicidial/demographic_quotas_report.php' },
-      { label: 'Khomp Quick Stats', href: '/vicidial/khomp_quick_stats.php' },
     ],
   },
 ];
