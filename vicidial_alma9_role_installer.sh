@@ -530,9 +530,20 @@ INSERT IGNORE INTO vicidial_conferences SELECT * FROM _c2;
 CREATE TEMPORARY TABLE _c3 AS SELECT * FROM vicidial_confbridges WHERE server_ip='${conf_src}';
 UPDATE _c3 SET server_ip='${ip_address}', extension='', leave_3way='0', leave_3way_datetime=NULL;
 INSERT IGNORE INTO vicidial_confbridges SELECT * FROM _c3;
-CREATE TEMPORARY TABLE _p AS SELECT * FROM phones WHERE server_ip='${conf_src}' AND is_webphone='Y' LIMIT 1;
+CREATE TEMPORARY TABLE _p AS SELECT * FROM phones WHERE is_webphone='Y' LIMIT 1;
 UPDATE _p SET server_ip='${ip_address}';
 INSERT IGNORE INTO phones SELECT * FROM _p;
+INSERT INTO phones
+    (extension, dialplan_number, voicemail_id, server_ip,
+     login, pass, active, protocol, template_id,
+     conf_secret, is_webphone, user_group)
+SELECT
+    '9176', '9176', '9176', '${ip_address}',
+    '9176', default_phone_login_password, 'Y', 'SIP', 'WEBRTC',
+    default_phone_registration_password, 'Y', '---ALL---'
+FROM system_settings
+WHERE NOT EXISTS (SELECT 1 FROM phones WHERE server_ip='${ip_address}' AND is_webphone='Y')
+LIMIT 1;
 INSERT IGNORE INTO server_updater SET server_ip='${ip_address}', last_update=NOW();
 JOINCONF
         echo "Copied conference ranges and webphone template from ${conf_src} to ${ip_address}."
@@ -949,6 +960,7 @@ SELECT
     '9176', default_phone_login_password, 'Y', 'SIP', NULL, NULL, 'WEBRTC',
     default_phone_registration_password, 'Y', '---ALL---'
 FROM system_settings
+WHERE '${ast_active}' = 'Y'
 LIMIT 1
 ON DUPLICATE KEY UPDATE
     dialplan_number=VALUES(dialplan_number),
