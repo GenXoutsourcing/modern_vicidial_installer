@@ -7707,6 +7707,20 @@ function RealtimeMainReportView({ token, user }) {
   const { data, error } = useLiveReport('/reports/realtime-main', token, 5000);
   const agents = data?.agents || [];
   const campaigns = data?.campaigns || [];
+  // Tick the TIME column every second between the 5s data polls, like the
+  // legacy Real-Time report's MM:SS column (time since last_call_time).
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [fetchedAt, setFetchedAt] = useState(Date.now());
+  useEffect(() => { setFetchedAt(Date.now()); }, [data]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  function statusTime(row) {
+    if (row.status_seconds === null || row.status_seconds === undefined) return '';
+    const s = Math.max(0, Number(row.status_seconds) + Math.floor((nowTs - fetchedAt) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
   // Legacy blind_monitor gate: level >6 with agent API access (level 9 always).
   const canMonitor = Number(user?.userLevel || 0) >= 9
     || (Number(user?.userLevel || 0) > 6 && Boolean(user?.vdcAgentApiAccess));
@@ -7766,6 +7780,7 @@ function RealtimeMainReportView({ token, user }) {
               { key: 'user', label: 'Agent', render: (row) => row.full_name || row.user },
               { key: 'campaign_id', label: 'Campaign' },
               { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'READY'}>{row.status}</StatusPill> },
+              { key: 'status_seconds', label: 'Time', render: (row) => statusTime(row) },
               { key: 'pause_code', label: 'Pause Code', render: (row) => row.pause_code || 'None' },
               { key: 'calls_today', label: 'Calls Today', render: (row) => formatNumber(row.calls_today) },
               { key: 'server_ip', label: 'Server' },

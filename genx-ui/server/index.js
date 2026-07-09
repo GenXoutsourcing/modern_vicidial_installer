@@ -3878,7 +3878,8 @@ async function realtimeMainReport(req, res) {
   const agentCampaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'la.campaign_id', agentParams);
   const agents = await rows(
     `SELECT la.user, u.full_name, la.status, la.campaign_id, la.server_ip, la.calls_today,
-            la.last_call_time, la.pause_code, la.callerid, la.conf_exten, la.lead_id
+            la.last_call_time, la.pause_code, la.callerid, la.conf_exten, la.lead_id,
+            TIMESTAMPDIFF(SECOND, la.last_call_time, NOW()) AS status_seconds
      FROM vicidial_live_agents la
      LEFT JOIN vicidial_users u ON u.user = la.user
      WHERE ${agentCampaignWhere}
