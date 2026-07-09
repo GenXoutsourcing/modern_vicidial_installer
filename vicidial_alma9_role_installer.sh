@@ -1404,6 +1404,15 @@ fi
 [ -f /etc/my.cnf.original ] || cp /etc/my.cnf /etc/my.cnf.original
 echo "" > /etc/my.cnf
 
+# Size the MyISAM key buffer from actual RAM: ~50% on a dedicated DB box,
+# ~25% when the DB shares the server with web/telephony (express/combo).
+TOTAL_RAM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+if [ "$ROLE_WEB" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
+    KEY_BUFFER_MB=$((TOTAL_RAM_MB / 4))
+else
+    KEY_BUFFER_MB=$((TOTAL_RAM_MB / 2))
+fi
+[ "$KEY_BUFFER_MB" -lt 256 ] && KEY_BUFFER_MB=256
 
 cat <<MYSQLCONF>> /etc/my.cnf
 [mysql.server]
@@ -1421,7 +1430,7 @@ socket = /var/lib/mysql/mysql.sock # Same note as above
 
 # Stuff to tune for your hardware
 max_connections=2000 # If you have a dedicated database, change this to 2000
-key_buffer_size = 12G # Increase to be approximately 60% of system RAM when you have more then 8GB in the system
+key_buffer_size = ${KEY_BUFFER_MB}M # auto-sized from ${TOTAL_RAM_MB}MB RAM: 50% dedicated DB, 25% when sharing with web/telephony
 
 # In general most of the below settings don't need tuning
 log-error = /var/log/mysqld/mysqld.log
