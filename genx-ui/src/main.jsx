@@ -5595,7 +5595,7 @@ function ServersPanel({ admin, user, onAction }) {
   const canManage = userCan(user, 'servers');
 
   return (
-    <Panel eyebrow="Platform" title="VICIdial Servers" icon={Server} className="admin-wide-panel">
+    <Panel eyebrow="Platform" title="System Servers" icon={Server} className="admin-wide-panel">
       <DataTable
         emptyLabel="No servers returned"
         rows={servers.map((row) => ({ ...row, id: row.server_id }))}
@@ -5610,7 +5610,6 @@ function ServersPanel({ admin, user, onAction }) {
               </>
             ),
           },
-          { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
           { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
           { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
           { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
@@ -5636,7 +5635,7 @@ function ServersPanel({ admin, user, onAction }) {
               // genx-server-stats elsewhere); 2 missed beats = unreachable/unusable.
               const age = Number(row.heartbeat_age_sec);
               const down = !Number.isFinite(age) || age > 120;
-              return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Active</StatusPill>;
+              return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Online</StatusPill>;
             },
           },
           ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction?.('servers', 'edit', row)} /> }] : []),
