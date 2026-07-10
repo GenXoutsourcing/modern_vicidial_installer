@@ -281,6 +281,80 @@ const sessionTableReady = (async () => {
   }
 })();
 
+// GenX-owned permission layer, keyed by VICIdial user group so it inherits
+// the grouping the rest of the stack already enforces. First permission:
+// which nav sections the admin UI shows. No row (or 'ALL') = full nav, so
+// existing groups are unaffected until explicitly restricted.
+const GENX_NAV_SECTIONS = ['users', 'campaigns', 'lists', 'inbound', 'admin', 'reports'];
+
+const permTableReady = (async () => {
+  try {
+    await execute(
+      `CREATE TABLE IF NOT EXISTS genx_group_permissions (
+         user_group VARCHAR(20) NOT NULL,
+         permission VARCHAR(40) NOT NULL,
+         perm_value TEXT,
+         PRIMARY KEY (user_group, permission)
+       )`,
+    );
+    return true;
+  } catch (error) {
+    console.error('genx_group_permissions table unavailable; all groups get full nav', error.message);
+    return false;
+  }
+})();
+
+function parseNavSections(raw) {
+  const text = String(raw || '').trim();
+  if (!text || text.toUpperCase() === 'ALL') return GENX_NAV_SECTIONS;
+  const values = [...new Set(
+    text.split(',').map((item) => item.trim().toLowerCase()).filter((item) => GENX_NAV_SECTIONS.includes(item)),
+  )];
+  // An empty selection would leave only the dashboard; treat it as unset
+  // rather than locking the group out entirely.
+  return values.length ? values : GENX_NAV_SECTIONS;
+}
+
+async function navSectionsFor(userGroup) {
+  if (!(await permTableReady)) return GENX_NAV_SECTIONS;
+  try {
+    const [permRows] = await pool.query(
+      "SELECT perm_value FROM genx_group_permissions WHERE user_group = ? AND permission = 'nav_sections' LIMIT 1",
+      [userGroup || ''],
+    );
+    return parseNavSections(permRows?.[0]?.perm_value);
+  } catch {
+    return GENX_NAV_SECTIONS;
+  }
+}
+
+async function saveNavSections(userGroup, rawValue) {
+  if (rawValue === undefined || !(await permTableReady)) return;
+  const values = parseNavSections(rawValue);
+  try {
+    if (values.length === GENX_NAV_SECTIONS.length) {
+      await execute("DELETE FROM genx_group_permissions WHERE user_group = ? AND permission = 'nav_sections'", [userGroup]);
+    } else {
+      await execute(
+        "REPLACE INTO genx_group_permissions (user_group, permission, perm_value) VALUES (?, 'nav_sections', ?)",
+        [userGroup, values.join(',')],
+      );
+    }
+  } catch { /* nav gating is best-effort; stock flags still protect the API */ }
+}
+
+async function genxNavPermissionRows() {
+  if (!(await permTableReady)) return new Map();
+  try {
+    const [permRows] = await pool.query(
+      "SELECT user_group, perm_value FROM genx_group_permissions WHERE permission = 'nav_sections'",
+    );
+    return new Map((permRows || []).map((row) => [row.user_group, String(row.perm_value || '')]));
+  } catch {
+    return new Map();
+  }
+}
+
 async function persistSession(token, session) {
   if (!(await sessionTableReady)) return;
   try {
@@ -445,7 +519,9 @@ async function authenticateVicidialUser(username, password) {
   if (Number(user.user_level || 0) < config.minUserLevel) return null;
   if (!passwordMatches(password, user.pass)) return null;
 
-  return publicUser(user);
+  const pub = publicUser(user);
+  pub.navSections = await navSectionsFor(user.user_group);
+  return pub;
 }
 
 async function scalar(sql, params = [], fallback = 0) {
@@ -2446,6 +2522,10 @@ async function adminData(user) {
   ]);
   const systemSettings = systemSettingsRows?.[0] || {};
 
+  // GenX nav gating lives in genx_group_permissions; surface each group's
+  // setting so the User Groups edit modal can show and change it.
+  const navPerms = await genxNavPermissionRows();
+
   return {
     generatedAt: new Date().toISOString(),
     permissions: user?.permissions || {},
@@ -2506,7 +2586,7 @@ async function adminData(user) {
       called_leads: Number(item.called_leads || 0),
     })),
     inboundGroups,
-    userGroups,
+    userGroups: userGroups.map((row) => ({ ...row, genx_nav_sections: navPerms.get(row.user_group) || '' })),
     dids,
     phones,
     scripts,
@@ -9828,6 +9908,7 @@ async function deleteUserGroup(req, res) {
   try {
     const result = await execute('DELETE FROM vicidial_user_groups WHERE user_group = ? LIMIT 1', [id]);
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'group_not_found' });
+    await execute('DELETE FROM genx_group_permissions WHERE user_group = ?', [id]).catch(() => {});
     await adminLog(req, 'USERGROUPS', 'DELETE', id, 'GENX DELETE USER GROUP', 'DELETE FROM vicidial_user_groups', id);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
@@ -12653,6 +12734,7 @@ async function saveUserGroup(req, res, mode) {
       await adminLog(req, 'USERGROUPS', 'MODIFY', id, 'GENX MODIFY USER GROUP', 'UPDATE vicidial_user_groups', payload.group_name);
     }
 
+    await saveNavSections(id, req.body?.genx_nav_sections);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;

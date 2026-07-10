@@ -230,14 +230,31 @@ const NAV_ITEMS = [
 ];
 
 const NAV_GROUPS = [
-  { title: '', keys: ['command'] },
-  { title: 'Users', keys: ['users', 'remoteAgents'] },
-  { title: 'Campaigns', keys: ['campaigns', 'statuses', 'callTimes', 'scripts', 'leadFilters'] },
-  { title: 'Lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
-  { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['userGroups', 'phones', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
-  { title: 'Reports', keys: ['reports', 'recordings'] },
+  { title: '', section: '', keys: ['command'] },
+  { title: 'Users', section: 'users', keys: ['users', 'remoteAgents'] },
+  { title: 'Campaigns', section: 'campaigns', keys: ['campaigns', 'statuses', 'callTimes', 'scripts', 'leadFilters'] },
+  { title: 'Lists', section: 'lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
+  { title: 'Inbound', section: 'inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
+  { title: 'Admin', section: 'admin', keys: ['userGroups', 'phones', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
+  { title: 'Reports', section: 'reports', keys: ['reports', 'recordings'] },
 ];
+
+// GenX permission: which nav sections a user group can see. Stored in
+// genx_group_permissions (perm 'nav_sections'); no row = ALL.
+const NAV_SECTION_OPTIONS = [
+  { value: 'users', label: 'Users' },
+  { value: 'campaigns', label: 'Campaigns' },
+  { value: 'lists', label: 'Lists' },
+  { value: 'inbound', label: 'Inbound' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'reports', label: 'Reports' },
+];
+
+function navSectionValues(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.toUpperCase() === 'ALL') return NAV_SECTION_OPTIONS.map((option) => option.value);
+  return raw.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+}
 
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
@@ -1269,6 +1286,7 @@ function actionDefaults(entity, admin) {
     return {
       user_group: '',
       group_name: '',
+      genx_nav_sections: 'ALL',
       allowed_campaigns: '-ALL-CAMPAIGNS-',
       allowed_reports: 'ALL REPORTS',
       admin_viewable_groups: '---ALL---',
@@ -2656,6 +2674,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'allowed_custom_reports', label: 'Custom Reports', type: 'multiSelectText', options: reportScopeOptions, values: reportScopeValues, serialize: reportScopeText, wide: true },
       { key: 'reports_header_override', label: 'Reports Header Override', type: 'select', options: enumOptions(['DISABLED', 'LOGO_ONLY_SMALL', 'LOGO_ONLY_LARGE', 'ALT_1', 'ALT_2', 'ALT_3', 'ALT_4']) },
       { key: 'admin_home_url', label: 'Admin Home URL', wide: true },
+      { section: 'GenX Permissions' },
+      { key: 'genx_nav_sections', label: 'Nav Menu Access', type: 'checkboxGroupText', options: NAV_SECTION_OPTIONS, values: navSectionValues, serialize: (values) => values.join(','), wide: true },
     ];
   }
 
@@ -6936,6 +6956,14 @@ function UserGroupsView({ admin, user, onAction }) {
               { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => row.admin_viewable_groups || 'None' },
               { key: 'allowed_queue_groups', label: 'Queues', render: (row) => row.allowed_queue_groups || 'None' },
               { key: 'shift_enforcement', label: 'Shift', render: (row) => row.shift_enforcement || 'OFF' },
+              {
+                key: 'genx_nav_sections',
+                label: 'Nav Access',
+                render: (row) => {
+                  const sections = navSectionValues(row.genx_nav_sections);
+                  return sections.length === NAV_SECTION_OPTIONS.length ? 'Full' : sections.join(', ');
+                },
+              },
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('userGroups', 'edit', row)} /> }] : []),
             ]}
           />
@@ -16039,6 +16067,11 @@ function AdminShell({ token, user, onLogout }) {
   // Report views (reportHopperList etc.) live under the Reports nav entry:
   // highlight Reports in the sidebar and show its heading for all of them.
   const navView = activeView.startsWith('report') && activeView !== 'reports' ? 'reports' : activeView;
+  // GenX nav gating: the login payload carries the user group's allowed
+  // sections; missing/empty means full nav.
+  const allowedNavSections = new Set(
+    user?.navSections?.length ? user.navSections : NAV_SECTION_OPTIONS.map((option) => option.value),
+  );
   const activeMeta = NAV_ITEMS.find((item) => item.key === activeView)
     || NAV_ITEMS.find((item) => item.key === navView)
     || NAV_ITEMS[0];
@@ -16079,7 +16112,7 @@ function AdminShell({ token, user, onLogout }) {
 
       <div className="shell-body">
         <nav className="side-nav" aria-label="GenX admin navigation">
-          {NAV_GROUPS.map((group) => (
+          {NAV_GROUPS.filter((group) => !group.section || allowedNavSections.has(group.section)).map((group) => (
             <div className="nav-group" key={group.title || 'top'}>
               {group.title && <p className="nav-group-title">{group.title}</p>}
               {group.keys.map((key) => {
