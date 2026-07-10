@@ -355,6 +355,26 @@ async function genxNavPermissionRows() {
   }
 }
 
+// GenX permission: a group's flag_template forces a set of vicidial_users
+// columns to fixed values for every member. This makes a role (e.g. the
+// ADMIN floor-manager profile) group-enforced rather than hand-set per user:
+// creating or editing a member re-stamps the template, and adding the API
+// group's template is how API access is granted/revoked.
+async function flagTemplateFor(userGroup) {
+  if (!userGroup || !(await permTableReady)) return null;
+  try {
+    const [permRows] = await pool.query(
+      "SELECT perm_value FROM genx_group_permissions WHERE user_group = ? AND permission = 'flag_template' LIMIT 1",
+      [userGroup],
+    );
+    if (!permRows?.[0]?.perm_value) return null;
+    const parsed = JSON.parse(permRows[0].perm_value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function persistSession(token, session) {
   if (!(await sessionTableReady)) return;
   try {
@@ -3409,6 +3429,22 @@ function restrictedUserEditor(genxUser) {
   return Array.isArray(genxUser?.navSections) && !genxUser.navSections.includes('admin');
 }
 
+// The single user group whose members are the only ones allowed to use the
+// VICIdial API. Stored as a system row so it's configurable without a code
+// change; null means "no API group configured" and the gate stays inert.
+async function apiUserGroup() {
+  if (!(await permTableReady)) return null;
+  try {
+    const [permRows] = await pool.query(
+      "SELECT perm_value FROM genx_group_permissions WHERE user_group = '__GENX__' AND permission = 'api_user_group' LIMIT 1",
+    );
+    const name = String(permRows?.[0]?.perm_value || '').trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveUser(req, res, mode) {
   if (!requireModify(req, res, 'modifyUsers')) return;
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
@@ -3446,6 +3482,29 @@ async function saveUser(req, res, mode) {
   // The essential form doesn't carry this field; don't let the scope merge
   // wipe it for restricted editors.
   if (restrictedUserEditor(req.genxUser)) delete payload.max_inbound_filter_ingroups;
+
+  // Resolve the group this user will belong to after the save (restricted
+  // editors can't change it, so fall back to the stored value).
+  let effectiveGroup = cleanId(payload.user_group, 20);
+  if (!effectiveGroup || restrictedUserEditor(req.genxUser)) {
+    const [current] = await rows('SELECT user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+    effectiveGroup = current?.user_group || effectiveGroup || 'ADMIN';
+  }
+
+  // Group-enforced flag template: force the group's fixed flags regardless of
+  // what the form submitted, so the role is defined by the group, not per user.
+  const template = await flagTemplateFor(effectiveGroup);
+  if (template) Object.assign(payload, template);
+
+  // API gate: only members of the configured API group keep API access; every
+  // other user has both API surfaces revoked on every save.
+  const apiGroup = await apiUserGroup();
+  if (apiGroup) {
+    const isApiUser = effectiveGroup === apiGroup;
+    payload.vdc_agent_api_access = isApiUser ? '1' : '0';
+    payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
+  }
+
   const { assignments, values } = dynamicAssignments(payload);
 
   try {
