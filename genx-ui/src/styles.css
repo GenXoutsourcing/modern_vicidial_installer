@@ -482,6 +482,14 @@ body {
   gap: 12px;
 }
 
+.command-metric-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.command-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric-card {
   display: flex;
   min-height: 126px;

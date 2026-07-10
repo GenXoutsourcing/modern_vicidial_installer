@@ -203,9 +203,8 @@ const WEEKDAY_OPTIONS = [
 const NAV_ITEMS = [
   { key: 'command', label: 'Command', eyebrow: 'Live Operations', title: 'VICIdial command layer', icon: LayoutDashboard },
   { key: 'campaigns', label: 'Campaigns', eyebrow: 'Admin', title: 'Campaign Control', icon: Radio },
-  { key: 'campaignTools', label: 'Campaign Tools', eyebrow: 'Admin', title: 'Campaign Tools', icon: SlidersHorizontal },
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
-  { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups and Scope', icon: ShieldCheck },
+  { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups', icon: ShieldCheck },
   { key: 'lists', label: 'Lists', eyebrow: 'Admin', title: 'Lists and Lead Inventory', icon: Database },
   { key: 'leadSearch', label: 'Lead Search', eyebrow: 'Lists', title: 'Lead Search and Modify', icon: Search },
   { key: 'leadLoader', label: 'Lead Loader', eyebrow: 'Admin', title: 'Lead Loader', icon: FileText },
@@ -236,7 +235,7 @@ const NAV_ITEMS = [
 const NAV_GROUPS = [
   { title: '', keys: ['command'] },
   { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
-  { title: 'Campaigns', keys: ['campaigns', 'campaignTools', 'statuses'] },
+  { title: 'Campaigns', keys: ['campaigns', 'statuses'] },
   { title: 'Lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
@@ -5486,6 +5485,7 @@ function CampaignTable({ campaigns }) {
 
 function CommandView({ dashboard, admin }) {
   const metrics = dashboard?.metrics || {};
+  const counts = admin?.counts || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
 
   const metricCards = [
@@ -5510,11 +5510,25 @@ function CommandView({ dashboard, admin }) {
       detail: `${formatSeconds(metrics.averageSeconds)} avg call`,
       accent: '#7bb7ff',
     },
+    {
+      icon: PhoneCall,
+      label: 'Phones',
+      value: formatNumber(counts.activePhones),
+      detail: `${formatNumber(counts.phones)} total`,
+      accent: '#b9f2ff',
+    },
+    {
+      icon: Server,
+      label: 'Servers',
+      value: formatNumber(counts.activeServers),
+      detail: `${formatNumber(counts.servers)} total`,
+      accent: '#7bb7ff',
+    },
   ];
 
   return (
     <>
-      <section className="metric-grid" aria-label="Operations metrics">
+      <section className="metric-grid command-metric-grid" aria-label="Operations metrics">
         {metricCards.map((card) => (
           <MetricCard key={card.label} {...card} />
         ))}
@@ -5546,12 +5560,10 @@ function AdminSummary({ admin }) {
     { icon: Users, label: 'Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total`, accent: '#73fbd3' },
     { icon: Database, label: 'Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total`, accent: '#a8c7ff' },
     { icon: PhoneCall, label: 'DIDs', value: counts.activeDids, detail: `${formatNumber(counts.dids)} total`, accent: '#00ffa8' },
-    { icon: PhoneCall, label: 'Phones', value: counts.activePhones, detail: `${formatNumber(counts.phones)} total`, accent: '#b9f2ff' },
-    { icon: Server, label: 'Servers', value: counts.activeServers, detail: `${formatNumber(counts.servers)} total`, accent: '#7bb7ff' },
   ];
 
   return (
-    <section className="metric-grid admin-metric-grid" aria-label="Admin metrics">
+    <section className="metric-grid command-summary-grid" aria-label="Admin metrics">
       {cards.map((card) => (
         <MetricCard key={card.label} {...card} />
       ))}
@@ -5614,125 +5626,6 @@ function CampaignsView({ admin, user, onAction }) {
                   </RowActions>
                 ),
               }] : []),
-            ]}
-          />
-        </Panel>
-      </section>
-    </>
-  );
-}
-
-function CampaignToolsView({ admin, user, onAction }) {
-  const pauseCodes = admin?.pauseCodes || [];
-  const hotkeys = admin?.campaignHotkeys || [];
-  const recycle = admin?.leadRecycle || [];
-  const listMixes = admin?.listMixes || [];
-  const canManage = userCan(user, 'pauseCodes');
-  const statusNameMap = new Map([
-    ...(admin?.lookups?.statuses || []),
-    ...(admin?.lookups?.campaignStatuses || []),
-  ].map((item) => [String(item.status || ''), item.status_name || item.status]));
-  const statusLabel = (status) => `${status}${statusNameMap.get(String(status || '')) ? ` - ${statusNameMap.get(String(status || ''))}` : ''}`;
-
-  return (
-    <>
-      <ActionBar
-        entity="pauseCodes"
-        label="Pause Code"
-        user={user}
-        onAction={onAction}
-        extraActions={canManage ? (
-          <>
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('campaignHotkeys', 'create')}>
-              <Plus size={17} aria-hidden="true" />
-              Add Hotkey
-            </button>
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('leadRecycle', 'create')}>
-              <Plus size={17} aria-hidden="true" />
-              Add Recycle
-            </button>
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('listMixes', 'create')}>
-              <Plus size={17} aria-hidden="true" />
-              Add List Mix
-            </button>
-          </>
-        ) : null}
-      >
-        <p className="action-copy">Manage campaign pause codes, disposition hotkeys, lead recycle rules, and list mix containers.</p>
-      </ActionBar>
-      <section className="admin-grid">
-        <Panel eyebrow="Campaign Tools" title="Pause Codes" icon={Timer} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No pause codes returned"
-            rows={pauseCodes.map((row) => ({ ...row, id: `${row.campaign_id}-${row.pause_code}` }))}
-            columns={[
-              {
-                key: 'pause_code',
-                label: 'Pause Code',
-                render: (row) => (
-                  <>
-                    <strong>{row.pause_code}</strong>
-                    <span>{row.pause_code_name || 'Unnamed pause code'}</span>
-                  </>
-                ),
-              },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
-              { key: 'billable', label: 'Billable', render: (row) => row.billable || 'NO' },
-              { key: 'time_limit', label: 'Limit', render: (row) => formatNumber(row.time_limit) },
-              { key: 'require_mgr_approval', label: 'Approval', render: (row) => row.require_mgr_approval || 'NO' },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('pauseCodes', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel eyebrow="Dispositions" title="Campaign Hotkeys" icon={Gauge} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No campaign hotkeys returned"
-            rows={hotkeys.map((row) => ({ ...row, id: `${row.campaign_id}-${row.hotkey}` }))}
-            columns={[
-              { key: 'hotkey', label: 'Hotkey', render: (row) => <strong>{row.hotkey}</strong> },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
-              { key: 'status', label: 'Status', render: (row) => statusLabel(row.status) },
-              { key: 'status_name', label: 'Name', render: (row) => row.status_name || 'None' },
-              { key: 'selectable', label: 'Selectable', render: (row) => <StatusPill ok={row.selectable === 'Y'}>{row.selectable === 'Y' ? 'Yes' : 'No'}</StatusPill> },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('campaignHotkeys', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel eyebrow="Lead Flow" title="Lead Recycle" icon={RefreshCcw} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No lead recycle rules returned"
-            rows={recycle.map((row) => ({ ...row, id: row.recycle_id }))}
-            columns={[
-              { key: 'recycle_id', label: 'ID', render: (row) => row.recycle_id },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
-              { key: 'status', label: 'Status', render: (row) => statusLabel(row.status) },
-              { key: 'attempt_delay', label: 'Delay', render: (row) => `${formatNumber(row.attempt_delay)}s` },
-              { key: 'attempt_maximum', label: 'Max', render: (row) => row.attempt_maximum },
-              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('leadRecycle', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel eyebrow="Lists" title="List Mixes" icon={Database} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No list mixes returned"
-            rows={listMixes.map((row) => ({ ...row, id: row.vcl_id }))}
-            columns={[
-              {
-                key: 'list_mix',
-                label: 'List Mix',
-                render: (row) => (
-                  <>
-                    <strong>{row.vcl_id}</strong>
-                    <span>{row.vcl_name || 'Unnamed list mix'}</span>
-                  </>
-                ),
-              },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
-              { key: 'mix_method', label: 'Method', render: (row) => row.mix_method || 'IN_ORDER' },
-              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'ACTIVE'}>{row.status || 'INACTIVE'}</StatusPill> },
-              { key: 'list_mix_container', label: 'Rules', render: (row) => String(row.list_mix_container || '').trim() ? 'Configured' : 'Empty' },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('listMixes', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -6926,12 +6819,6 @@ function InboundView({ admin, user, onAction }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Queue" title="Routing Health" icon={Gauge}>
-          <div className="quick-stack">
-            <MetricCard icon={Headphones} label="Active Groups" value={formatNumber(groups.filter((row) => row.active === 'Y').length)} detail={`${formatNumber(groups.length)} configured`} accent="#00d9ff" />
-            <MetricCard icon={Timer} label="Drop Rules" value={formatNumber(groups.filter((row) => Number(row.drop_call_seconds || 0) > 0).length)} detail="Groups with drop timing" accent="#ffd166" />
-          </div>
-        </Panel>
       </section>
     </>
   );
@@ -6947,7 +6834,7 @@ function UserGroupsView({ admin, user, onAction }) {
         <p className="action-copy">Control campaign access, report access, queue visibility, and manager scope from the GenX permission layer.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Access" title="User Groups and Scope" icon={ShieldCheck} className="admin-wide-panel">
+        <Panel eyebrow="Access" title="User Groups" icon={ShieldCheck} className="admin-wide-panel">
           <DataTable
             emptyLabel="No user groups returned"
             rows={groups.map((row) => ({ ...row, id: row.user_group }))}
@@ -6970,12 +6857,6 @@ function UserGroupsView({ admin, user, onAction }) {
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('userGroups', 'edit', row)} /> }] : []),
             ]}
           />
-        </Panel>
-        <Panel eyebrow="Scope" title="Access Snapshot" icon={ShieldCheck}>
-          <div className="quick-stack">
-            <MetricCard icon={Radio} label="All Campaign Groups" value={formatNumber(groups.filter((row) => String(row.allowed_campaigns || '').includes('ALL')).length)} detail="Groups with broad campaign scope" accent="#00d9ff" />
-            <MetricCard icon={FileText} label="All Report Groups" value={formatNumber(groups.filter((row) => String(row.allowed_reports || '').toUpperCase().includes('ALL')).length)} detail="Groups with broad report scope" accent="#73fbd3" />
-          </div>
         </Panel>
       </section>
     </>
@@ -7412,25 +7293,12 @@ function ShiftsView({ admin, user, onAction }) {
 
 function StatusesView({ admin, user, onAction }) {
   const statuses = admin?.statuses || [];
-  const campaignStatuses = admin?.campaignStatuses || [];
   const canManageSystem = userCan(user, 'statuses');
-  const canManageCampaign = userCan(user, 'campaignStatuses');
 
   return (
     <>
-      <ActionBar
-        entity="statuses"
-        label="System Status"
-        user={user}
-        onAction={onAction}
-        extraActions={canManageCampaign ? (
-          <button type="button" className="secondary-action compact-action" onClick={() => onAction('campaignStatuses', 'create')}>
-            <Plus size={17} aria-hidden="true" />
-            Add Campaign Status
-          </button>
-        ) : null}
-      >
-        <p className="action-copy">Manage system and campaign disposition codes, reporting categories, callbacks, DNC, sale flags, and contact outcomes.</p>
+      <ActionBar entity="statuses" label="System Status" user={user} onAction={onAction}>
+        <p className="action-copy">Manage system disposition codes, reporting categories, callbacks, DNC, sale flags, and contact outcomes.</p>
       </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="System" title="System Statuses" icon={Gauge} className="admin-wide-panel">
@@ -7454,30 +7322,6 @@ function StatusesView({ admin, user, onAction }) {
               { key: 'dnc', label: 'DNC', render: (row) => row.dnc || 'N' },
               { key: 'callback', label: 'Callback', render: (row) => row.scheduled_callback || 'N' },
               ...(canManageSystem ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('statuses', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel eyebrow="Campaign" title="Campaign Statuses" icon={Radio} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No campaign statuses returned"
-            rows={campaignStatuses.map((row) => ({ ...row, id: `${row.campaign_id}-${row.status}` }))}
-            columns={[
-              {
-                key: 'status',
-                label: 'Status',
-                render: (row) => (
-                  <>
-                    <strong>{row.status}</strong>
-                    <span>{row.status_name || 'Unnamed status'}</span>
-                  </>
-                ),
-              },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id },
-              { key: 'category', label: 'Category', render: (row) => row.category || 'UNDEFINED' },
-              { key: 'selectable', label: 'Selectable', render: (row) => <StatusPill ok={row.selectable === 'Y'}>{row.selectable === 'Y' ? 'Yes' : 'No'}</StatusPill> },
-              { key: 'sale', label: 'Sale', render: (row) => row.sale || 'N' },
-              { key: 'dnc', label: 'DNC', render: (row) => row.dnc || 'N' },
-              ...(canManageCampaign ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('campaignStatuses', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
@@ -16060,7 +15904,6 @@ function SystemView({ admin, user, onAction }) {
 function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
   if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'campaignTools') return <CampaignToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
