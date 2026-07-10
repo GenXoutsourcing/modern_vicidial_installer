@@ -229,17 +229,13 @@ const NAV_ITEMS = [
   { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
 ];
 
-// Sidebar grouping mirrors legacy VICIdial admin's menu bar so navigation
-// muscle-memory transfers: Users | Campaigns | Lists | Scripts | Filters |
-// Inbound | User Groups | Admin | Reports.
 const NAV_GROUPS = [
   { title: '', keys: ['command'] },
-  { title: 'Users', keys: ['users', 'userGroups', 'remoteAgents'] },
-  { title: 'Campaigns', keys: ['campaigns', 'statuses'] },
+  { title: 'Users', keys: ['users', 'remoteAgents'] },
+  { title: 'Campaigns', keys: ['campaigns', 'statuses', 'callTimes', 'scripts', 'leadFilters'] },
   { title: 'Lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
-  { title: 'Scripts & Filters', keys: ['scripts', 'leadFilters'] },
   { title: 'Inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', keys: ['phones', 'callTimes', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
+  { title: 'Admin', keys: ['userGroups', 'phones', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
   { title: 'Reports', keys: ['reports', 'recordings'] },
 ];
 
