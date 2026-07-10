@@ -490,6 +490,14 @@ body {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.command-servers-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.command-servers-grid .admin-wide-panel {
+  grid-column: 1;
+}
+
 .metric-card {
   display: flex;
   min-height: 126px;
