@@ -3496,12 +3496,15 @@ async function saveUser(req, res, mode) {
   const template = await flagTemplateFor(effectiveGroup);
   if (template) Object.assign(payload, template);
 
-  // API gate: only members of the configured API group keep API access; every
-  // other user has both API surfaces revoked on every save.
+  // API gate: only members of the configured API group may use the external
+  // Non-Agent API (api_allowed_functions='' disables it for everyone else).
+  // vdc_agent_api_access is NOT forced off here — it doubles as the internal
+  // agent-control permission (listen/barge, legacy report agent logout), so
+  // it stays a per-user/template flag; APIUSERS members always get it.
   const apiGroup = await apiUserGroup();
   if (apiGroup) {
     const isApiUser = effectiveGroup === apiGroup;
-    payload.vdc_agent_api_access = isApiUser ? '1' : '0';
+    if (isApiUser) payload.vdc_agent_api_access = '1';
     payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
   }
 
