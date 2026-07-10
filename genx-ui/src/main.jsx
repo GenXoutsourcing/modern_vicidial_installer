@@ -5483,7 +5483,32 @@ function CampaignTable({ campaigns }) {
   );
 }
 
-function CommandView({ dashboard, admin }) {
+const DASHBOARD_POLL_MS = 5000;
+
+// Counts down to the next Mission Control auto-refresh; the anchor resets
+// whenever a new dashboard payload lands (updatedAt changes).
+function RefreshCountdown({ updatedAt, intervalMs = DASHBOARD_POLL_MS }) {
+  const anchorRef = useRef(Date.now());
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    anchorRef.current = Date.now();
+  }, [updatedAt]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((n) => n + 1), 500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const secondsLeft = Math.max(0, Math.ceil((intervalMs - (Date.now() - anchorRef.current)) / 1000));
+  return (
+    <span>
+      <RefreshCcw size={16} aria-hidden="true" /> Refresh in {secondsLeft}s
+    </span>
+  );
+}
+
+function CommandView({ dashboard, admin, user, onAction }) {
   const metrics = dashboard?.metrics || {};
   const counts = admin?.counts || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
@@ -5509,6 +5534,13 @@ function CommandView({ dashboard, admin }) {
       value: metrics.talkTimeLabel || '0m',
       detail: `${formatSeconds(metrics.averageSeconds)} avg call`,
       accent: '#7bb7ff',
+    },
+    {
+      icon: Activity,
+      label: 'Current Dials',
+      value: formatNumber(metrics.currentCalls),
+      detail: `${formatNumber(metrics.currentCallsLive)} connected`,
+      accent: '#ffd166',
     },
     {
       icon: PhoneCall,
@@ -5550,7 +5582,67 @@ function CommandView({ dashboard, admin }) {
         />
         <CampaignTable campaigns={dashboard?.campaigns || []} />
       </section>
+
+      <section className="admin-grid">
+        <ServersPanel admin={admin} user={user} onAction={onAction} />
+      </section>
     </>
+  );
+}
+
+function ServersPanel({ admin, user, onAction }) {
+  const servers = admin?.servers || [];
+  const canManage = userCan(user, 'servers');
+
+  return (
+    <Panel eyebrow="Platform" title="VICIdial Servers" icon={Server} className="admin-wide-panel">
+      <DataTable
+        emptyLabel="No servers returned"
+        rows={servers.map((row) => ({ ...row, id: row.server_id }))}
+        columns={[
+          {
+            key: 'server_id',
+            label: 'Server',
+            render: (row) => (
+              <>
+                <strong>{row.server_id}</strong>
+                <span>{row.server_description || row.server_ip}</span>
+              </>
+            ),
+          },
+          { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
+          { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
+          { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
+          { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
+          {
+            key: 'disk_usage',
+            label: 'HD Usage',
+            render: (row) => {
+              // disk_usage is AST_update's "N pct|" string per df row; show the fullest partition.
+              const pcts = String(row.disk_usage || '').split('|')
+                .map((part) => Number(part.trim().split(' ')[1]))
+                .filter((n) => Number.isFinite(n));
+              if (!pcts.length) return 'Unknown';
+              const worst = Math.max(...pcts);
+              return worst >= 85 ? <StatusPill ok={false}>{worst}%</StatusPill> : `${worst}%`;
+            },
+          },
+          {
+            key: 'active',
+            label: 'Status',
+            render: (row) => {
+              if (row.active !== 'Y') return <StatusPill ok={false}>Off</StatusPill>;
+              // Stats heartbeat is written every minute (AST_update on telephony,
+              // genx-server-stats elsewhere); 2 missed beats = unreachable/unusable.
+              const age = Number(row.heartbeat_age_sec);
+              const down = !Number.isFinite(age) || age > 120;
+              return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Active</StatusPill>;
+            },
+          },
+          ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction?.('servers', 'edit', row)} /> }] : []),
+        ]}
+      />
+    </Panel>
   );
 }
 
@@ -15781,9 +15873,7 @@ function RecordingsView({ admin, token }) {
 }
 
 function SystemView({ admin, user, onAction }) {
-  const servers = admin?.servers || [];
   const carriers = admin?.carriers || [];
-  const canManageServers = userCan(user, 'servers');
   const canManageCarriers = userCan(user, 'carriers');
 
   return (
@@ -15803,54 +15893,6 @@ function SystemView({ admin, user, onAction }) {
         <p className="action-copy">Manage VICIdial servers, conference settings, websocket endpoints, and carrier routing records.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Platform" title="VICIdial Servers" icon={Server} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No servers returned"
-            rows={servers.map((row) => ({ ...row, id: row.server_id }))}
-            columns={[
-              {
-                key: 'server_id',
-                label: 'Server',
-                render: (row) => (
-                  <>
-                    <strong>{row.server_id}</strong>
-                    <span>{row.server_description || row.server_ip}</span>
-                  </>
-                ),
-              },
-              { key: 'asterisk_version', label: 'Asterisk', render: (row) => row.asterisk_version || 'Unknown' },
-              { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
-              { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
-              { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
-              {
-                key: 'disk_usage',
-                label: 'HD Usage',
-                render: (row) => {
-                  // disk_usage is AST_update's "N pct|" string per df row; show the fullest partition.
-                  const pcts = String(row.disk_usage || '').split('|')
-                    .map((part) => Number(part.trim().split(' ')[1]))
-                    .filter((n) => Number.isFinite(n));
-                  if (!pcts.length) return 'Unknown';
-                  const worst = Math.max(...pcts);
-                  return worst >= 85 ? <StatusPill ok={false}>{worst}%</StatusPill> : `${worst}%`;
-                },
-              },
-              {
-                key: 'active',
-                label: 'Status',
-                render: (row) => {
-                  if (row.active !== 'Y') return <StatusPill ok={false}>Off</StatusPill>;
-                  // Stats heartbeat is written every minute (AST_update on telephony,
-                  // genx-server-stats elsewhere); 2 missed beats = unreachable/unusable.
-                  const age = Number(row.heartbeat_age_sec);
-                  const down = !Number.isFinite(age) || age > 120;
-                  return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Active</StatusPill>;
-                },
-              },
-              ...(canManageServers ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('servers', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
         <Panel eyebrow="Telephony" title="Carriers" icon={PhoneCall} className="admin-wide-panel">
           <DataTable
             emptyLabel="No carriers returned"
@@ -15902,7 +15944,7 @@ function SystemView({ admin, user, onAction }) {
 }
 
 function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
-  if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} />;
+  if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
@@ -16038,7 +16080,7 @@ function AdminShell({ token, user, onLogout }) {
   // Mission Control tiles poll fast so live dialing is visible; the heavier
   // admin catalog stays on the slower cycle.
   useEffect(() => {
-    const timer = window.setInterval(loadDashboard, 5000);
+    const timer = window.setInterval(loadDashboard, DASHBOARD_POLL_MS);
     return () => window.clearInterval(timer);
   }, [loadDashboard]);
 
@@ -16121,6 +16163,7 @@ function AdminShell({ token, user, onLogout }) {
             </div>
             <div className="strip-items">
               {activeView === 'command' && <RangeControl value={range} onChange={setRange} />}
+              {activeView === 'command' && <RefreshCountdown updatedAt={updatedAt} />}
               <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
               <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
               <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.3</span>
