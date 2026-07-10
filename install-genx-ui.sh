@@ -214,10 +214,28 @@ EOF
 cat > "$APACHE_FILE" <<EOF
 # Managed by modern_vicidial_installer/install-genx-ui.sh
 ProxyPreserveHost On
+ProxyPass /genxapi/ !
 ProxyPass /genx/ http://127.0.0.1:$PORT/ retry=0 timeout=30
 ProxyPassReverse /genx/ http://127.0.0.1:$PORT/
 RedirectMatch 302 ^/genx$ /genx/
 EOF
+
+# Block the legacy VICIdial API entry points (Non-Agent, Agent and QC APIs).
+# The GenX API at /genxapi/api.php replaces them; blocking at the web server
+# survives VICIdial upgrades (unlike deleting the files). Served from the PHP
+# docroot, so it is excluded from the /genx proxy above.
+cat > /etc/httpd/conf.d/genx-block-legacy-api.conf <<'BLOCKEOF'
+# Managed by modern_vicidial_installer/install-genx-ui.sh
+<LocationMatch "^/(agc/api|vicidial/non_agent_api|vicidial/qc_api)\.php$">
+    Require all denied
+</LocationMatch>
+BLOCKEOF
+
+# Install the GenX API replacement into the PHP docroot.
+if [ -f "$SCRIPT_DIR/genx-ui/genxapi/api.php" ]; then
+    install -d -m 0755 /var/www/html/genxapi
+    install -m 0644 "$SCRIPT_DIR/genx-ui/genxapi/api.php" /var/www/html/genxapi/api.php
+fi
 
 # A slave DB that joins the cluster AFTER this web install would never be
 # picked up (discovery only ran at install time). This cron re-runs the same
