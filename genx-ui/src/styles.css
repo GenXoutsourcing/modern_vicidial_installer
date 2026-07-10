@@ -483,11 +483,7 @@ body {
 }
 
 .command-metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.command-summary-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .admin-grid.command-servers-grid {

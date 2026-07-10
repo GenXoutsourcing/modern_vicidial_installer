@@ -5511,6 +5511,7 @@ function RefreshCountdown({ updatedAt, intervalMs = DASHBOARD_POLL_MS }) {
 
 function CommandView({ dashboard, admin, user, onAction }) {
   const metrics = dashboard?.metrics || {};
+  const counts = admin?.counts || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
 
   const metricCards = [
@@ -5542,6 +5543,27 @@ function CommandView({ dashboard, admin, user, onAction }) {
       detail: `${formatNumber(metrics.currentCallsLive)} connected`,
       accent: '#ffd166',
     },
+    {
+      icon: Users,
+      label: 'Active Users',
+      value: formatNumber(counts.activeUsers),
+      detail: `${formatNumber(counts.users)} total users`,
+      accent: '#73fbd3',
+    },
+    {
+      icon: Database,
+      label: 'Active Lists',
+      value: formatNumber(counts.activeLists),
+      detail: `${formatNumber(counts.lists)} total lists`,
+      accent: '#a8c7ff',
+    },
+    {
+      icon: BarChart3,
+      label: 'Total Leads',
+      value: formatNumber(metrics.leadsTotal),
+      detail: `across ${formatNumber(counts.lists)} lists`,
+      accent: '#00ffa8',
+    },
   ];
 
   return (
@@ -5551,8 +5573,6 @@ function CommandView({ dashboard, admin, user, onAction }) {
           <MetricCard key={card.label} {...card} />
         ))}
       </section>
-
-      <AdminSummary admin={admin} dashboard={dashboard} />
 
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
@@ -5620,23 +5640,6 @@ function ServersPanel({ admin, user, onAction }) {
         ]}
       />
     </Panel>
-  );
-}
-
-function AdminSummary({ admin, dashboard }) {
-  const counts = admin?.counts || {};
-  const cards = [
-    { icon: Users, label: 'Active Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total users`, accent: '#73fbd3' },
-    { icon: Database, label: 'Active Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total lists`, accent: '#a8c7ff' },
-    { icon: BarChart3, label: 'Total Leads', value: dashboard?.metrics?.leadsTotal, detail: `across ${formatNumber(counts.lists)} lists`, accent: '#00ffa8' },
-  ];
-
-  return (
-    <section className="metric-grid command-summary-grid" aria-label="Admin metrics">
-      {cards.map((card) => (
-        <MetricCard key={card.label} {...card} />
-      ))}
-    </section>
   );
 }
 
