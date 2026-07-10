@@ -5324,17 +5324,29 @@ function MetricCard({ icon: Icon, label, value, detail, accent }) {
 }
 
 function ActivityChart({ data, rangeLabel }) {
-  const max = Math.max(...data.map((item) => item.calls), 1);
+  const rawMax = Math.max(...data.map((item) => item.calls), 1);
   const hourLabels = new Set(['0', '6', '12', '18', '23']);
+  // Y axis uses a "nice" rounded scale (1/2/5 x 10^n steps, 4 divisions) so
+  // the tick labels are round numbers and the gridlines land on them.
+  const niceCeil = (value) => {
+    const pow = 10 ** Math.floor(Math.log10(value));
+    const unit = value / pow;
+    return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 5 ? 5 : 10) * pow;
+  };
+  const tickStep = Math.max(1, niceCeil(rawMax / 4));
+  const yMax = tickStep * 4;
+  const yTicks = [4, 3, 2, 1, 0].map((n) => n * tickStep);
   // Points live in a 0-100 viewBox that stretches to fill the panel; the
-  // stroke stays crisp via non-scaling-stroke.
+  // stroke stays crisp via non-scaling-stroke. Plot area spans y=4..96 so
+  // the line never sits on the border.
+  const yFor = (calls) => 4 + (1 - calls / yMax) * 92;
   const stepX = data.length > 1 ? 100 / (data.length - 1) : 100;
   const points = data.map((item, index) => ({
     x: data.length > 1 ? index * stepX : 50,
-    y: 97 - (item.calls / max) * 90,
+    y: yFor(item.calls),
   }));
   const line = points.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
-  const area = `0,100 ${line} 100,100`;
+  const area = `0,96 ${line} 100,96`;
 
   return (
     <section className="panel chart-panel chart-panel-wide">
@@ -5346,24 +5358,43 @@ function ActivityChart({ data, rangeLabel }) {
         <Activity size={22} aria-hidden="true" />
       </div>
       <div className="line-chart" aria-label="Calls by range">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
-          <defs>
-            <linearGradient id="callflow-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgba(0, 217, 255, 0.3)" />
-              <stop offset="100%" stopColor="rgba(0, 217, 255, 0)" />
-            </linearGradient>
-          </defs>
-          <polygon points={area} fill="url(#callflow-fill)" />
-          <polyline
-            points={line}
-            fill="none"
-            stroke="var(--blue)"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        </svg>
+        <div className="line-chart-plot">
+          <div className="line-chart-axis" aria-hidden="true">
+            {yTicks.map((tick) => (
+              <span key={tick}>{formatNumber(tick)}</span>
+            ))}
+          </div>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
+            <defs>
+              <linearGradient id="callflow-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(0, 217, 255, 0.3)" />
+                <stop offset="100%" stopColor="rgba(0, 217, 255, 0)" />
+              </linearGradient>
+            </defs>
+            {yTicks.map((tick) => (
+              <line
+                key={tick}
+                x1="0"
+                y1={yFor(tick)}
+                x2="100"
+                y2={yFor(tick)}
+                stroke="rgba(0, 217, 255, 0.12)"
+                strokeWidth="1"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            <polygon points={area} fill="url(#callflow-fill)" />
+            <polyline
+              points={line}
+              fill="none"
+              stroke="var(--blue)"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+        </div>
         <div className="line-chart-labels">
           {data.map((item, index) => {
             const label = item.label ?? String(item.hour ?? index);
