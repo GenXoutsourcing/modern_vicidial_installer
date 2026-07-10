@@ -261,6 +261,9 @@ function hasAdminNav(user) {
   return !user?.navSections || user.navSections.includes('admin');
 }
 
+// Nav items inside otherwise-allowed sections that stay admin-only.
+const ADMIN_ONLY_NAV_KEYS = new Set(['statuses']);
+
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
@@ -16156,6 +16159,10 @@ function AdminShell({ token, user, onLogout }) {
             <div className="nav-group" key={group.title || 'top'}>
               {group.title && <p className="nav-group-title">{group.title}</p>}
               {group.keys.map((key) => {
+                // Item-level gating on top of the section gating: global
+                // status definitions are admin-only (campaign statuses live
+                // on the individual campaigns).
+                if (ADMIN_ONLY_NAV_KEYS.has(key) && !hasAdminNav(user)) return null;
                 const item = NAV_ITEMS.find((navItem) => navItem.key === key);
                 if (!item) return null;
                 const Icon = item.icon;

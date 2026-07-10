@@ -10972,6 +10972,9 @@ async function deleteHoliday(req, res) {
 
 async function saveStatusGroup(req, res, mode) {
   if (!requireModify(req, res, 'modifyStatuses')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'system_statuses_admin_only' });
+  }
   const payload = {
     status_group_notes: cleanText(req.body?.status_group_notes, 255),
     user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
@@ -10999,6 +11002,9 @@ async function saveStatusGroup(req, res, mode) {
 
 async function deleteStatusGroup(req, res) {
   if (!requireModify(req, res, 'modifyStatuses')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'system_statuses_admin_only' });
+  }
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_status_group_id');
   try {
@@ -11026,6 +11032,9 @@ function enumYN(value) {
 
 async function saveStatusCategory(req, res, mode) {
   if (!canModifyStatusCategories(req, res)) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'system_statuses_admin_only' });
+  }
   const payload = {
     vsc_name: cleanText(req.body?.vsc_name, 50),
     vsc_description: cleanText(req.body?.vsc_description, 255),
@@ -11064,6 +11073,9 @@ async function saveStatusCategory(req, res, mode) {
 
 async function deleteStatusCategory(req, res) {
   if (!canModifyStatusCategories(req, res)) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'system_statuses_admin_only' });
+  }
   const id = cleanId(req.params.id, 20);
   if (!id || id.length < 2) return badRequest(res, 'invalid_vsc_id');
   if (/^UNDEFINED$/i.test(id)) return badRequest(res, 'reserved_category');
@@ -13928,6 +13940,11 @@ function statusPayload(body) {
 
 async function saveStatus(req, res, mode) {
   if (!requireModify(req, res, 'modifyStatuses')) return;
+  // System-wide disposition definitions are admin-only; restricted managers
+  // keep campaign-specific statuses (saveCampaignStatus) instead.
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'system_statuses_admin_only' });
+  }
   const id = cleanId(mode === 'create' ? req.body?.status : req.params.id, 6);
   if (!id) return badRequest(res, 'invalid_status');
   const payload = statusPayload(req.body || {});
