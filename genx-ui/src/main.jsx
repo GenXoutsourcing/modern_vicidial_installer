@@ -5596,9 +5596,11 @@ function CommandView({ dashboard, admin, user, onAction }) {
         <CampaignTable campaigns={dashboard?.campaigns || []} />
       </section>
 
-      <section className="admin-grid command-servers-grid">
-        <ServersPanel admin={admin} user={user} onAction={onAction} />
-      </section>
+      {(!user?.navSections || user.navSections.includes('admin')) && (
+        <section className="admin-grid command-servers-grid">
+          <ServersPanel admin={admin} user={user} onAction={onAction} />
+        </section>
+      )}
     </>
   );
 }
