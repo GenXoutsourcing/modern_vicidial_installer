@@ -5511,13 +5511,12 @@ function RefreshCountdown({ updatedAt, intervalMs = DASHBOARD_POLL_MS }) {
 
 function CommandView({ dashboard, admin, user, onAction }) {
   const metrics = dashboard?.metrics || {};
-  const counts = admin?.counts || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
 
   const metricCards = [
     {
       icon: Users,
-      label: 'Agents Live',
+      label: 'Agents Logged In',
       value: formatNumber(metrics.activeAgents),
       detail: `${formatNumber(metrics.pausedAgents)} paused`,
       accent: '#00d9ff',
@@ -5543,20 +5542,6 @@ function CommandView({ dashboard, admin, user, onAction }) {
       detail: `${formatNumber(metrics.currentCallsLive)} connected`,
       accent: '#ffd166',
     },
-    {
-      icon: PhoneCall,
-      label: 'Phones',
-      value: formatNumber(counts.activePhones),
-      detail: `${formatNumber(counts.phones)} total`,
-      accent: '#b9f2ff',
-    },
-    {
-      icon: Server,
-      label: 'Servers',
-      value: formatNumber(counts.activeServers),
-      detail: `${formatNumber(counts.servers)} total`,
-      accent: '#7bb7ff',
-    },
   ];
 
   return (
@@ -5567,7 +5552,7 @@ function CommandView({ dashboard, admin, user, onAction }) {
         ))}
       </section>
 
-      <AdminSummary admin={admin} />
+      <AdminSummary admin={admin} dashboard={dashboard} />
 
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
@@ -5638,12 +5623,12 @@ function ServersPanel({ admin, user, onAction }) {
   );
 }
 
-function AdminSummary({ admin }) {
+function AdminSummary({ admin, dashboard }) {
   const counts = admin?.counts || {};
   const cards = [
-    { icon: Users, label: 'Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total`, accent: '#73fbd3' },
-    { icon: Database, label: 'Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total`, accent: '#a8c7ff' },
-    { icon: PhoneCall, label: 'DIDs', value: counts.activeDids, detail: `${formatNumber(counts.dids)} total`, accent: '#00ffa8' },
+    { icon: Users, label: 'Active Users', value: counts.activeUsers, detail: `${formatNumber(counts.users)} total users`, accent: '#73fbd3' },
+    { icon: Database, label: 'Active Lists', value: counts.activeLists, detail: `${formatNumber(counts.lists)} total lists`, accent: '#a8c7ff' },
+    { icon: BarChart3, label: 'Total Leads', value: dashboard?.metrics?.leadsTotal, detail: `across ${formatNumber(counts.lists)} lists`, accent: '#00ffa8' },
   ];
 
   return (
