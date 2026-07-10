@@ -1070,6 +1070,15 @@ async function adminData(user) {
   const listWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'l.campaign_id', listCampaignParams);
   const userGroupParams = [];
   const userGroupWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', userGroupParams);
+  // GenX visibility rule: managers without Admin nav access never see users
+  // above their own level (SuperAdmins are only visible to SuperAdmins).
+  const restrictedViewer = Array.isArray(user?.navSections) && !user.navSections.includes('admin');
+  const usersParams = [...userGroupParams];
+  let usersWhere = userGroupWhere;
+  if (restrictedViewer) {
+    usersWhere += ' AND user_level <= ?';
+    usersParams.push(Number(user?.userLevel || 1));
+  }
   const inboundParams = [];
   const inboundWhere = scopeWhere(user?.permissions?.allowedQueueGroups, 'group_id', inboundParams);
   const didQueueParams = [];
@@ -1644,10 +1653,10 @@ async function adminData(user) {
               custom_four,
               custom_five
        FROM vicidial_users
-       WHERE ${userGroupWhere}
+       WHERE ${usersWhere}
        ORDER BY active DESC, user_level DESC, user ASC
        LIMIT 200`,
-      userGroupParams,
+      usersParams,
       [],
     ),
     requiredRows(
@@ -3390,9 +3399,10 @@ function userPayload(body, currentUser) {
 // layer) may change. Everything else keeps its stored value — this is the
 // security boundary behind the trimmed "essential" user form.
 const ESSENTIAL_USER_FIELDS = new Set([
-  'pass', 'pass_hash', 'full_name', 'user_level', 'user_group', 'active',
-  'phone_login', 'phone_pass', 'view_reports', 'hotkeys_active',
-  'agent_choose_ingroups', 'closer_campaigns', 'scheduled_callbacks',
+  'pass', 'pass_hash', 'full_name', 'email', 'active', 'view_reports',
+  'hotkeys_active', 'agent_choose_ingroups', 'agent_choose_blended',
+  'closer_default_blended', 'closer_campaigns', 'scheduled_callbacks',
+  'agentcall_manual', 'vicidial_transfers', 'custom_fields_modify',
 ]);
 
 function restrictedUserEditor(genxUser) {
@@ -3410,20 +3420,15 @@ async function saveUser(req, res, mode) {
 
   if (restrictedUserEditor(req.genxUser)) {
     if (mode === 'create') return res.status(403).json({ ok: false, error: 'user_create_not_allowed' });
+    // Level, group and phone are display-only for restricted managers, so
+    // they fall out of the whitelist entirely.
     for (const key of Object.keys(payload)) {
       if (!ESSENTIAL_USER_FIELDS.has(key)) delete payload[key];
     }
-    payload.user_level = Math.min(Number(payload.user_level || 1), 8);
     const [target] = await rows('SELECT user_level FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
     if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
     if (Number(target.user_level || 0) > Number(req.genxUser?.userLevel || 0)) {
       return res.status(403).json({ ok: false, error: 'user_above_your_level' });
-    }
-    if (payload.user_group) {
-      const groupNav = await navSectionsFor(payload.user_group);
-      if (groupNav.includes('admin')) {
-        return res.status(403).json({ ok: false, error: 'user_group_not_allowed' });
-      }
     }
   }
   if (mode !== 'create' && !req.genxUser?.permissions?.allowedQueueGroups?.all) {

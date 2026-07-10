@@ -2433,32 +2433,31 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
   }
 
   if (entity === 'users') {
-    // Managers without Admin nav access get the essential form only. The
-    // server enforces the same whitelist on save, so this is display, not
-    // the security boundary.
+    // Managers without Admin nav access get the essential form only. Level,
+    // group and phone are shown read-only; the server enforces the same
+    // whitelist on save, so this is display, not the security boundary.
     if (!hasAdminNav(user)) {
-      const adminNavGroups = new Set(
-        (admin?.userGroups || [])
-          .filter((group) => navSectionValues(group.genx_nav_sections).includes('admin'))
-          .map((group) => String(group.user_group)),
-      );
-      const managerGroupOptions = userGroupOptions.filter((option) => !adminNavGroups.has(String(option.value)));
       return [
         { section: 'Identity and Login' },
         { key: 'user', label: 'User ID', disabled: true },
         { key: 'pass', label: 'New Password', type: 'password' },
         { key: 'full_name', label: 'Full Name' },
-        { key: 'user_level', label: 'Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS.filter((level) => Number(level) <= 8), form?.user_level)) },
-        { key: 'user_group', label: 'User Group', type: managerGroupOptions.length ? 'select' : 'text', options: withCurrentOption(managerGroupOptions, form?.user_group) },
+        { key: 'email', label: 'Email' },
+        { key: 'user_level', label: 'Level', disabled: true },
+        { key: 'user_group', label: 'User Group', disabled: true },
+        { key: 'phone_login', label: 'Phone Login', disabled: true },
         { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-        { key: 'phone_login', label: 'Phone Login', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.phone_login) },
-        { key: 'phone_pass', label: 'Phone Password', type: 'password' },
         { section: 'Agent Options' },
         { key: 'view_reports', label: 'Reports', type: 'select', options: flagOptions() },
         { key: 'hotkeys_active', label: 'Hotkeys Active', type: 'select', options: flagOptions() },
         { key: 'agent_choose_ingroups', label: 'Agent Choose In-Groups', type: 'select', options: flagOptions() },
+        { key: 'agent_choose_blended', label: 'Agent Choose Blended', type: 'select', options: flagOptions() },
+        { key: 'closer_default_blended', label: 'Closer Default Blended', type: 'select', options: flagOptions() },
         { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
         { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
+        { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
+        { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
+        { key: 'custom_fields_modify', label: 'Custom Field Modify', type: 'select', options: flagOptions() },
       ];
     }
     return [
