@@ -201,7 +201,7 @@ const WEEKDAY_OPTIONS = [
 ];
 
 const NAV_ITEMS = [
-  { key: 'command', label: 'Command', eyebrow: 'Live Operations', title: 'VICIdial command layer', icon: LayoutDashboard },
+  { key: 'command', label: 'Command', eyebrow: 'Live Operations', title: 'GenX command layer', icon: LayoutDashboard },
   { key: 'campaigns', label: 'Campaigns', eyebrow: 'Admin', title: 'Campaign Control', icon: Radio },
   { key: 'users', label: 'Users', eyebrow: 'Admin', title: 'Users and Permissions', icon: Users },
   { key: 'userGroups', label: 'Groups', eyebrow: 'Access', title: 'User Groups', icon: ShieldCheck },
@@ -376,7 +376,7 @@ function Login({ onLogin }) {
       });
       onLogin(payload.token || '', payload.user);
     } catch (_error) {
-      setError('VICIdial credentials or user level were not accepted');
+      setError('Credentials or user level were not accepted');
     } finally {
       setLoading(false);
     }
@@ -393,7 +393,7 @@ function Login({ onLogin }) {
           </div>
         </div>
         <form onSubmit={submit} className="login-form">
-          <label htmlFor="vicidial-user">VICIdial user</label>
+          <label htmlFor="vicidial-user">Username</label>
           <div className="input-row">
             <Users size={18} aria-hidden="true" />
             <input
@@ -2765,12 +2765,12 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'client_browser', label: 'Client Browser' },
       { key: 'install_directory', label: 'Install Directory' },
       { key: 'local_web_callerID_URL', label: 'Local CallerID URL', type: 'textarea', wide: true },
-      { key: 'VICIDIAL_web_URL', label: 'VICIDIAL Web URL', type: 'textarea', wide: true },
+      { key: 'VICIDIAL_web_URL', label: 'Dialer Web URL', type: 'textarea', wide: true },
       { section: 'Dialplan Extensions' },
       { key: 'park_on_extension', label: 'Park Extension' },
       { key: 'conf_on_extension', label: 'Conference Extension' },
-      { key: 'VICIDIAL_park_on_extension', label: 'VICIDIAL Park Extension' },
-      { key: 'VICIDIAL_park_on_filename', label: 'VICIDIAL Park Filename' },
+      { key: 'VICIDIAL_park_on_extension', label: 'Park Extension' },
+      { key: 'VICIDIAL_park_on_filename', label: 'Park Filename' },
       { key: 'monitor_prefix', label: 'Monitor Prefix' },
       { key: 'recording_exten', label: 'Recording Extension' },
       { key: 'voicemail_exten', label: 'Voicemail Extension' },
@@ -2842,7 +2842,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'active_asterisk_server', label: 'Asterisk Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
       { key: 'asterisk_version', label: 'Asterisk Version' },
-      { key: 'max_vicidial_trunks', label: 'Max VICIdial Trunks', type: 'number' },
+      { key: 'max_vicidial_trunks', label: 'Max Dialer Trunks', type: 'number' },
       { key: 'local_gmt', label: 'Local GMT', type: 'select', options: enumOptions(ensureOption(GMT_OPTIONS, form?.local_gmt)) },
       { section: 'Asterisk and Dialplan' },
       { key: 'telnet_host', label: 'Telnet Host' },
@@ -2855,7 +2855,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'ext_context', label: 'Extension Context', type: phoneContextOptions.length ? 'select' : 'text', options: withCurrentOption(phoneContextOptions, form?.ext_context) },
       { key: 'answer_transfer_agent', label: 'Answer Transfer Agent Exten' },
       { key: 'agi_output', label: 'AGI Output', type: 'select', options: enumOptions(['NONE', 'STDERR', 'FILE', 'BOTH']) },
-      { key: 'generate_vicidial_conf', label: 'Generate VICIdial Conf', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'generate_vicidial_conf', label: 'Generate Dialer Conf', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'rebuild_conf_files', label: 'Rebuild Conf Files', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       customDialplanField(),
       { key: 'routing_prefix', label: 'Routing Prefix' },
@@ -2867,8 +2867,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { section: 'Operations' },
       { key: 'sys_perf_log', label: 'System Performance Log', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'vd_server_logs', label: 'VD Server Logs', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'vicidial_balance_active', label: 'VICIdial Balance Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'vicidial_balance_rank', label: 'VICIdial Balance Rank', type: 'number' },
+      { key: 'vicidial_balance_active', label: 'Balance Dialing Active', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'vicidial_balance_rank', label: 'Balance Dialing Rank', type: 'number' },
       { key: 'balance_trunks_offlimits', label: 'Balance Trunks Off Limits', type: 'number' },
       { key: 'outbound_calls_per_second', label: 'Outbound Calls Per Second', type: 'number' },
       { key: 'sounds_update', label: 'Sounds Update', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -4932,7 +4932,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         onLogout();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user does not have permission for this change' : 'The change was not saved');
+      setError(requestError.status === 403 ? 'Your user does not have permission for this change' : 'The change was not saved');
     } finally {
       setSaving(false);
     }
@@ -4956,7 +4956,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         onLogout();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user does not have permission to delete this' : 'The delete failed');
+      setError(requestError.status === 403 ? 'Your user does not have permission to delete this' : 'The delete failed');
       setConfirmingDelete(false);
     } finally {
       setDeleting(false);
@@ -5717,7 +5717,7 @@ function UsersView({ admin, user, onAction }) {
   return (
     <>
       <ActionBar entity="users" label="User" user={user} onAction={onAction}>
-        <p className="action-copy">Add operators and control the common VICIdial permission flags from GenX.</p>
+        <p className="action-copy">Add operators and control the common dialer permission flags from GenX.</p>
       </ActionBar>
       <section className="admin-grid">
         <Panel
@@ -5854,7 +5854,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   async function submit(event) {
     event.preventDefault();
     if (!canLoad) {
-      setError('Your VICIdial user is not allowed to load leads');
+      setError('Your user is not allowed to load leads');
       return;
     }
     setLoading(true);
@@ -5879,8 +5879,8 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
         csv_required: 'Add a CSV file or paste CSV rows first',
         csv_header_and_rows_required: 'CSV needs a header row and at least one lead row',
         phone_number_header_required: 'CSV needs a phone_number column',
-        campaign_not_allowed: 'Your VICIdial user cannot load leads into that campaign',
-        permission_denied: 'Your VICIdial user is not allowed to load leads',
+        campaign_not_allowed: 'Your user cannot load leads into that campaign',
+        permission_denied: 'Your user is not allowed to load leads',
       };
       setError(messages[loadError.message] || 'Lead load failed');
     } finally {
@@ -5893,7 +5893,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
       <section className="metric-grid admin-metric-grid" aria-label="Lead loader metrics">
         <MetricCard icon={Database} label="Lists" value={formatNumber(lists.length)} detail="Available lead lists" accent="#00d9ff" />
         <MetricCard icon={Radio} label="Campaign" value={selectedList?.campaign_id || 'None'} detail={selectedList?.list_name || selectedList?.list_id || 'No list selected'} accent="#73fbd3" />
-        <MetricCard icon={ShieldCheck} label="Load Access" value={canLoad ? 'Allowed' : 'No'} detail="VICIdial permission" accent="#ffd166" />
+        <MetricCard icon={ShieldCheck} label="Load Access" value={canLoad ? 'Allowed' : 'No'} detail="load_leads permission" accent="#ffd166" />
       </section>
 
       <section className="admin-grid">
@@ -6579,7 +6579,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
                   {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
                 </div>
               )}
-              {!canEdit && <p className="connection-summary">Your VICIdial user cannot modify leads (modify_leads setting).</p>}
+              {!canEdit && <p className="connection-summary">Your user cannot modify leads (modify_leads setting).</p>}
             </form>
           </Panel>
           {custom && (custom.fields || []).length > 0 && (
@@ -6727,7 +6727,7 @@ function DncView({ admin, user, token }) {
   async function submit(event) {
     event.preventDefault();
     if (!canManage) {
-      setError('Your VICIdial user is not allowed to manage the DNC list');
+      setError('Your user is not allowed to manage the DNC list');
       return;
     }
     setSubmitting(true);
@@ -6744,8 +6744,8 @@ function DncView({ admin, user, token }) {
       const messages = {
         phone_numbers_required: 'Paste at least one phone number first',
         invalid_dnc_campaign: 'That campaign does not have campaign DNC enabled',
-        dnc_campaign_not_allowed: 'Your VICIdial user cannot manage DNC for that campaign',
-        permission_denied: 'Your VICIdial user is not allowed to manage the DNC list',
+        dnc_campaign_not_allowed: 'Your user cannot manage DNC for that campaign',
+        permission_denied: 'Your user is not allowed to manage the DNC list',
       };
       setError(messages[requestError.message] || 'DNC update failed');
     } finally {
@@ -6771,7 +6771,7 @@ function DncView({ admin, user, token }) {
     <>
       <section className="metric-grid admin-metric-grid" aria-label="DNC metrics">
         <MetricCard icon={ShieldCheck} label="Campaign DNC Lists" value={formatNumber(dncCampaigns.length)} detail="Campaigns with DNC enabled" accent="#00d9ff" />
-        <MetricCard icon={LockKeyhole} label="Delete Access" value={canManage ? 'Allowed' : 'No'} detail="VICIdial delete_from_dnc permission" accent="#ffd166" />
+        <MetricCard icon={LockKeyhole} label="Delete Access" value={canManage ? 'Allowed' : 'No'} detail="delete_from_dnc permission" accent="#ffd166" />
       </section>
       <section className="admin-grid">
         <Panel eyebrow="Compliance" title="Add / Remove Numbers" icon={ShieldCheck} className="admin-wide-panel">
@@ -7117,7 +7117,7 @@ function LeadFiltersView({ admin, user, onAction }) {
   return (
     <>
       <ActionBar entity="leadFilters" label="Filter" user={user} onAction={onAction}>
-        <p className="action-copy">Manage VICIdial lead filter rules used by campaigns and manual dialing controls.</p>
+        <p className="action-copy">Manage lead filter rules used by campaigns and manual dialing controls.</p>
       </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Lead Admin" title="Lead Filters" icon={SlidersHorizontal} className="admin-wide-panel">
@@ -7479,7 +7479,7 @@ function CatalogPanels({ groups, query, emptyLabel, onNavigate }) {
   return (
     <section className="catalog-grid">
       {filtered.map((group) => (
-        <Panel key={group.title} eyebrow="VICIdial" title={group.title} icon={ExternalLink}>
+        <Panel key={group.title} eyebrow="Legacy" title={group.title} icon={ExternalLink}>
           <div className="link-list">
             {group.items.map((item) => (
               item.view ? (
@@ -7543,7 +7543,7 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
   return (
     <>
       <section className="metric-grid admin-metric-grid" aria-label="Report metrics">
-        <MetricCard icon={FileText} label="Report Links" value={formatNumber(visibleReportCount)} detail="Reviewed VICIdial report entries" accent="#00d9ff" />
+        <MetricCard icon={FileText} label="Report Links" value={formatNumber(visibleReportCount)} detail="Reviewed legacy report entries" accent="#00d9ff" />
         <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(metrics.callsToday)} detail={`${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`} accent="#73fbd3" />
         <MetricCard icon={Users} label="Users" value={formatNumber(admin?.counts?.users)} detail={`${formatNumber(admin?.counts?.activeUsers)} active`} accent="#a8c7ff" />
         <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
@@ -7590,12 +7590,12 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
         <div>
           <p className="eyebrow">Reports</p>
           <h2>Reporting Center</h2>
-          <p className="action-copy">Native GenX dashboards live here first; reviewed VICIdial report tools stay reachable while we rebuild each report experience.</p>
+          <p className="action-copy">Native GenX dashboards live here first; reviewed legacy report tools stay reachable while we rebuild each report experience.</p>
         </div>
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
       </section>
 
-      <CatalogPanels groups={reportGroups} query={query} emptyLabel={user?.viewReports ? 'No reports match that search' : 'Your VICIdial user is not allowed to view reports'} onNavigate={onNavigate} />
+      <CatalogPanels groups={reportGroups} query={query} emptyLabel={user?.viewReports ? 'No reports match that search' : 'Your user is not allowed to view reports'} onNavigate={onNavigate} />
     </>
   );
 }
@@ -7619,7 +7619,7 @@ function useLiveReport(path, token, intervalMs = 5000) {
           setError('');
         }
       } catch (requestError) {
-        if (!cancelled) setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'Live data unavailable');
+        if (!cancelled) setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'Live data unavailable');
       }
     }
     load();
@@ -7833,7 +7833,7 @@ function WhiteboardReportView({ token }) {
       const payload = await apiFetch(`/reports/whiteboard?begin_date=${beginDate}&end_date=${endDate}&report_type=${reportType}`, token);
       setItems(payload.items || []);
     } catch (requestError) {
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
       setItems([]);
     } finally {
       setLoading(false);
@@ -7900,7 +7900,7 @@ function AgentMonitorLogReportView({ token }) {
       const payload = await apiFetch(`/reports/agent-monitor-log?begin_date=${beginDate}&end_date=${endDate}`, token);
       setEntries(payload.entries || []);
     } catch (requestError) {
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
       setEntries([]);
     } finally {
       setLoading(false);
@@ -8152,8 +8152,8 @@ function AudioStorePanel({ user }) {
     <>
       {storeInfo && !storeInfo.configured && (
         <p className="connection-summary">
-          The VICIdial central sound store has not been created yet (System Settings → Sounds Web Directory is empty).
-          {canEdit ? ' Initialize it to generate the directory the VICIdial way.' : ' A level 9 admin can initialize it.'}
+          The central sound store has not been created yet (System Settings → Sounds Web Directory is empty).
+          {canEdit ? ' Initialize it to generate the directory automatically.' : ' A level 9 admin can initialize it.'}
         </p>
       )}
       {storeInfo?.configured && !storeInfo.exists && (
@@ -8776,7 +8776,7 @@ function ListStatusesReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -8913,7 +8913,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9063,7 +9063,7 @@ function CampaignStatusListReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9198,7 +9198,7 @@ function DialerInventoryReportView({ token, onLogout }) {
         return;
       }
       if (requestError.status === 404) setError('That list is not enabled for the inventory report');
-      else setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      else setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9352,7 +9352,7 @@ function OutboundCallingReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9510,7 +9510,7 @@ function OutboundIntervalReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9651,7 +9651,7 @@ function LeadSourceReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -9775,7 +9775,7 @@ function InboundSummaryReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10042,7 +10042,7 @@ function InboundHourlyReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10149,7 +10149,7 @@ function InboundDailyReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10297,7 +10297,7 @@ function DidStatsReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10427,7 +10427,7 @@ function DidDetailReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10515,7 +10515,7 @@ function IvrReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -10628,7 +10628,7 @@ function InboundForecastingReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12286,7 +12286,7 @@ function CalledCountsReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12400,7 +12400,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12671,7 +12671,7 @@ function DialLogReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12765,7 +12765,7 @@ function TimeclockReportView({ token, onLogout }) {
       setData(payload);
     } catch (requestError) {
       if (requestError.status === 401) { onLogout?.(); return; }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12836,7 +12836,7 @@ function TimeclockStatusReportView({ token, onLogout }) {
       setData(payload);
     } catch (requestError) {
       if (requestError.status === 401) { onLogout?.(); return; }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -12906,7 +12906,7 @@ function LogReportView({ token, onLogout, config }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -13276,7 +13276,7 @@ function ServerPerformanceReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -13398,7 +13398,7 @@ function PhoneStatsReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -13494,7 +13494,7 @@ function ProcessReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -13588,7 +13588,7 @@ function SphReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -13701,7 +13701,7 @@ function MaxStatsReportView({ token, onLogout }) {
         onLogout?.();
         return;
       }
-      setError(requestError.status === 403 ? 'Your VICIdial user is not allowed to view reports' : 'The report failed to load');
+      setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
       setLoading(false);
     }
@@ -15841,7 +15841,7 @@ function SystemView({ admin, user, onAction }) {
           </button>
         ) : null}
       >
-        <p className="action-copy">Manage VICIdial servers, conference settings, websocket endpoints, and carrier routing records.</p>
+        <p className="action-copy">Manage system servers, conference settings, websocket endpoints, and carrier routing records.</p>
       </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Telephony" title="Carriers" icon={PhoneCall} className="admin-wide-panel">
@@ -16122,7 +16122,7 @@ function AdminShell({ token, user, onLogout }) {
           </section>
 
           {error && <div className="alert">{error}</div>}
-          {isLoading && <div className="loading-band">Loading live VICIdial data</div>}
+          {isLoading && <div className="loading-band">Loading live dialer data</div>}
 
           <AdminPage
             activeView={activeView}
@@ -16137,7 +16137,7 @@ function AdminShell({ token, user, onLogout }) {
           />
 
           <footer className="footer-line">
-            <span><Search size={14} aria-hidden="true" /> GenX admin app connected to VICIdial data layer</span>
+            <span><Search size={14} aria-hidden="true" /> GenX admin app connected to the dialer data layer</span>
           </footer>
         </div>
       </div>
