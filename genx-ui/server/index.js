@@ -1071,8 +1071,6 @@ async function adminData(user) {
     stateCallTimes,
     holidays,
     statusGroups,
-    screenLabels,
-    screenColors,
     settingsContainers,
     statusCategories,
     extensionGroups,
@@ -2414,16 +2412,6 @@ async function adminData(user) {
       [],
     ),
     rows(
-      'SELECT * FROM vicidial_screen_labels ORDER BY label_id ASC LIMIT 200',
-      [],
-      [],
-    ),
-    rows(
-      'SELECT * FROM vicidial_screen_colors ORDER BY colors_id ASC LIMIT 200',
-      [],
-      [],
-    ),
-    rows(
       `SELECT container_id, container_notes, container_type, user_group, container_entry
        FROM vicidial_settings_containers ORDER BY container_id ASC LIMIT 500`,
       [],
@@ -2554,8 +2542,6 @@ async function adminData(user) {
     stateCallTimes,
     holidays,
     statusGroups,
-    screenLabels,
-    screenColors,
     settingsContainers,
     statusCategories,
     extensionGroups,
@@ -11684,110 +11670,6 @@ async function putLeadCustomData(req, res) {
   }
 }
 
-const SCREEN_LABEL_FIELDS = ['label_hide_field_logs', 'label_title', 'label_first_name', 'label_middle_initial',
-  'label_last_name', 'label_address1', 'label_address2', 'label_address3', 'label_city', 'label_state',
-  'label_province', 'label_postal_code', 'label_vendor_lead_code', 'label_gender', 'label_phone_number',
-  'label_phone_code', 'label_alt_phone', 'label_security_phrase', 'label_email', 'label_comments',
-  'label_lead_id', 'label_list_id', 'label_entry_date', 'label_gmt_offset_now', 'label_source_id',
-  'label_called_since_last_reset', 'label_status', 'label_user', 'label_date_of_birth', 'label_country_code',
-  'label_last_local_call_time', 'label_called_count', 'label_rank', 'label_owner', 'label_entry_list_id'];
-
-const SCREEN_COLOR_FIELDS = ['menu_background', 'frame_background', 'std_row1_background', 'std_row2_background',
-  'std_row3_background', 'std_row4_background', 'std_row5_background', 'alt_row1_background',
-  'alt_row2_background', 'alt_row3_background', 'web_logo', 'button_color'];
-
-async function saveScreenLabel(req, res, mode) {
-  if (!requireModify(req, res, 'modifyLabels')) return;
-  const payload = {
-    label_name: cleanText(req.body?.label_name, 100) || 'New Screen Label Set',
-    active: ynFlag(req.body?.active, 'N'),
-    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
-  };
-  for (const field of SCREEN_LABEL_FIELDS) {
-    payload[field] = cleanText(req.body?.[field], 60);
-  }
-  try {
-    if (mode === 'create') {
-      const id = cleanId(req.body?.label_id, 20);
-      if (!id || id.length < 2) return badRequest(res, 'invalid_label_id');
-      const { assignments, values } = dynamicAssignments({ label_id: id, ...payload });
-      await execute(`INSERT INTO vicidial_screen_labels SET ${assignments}`, values);
-      await adminLog(req, 'LABELS', 'ADD', id, 'GENX ADD SCREEN LABELS', 'INSERT INTO vicidial_screen_labels', payload.label_name);
-    } else {
-      const id = cleanId(req.params.id, 20);
-      if (!id) return badRequest(res, 'invalid_label_id');
-      const { assignments, values } = dynamicAssignments(payload);
-      const result = await execute(`UPDATE vicidial_screen_labels SET ${assignments} WHERE label_id = ?`, [...values, id]);
-      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'label_not_found' });
-      await adminLog(req, 'LABELS', 'MODIFY', id, 'GENX MODIFY SCREEN LABELS', 'UPDATE vicidial_screen_labels', payload.label_name);
-    }
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'label_save_failed' });
-  }
-}
-
-async function deleteScreenLabel(req, res) {
-  if (!requireModify(req, res, 'modifyLabels')) return;
-  const id = cleanId(req.params.id, 20);
-  if (!id) return badRequest(res, 'invalid_label_id');
-  try {
-    const result = await execute('DELETE FROM vicidial_screen_labels WHERE label_id = ? LIMIT 1', [id]);
-    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'label_not_found' });
-    await adminLog(req, 'LABELS', 'DELETE', id, 'GENX DELETE SCREEN LABELS', 'DELETE FROM vicidial_screen_labels', id);
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'label_delete_failed' });
-  }
-}
-
-async function saveScreenColor(req, res, mode) {
-  if (!requireModify(req, res, 'modifyColors')) return;
-  const payload = {
-    colors_name: cleanText(req.body?.colors_name, 100) || 'New Color Scheme',
-    active: ynFlag(req.body?.active, 'N'),
-    user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
-  };
-  for (const field of SCREEN_COLOR_FIELDS) {
-    payload[field] = field === 'web_logo'
-      ? cleanText(req.body?.[field], 100)
-      : cleanText(req.body?.[field], 6).replace(/[^0-9a-fA-F]/g, '');
-  }
-  try {
-    if (mode === 'create') {
-      const id = cleanId(req.body?.colors_id, 20);
-      if (!id || id.length < 2) return badRequest(res, 'invalid_colors_id');
-      const { assignments, values } = dynamicAssignments({ colors_id: id, ...payload });
-      await execute(`INSERT INTO vicidial_screen_colors SET ${assignments}`, values);
-      await adminLog(req, 'COLORS', 'ADD', id, 'GENX ADD SCREEN COLORS', 'INSERT INTO vicidial_screen_colors', payload.colors_name);
-    } else {
-      const id = cleanId(req.params.id, 20);
-      if (!id) return badRequest(res, 'invalid_colors_id');
-      const { assignments, values } = dynamicAssignments(payload);
-      const result = await execute(`UPDATE vicidial_screen_colors SET ${assignments} WHERE colors_id = ?`, [...values, id]);
-      if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'colors_not_found' });
-      await adminLog(req, 'COLORS', 'MODIFY', id, 'GENX MODIFY SCREEN COLORS', 'UPDATE vicidial_screen_colors', payload.colors_name);
-    }
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'colors_save_failed' });
-  }
-}
-
-async function deleteScreenColor(req, res) {
-  if (!requireModify(req, res, 'modifyColors')) return;
-  const id = cleanId(req.params.id, 20);
-  if (!id) return badRequest(res, 'invalid_colors_id');
-  try {
-    const result = await execute('DELETE FROM vicidial_screen_colors WHERE colors_id = ? LIMIT 1', [id]);
-    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'colors_not_found' });
-    await adminLog(req, 'COLORS', 'DELETE', id, 'GENX DELETE SCREEN COLORS', 'DELETE FROM vicidial_screen_colors', id);
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: 'colors_delete_failed' });
-  }
-}
-
 async function saveSettingsContainer(req, res, mode) {
   if (!requireModify(req, res, 'modifySettingsContainers')) return;
   const payload = {
@@ -14525,12 +14407,6 @@ app.post('/api/admin/lists/:id/custom-fields/copy', requireAccess, copyListCusto
 app.post('/api/admin/conf-templates', requireAccess, (req, res) => saveConfTemplate(req, res, 'create'));
 app.put('/api/admin/conf-templates/:id', requireAccess, (req, res) => saveConfTemplate(req, res, 'update'));
 app.delete('/api/admin/conf-templates/:id', requireAccess, deleteConfTemplate);
-app.post('/api/admin/screen-labels', requireAccess, (req, res) => saveScreenLabel(req, res, 'create'));
-app.put('/api/admin/screen-labels/:id', requireAccess, (req, res) => saveScreenLabel(req, res, 'update'));
-app.delete('/api/admin/screen-labels/:id', requireAccess, deleteScreenLabel);
-app.post('/api/admin/screen-colors', requireAccess, (req, res) => saveScreenColor(req, res, 'create'));
-app.put('/api/admin/screen-colors/:id', requireAccess, (req, res) => saveScreenColor(req, res, 'update'));
-app.delete('/api/admin/screen-colors/:id', requireAccess, deleteScreenColor);
 app.post('/api/admin/settings-containers', requireAccess, (req, res) => saveSettingsContainer(req, res, 'create'));
 app.put('/api/admin/settings-containers/:id', requireAccess, (req, res) => saveSettingsContainer(req, res, 'update'));
 app.delete('/api/admin/settings-containers/:id', requireAccess, deleteSettingsContainer);

@@ -225,7 +225,7 @@ const NAV_ITEMS = [
   { key: 'remoteAgents', label: 'Remote Agents', eyebrow: 'Users', title: 'Remote Agents', icon: Headphones },
   { key: 'dropLists', label: 'Drop Lists', eyebrow: 'Lists', title: 'Drop Lists', icon: Database },
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
-  { key: 'display', label: 'Display', eyebrow: 'Platform', title: 'Screen Labels, Colors and Containers', icon: LayoutDashboard },
+  { key: 'display', label: 'Settings Containers', eyebrow: 'Platform', title: 'Settings Containers', icon: LayoutDashboard },
   { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
 ];
 
@@ -473,13 +473,11 @@ function userCan(user, entity) {
   if (entity === 'statusCategories') return Boolean(user?.modifyStatuses || user?.modifyServers);
   if (entity === 'extensionGroups') return Boolean(user?.modifyRemoteagents);
   if (entity === 'confTemplates') return Boolean(user?.modifyServers);
-  if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
-  if (entity === 'screenColors') return Boolean(user?.modifyColors);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'screenLabels', 'screenColors', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -515,8 +513,6 @@ function userCanDelete(user, entity) {
   if (entity === 'statusCategories') return Boolean(user?.modifyStatuses || user?.modifyServers);
   if (entity === 'extensionGroups') return Boolean(user?.deleteRemoteAgents);
   if (entity === 'confTemplates') return Boolean(user?.modifyServers);
-  if (entity === 'screenLabels') return Boolean(user?.modifyLabels);
-  if (entity === 'screenColors') return Boolean(user?.modifyColors);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
 }
@@ -1677,14 +1673,6 @@ function actionDefaults(entity, admin) {
 
   if (entity === 'confTemplates') {
     return { template_id: '', template_name: '', template_contents: '', user_group: '---ALL---' };
-  }
-
-  if (entity === 'screenLabels') {
-    return { label_id: '', label_name: '', active: 'N', user_group: '---ALL---' };
-  }
-
-  if (entity === 'screenColors') {
-    return { colors_id: '', colors_name: '', active: 'N', user_group: '---ALL---', menu_background: '', frame_background: '', std_row1_background: '', std_row2_background: '', std_row3_background: '', std_row4_background: '', std_row5_background: '', alt_row1_background: '', alt_row2_background: '', alt_row3_background: '', web_logo: '', button_color: '' };
   }
 
   if (entity === 'settingsContainers') {
@@ -3076,36 +3064,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     ];
   }
 
-  if (entity === 'screenLabels') {
-    const labelFields = ['label_title', 'label_first_name', 'label_middle_initial', 'label_last_name',
-      'label_address1', 'label_address2', 'label_address3', 'label_city', 'label_state', 'label_province',
-      'label_postal_code', 'label_vendor_lead_code', 'label_gender', 'label_phone_number', 'label_phone_code',
-      'label_alt_phone', 'label_security_phrase', 'label_email', 'label_comments'];
-    return [
-      { key: 'label_id', label: 'Label Set ID', disabled: mode === 'edit' },
-      { key: 'label_name', label: 'Name' },
-      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
-      { section: 'Field Labels (blank = default, ---HIDE--- hides the field)' },
-      ...labelFields.map((key) => ({ key, label: key.replace('label_', '').replace(/_/g, ' ') })),
-    ];
-  }
-
-  if (entity === 'screenColors') {
-    const colorFields = ['menu_background', 'frame_background', 'std_row1_background', 'std_row2_background',
-      'std_row3_background', 'std_row4_background', 'std_row5_background', 'alt_row1_background',
-      'alt_row2_background', 'alt_row3_background', 'button_color'];
-    return [
-      { key: 'colors_id', label: 'Color Scheme ID', disabled: mode === 'edit' },
-      { key: 'colors_name', label: 'Name' },
-      { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
-      { key: 'web_logo', label: 'Web Logo' },
-      { section: 'Colors (6-digit hex, no #)' },
-      ...colorFields.map((key) => ({ key, label: key.replace(/_/g, ' ') })),
-    ];
-  }
-
   if (entity === 'settingsContainers') {
     return [
       { key: 'container_id', label: 'Container ID', disabled: mode === 'edit' },
@@ -3664,8 +3622,6 @@ function entityLabel(entity) {
     statusCategories: 'Status Category',
     extensionGroups: 'Extension Group Entry',
     confTemplates: 'Conf Template',
-    screenLabels: 'Screen Label Set',
-    screenColors: 'Screen Color Scheme',
     settingsContainers: 'Settings Container',
   }[entity] || 'Record';
 }
@@ -3716,8 +3672,6 @@ function entityId(entity, row) {
     statusCategories: row.vsc_id,
     extensionGroups: row.extension_id,
     confTemplates: row.template_id,
-    screenLabels: row.label_id,
-    screenColors: row.colors_id,
     settingsContainers: row.container_id,
   }[entity];
 }
@@ -3751,8 +3705,6 @@ function entityPath(entity) {
     statusCategories: 'status-categories',
     extensionGroups: 'extension-groups',
     confTemplates: 'conf-templates',
-    screenLabels: 'screen-labels',
-    screenColors: 'screen-colors',
     settingsContainers: 'settings-containers',
   }[entity] || entity;
 }
@@ -5769,6 +5721,10 @@ function CampaignsView({ admin, user, onAction }) {
 function UsersView({ admin, user, onAction }) {
   const users = admin?.users || [];
   const canManage = userCan(user, 'users');
+  // Inactive users are hidden by default; the header button reveals them.
+  const [showInactive, setShowInactive] = useState(false);
+  const visibleUsers = showInactive ? users : users.filter((row) => row.active === 'Y');
+  const inactiveCount = users.filter((row) => row.active !== 'Y').length;
 
   return (
     <>
@@ -5776,10 +5732,20 @@ function UsersView({ admin, user, onAction }) {
         <p className="action-copy">Add operators and control the common VICIdial permission flags from GenX.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="User Admin" title="Users and Permissions" icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="User Admin"
+          title="Users and Permissions"
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={inactiveCount > 0 ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => setShowInactive((value) => !value)}>
+              {showInactive ? 'Hide Inactive' : `Show Inactive (${formatNumber(inactiveCount)})`}
+            </button>
+          ) : null}
+        >
           <DataTable
             emptyLabel="No users returned"
-            rows={users.map((row) => ({ ...row, id: row.user }))}
+            rows={visibleUsers.map((row) => ({ ...row, id: row.user }))}
             columns={[
               {
                 key: 'user',
@@ -8377,6 +8343,31 @@ function MediaToolsView({ admin, user, onAction }) {
           />
         </Panel>
         <Panel
+          eyebrow="Telephony"
+          title={`Extension Groups (${formatNumber((admin?.extensionGroups || []).length)})`}
+          icon={PhoneCall}
+          className="admin-wide-panel"
+          headerActions={userCan(user, 'extensionGroups') ? (
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('extensionGroups', 'create')}>
+              <Plus size={14} aria-hidden="true" /> Add
+            </button>
+          ) : null}
+        >
+          <DataTable
+            emptyLabel="No extension group entries (used for external dial-out extension rotation)"
+            rows={(admin?.extensionGroups || []).map((row) => ({ ...row, id: row.extension_id }))}
+            columns={[
+              { key: 'extension_group_id', label: 'Group ID' },
+              { key: 'extension', label: 'Extension' },
+              { key: 'rank', label: 'Rank' },
+              { key: 'campaign_groups', label: 'Campaign Groups', render: (row) => row.campaign_groups || '—' },
+              { key: 'call_count_today', label: 'Calls Today', render: (row) => formatNumber(row.call_count_today) },
+              { key: 'last_call_time', label: 'Last Call', render: (row) => formatDateTime(row.last_call_time) },
+              ...(userCan(user, 'extensionGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('extensionGroups', 'edit', row)} /> }] : []),
+            ]}
+          />
+        </Panel>
+        <Panel
           eyebrow="Routing"
           title={`Queue Groups (${formatNumber((admin?.queueGroups || []).length)})`}
           icon={Headphones}
@@ -8710,49 +8701,6 @@ function DisplayView({ admin, user, onAction }) {
     <>
       <section className="admin-grid media-tools-grid">
         <Panel
-          eyebrow="Agent Screen"
-          title={`Screen Labels (${formatNumber((admin?.screenLabels || []).length)})`}
-          icon={FileText}
-          headerActions={userCan(user, 'screenLabels') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('screenLabels', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No screen label sets (rename/hide agent screen lead fields)"
-            rows={(admin?.screenLabels || []).map((row) => ({ ...row, id: row.label_id }))}
-            columns={[
-              { key: 'label_id', label: 'ID' },
-              { key: 'label_name', label: 'Name' },
-              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-              ...(userCan(user, 'screenLabels') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('screenLabels', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
-          eyebrow="Agent Screen"
-          title={`Screen Colors (${formatNumber((admin?.screenColors || []).length)})`}
-          icon={SlidersHorizontal}
-          headerActions={userCan(user, 'screenColors') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('screenColors', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No color schemes"
-            rows={(admin?.screenColors || []).map((row) => ({ ...row, id: row.colors_id }))}
-            columns={[
-              { key: 'colors_id', label: 'ID' },
-              { key: 'colors_name', label: 'Name' },
-              { key: 'menu_background', label: 'Menu', render: (row) => (row.menu_background ? <span style={{ display: 'inline-block', width: 40, height: 16, borderRadius: 4, background: `#${row.menu_background}` }} title={`#${row.menu_background}`} /> : '—') },
-              { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-              ...(userCan(user, 'screenColors') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('screenColors', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
           eyebrow="Configuration"
           title={`Settings Containers (${formatNumber((admin?.settingsContainers || []).length)})`}
           icon={Database}
@@ -8803,31 +8751,6 @@ function RemoteAgentsView({ admin, user, onAction }) {
               { key: 'campaign_id', label: 'Campaign' },
               { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'ACTIVE'}>{row.status}</StatusPill> },
               ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('remoteAgents', 'edit', row)} /> }] : []),
-            ]}
-          />
-        </Panel>
-        <Panel
-          eyebrow="Users"
-          title={`Extension Groups (${formatNumber((admin?.extensionGroups || []).length)})`}
-          icon={PhoneCall}
-          className="admin-wide-panel"
-          headerActions={userCan(user, 'extensionGroups') ? (
-            <button type="button" className="secondary-action compact-action" onClick={() => onAction('extensionGroups', 'create')}>
-              <Plus size={14} aria-hidden="true" /> Add
-            </button>
-          ) : null}
-        >
-          <DataTable
-            emptyLabel="No extension group entries (used for external dial-out extension rotation)"
-            rows={(admin?.extensionGroups || []).map((row) => ({ ...row, id: row.extension_id }))}
-            columns={[
-              { key: 'extension_group_id', label: 'Group ID' },
-              { key: 'extension', label: 'Extension' },
-              { key: 'rank', label: 'Rank' },
-              { key: 'campaign_groups', label: 'Campaign Groups', render: (row) => row.campaign_groups || '—' },
-              { key: 'call_count_today', label: 'Calls Today', render: (row) => formatNumber(row.call_count_today) },
-              { key: 'last_call_time', label: 'Last Call', render: (row) => formatDateTime(row.last_call_time) },
-              ...(userCan(user, 'extensionGroups') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('extensionGroups', 'edit', row)} /> }] : []),
             ]}
           />
         </Panel>
