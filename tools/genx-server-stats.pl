@@ -106,12 +106,13 @@ if (defined $perf_log && $perf_log eq 'Y') {
 
 # The legacy Reports server list turns a server RED once server_updater is
 # more than 10 seconds stale (and at 90+ seconds admin.php may clear the
-# server's live calls/agents). AST_update.pl refreshes every second on
-# telephony boxes; emulate that here by re-touching the heartbeat every 5
-# seconds for the rest of this cron minute.
+# server's live calls/agents), and the GenX UI flags DOWN at 15 seconds.
+# AST_update.pl refreshes every second on telephony boxes; emulate that here
+# by re-touching the heartbeat every 4 seconds for the rest of this cron
+# minute, so the worst-case gap to the next run's first write stays ~8s.
 my $started = time();
-while (time() - $started < 53) {
-    sleep(5);
+while (time() - $started < 55) {
+    sleep(4);
     $dbh->do("UPDATE server_updater SET last_update=NOW() WHERE server_ip=?", undef, $server_ip);
 }
 

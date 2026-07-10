@@ -5326,33 +5326,51 @@ function MetricCard({ icon: Icon, label, value, detail, accent }) {
 function ActivityChart({ data, rangeLabel }) {
   const max = Math.max(...data.map((item) => item.calls), 1);
   const hourLabels = new Set(['0', '6', '12', '18', '23']);
+  // Points live in a 0-100 viewBox that stretches to fill the panel; the
+  // stroke stays crisp via non-scaling-stroke.
+  const stepX = data.length > 1 ? 100 / (data.length - 1) : 100;
+  const points = data.map((item, index) => ({
+    x: data.length > 1 ? index * stepX : 50,
+    y: 97 - (item.calls / max) * 90,
+  }));
+  const line = points.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
+  const area = `0,100 ${line} 100,100`;
 
   return (
-    <section className="panel chart-panel">
+    <section className="panel chart-panel chart-panel-wide">
       <div className="panel-title">
         <div>
           <p className="eyebrow">{rangeLabel}</p>
           <h2>Call Flow</h2>
         </div>
-        <BarChart3 size={22} aria-hidden="true" />
+        <Activity size={22} aria-hidden="true" />
       </div>
-      <div className="bar-chart" style={{ '--bar-count': Math.max(data.length, 1) }} aria-label="Calls by range">
-        {data.map((item, index) => {
-          const label = item.label ?? String(item.hour ?? index);
-          const showLabel = data.length <= 12 || hourLabels.has(label) || index === data.length - 1;
-          return (
-            <div className="bar-column" key={item.key || label}>
-              <div className="bar-track">
-                <div
-                  className="bar-fill"
-                  style={{ height: `${Math.max(4, (item.calls / max) * 100)}%` }}
-                  title={`${item.calls} calls`}
-                />
-              </div>
-              <span>{showLabel ? label : ''}</span>
-            </div>
-          );
-        })}
+      <div className="line-chart" aria-label="Calls by range">
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
+          <defs>
+            <linearGradient id="callflow-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgba(0, 217, 255, 0.3)" />
+              <stop offset="100%" stopColor="rgba(0, 217, 255, 0)" />
+            </linearGradient>
+          </defs>
+          <polygon points={area} fill="url(#callflow-fill)" />
+          <polyline
+            points={line}
+            fill="none"
+            stroke="var(--blue)"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        </svg>
+        <div className="line-chart-labels">
+          {data.map((item, index) => {
+            const label = item.label ?? String(item.hour ?? index);
+            const showLabel = data.length <= 12 || hourLabels.has(label) || index === data.length - 1;
+            return <span key={item.key || label}>{showLabel ? label : ''}</span>;
+          })}
+        </div>
       </div>
     </section>
   );
@@ -5571,15 +5589,6 @@ function CommandView({ dashboard, admin, user, onAction }) {
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
         <CampaignPerformance rows={dashboard?.campaignPerformance || []} />
-        <BreakdownPanel
-          eyebrow="Lead Inventory"
-          title="Lead Status"
-          icon={Activity}
-          items={dashboard?.leadStatusBreakdown || []}
-          valueKey="leads"
-          labelKey="status"
-          emptyLabel="No leads returned"
-        />
         <CampaignTable campaigns={dashboard?.campaigns || []} />
       </section>
 
@@ -5631,10 +5640,11 @@ function ServersPanel({ admin, user, onAction }) {
             label: 'Status',
             render: (row) => {
               if (row.active !== 'Y') return <StatusPill ok={false}>Off</StatusPill>;
-              // Stats heartbeat is written every minute (AST_update on telephony,
-              // genx-server-stats elsewhere); 2 missed beats = unreachable/unusable.
+              // Heartbeat is written every few seconds on every role (AST_update
+              // on telephony, genx-server-stats' re-touch loop elsewhere), so
+              // 15s stale means the box is unreachable/unusable.
               const age = Number(row.heartbeat_age_sec);
-              const down = !Number.isFinite(age) || age > 120;
+              const down = !Number.isFinite(age) || age > 15;
               return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Online</StatusPill>;
             },
           },

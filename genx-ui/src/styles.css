@@ -1324,42 +1324,28 @@ body {
   filter: drop-shadow(0 0 10px rgba(0, 217, 255, 0.35));
 }
 
-.bar-chart {
-  display: grid;
-  grid-template-columns: repeat(var(--bar-count), minmax(6px, 1fr));
-  align-items: end;
-  gap: 5px;
-  min-height: 240px;
+.chart-panel-wide {
+  grid-column: span 2;
 }
 
-.bar-column {
-  display: grid;
-  grid-template-rows: 1fr 18px;
-  gap: 8px;
-  min-width: 0;
+.line-chart svg {
+  display: block;
+  width: 100%;
   height: 240px;
-  text-align: center;
-}
-
-.bar-track {
-  display: flex;
-  align-items: flex-end;
-  min-height: 0;
   border-radius: 8px;
   border: 1px solid rgba(0, 217, 255, 0.1);
-  background: rgba(0, 217, 255, 0.07);
-  overflow: hidden;
+  background: rgba(0, 217, 255, 0.04);
 }
 
-.bar-fill {
-  width: 100%;
-  min-height: 4px;
-  border-radius: 8px 8px 0 0;
-  background: linear-gradient(180deg, var(--blue), var(--green));
-  box-shadow: 0 0 14px rgba(0, 217, 255, 0.42);
+.line-chart-labels {
+  display: flex;
+  margin-top: 8px;
 }
 
-.bar-column span {
+.line-chart-labels span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 700;
@@ -1659,10 +1645,6 @@ td span {
 
   .side-nav button {
     flex: 1 1 45%;
-  }
-
-  .bar-chart {
-    gap: 4px;
   }
 
   .agent-row {
