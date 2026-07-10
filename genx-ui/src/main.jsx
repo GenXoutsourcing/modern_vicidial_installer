@@ -256,6 +256,11 @@ function navSectionValues(value) {
   return raw.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
 }
 
+// Full admin capability = the user's group has the Admin nav section.
+function hasAdminNav(user) {
+  return !user?.navSections || user.navSections.includes('admin');
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
@@ -2428,6 +2433,34 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
   }
 
   if (entity === 'users') {
+    // Managers without Admin nav access get the essential form only. The
+    // server enforces the same whitelist on save, so this is display, not
+    // the security boundary.
+    if (!hasAdminNav(user)) {
+      const adminNavGroups = new Set(
+        (admin?.userGroups || [])
+          .filter((group) => navSectionValues(group.genx_nav_sections).includes('admin'))
+          .map((group) => String(group.user_group)),
+      );
+      const managerGroupOptions = userGroupOptions.filter((option) => !adminNavGroups.has(String(option.value)));
+      return [
+        { section: 'Identity and Login' },
+        { key: 'user', label: 'User ID', disabled: true },
+        { key: 'pass', label: 'New Password', type: 'password' },
+        { key: 'full_name', label: 'Full Name' },
+        { key: 'user_level', label: 'Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS.filter((level) => Number(level) <= 8), form?.user_level)) },
+        { key: 'user_group', label: 'User Group', type: managerGroupOptions.length ? 'select' : 'text', options: withCurrentOption(managerGroupOptions, form?.user_group) },
+        { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
+        { key: 'phone_login', label: 'Phone Login', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.phone_login) },
+        { key: 'phone_pass', label: 'Phone Password', type: 'password' },
+        { section: 'Agent Options' },
+        { key: 'view_reports', label: 'Reports', type: 'select', options: flagOptions() },
+        { key: 'hotkeys_active', label: 'Hotkeys Active', type: 'select', options: flagOptions() },
+        { key: 'agent_choose_ingroups', label: 'Agent Choose In-Groups', type: 'select', options: flagOptions() },
+        { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
+        { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
+      ];
+    }
     return [
       { section: 'Identity and Login' },
       { key: 'user', label: 'User ID', disabled: mode === 'edit' },
@@ -4980,8 +5013,10 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   }
 
   const isOwnUser = action.entity === 'users' && String(form.user || '') === String(user?.user || '');
+  // Restricted managers (no Admin nav access) cannot delete users at all.
+  const userDeleteBlocked = action.entity === 'users' && !hasAdminNav(user);
   const isOwnGroup = action.entity === 'userGroups' && String(form.user_group || '') === String(user?.userGroup || '');
-  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup;
+  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup && !userDeleteBlocked;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -5231,13 +5266,13 @@ function RowActions({ children }) {
   return <div className="row-actions">{children}</div>;
 }
 
-function ActionBar({ entity, label, user, onAction, children, extraActions = null }) {
+function ActionBar({ entity, label, user, onAction, children, extraActions = null, canAdd = true }) {
   return (
     <div className="action-bar">
       <div>{children}</div>
       <div className="action-buttons">
         {extraActions}
-        {userCan(user, entity) && (
+        {canAdd && userCan(user, entity) && (
           <button type="button" className="primary-action compact-action" onClick={() => onAction(entity, 'create')}>
             <Plus size={17} aria-hidden="true" />
             Add {label}
@@ -5734,8 +5769,12 @@ function UsersView({ admin, user, onAction }) {
 
   return (
     <>
-      <ActionBar entity="users" label="User" user={user} onAction={onAction}>
-        <p className="action-copy">Add operators and control the common dialer permission flags from GenX.</p>
+      <ActionBar entity="users" label="User" user={user} onAction={onAction} canAdd={hasAdminNav(user)}>
+        <p className="action-copy">
+          {hasAdminNav(user)
+            ? 'Add operators and control the common dialer permission flags from GenX.'
+            : 'Manage the day-to-day agent settings for your operators.'}
+        </p>
       </ActionBar>
       <section className="admin-grid">
         <Panel

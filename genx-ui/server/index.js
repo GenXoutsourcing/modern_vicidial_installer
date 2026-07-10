@@ -3386,6 +3386,19 @@ function userPayload(body, currentUser) {
   };
 }
 
+// Fields a restricted manager (no Admin nav access in the GenX permission
+// layer) may change. Everything else keeps its stored value — this is the
+// security boundary behind the trimmed "essential" user form.
+const ESSENTIAL_USER_FIELDS = new Set([
+  'pass', 'pass_hash', 'full_name', 'user_level', 'user_group', 'active',
+  'phone_login', 'phone_pass', 'view_reports', 'hotkeys_active',
+  'agent_choose_ingroups', 'closer_campaigns', 'scheduled_callbacks',
+]);
+
+function restrictedUserEditor(genxUser) {
+  return Array.isArray(genxUser?.navSections) && !genxUser.navSections.includes('admin');
+}
+
 async function saveUser(req, res, mode) {
   if (!requireModify(req, res, 'modifyUsers')) return;
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
@@ -3394,6 +3407,25 @@ async function saveUser(req, res, mode) {
   if (mode === 'create' && !payload.pass) return badRequest(res, 'password_required');
   if (mode !== 'create' && !payload.pass) delete payload.pass;
   if (payload.pass) payload.pass_hash = '';
+
+  if (restrictedUserEditor(req.genxUser)) {
+    if (mode === 'create') return res.status(403).json({ ok: false, error: 'user_create_not_allowed' });
+    for (const key of Object.keys(payload)) {
+      if (!ESSENTIAL_USER_FIELDS.has(key)) delete payload[key];
+    }
+    payload.user_level = Math.min(Number(payload.user_level || 1), 8);
+    const [target] = await rows('SELECT user_level FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+    if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+    if (Number(target.user_level || 0) > Number(req.genxUser?.userLevel || 0)) {
+      return res.status(403).json({ ok: false, error: 'user_above_your_level' });
+    }
+    if (payload.user_group) {
+      const groupNav = await navSectionsFor(payload.user_group);
+      if (groupNav.includes('admin')) {
+        return res.status(403).json({ ok: false, error: 'user_group_not_allowed' });
+      }
+    }
+  }
   if (mode !== 'create' && !req.genxUser?.permissions?.allowedQueueGroups?.all) {
     const [existingUser] = await rows(
       'SELECT closer_campaigns, max_inbound_filter_ingroups FROM vicidial_users WHERE user = ?',
@@ -3406,6 +3438,9 @@ async function saveUser(req, res, mode) {
       payload.max_inbound_filter_ingroups = mergeScopedGroupList(req.body?.max_inbound_filter_ingroups, existingUser.max_inbound_filter_ingroups, queueScope);
     }
   }
+  // The essential form doesn't carry this field; don't let the scope merge
+  // wipe it for restricted editors.
+  if (restrictedUserEditor(req.genxUser)) delete payload.max_inbound_filter_ingroups;
   const { assignments, values } = dynamicAssignments(payload);
 
   try {
@@ -9566,6 +9601,9 @@ async function whiteboardReport(req, res) {
 // campaign/in-group rank rows, deactivate remote agents they started.
 async function deleteUser(req, res) {
   if (!requireModify(req, res, 'deleteUsers')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'user_delete_not_allowed' });
+  }
   const id = cleanId(req.params.id, 20);
   if (!id || id.length < 2) return badRequest(res, 'invalid_user_id');
   if (id === req.genxUser.user) return res.status(403).json({ ok: false, error: 'cannot_delete_self' });
