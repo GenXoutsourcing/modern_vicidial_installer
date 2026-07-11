@@ -1768,6 +1768,39 @@ td span {
   accent-color: #00d9ff;
 }
 
+/* Custom Report Matrix pickers */
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 12px;
+  margin: 6px 0 14px;
+}
+
+.checkbox-inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.checkbox-inline input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: #00d9ff;
+  flex: none;
+}
+
+.custom-report .report-filter-bar select[multiple] {
+  min-height: 92px;
+}
+
+.row-action-group {
+  display: inline-flex;
+  gap: 6px;
+}
+
 /* Native dropdown option lists follow the theme instead of the OS grey. */
 select,
 select option,

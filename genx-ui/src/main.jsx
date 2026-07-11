@@ -7726,6 +7726,322 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
   );
 }
 
+// Custom Report Matrix: one page where the user assembles a report from a
+// server-side dataset registry (dimensions x measures x filters), runs it,
+// and can save the configuration under their own name (shared with their
+// user group by default). The server compiles the SQL; this view only ever
+// sends registry keys and filter values.
+function CustomReportView({ token }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [meta, setMeta] = useState(null);
+  const [saved, setSaved] = useState([]);
+  const [datasetKey, setDatasetKey] = useState('outbound_calls');
+  const [dims, setDims] = useState(['campaign_id']);
+  const [measures, setMeasures] = useState(['calls', 'talk_sec']);
+  const [filters, setFilters] = useState({});
+  const [beginDate, setBeginDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [beginTime, setBeginTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saveName, setSaveName] = useState('');
+  const [shared, setShared] = useState(true);
+  const [activeSavedId, setActiveSavedId] = useState(null);
+
+  const dataset = meta?.datasets?.find((item) => item.key === datasetKey) || null;
+
+  const loadSaved = useCallback(() => {
+    apiFetch('/reports/custom/saved', token).then((payload) => setSaved(payload.reports || [])).catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    apiFetch('/reports/custom/meta', token)
+      .then(setMeta)
+      .catch((requestError) => setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'Could not load report options'));
+    loadSaved();
+  }, [token, loadSaved]);
+
+  function pickDataset(key) {
+    const next = meta?.datasets?.find((item) => item.key === key);
+    setDatasetKey(key);
+    setDims(next?.dimensions?.length ? [next.dimensions[0].key] : []);
+    setMeasures(next?.measures?.length ? [next.measures[0].key] : []);
+    setFilters({});
+    setResult(null);
+    setActiveSavedId(null);
+  }
+
+  function toggleKey(list, setList, key) {
+    setList(list.includes(key) ? list.filter((item) => item !== key) : [...list, key]);
+  }
+
+  function config() {
+    return {
+      dataset: datasetKey,
+      dimensions: dims,
+      measures,
+      filters,
+    };
+  }
+
+  async function run(event) {
+    event?.preventDefault();
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const payload = await apiFetch('/reports/custom/run', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...config(),
+          begin_date: beginDate,
+          end_date: endDate,
+          begin_time: beginTime ? `${beginTime}:00` : '',
+          end_time: endTime ? `${endTime}:59` : '',
+        }),
+      });
+      setResult(payload);
+    } catch (requestError) {
+      setResult(null);
+      setError(requestError.status === 400 ? 'Pick at least one measure' : 'Report failed to run');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveReport() {
+    const name = saveName.trim();
+    if (!name) {
+      setError('Give the report a name before saving');
+      return;
+    }
+    setError('');
+    try {
+      const payload = await apiFetch(
+        activeSavedId ? `/reports/custom/saved/${activeSavedId}` : '/reports/custom/saved',
+        token,
+        { method: activeSavedId ? 'PUT' : 'POST', body: JSON.stringify({ name, shared, config: config() }) },
+      );
+      setActiveSavedId(payload.report_id || activeSavedId);
+      setNotice(`Saved "${name}"`);
+      loadSaved();
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Only the owner can update this report' : 'Save failed');
+    }
+  }
+
+  function loadReport(report) {
+    setDatasetKey(report.config.dataset);
+    setDims(report.config.dimensions || []);
+    setMeasures(report.config.measures || []);
+    setFilters(report.config.filters || {});
+    setSaveName(report.report_name);
+    setShared(report.shared !== 'N');
+    setActiveSavedId(report.report_id);
+    setResult(null);
+    setNotice('');
+  }
+
+  async function deleteReport(report) {
+    try {
+      await apiFetch(`/reports/custom/saved/${report.report_id}`, token, { method: 'DELETE' });
+      if (activeSavedId === report.report_id) setActiveSavedId(null);
+      loadSaved();
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Only the owner can delete this report' : 'Delete failed');
+    }
+  }
+
+  function setFilterValue(key, value) {
+    setFilters((current) => {
+      const next = { ...current };
+      const isEmpty = Array.isArray(value) ? !value.length : !String(value || '').trim();
+      if (isEmpty) delete next[key];
+      else next[key] = value;
+      return next;
+    });
+  }
+
+  const tableColumns = (result?.columns || []).map((column) => ({ key: column.key, label: column.label }));
+
+  return (
+    <div className="log-report custom-report">
+      <section className="admin-grid log-report-top">
+        <Panel eyebrow="Custom Report" title="Report Setup" icon={SlidersHorizontal}>
+          <form className="entity-form report-filter-bar" onSubmit={run}>
+            <div className="field-grid">
+              <label>
+                <span>Dataset</span>
+                <select value={datasetKey} onChange={(event) => pickDataset(event.target.value)}>
+                  {(meta?.datasets || []).map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Begin Date</span>
+                <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
+              </label>
+              <label>
+                <span>End Date</span>
+                <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              </label>
+              <label>
+                <span>Begin Time</span>
+                <input type="time" value={beginTime} onChange={(event) => setBeginTime(event.target.value)} />
+              </label>
+              <label>
+                <span>End Time</span>
+                <input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button type="submit" className="primary-action" disabled={loading || !measures.length}>
+                <Search size={16} aria-hidden="true" />
+                {loading ? 'Loading' : 'Run Report'}
+              </button>
+            </div>
+          </form>
+        </Panel>
+        <Panel eyebrow="Custom Report" title="Rows &amp; Values" icon={BarChart3}>
+          <p className="action-copy">Group By (up to 3)</p>
+          <div className="checkbox-grid">
+            {(dataset?.dimensions || []).map((item) => (
+              <label key={item.key} className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={dims.includes(item.key)}
+                  disabled={!dims.includes(item.key) && dims.length >= 3}
+                  onChange={() => toggleKey(dims, setDims, item.key)}
+                />
+                <span>{item.label}</span>
+              </label>
+            ))}
+          </div>
+          <p className="action-copy">Values</p>
+          <div className="checkbox-grid">
+            {(dataset?.measures || []).map((item) => (
+              <label key={item.key} className="checkbox-inline">
+                <input type="checkbox" checked={measures.includes(item.key)} onChange={() => toggleKey(measures, setMeasures, item.key)} />
+                <span>{item.label}</span>
+              </label>
+            ))}
+          </div>
+        </Panel>
+        <Panel eyebrow="Custom Report" title="Filters" icon={Search}>
+          <div className="field-grid">
+            {(dataset?.filters || []).map((item) => (
+              <label key={item.key}>
+                <span>{item.label}</span>
+                {item.picker ? (
+                  <select
+                    multiple
+                    value={Array.isArray(filters[item.key]) ? filters[item.key] : []}
+                    onChange={(event) => setFilterValue(item.key, [...event.target.selectedOptions].map((option) => option.value))}
+                  >
+                    {(meta?.pickers?.[item.picker] || []).map((value) => (
+                      <option key={value} value={value}>{value}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    placeholder="Comma-separated"
+                    value={Array.isArray(filters[item.key]) ? filters[item.key].join(',') : (filters[item.key] || '')}
+                    onChange={(event) => setFilterValue(item.key, event.target.value)}
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+        </Panel>
+      </section>
+
+      {(error || notice) && <div className={error ? 'form-error' : 'connection-summary'}>{error || notice}</div>}
+
+      <Panel
+        eyebrow="Custom Report"
+        title="Results"
+        icon={FileText}
+        headerActions={result?.rows?.length ? (
+          <button
+            type="button"
+            className="row-action"
+            onClick={() => downloadCsv(
+              `custom_report_${datasetKey}_${beginDate}_${endDate}.csv`,
+              tableColumns.map((column) => ({ label: column.label, value: (row) => row[column.key] })),
+              result.rows,
+            )}
+          >
+            Download CSV
+          </button>
+        ) : null}
+      >
+        {result?.truncated && <p className="action-copy">Results were capped - narrow the date range or add filters.</p>}
+        <DataTable
+          columns={tableColumns.length ? tableColumns : [{ key: 'empty', label: 'Results' }]}
+          rows={result?.rows || []}
+          emptyLabel={result ? 'No rows for that selection' : 'Choose options and press Run Report'}
+        />
+      </Panel>
+
+      <section className="admin-grid" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
+        <Panel eyebrow="Custom Report" title="Saved Reports" icon={BookOpen}>
+          <DataTable
+            columns={[
+              { key: 'report_name', label: 'Name' },
+              { key: 'dataset', label: 'Dataset', render: (row) => meta?.datasets?.find((item) => item.key === row.config?.dataset)?.label || row.config?.dataset },
+              { key: 'owner_user', label: 'Owner' },
+              { key: 'shared', label: 'Shared', render: (row) => (row.shared === 'N' ? 'Private' : 'Group') },
+              {
+                key: 'actions',
+                label: '',
+                render: (row) => (
+                  <span className="row-action-group">
+                    <button type="button" className="row-action" onClick={() => loadReport(row)}>Load</button>
+                    <button type="button" className="row-action danger" onClick={() => deleteReport(row)}>
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
+                  </span>
+                ),
+              },
+            ]}
+            rows={saved}
+            emptyLabel="No saved reports yet"
+          />
+        </Panel>
+        <Panel eyebrow="Custom Report" title={activeSavedId ? 'Update Saved Report' : 'Save This Report'} icon={Save}>
+          <div className="entity-form">
+            <div className="field-grid">
+              <label>
+                <span>Report Name</span>
+                <input value={saveName} onChange={(event) => setSaveName(event.target.value)} placeholder="My daily campaign report" maxLength={80} />
+              </label>
+              <label className="checkbox-inline">
+                <input type="checkbox" checked={shared} onChange={(event) => setShared(event.target.checked)} />
+                <span>Share with my user group</span>
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="primary-action" onClick={saveReport}>
+                <Save size={16} aria-hidden="true" />
+                {activeSavedId ? 'Update Report' : 'Save Report'}
+              </button>
+              {activeSavedId && (
+                <button type="button" className="row-action" onClick={() => { setActiveSavedId(null); setNotice(''); }}>
+                  Save As New
+                </button>
+              )}
+            </div>
+          </div>
+        </Panel>
+      </section>
+    </div>
+  );
+}
+
 function useLiveReport(path, token, intervalMs = 5000) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -16116,6 +16432,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportCalledCounts') return <CalledCountsReportView token={token} />;
   if (activeView === 'reportAdminLog') return <AdminChangeLogReportView token={token} initialSection={viewParams?.section} initialRecord={viewParams?.record} />;
   if (activeView === 'reportDialLog') return <DialLogReportView token={token} />;
+  if (activeView === 'reportCustom') return <CustomReportView token={token} />;
   if (activeView === 'reportTimeclock') return <TimeclockReportView token={token} />;
   if (activeView === 'reportTimeclockStatus') return <TimeclockStatusReportView token={token} />;
   if (LOG_REPORT_CONFIGS[activeView]) return <LogReportView token={token} config={LOG_REPORT_CONFIGS[activeView]} />;

@@ -326,6 +326,33 @@ const apiKeyTableReady = (async () => {
   }
 })();
 
+// Saved custom-report configurations (the Custom Report Matrix page). Only a
+// normalized, registry-validated config JSON is stored — it is re-validated
+// against the dataset registry on every run, so a stale or hand-edited row can
+// never widen what a user is allowed to query.
+const savedReportTableReady = (async () => {
+  try {
+    await execute(
+      `CREATE TABLE IF NOT EXISTS genx_saved_reports (
+         report_id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+         report_name VARCHAR(80) NOT NULL,
+         owner_user VARCHAR(20) NOT NULL,
+         owner_group VARCHAR(20) NOT NULL DEFAULT '',
+         shared ENUM('Y','N') NOT NULL DEFAULT 'Y',
+         config MEDIUMTEXT NOT NULL,
+         created_date DATETIME NOT NULL,
+         modified_date DATETIME NOT NULL,
+         KEY owner_user (owner_user),
+         KEY owner_group (owner_group)
+       )`,
+    );
+    return true;
+  } catch (error) {
+    console.error('genx_saved_reports table unavailable; saved custom reports disabled', error.message);
+    return false;
+  }
+})();
+
 function parseNavSections(raw) {
   const text = String(raw || '').trim();
   if (!text || text.toUpperCase() === 'ALL') return GENX_NAV_SECTIONS;
@@ -4232,6 +4259,325 @@ function parseReportDateRange(req) {
     beginDate: cleanReportDate(req.query?.begin_date, today),
     endDate: cleanReportDate(req.query?.end_date, today),
   };
+}
+
+// --- Custom Report Matrix (semantic layer) ---------------------------------
+// One configurable report: the client picks a dataset, dimensions, measures
+// and filters; the SQL is compiled here from this whitelisted registry.
+// Client input only ever SELECTS registry entries by key — every filter value
+// binds as a parameter, so no client string reaches the SQL text. All datasets
+// read through rangeSource (replica-routed and archive-aware).
+const customCapSum = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+const CUSTOM_UNANSWERED_IN = "('DROP','XDROP','HXFER','QVMAIL','HOLDTO','LIVE','QUEUE','TIMEOT','AFTHRS','NANQUE','IQNANQ','INBND','MAXCAL')";
+
+const CUSTOM_REPORT_DATASETS = {
+  outbound_calls: {
+    label: 'Outbound Calls',
+    table: 'vicidial_log', dateCol: 'call_date', alias: 'vl',
+    scope: { type: 'campaigns', column: 'campaign_id' },
+    dimensions: {
+      campaign_id: { label: 'Campaign', sql: 'campaign_id' },
+      status: { label: 'Status', sql: 'status' },
+      user: { label: 'Agent', sql: 'user' },
+      user_group: { label: 'User Group', sql: 'user_group' },
+      list_id: { label: 'List', sql: 'list_id' },
+      term_reason: { label: 'Hangup Reason', sql: 'term_reason' },
+      call_day: { label: 'Day', sql: 'DATE(call_date)' },
+      call_hour: { label: 'Hour', sql: "DATE_FORMAT(call_date, '%Y-%m-%d %H:00')" },
+    },
+    measures: {
+      calls: { label: 'Calls', sql: 'COUNT(*)' },
+      talk_sec: { label: 'Talk Time (sec)', sql: 'COALESCE(SUM(length_in_sec),0)' },
+      avg_talk_sec: { label: 'Avg Talk (sec)', sql: 'COALESCE(ROUND(AVG(length_in_sec),1),0)' },
+      unique_leads: { label: 'Unique Leads', sql: 'COUNT(DISTINCT lead_id)' },
+      drops: { label: 'Drops', sql: "COALESCE(SUM(status LIKE '%DROP%'),0)" },
+    },
+    filters: {
+      campaign_id: { label: 'Campaigns', column: 'campaign_id', picker: 'campaigns' },
+      status: { label: 'Statuses', column: 'status' },
+      user: { label: 'Agents', column: 'user' },
+      list_id: { label: 'Lists', column: 'list_id' },
+      user_group: { label: 'User Groups', column: 'user_group' },
+    },
+  },
+  inbound_calls: {
+    label: 'Inbound Calls',
+    table: 'vicidial_closer_log', dateCol: 'call_date', alias: 'cl',
+    scope: { type: 'queueGroups', column: 'campaign_id' },
+    dimensions: {
+      group_id: { label: 'In-Group', sql: 'campaign_id' },
+      status: { label: 'Status', sql: 'status' },
+      user: { label: 'Agent', sql: 'user' },
+      user_group: { label: 'User Group', sql: 'user_group' },
+      list_id: { label: 'List', sql: 'list_id' },
+      term_reason: { label: 'Hangup Reason', sql: 'term_reason' },
+      call_day: { label: 'Day', sql: 'DATE(call_date)' },
+      call_hour: { label: 'Hour', sql: "DATE_FORMAT(call_date, '%Y-%m-%d %H:00')" },
+    },
+    measures: {
+      calls: { label: 'Calls', sql: 'COUNT(*)' },
+      answered: { label: 'Answered', sql: `COALESCE(SUM(status NOT IN ${CUSTOM_UNANSWERED_IN}),0)` },
+      drops: { label: 'Drops', sql: "COALESCE(SUM(status LIKE '%DROP%'),0)" },
+      talk_sec: { label: 'Talk Time (sec)', sql: 'COALESCE(SUM(GREATEST(length_in_sec - queue_seconds, 0)),0)' },
+      queue_sec: { label: 'Queue Time (sec)', sql: 'COALESCE(SUM(queue_seconds),0)' },
+      avg_queue_sec: { label: 'Avg Queue (sec)', sql: 'COALESCE(ROUND(AVG(queue_seconds),1),0)' },
+    },
+    filters: {
+      group_id: { label: 'In-Groups', column: 'campaign_id', picker: 'inboundGroups' },
+      status: { label: 'Statuses', column: 'status' },
+      user: { label: 'Agents', column: 'user' },
+      user_group: { label: 'User Groups', column: 'user_group' },
+    },
+  },
+  agent_activity: {
+    label: 'Agent Activity',
+    table: 'vicidial_agent_log', dateCol: 'event_time', alias: 'al',
+    scope: { type: 'userGroups', column: 'user_group' },
+    dimensions: {
+      user: { label: 'Agent', sql: 'user' },
+      user_group: { label: 'User Group', sql: 'user_group' },
+      campaign_id: { label: 'Campaign', sql: 'campaign_id' },
+      status: { label: 'Disposition', sql: 'status' },
+      sub_status: { label: 'Pause Code', sql: 'sub_status' },
+      event_day: { label: 'Day', sql: 'DATE(event_time)' },
+      event_hour: { label: 'Hour', sql: "DATE_FORMAT(event_time, '%Y-%m-%d %H:00')" },
+    },
+    measures: {
+      events: { label: 'Events', sql: 'COUNT(*)' },
+      calls: { label: 'Calls Handled', sql: 'COUNT(lead_id)' },
+      pause_sec: { label: 'Pause (sec)', sql: customCapSum('pause_sec') },
+      wait_sec: { label: 'Wait (sec)', sql: customCapSum('wait_sec') },
+      talk_sec: { label: 'Talk (sec)', sql: customCapSum('talk_sec') },
+      dispo_sec: { label: 'Wrap-up (sec)', sql: customCapSum('dispo_sec') },
+      dead_sec: { label: 'Dead (sec)', sql: customCapSum('dead_sec') },
+    },
+    filters: {
+      user: { label: 'Agents', column: 'user' },
+      user_group: { label: 'User Groups', column: 'user_group' },
+      campaign_id: { label: 'Campaigns', column: 'campaign_id', picker: 'campaigns' },
+      sub_status: { label: 'Pause Codes', column: 'sub_status' },
+    },
+  },
+  carrier_calls: {
+    label: 'Carrier / Dial Attempts',
+    table: 'vicidial_carrier_log', dateCol: 'call_date', alias: 'vcl',
+    scope: null,
+    dimensions: {
+      server_ip: { label: 'Server', sql: 'server_ip' },
+      dialstatus: { label: 'Dial Status', sql: 'dialstatus' },
+      hangup_cause: { label: 'Hangup Cause', sql: 'hangup_cause' },
+      sip_hangup_cause: { label: 'SIP Cause', sql: 'sip_hangup_cause' },
+      sip_hangup_reason: { label: 'SIP Reason', sql: 'sip_hangup_reason' },
+      call_day: { label: 'Day', sql: 'DATE(call_date)' },
+      call_hour: { label: 'Hour', sql: "DATE_FORMAT(call_date, '%Y-%m-%d %H:00')" },
+    },
+    measures: {
+      calls: { label: 'Calls', sql: 'COUNT(*)' },
+      answered: { label: 'Answered', sql: "COALESCE(SUM(dialstatus = 'ANSWER'),0)" },
+      unique_leads: { label: 'Unique Leads', sql: 'COUNT(DISTINCT lead_id)' },
+    },
+    filters: {
+      dialstatus: { label: 'Dial Statuses', column: 'dialstatus' },
+      server_ip: { label: 'Servers', column: 'server_ip' },
+      sip_hangup_cause: { label: 'SIP Causes', column: 'sip_hangup_cause' },
+    },
+  },
+};
+
+const CUSTOM_REPORT_MAX_ROWS = 5000;
+const CUSTOM_REPORT_MAX_DIMS = 3;
+
+function customReportScope(req, ds, params) {
+  if (!ds.scope) return '';
+  const perms = req.genxUser?.permissions || {};
+  const scope = ds.scope.type === 'campaigns' ? perms.allowedCampaigns
+    : ds.scope.type === 'queueGroups' ? perms.allowedQueueGroups
+      : perms.adminViewableGroups;
+  const clause = scopeWhere(scope, `${ds.alias}.${ds.scope.column}`, params);
+  return clause === '1=1' ? '' : clause;
+}
+
+// Normalizes a client config against the registry. Everything not recognized
+// is silently dropped; the result is safe to compile and safe to store.
+function normalizeCustomReportConfig(raw) {
+  const dsKey = Object.prototype.hasOwnProperty.call(CUSTOM_REPORT_DATASETS, String(raw?.dataset || '')) ? String(raw.dataset) : '';
+  if (!dsKey) return null;
+  const ds = CUSTOM_REPORT_DATASETS[dsKey];
+  const pick = (list, registry, max) => [...new Set((Array.isArray(list) ? list : [])
+    .map(String).filter((key) => Object.prototype.hasOwnProperty.call(registry, key)))].slice(0, max);
+  const dimensions = pick(raw?.dimensions, ds.dimensions, CUSTOM_REPORT_MAX_DIMS);
+  const measures = pick(raw?.measures, ds.measures, 8);
+  const filters = {};
+  for (const key of Object.keys(ds.filters)) {
+    const value = raw?.filters?.[key];
+    const values = (Array.isArray(value) ? value : String(value ?? '').split(','))
+      .map((item) => cleanText(String(item), 60).trim()).filter(Boolean).slice(0, 50);
+    if (values.length) filters[key] = values;
+  }
+  const orderPool = [...dimensions, ...measures];
+  return {
+    dataset: dsKey,
+    dimensions,
+    measures,
+    filters,
+    order_by: orderPool.includes(String(raw?.order_by || '')) ? String(raw.order_by) : '',
+    order_dir: raw?.order_dir === 'asc' ? 'asc' : 'desc',
+  };
+}
+
+async function customReportMeta(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const datasets = Object.entries(CUSTOM_REPORT_DATASETS).map(([key, ds]) => ({
+    key,
+    label: ds.label,
+    dimensions: Object.entries(ds.dimensions).map(([k, d]) => ({ key: k, label: d.label })),
+    measures: Object.entries(ds.measures).map(([k, m]) => ({ key: k, label: m.label })),
+    filters: Object.entries(ds.filters).map(([k, f]) => ({ key: k, label: f.label, picker: f.picker || null })),
+  }));
+  const campaignParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
+  const groupParams = [];
+  const groupWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'group_id', groupParams);
+  const [campaigns, inboundGroups] = await Promise.all([
+    rows(`SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignWhere} ORDER BY campaign_id ASC LIMIT 500`, campaignParams, []),
+    rows(`SELECT group_id FROM vicidial_inbound_groups WHERE group_handling = 'PHONE' AND ${groupWhere} ORDER BY group_id ASC LIMIT 500`, groupParams, []),
+  ]);
+  return res.json({
+    ok: true,
+    datasets,
+    pickers: {
+      campaigns: campaigns.map((row) => String(row.campaign_id)),
+      inboundGroups: inboundGroups.map((row) => String(row.group_id)),
+    },
+  });
+}
+
+async function customReportRun(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const body = req.body || {};
+  const config = normalizeCustomReportConfig(body);
+  if (!config) return badRequest(res, 'unknown_dataset');
+  if (!config.measures.length) return badRequest(res, 'measures_required');
+  const ds = CUSTOM_REPORT_DATASETS[config.dataset];
+
+  const today = new Date().toISOString().slice(0, 10);
+  const beginDate = cleanReportDate(body.begin_date, today);
+  const endDate = cleanReportDate(body.end_date, today);
+  const start = `${beginDate} ${cleanReportTime(body.begin_time, '00:00:00')}`;
+  const end = `${endDate} ${cleanReportTime(body.end_time, '23:59:59')}`;
+
+  const extra = [];
+  const extraParams = [];
+  const scopeClause = customReportScope(req, ds, extraParams);
+  if (scopeClause) extra.push(scopeClause);
+  for (const [key, values] of Object.entries(config.filters)) {
+    extra.push(`${ds.alias}.${ds.filters[key].column} IN (${values.map(() => '?').join(',')})`);
+    extraParams.push(...values);
+  }
+
+  const src = await rangeSource({
+    table: ds.table, dateCol: ds.dateCol, start, end, alias: ds.alias,
+    extraWhere: extra.join(' AND '), extraParams,
+  });
+  const selects = [
+    ...config.dimensions.map((key) => `${ds.dimensions[key].sql} AS \`${key}\``),
+    ...config.measures.map((key) => `${ds.measures[key].sql} AS \`${key}\``),
+  ];
+  const orderKey = config.order_by || config.measures[0];
+  const orderDir = config.dimensions.includes(orderKey) && !config.order_by ? 'ASC' : config.order_dir.toUpperCase();
+  const limit = Math.min(Math.max(Number(body.limit) || 500, 1), CUSTOM_REPORT_MAX_ROWS);
+  const sql = `SELECT ${selects.join(', ')}
+     FROM ${src.fromSql}
+     WHERE ${src.dateWhere}
+     ${config.dimensions.length ? `GROUP BY ${config.dimensions.map((key) => `\`${key}\``).join(', ')}` : ''}
+     ORDER BY \`${orderKey}\` ${orderDir}
+     LIMIT ${limit + 1}`;
+  const data = await rows(sql, src.params, []);
+  const truncated = data.length > limit;
+  if (truncated) data.length = limit;
+  return res.json({
+    ok: true,
+    dataset: config.dataset,
+    columns: [
+      ...config.dimensions.map((key) => ({ key, label: ds.dimensions[key].label })),
+      ...config.measures.map((key) => ({ key, label: ds.measures[key].label })),
+    ],
+    rows: data,
+    truncated,
+    range: { beginDate, endDate },
+    config,
+  });
+}
+
+async function listSavedCustomReports(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  await savedReportTableReady;
+  const me = req.genxUser || {};
+  const params = [];
+  let where = "(owner_user = ? OR (shared = 'Y' AND owner_group = ?))";
+  if (Number(me.userLevel || 0) >= 9) where = '1=1';
+  else params.push(me.user || '', me.userGroup || '');
+  const list = await rows(
+    `SELECT report_id, report_name, owner_user, owner_group, shared, config, created_date, modified_date
+     FROM genx_saved_reports WHERE ${where} ORDER BY report_name ASC LIMIT 500`,
+    params,
+    [],
+  );
+  const reports = list.map((row) => {
+    let config = null;
+    try { config = normalizeCustomReportConfig(JSON.parse(row.config)); } catch (error) { config = null; }
+    return { ...row, config };
+  }).filter((row) => row.config);
+  return res.json({ ok: true, reports });
+}
+
+async function saveCustomReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  await savedReportTableReady;
+  const body = req.body || {};
+  const name = cleanText(body.name, 80).trim();
+  if (!name) return badRequest(res, 'name_required');
+  const shared = body.shared === false ? 'N' : 'Y';
+  const config = normalizeCustomReportConfig(body.config);
+  if (!config) return badRequest(res, 'unknown_dataset');
+  if (!config.measures.length) return badRequest(res, 'measures_required');
+
+  const id = Number(req.params?.id || 0);
+  if (id) {
+    const [existing] = await rows('SELECT report_id, report_name, owner_user, owner_group, shared FROM genx_saved_reports WHERE report_id = ? LIMIT 1', [id], []);
+    if (!existing) return res.status(404).json({ ok: false, error: 'report_not_found' });
+    if (Number(req.genxUser?.userLevel || 0) < 9 && existing.owner_user !== req.genxUser?.user) {
+      return res.status(403).json({ ok: false, error: 'not_report_owner' });
+    }
+    await execute(
+      'UPDATE genx_saved_reports SET report_name = ?, shared = ?, config = ?, modified_date = NOW() WHERE report_id = ? LIMIT 1',
+      [name, shared, JSON.stringify(config), id],
+    );
+    await adminLog(req, 'REPORTS', 'MODIFY', String(id), 'GENX CUSTOM REPORT SAVE', `dataset ${config.dataset}`, name);
+    return res.json({ ok: true, report_id: id });
+  }
+  const result = await execute(
+    `INSERT INTO genx_saved_reports SET report_name = ?, owner_user = ?, owner_group = ?, shared = ?,
+       config = ?, created_date = NOW(), modified_date = NOW()`,
+    [name, req.genxUser?.user || '', req.genxUser?.userGroup || '', shared, JSON.stringify(config)],
+  );
+  await adminLog(req, 'REPORTS', 'ADD', String(result.insertId), 'GENX CUSTOM REPORT SAVE', `dataset ${config.dataset}`, name);
+  return res.json({ ok: true, report_id: result.insertId });
+}
+
+async function deleteCustomReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  await savedReportTableReady;
+  const id = Number(req.params?.id || 0);
+  if (!id) return badRequest(res, 'invalid_report_id');
+  const [existing] = await rows('SELECT report_id, report_name, owner_user, owner_group, shared FROM genx_saved_reports WHERE report_id = ? LIMIT 1', [id], []);
+  if (!existing) return res.status(404).json({ ok: false, error: 'report_not_found' });
+  if (Number(req.genxUser?.userLevel || 0) < 9 && existing.owner_user !== req.genxUser?.user) {
+    return res.status(403).json({ ok: false, error: 'not_report_owner' });
+  }
+  await execute('DELETE FROM genx_saved_reports WHERE report_id = ? LIMIT 1', [id]);
+  await adminLog(req, 'REPORTS', 'DELETE', String(id), 'GENX CUSTOM REPORT DELETE', 'DELETE FROM genx_saved_reports', existing.report_name);
+  return res.json({ ok: true });
 }
 
 async function agentMonitorLogReport(req, res) {
@@ -14644,6 +14990,12 @@ app.get('/api/reports/sph', requireAccess, sphReport);
 app.get('/api/reports/webserver-url', requireAccess, webserverUrlReport);
 app.get('/api/reports/url-log', requireAccess, urlLogReport);
 app.get('/api/reports/max-stats', requireAccess, maxStatsReport);
+app.get('/api/reports/custom/meta', requireAccess, customReportMeta);
+app.post('/api/reports/custom/run', requireAccess, customReportRun);
+app.get('/api/reports/custom/saved', requireAccess, listSavedCustomReports);
+app.post('/api/reports/custom/saved', requireAccess, saveCustomReport);
+app.put('/api/reports/custom/saved/:id', requireAccess, saveCustomReport);
+app.delete('/api/reports/custom/saved/:id', requireAccess, deleteCustomReport);
 // ---- Audio store (legacy vicidial/audio_store.php port) ----
 // Files live in a webroot dir (central-control compatible); rows mirror to
 // audio_store_details. Playback is served through an authenticated route.

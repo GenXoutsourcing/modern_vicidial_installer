@@ -1,5 +1,13 @@
 export const REPORT_GROUPS = [
   {
+    // href doubles as extra search keywords for the catalog filter; the
+    // Custom Report Matrix is a native GenX screen with no legacy equivalent.
+    title: 'Custom',
+    items: [
+      { label: 'Custom Report Matrix', href: 'custom report builder matrix', view: 'reportCustom' },
+    ],
+  },
+  {
     title: 'Real-Time',
     items: [
       { label: 'Real-Time Main', href: '/vicidial/realtime_report.php?report_display_type=HTML', view: 'reportRealtimeMain' },
