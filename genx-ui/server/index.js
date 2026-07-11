@@ -650,17 +650,33 @@ async function rangeSource({ table, dateCol, start, end, alias = 't', extraWhere
     span = !boundary || String(start) < boundary; // range reaches before the live boundary
   }
   if (!span) {
+    // Live-only: the date/extra predicate lives in the WHERE. fromParams is
+    // empty; whereParams carries the binds. For a plain single-table query,
+    // params (= fromParams+whereParams) is all you need; for a query with a
+    // param-bearing JOIN between FROM and WHERE, bind fromParams, then the
+    // join's params, then whereParams.
+    const whereParams = [start, end, ...extraParams];
     return {
       fromSql: `${table} ${alias}`,
+      fromParams: [],
       dateWhere: `${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?${andExtra}`,
-      params: [start, end, ...extraParams],
+      whereParams,
+      params: whereParams,
     };
   }
-  const branch = (t) => `SELECT * FROM ${t} WHERE ${dateCol} >= ? AND ${dateCol} <= ?${andExtra}`;
+  // Span live+archive: the predicate is pushed into the FROM (each branch), so
+  // fromParams carries the binds and the outer WHERE is a no-op. Inner tables
+  // carry the same alias so an alias-qualified extraWhere (e.g. 'vl.campaign_id
+  // IN (?)') works identically in the live path and inside each branch — needed
+  // when the outer query joins another table that shares a column name.
+  const branch = (t) => `SELECT ${alias}.* FROM ${t} ${alias} WHERE ${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?${andExtra}`;
+  const fromParams = [start, end, ...extraParams, start, end, ...extraParams];
   return {
     fromSql: `(${branch(table)} UNION ALL ${branch(`${table}_archive`)}) ${alias}`,
+    fromParams,
     dateWhere: '1=1',
-    params: [start, end, ...extraParams, start, end, ...extraParams],
+    whereParams: [],
+    params: fromParams,
   };
 }
 
@@ -4873,8 +4889,13 @@ async function outboundCallingReport(req, res) {
   if (!campaignIds.length) return res.json({ ok: true, campaigns, sections: null, range: { beginDate, endDate } });
 
   const ph = campaignIds.map(() => '?').join(',');
-  const logWhere = `call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})`;
-  const logParams = [begin, end, ...campaignIds];
+  // Archive-aware sources for the report's log tables (Phase 2): each spans
+  // live + <table>_archive when the range reaches before the live boundary.
+  const vlSrc = await rangeSource({ table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl', extraWhere: `vl.campaign_id IN (${ph})`, extraParams: campaignIds });
+  const alSrc = await rangeSource({ table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al', extraWhere: `al.campaign_id IN (${ph})`, extraParams: campaignIds });
+  const logFrom = vlSrc.fromSql;
+  const logWhere = vlSrc.dateWhere;
+  const logParams = vlSrc.params;
   const sets = await campaignStatusSets(campaignIds);
   const { dropGroups, closerGroups } = await campaignInboundGroups(campaignIds);
   const haIn = sqlStatusList(sets.humanAnswered);
@@ -4891,47 +4912,46 @@ async function outboundCallingReport(req, res) {
     totals, haAgent, haAll, ansAgent, amCalls, drops, naStats, bdnStats,
     termReasons, agentTime, statusBreakdown, listBreakdown, carrierBreakdown,
   ] = await Promise.all([
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere}`, logParams),
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${haIn})`, logParams),
-    one(`SELECT COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
-    one(`SELECT COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} AND user != 'VDAD' AND status IN (${amIn})`, logParams),
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status = 'DROP' AND (length_in_sec <= 6000 OR length_in_sec IS NULL)`, logParams),
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_NA_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
-    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM vicidial_log WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_BDN_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
-    rows(`SELECT term_reason, COUNT(*) AS calls FROM vicidial_log WHERE ${logWhere} GROUP BY term_reason ORDER BY calls DESC LIMIT 50`, logParams, []),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere}`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${amIn})`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status = 'DROP' AND (length_in_sec <= 6000 OR length_in_sec IS NULL)`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_NA_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
+    one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_BDN_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
+    rows(`SELECT term_reason, COUNT(*) AS calls FROM ${logFrom} WHERE ${logWhere} GROUP BY term_reason ORDER BY calls DESC LIMIT 50`, logParams, []),
     one(
       `SELECT COALESCE(SUM(pause_sec + wait_sec + talk_sec + dispo_sec),0) AS seconds
-       FROM vicidial_agent_log WHERE event_time >= ? AND event_time <= ? AND campaign_id IN (${ph})
+       FROM ${alSrc.fromSql} WHERE ${alSrc.dateWhere}
          AND pause_sec < 65000 AND wait_sec < 65000 AND talk_sec < 65000 AND dispo_sec < 65000`,
-      logParams,
+      alSrc.params,
     ),
     rows(
       `SELECT vl.status, COUNT(*) AS calls, COALESCE(SUM(vl.length_in_sec),0) AS seconds, s.status_name, s.category
-       FROM vicidial_log vl
+       FROM ${vlSrc.fromSql}
        LEFT JOIN (SELECT status, status_name, category FROM vicidial_statuses
                   UNION SELECT status, status_name, category FROM vicidial_campaign_statuses WHERE campaign_id IN (${ph})) s
          ON s.status = vl.status
-       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+       WHERE ${vlSrc.dateWhere}
        GROUP BY vl.status ORDER BY vl.status ASC LIMIT 200`,
-      [...campaignIds, begin, end, ...campaignIds],
+      [...vlSrc.fromParams, ...campaignIds, ...vlSrc.whereParams],
       [],
     ),
     rows(
       `SELECT vl.list_id, COUNT(*) AS calls, l.list_name
-       FROM vicidial_log vl LEFT JOIN vicidial_lists l ON l.list_id = vl.list_id
-       WHERE ${logWhere.replace(/call_date/g, 'vl.call_date').replace('campaign_id', 'vl.campaign_id')}
+       FROM ${vlSrc.fromSql} LEFT JOIN vicidial_lists l ON l.list_id = vl.list_id
+       WHERE ${vlSrc.dateWhere}
        GROUP BY vl.list_id ORDER BY calls DESC LIMIT 200`,
-      logParams,
+      [...vlSrc.fromParams, ...vlSrc.whereParams],
       [],
     ),
     rows(
       `SELECT vcl.dialstatus, COUNT(*) AS calls
-       FROM ${carrierSrc.fromSql}, vicidial_log vl
-       WHERE vcl.uniqueid = vl.uniqueid AND ${carrierSrc.dateWhere}
-         AND vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+       FROM ${carrierSrc.fromSql}, ${vlSrc.fromSql}
+       WHERE vcl.uniqueid = vl.uniqueid AND ${carrierSrc.dateWhere} AND ${vlSrc.dateWhere}
        GROUP BY vcl.dialstatus ORDER BY vcl.dialstatus ASC LIMIT 50`,
-      [...carrierSrc.params, begin, end, ...campaignIds],
+      [...carrierSrc.fromParams, ...vlSrc.fromParams, ...carrierSrc.whereParams, ...vlSrc.whereParams],
       [],
     ),
   ]);
@@ -4940,21 +4960,22 @@ async function outboundCallingReport(req, res) {
   let inbound = null;
   if (dropGroups.length) {
     const dropIn = sqlStatusList(dropGroups);
+    const clSrc = await rangeSource({ table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl', extraWhere: `cl.campaign_id IN (${dropIn})` });
     const [inboundTotals, inboundBreakdown] = await Promise.all([
       one(
         `SELECT COUNT(*) AS calls, COALESCE(SUM(cl.length_in_sec),0) AS seconds,
                 COALESCE(SUM(cl.queue_seconds),0) AS queue_seconds,
                 COALESCE(SUM(GREATEST(cl.length_in_sec - cl.queue_seconds - ROUND(COALESCE(ig.agent_alert_delay,0) / 1000), 0)),0) AS talk_seconds
-         FROM vicidial_closer_log cl
+         FROM ${clSrc.fromSql}
          LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
-         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${dropIn})`,
-        [begin, end],
+         WHERE ${clSrc.dateWhere}`,
+        [...clSrc.fromParams, ...clSrc.whereParams],
       ),
       rows(
         `SELECT status, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
-         FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${dropIn})
+         FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}
          GROUP BY status ORDER BY status ASC LIMIT 200`,
-        [begin, end],
+        [...clSrc.fromParams, ...clSrc.whereParams],
         [],
       ),
     ]);
@@ -4962,11 +4983,12 @@ async function outboundCallingReport(req, res) {
   }
   let inboundAnswered = null;
   if (closerGroups.length) {
+    const clSrc = await rangeSource({ table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl', extraWhere: `cl.campaign_id IN (${sqlStatusList(closerGroups)})` });
     inboundAnswered = await one(
-      `SELECT COUNT(*) AS calls FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${sqlStatusList(closerGroups)})
+      `SELECT COUNT(*) AS calls FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
          AND status NOT IN (${sqlStatusList(CLOSER_UNANSWERED_STATUSES)})`,
-      [begin, end],
+      [...clSrc.fromParams, ...clSrc.whereParams],
     );
   }
 
