@@ -676,8 +676,9 @@ async function liveBoundary(table, dateCol) {
 async function rangeSource({ table, dateCol, start, end, alias = 't', extraWhere = '', extraParams = [] }) {
   const andExtra = extraWhere ? ` AND ${extraWhere}` : '';
   let span = false; // false = live only, true = span live + archive
+  let boundary = null;
   if (await archiveTableExists(table)) {
-    const boundary = await liveBoundary(table, dateCol);
+    boundary = await liveBoundary(table, dateCol);
     span = !boundary || String(start) < boundary; // range reaches before the live boundary
   }
   if (!span) {
@@ -700,10 +701,20 @@ async function rangeSource({ table, dateCol, start, end, alias = 't', extraWhere
   // carry the same alias so an alias-qualified extraWhere (e.g. 'vl.campaign_id
   // IN (?)') works identically in the live path and inside each branch — needed
   // when the outer query joins another table that shares a column name.
-  const branch = (t) => `SELECT ${alias}.* FROM ${t} ${alias} WHERE ${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?${andExtra}`;
-  const fromParams = [start, end, ...extraParams, start, end, ...extraParams];
+  //
+  // The stock archiver (ADMIN_archive_log_tables.pl) INSERT IGNOREs the WHOLE
+  // live table into _archive before pruning old rows from live, so the archive
+  // is a SUPERSET that still contains the live window. The archive branch is
+  // therefore bounded strictly below the live boundary — live serves
+  // [boundary, end], archive serves [start, boundary) — or UNION ALL would
+  // double-count every row present in both.
+  const liveBranch = `SELECT ${alias}.* FROM ${table} ${alias}`
+    + ` WHERE ${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?${andExtra}`;
+  const archiveBranch = `SELECT ${alias}.* FROM ${table}_archive ${alias}`
+    + ` WHERE ${alias}.${dateCol} >= ? AND ${alias}.${dateCol} ${boundary ? '<' : '<='} ?${andExtra}`;
+  const fromParams = [start, end, ...extraParams, start, boundary || end, ...extraParams];
   return {
-    fromSql: `(${branch(table)} UNION ALL ${branch(`${table}_archive`)}) ${alias}`,
+    fromSql: `(${liveBranch} UNION ALL ${archiveBranch}) ${alias}`,
     fromParams,
     dateWhere: '1=1',
     whereParams: [],
