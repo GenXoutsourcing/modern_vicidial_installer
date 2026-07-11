@@ -597,6 +597,69 @@ async function execute(sql, params = []) {
   return result;
 }
 
+// --- Archive-aware reporting ------------------------------------------------
+// When a log table is archived (rows moved to <table>_archive on a schedule),
+// a report reading only the live table loses history past the archive window.
+// rangeSource() returns a date-filtered FROM source that transparently spans
+// the live table and its _archive twin for the requested [start,end], so
+// reports stay complete no matter how aggressively a table is archived. The
+// common case (range entirely within the live window) stays a plain live-table
+// read with zero overhead; only ranges reaching before the live boundary pay
+// for the UNION, with the date predicate pushed into each branch so both use
+// their date index. Reports run on the read replica and the _archive tables
+// replicate too, so this works on the slave without touching the primary.
+const _archiveExistsCache = new Map();        // table -> boolean
+const _liveBoundaryCache = new Map();         // table -> { value, at }
+const LIVE_BOUNDARY_TTL_MS = 10 * 60 * 1000;  // boundary only moves when the nightly archive runs
+
+function sqlDateTime(value) {
+  if (value == null) return null;
+  if (!(value instanceof Date)) return String(value);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${value.getFullYear()}-${p(value.getMonth() + 1)}-${p(value.getDate())} `
+    + `${p(value.getHours())}:${p(value.getMinutes())}:${p(value.getSeconds())}`;
+}
+
+async function archiveTableExists(table) {
+  if (_archiveExistsCache.has(table)) return _archiveExistsCache.get(table);
+  const found = await rows(`SHOW TABLES LIKE '${table}_archive'`, [], []);
+  const exists = found.length > 0;
+  _archiveExistsCache.set(table, exists);
+  return exists;
+}
+
+async function liveBoundary(table, dateCol) {
+  const cached = _liveBoundaryCache.get(table);
+  if (cached && (Date.now() - cached.at) < LIVE_BOUNDARY_TTL_MS) return cached.value;
+  const [row] = await rows(`SELECT MIN(${dateCol}) AS mn FROM ${table}`, [], []);
+  const value = sqlDateTime(row?.mn);
+  _liveBoundaryCache.set(table, { value, at: Date.now() });
+  return value;
+}
+
+// table/dateCol are internal constants (never user input), so interpolating
+// them is safe; the date bounds are always bound as ? params.
+async function rangeSource({ table, dateCol, start, end, alias = 't' }) {
+  let span = false; // false = live only, true = span live + archive
+  if (await archiveTableExists(table)) {
+    const boundary = await liveBoundary(table, dateCol);
+    span = !boundary || String(start) < boundary; // range reaches before the live boundary
+  }
+  if (!span) {
+    return {
+      fromSql: `${table} ${alias}`,
+      dateWhere: `${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?`,
+      params: [start, end],
+    };
+  }
+  const branch = (t) => `SELECT * FROM ${t} WHERE ${dateCol} >= ? AND ${dateCol} <= ?`;
+  return {
+    fromSql: `(${branch(table)} UNION ALL ${branch(`${table}_archive`)}) ${alias}`,
+    dateWhere: '1=1',
+    params: [start, end, start, end],
+  };
+}
+
 async function tableColumns(table) {
   const [result] = await pool.query(`SHOW COLUMNS FROM ${quoteId(table)}`);
   return result.map((column) => ({
@@ -4793,6 +4856,12 @@ async function outboundCallingReport(req, res) {
   const haIn = sqlStatusList(sets.humanAnswered);
   const amIn = sqlStatusList(sets.answeringMachine);
 
+  // carrier_log can be archived more aggressively than vicidial_log, so span
+  // live+archive for the carrier dialstatus breakdown below.
+  const carrierSrc = await rangeSource({
+    table: 'vicidial_carrier_log', dateCol: 'call_date', start: begin, end, alias: 'vcl',
+  });
+
   const one = async (sql, params) => (await rows(sql, params, []))[0] || {};
   const [
     totals, haAgent, haAll, ansAgent, amCalls, drops, naStats, bdnStats,
@@ -4834,11 +4903,11 @@ async function outboundCallingReport(req, res) {
     ),
     rows(
       `SELECT vcl.dialstatus, COUNT(*) AS calls
-       FROM vicidial_carrier_log vcl, vicidial_log vl
-       WHERE vcl.uniqueid = vl.uniqueid AND vcl.call_date > ? AND vcl.call_date < ?
-         AND vl.call_date > ? AND vl.call_date < ? AND vl.campaign_id IN (${ph})
+       FROM ${carrierSrc.fromSql}, vicidial_log vl
+       WHERE vcl.uniqueid = vl.uniqueid AND ${carrierSrc.dateWhere}
+         AND vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
        GROUP BY vcl.dialstatus ORDER BY vcl.dialstatus ASC LIMIT 50`,
-      [begin, end, begin, end, ...campaignIds],
+      [...carrierSrc.params, begin, end, ...campaignIds],
       [],
     ),
   ]);
@@ -6766,26 +6835,26 @@ async function dialLogReport(req, res) {
 async function carrierLogReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const src = await rangeSource({
+    table: 'vicidial_carrier_log', dateCol: 'call_date',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'vcl',
+  });
   const dialstatus = cleanId(req.query?.dialstatus, 20);
-  let filterSql = '';
-  if (dialstatus) {
-    filterSql = ' AND dialstatus = ?';
-    params.push(dialstatus);
-  }
+  const filterSql = dialstatus ? ' AND dialstatus = ?' : '';
+  const filterParams = dialstatus ? [dialstatus] : [];
   const [entries, summary] = await Promise.all([
     rows(
       `SELECT uniqueid, call_date, server_ip, lead_id, hangup_cause, dialstatus, channel,
               dial_time, answered_time, sip_hangup_cause, sip_hangup_reason, caller_code
-       FROM vicidial_carrier_log WHERE call_date >= ? AND call_date <= ?${filterSql}
+       FROM ${src.fromSql} WHERE ${src.dateWhere}${filterSql}
        ORDER BY call_date ASC LIMIT 2000`,
-      params,
+      [...src.params, ...filterParams],
       [],
     ),
     rows(
-      `SELECT dialstatus, COUNT(*) AS calls FROM vicidial_carrier_log
-       WHERE call_date >= ? AND call_date <= ?${filterSql} GROUP BY dialstatus ORDER BY calls DESC LIMIT 50`,
-      params,
+      `SELECT dialstatus, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere}${filterSql} GROUP BY dialstatus ORDER BY calls DESC LIMIT 50`,
+      [...src.params, ...filterParams],
       [],
     ),
   ]);
@@ -6897,26 +6966,29 @@ async function transcriptsReport(req, res) {
 async function hangupCauseReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+  const src = await rangeSource({
+    table: 'vicidial_carrier_log', dateCol: 'call_date',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'vcl',
+  });
   const [causes, sipCauses, statuses] = await Promise.all([
     rows(
-      `SELECT hangup_cause, COUNT(*) AS calls FROM vicidial_carrier_log
-       WHERE call_date >= ? AND call_date <= ? GROUP BY hangup_cause ORDER BY calls DESC LIMIT 100`,
-      params,
+      `SELECT hangup_cause, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY hangup_cause ORDER BY calls DESC LIMIT 100`,
+      src.params,
       [],
     ),
     rows(
-      `SELECT sip_hangup_cause, sip_hangup_reason, COUNT(*) AS calls FROM vicidial_carrier_log
-       WHERE call_date >= ? AND call_date <= ? GROUP BY sip_hangup_cause, sip_hangup_reason
+      `SELECT sip_hangup_cause, sip_hangup_reason, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY sip_hangup_cause, sip_hangup_reason
        ORDER BY calls DESC LIMIT 100`,
-      params,
+      src.params,
       [],
     ),
     rows(
-      `SELECT dialstatus, hangup_cause, COUNT(*) AS calls FROM vicidial_carrier_log
-       WHERE call_date >= ? AND call_date <= ? GROUP BY dialstatus, hangup_cause
+      `SELECT dialstatus, hangup_cause, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY dialstatus, hangup_cause
        ORDER BY calls DESC LIMIT 200`,
-      params,
+      src.params,
       [],
     ),
   ]);
