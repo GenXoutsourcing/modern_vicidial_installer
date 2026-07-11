@@ -4645,10 +4645,11 @@ async function scheduleCustomReport(req, res) {
     feedKey = crypto.randomBytes(20).toString('hex');
     await execute('UPDATE genx_saved_reports SET feed_key = ? WHERE report_id = ? LIMIT 1', [feedKey, id]);
   }
-  // AST_email_web_report.pl passes report_url to a shell unquoted, so the
-  // stored URL uses the stock \& convention between query params.
+  // Plain & separators: AST_email_web_report.pl backslash-escapes ampersands
+  // itself (s/\&/\\&/) before passing the URL to an unquoted shell wget —
+  // pre-escaping here would double up and truncate the URL at the first &.
   // file_download=1 makes the runner attach the payload as a .csv file.
-  const feedUrl = `https://${host}/genx/api/reports/custom/feed/${id}?key=${feedKey}\\&range=${range}\\&file_download=1`;
+  const feedUrl = `https://${host}/genx/api/reports/custom/feed/${id}?key=${feedKey}&range=${range}&file_download=1`;
   const scheduleId = `GENXCR${id}X${crypto.randomBytes(3).toString('hex').toUpperCase()}`.slice(0, 30);
   const scheduleName = cleanText(body.name, 100).trim() || `GenX: ${saved.report_name}`.slice(0, 100);
   const filenameBase = String(saved.report_name).replace(/[^-_0-9a-zA-Z]/g, '_').slice(0, 60) || 'GenX_Report';
