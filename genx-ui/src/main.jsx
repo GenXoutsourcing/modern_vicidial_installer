@@ -3991,12 +3991,10 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
 // Mirrors the cross-links at the bottom of legacy admin.php campaign modify:
 // lists within the campaign, live hopper view, real-time report, and the
 // log-all-agents-out action. Delete lives on the modal's standard delete button.
-function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, onNavigate, onLogout }) {
+function CampaignConnections({ campaignId, user, token, onNavigate, onLogout }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
-  const lists = (admin?.lists || []).filter((row) => String(row.campaign_id || '') === campaign);
-  const activeLists = lists.filter((row) => row.active === 'Y').length;
 
   async function logoutAgents() {
     if (!confirmingLogout) {
@@ -4025,27 +4023,9 @@ function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, o
       <div className="campaign-tool-head">
         <div>
           <p className="eyebrow">Connections</p>
-          <h3>Lists, hopper and live activity</h3>
+          <h3>Hopper, reports and live activity</h3>
         </div>
         <Compass size={20} aria-hidden="true" />
-      </div>
-      <div className="connection-lists">
-        <p className="connection-summary">
-          {lists.length
-            ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} in this campaign (${formatNumber(activeLists)} active)`
-            : 'No lists point at this campaign yet'}
-        </p>
-        {lists.slice(0, 10).map((row) => (
-          <button
-            type="button"
-            className="tool-picker-item"
-            key={row.list_id}
-            onClick={() => userCan(user, 'lists') && onSwitchAction('lists', 'edit', row)}
-            disabled={!userCan(user, 'lists')}
-          >
-            {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
-          </button>
-        ))}
       </div>
       <div className="connection-actions">
         <button type="button" className="row-action" onClick={() => onNavigate('reportHopperList', { campaignId: campaign })}>
@@ -4089,6 +4069,88 @@ function CampaignConnections({ admin, campaignId, user, token, onSwitchAction, o
         )}
         {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
+    </div>
+  );
+}
+
+// Bottom section of the Manage Campaign modal: the campaign's lists plus a
+// per-status lead count breakdown across all of them.
+function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, onLogout }) {
+  const campaign = String(campaignId || '');
+  const lists = (admin?.lists || []).filter((row) => String(row.campaign_id || '') === campaign);
+  const activeLists = lists.filter((row) => row.active === 'Y').length;
+  const [breakdown, setBreakdown] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBreakdown(null);
+    if (!campaign) return undefined;
+    apiFetch(`/admin/campaigns/${encodeURIComponent(campaign)}/lead-statuses`, token)
+      .then((payload) => {
+        if (!cancelled) setBreakdown(payload);
+      })
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        if (!cancelled) setBreakdown({ statuses: [], totalLeads: 0, error: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign, token, onLogout]);
+
+  if (!campaign) return null;
+
+  return (
+    <div className="campaign-tool-panel campaign-connections">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">Leads</p>
+          <h3>Lists and lead statuses</h3>
+        </div>
+        <Database size={20} aria-hidden="true" />
+      </div>
+      <div className="connection-lists">
+        <p className="connection-summary">
+          {lists.length
+            ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} in this campaign (${formatNumber(activeLists)} active)`
+            : 'No lists point at this campaign yet'}
+        </p>
+        {lists.slice(0, 10).map((row) => (
+          <button
+            type="button"
+            className="tool-picker-item"
+            key={row.list_id}
+            onClick={() => userCan(user, 'lists') && onSwitchAction('lists', 'edit', row)}
+            disabled={!userCan(user, 'lists')}
+          >
+            {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
+          </button>
+        ))}
+      </div>
+      {breakdown?.statuses?.length > 0 && (
+        <>
+          <p className="connection-summary">
+            Lead statuses across these lists ({formatNumber(breakdown.totalLeads)} leads)
+          </p>
+          <DataTable
+            columns={[
+              { key: 'status', label: 'Status' },
+              { key: 'status_name', label: 'Name' },
+              { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+              {
+                key: 'pct',
+                label: '%',
+                render: (row) => (breakdown.totalLeads ? `${((row.leads / breakdown.totalLeads) * 100).toFixed(1)}%` : ''),
+              },
+            ]}
+            rows={breakdown.statuses}
+            emptyLabel="No leads"
+          />
+        </>
+      )}
+      {breakdown && !breakdown.statuses?.length && lists.length > 0 && (
+        <p className="connection-summary">{breakdown.error ? 'Lead status counts unavailable' : 'No leads loaded yet'}</p>
+      )}
     </div>
   );
 }
@@ -5243,11 +5305,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
 
         {isEdit && action.entity === 'campaigns' && (
           <CampaignConnections
-            admin={admin}
             campaignId={form.campaign_id}
             user={user}
             token={token}
-            onSwitchAction={onSwitchAction}
             onNavigate={onNavigate}
             onLogout={onLogout}
           />
@@ -5347,6 +5407,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             </button>
           </div>
         </form>
+
+        {isEdit && action.entity === 'campaigns' && (
+          <CampaignListsPanel
+            admin={admin}
+            campaignId={form.campaign_id}
+            user={user}
+            token={token}
+            onSwitchAction={onSwitchAction}
+            onLogout={onLogout}
+          />
+        )}
       </section>
     </div>
   );
@@ -7647,15 +7718,21 @@ function CatalogPanels({ groups, query, emptyLabel, onNavigate, eyebrow = 'Repor
           <div className="link-list">
             {group.items.map((item) => (
               item.view ? (
-                <button
+                // Real link (hash route) so open-in-new-tab works; left click
+                // stays in-app.
+                <a
                   key={`${group.title}-${item.label}`}
-                  type="button"
+                  href={`#/${item.view}`}
                   className="launch-link launch-link-native"
-                  onClick={() => onNavigate?.(item.view)}
+                  onClick={(event) => {
+                    if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+                    event.preventDefault();
+                    onNavigate?.(item.view);
+                  }}
                 >
                   <span>{item.label}</span>
                   <ShieldCheck size={15} aria-hidden="true" title="Native GenX screen" />
-                </button>
+                </a>
               ) : (
                 <a key={`${group.title}-${item.label}`} className="launch-link" href={item.href} target="_blank" rel="noreferrer">
                   <span>{item.label}</span>
@@ -16625,8 +16702,16 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   return <CommandView dashboard={dashboard} admin={admin} />;
 }
 
+// Hash routing (#/viewKey): nav entries are real links, so middle/right-click
+// "open in new tab" works and a fresh tab restores the view from the URL.
+// Unknown keys simply land on the Command view.
+function viewFromHash() {
+  const key = window.location.hash.replace(/^#\/?/, '');
+  return /^[a-zA-Z][\w-]*$/.test(key) ? key : 'command';
+}
+
 function AdminShell({ token, user, onLogout }) {
-  const [activeView, setActiveView] = useState('command');
+  const [activeView, setActiveView] = useState(viewFromHash);
   // Legacy-style cross-page links carry ids (campaign_id etc.); viewParams is
   // the payload for the view being navigated to, cleared on plain nav clicks.
   const [viewParams, setViewParams] = useState(null);
@@ -16674,6 +16759,27 @@ function AdminShell({ token, user, onLogout }) {
     setViewParams(params);
     setActiveView(view);
     setAction(null);
+    // Keep the URL in sync so refresh/share/new-tab lands on the same view
+    // (and browser back/forward walks the view history).
+    if (viewFromHash() !== view) window.location.hash = `#/${view}`;
+  }, []);
+
+  // Browser back/forward (and manual hash edits) drive the view too. The ref
+  // avoids clearing viewParams on the echo hashchange navigateTo just caused.
+  const activeViewRef = useRef(activeView);
+  useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+  useEffect(() => {
+    const onHashChange = () => {
+      const view = viewFromHash();
+      if (view === activeViewRef.current) return;
+      setViewParams(null);
+      setAction(null);
+      setActiveView(view);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
   const handleSaved = useCallback((nextAdminData) => {
@@ -16757,15 +16863,21 @@ function AdminShell({ token, user, onLogout }) {
                 if (!item) return null;
                 const Icon = item.icon;
                 return (
-                  <button
-                    type="button"
+                  // Real link so middle/right-click "open in new tab" works;
+                  // left click stays in-app via navigateTo.
+                  <a
+                    href={`#/${key}`}
                     key={key}
                     className={key === navView ? 'active' : ''}
-                    onClick={() => navigateTo(key)}
+                    onClick={(event) => {
+                      if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+                      event.preventDefault();
+                      navigateTo(key);
+                    }}
                   >
                     <Icon size={16} aria-hidden="true" />
                     <span>{item.label}</span>
-                  </button>
+                  </a>
                 );
               })}
             </div>

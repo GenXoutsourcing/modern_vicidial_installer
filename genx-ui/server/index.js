@@ -13112,6 +13112,53 @@ async function deleteCampaign(req, res) {
 // Mirrors legacy admin.php ADD=62: reconcile the agent's open vicidial_agent_log
 // row, remove them from vicidial_live_agents, kick their conference channel via
 // vicidial_manager, and log the manager-forced logout in vicidial_user_log.
+// Lead-status breakdown for the Manage Campaign modal: counts per status
+// across every list pointed at the campaign, with status names resolved from
+// the campaign's own statuses first, then the system statuses.
+async function campaignLeadStatuses(req, res) {
+  const me = req.genxUser || {};
+  if (!(me.modifyCampaigns || me.campaignDetail || me.viewReports)) {
+    return res.status(403).json({ ok: false, error: 'not_allowed' });
+  }
+  const id = cleanId(req.params.id, 20);
+  if (!id) return badRequest(res, 'invalid_campaign_id');
+  if (!scopeAllows(me.permissions?.allowedCampaigns, id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const lists = await rows('SELECT list_id FROM vicidial_lists WHERE campaign_id = ? LIMIT 500', [id], []);
+  if (!lists.length) return res.json({ ok: true, statuses: [], totalLeads: 0 });
+  const listIds = lists.map((row) => row.list_id);
+  const ph = listIds.map(() => '?').join(',');
+  const [counts, names] = await Promise.all([
+    rows(
+      `SELECT status, COUNT(*) AS leads FROM vicidial_list
+       WHERE list_id IN (${ph}) GROUP BY status ORDER BY leads DESC LIMIT 200`,
+      listIds,
+      [],
+    ),
+    rows(
+      `SELECT status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
+       UNION SELECT status, status_name FROM vicidial_statuses LIMIT 500`,
+      [id],
+      [],
+    ),
+  ]);
+  const nameMap = new Map();
+  for (const row of names) {
+    if (!nameMap.has(String(row.status))) nameMap.set(String(row.status), row.status_name || '');
+  }
+  const statuses = counts.map((row) => ({
+    status: row.status,
+    status_name: nameMap.get(String(row.status)) || '',
+    leads: Number(row.leads || 0),
+  }));
+  return res.json({
+    ok: true,
+    statuses,
+    totalLeads: statuses.reduce((sum, row) => sum + row.leads, 0),
+  });
+}
+
 async function logoutCampaignAgents(req, res) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
   const id = cleanId(req.params.id, 20);
@@ -15085,6 +15132,7 @@ app.post('/api/admin/campaigns/copy', requireAccess, copyCampaign);
 app.put('/api/admin/campaigns/:id', requireAccess, (req, res) => saveCampaign(req, res, 'update'));
 app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
 app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
+app.get('/api/admin/campaigns/:id/lead-statuses', requireAccess, campaignLeadStatuses);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
