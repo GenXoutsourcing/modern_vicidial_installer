@@ -304,6 +304,28 @@ const permTableReady = (async () => {
   }
 })();
 
+// API keys for the genxapi PHP endpoint: only the sha256 hash is stored, so a
+// key is shown to the admin exactly once at creation and cannot be recovered.
+const apiKeyTableReady = (async () => {
+  try {
+    await execute(
+      `CREATE TABLE IF NOT EXISTS genx_api_keys (
+         key_hash CHAR(64) NOT NULL PRIMARY KEY,
+         user VARCHAR(20) NOT NULL,
+         label VARCHAR(60) NOT NULL DEFAULT '',
+         active ENUM('Y','N') NOT NULL DEFAULT 'Y',
+         created_date DATETIME NOT NULL,
+         last_used DATETIME NULL,
+         KEY user (user)
+       )`,
+    );
+    return true;
+  } catch (error) {
+    console.error('genx_api_keys table unavailable; API keys disabled', error.message);
+    return false;
+  }
+})();
+
 function parseNavSections(raw) {
   const text = String(raw || '').trim();
   if (!text || text.toUpperCase() === 'ALL') return GENX_NAV_SECTIONS;
@@ -2554,10 +2576,12 @@ async function adminData(user) {
   // GenX nav gating lives in genx_group_permissions; surface each group's
   // setting so the User Groups edit modal can show and change it.
   const navPerms = await genxNavPermissionRows();
+  const apiGroupName = await apiUserGroup();
 
   return {
     generatedAt: new Date().toISOString(),
     permissions: user?.permissions || {},
+    apiUserGroup: apiGroupName || '',
     counts: {
       campaigns: campaigns.length,
       activeCampaigns: campaigns.filter((item) => item.active === 'Y').length,
@@ -3534,6 +3558,73 @@ async function saveUser(req, res, mode) {
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'user_exists' : 'user_write_failed' });
+  }
+}
+
+// API-key management. Keys belong to a user; that user must be in the API
+// group (only SuperAdmins reach this page, so no extra role check needed
+// beyond modifyUsers). Only the sha256 hash is ever stored.
+async function apiKeyTargetGuard(req, res) {
+  if (!(await apiKeyTableReady)) { res.status(503).json({ ok: false, error: 'api_keys_unavailable' }); return null; }
+  const id = cleanId(req.params.id, 20);
+  if (!id) { badRequest(res, 'invalid_user'); return null; }
+  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  if (!target) { res.status(404).json({ ok: false, error: 'user_not_found' }); return null; }
+  const apiGroup = await apiUserGroup();
+  if (!apiGroup || target.user_group !== apiGroup) {
+    res.status(400).json({ ok: false, error: 'user_not_in_api_group' });
+    return null;
+  }
+  return id;
+}
+
+async function listApiKeys(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = await apiKeyTargetGuard(req, res);
+  if (!id) return;
+  const keys = await rows(
+    "SELECT SUBSTRING(key_hash,1,12) AS hash_prefix, label, active, created_date, last_used FROM genx_api_keys WHERE user = ? ORDER BY created_date DESC",
+    [id], [],
+  );
+  return res.json({ ok: true, keys });
+}
+
+async function createApiKey(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = await apiKeyTargetGuard(req, res);
+  if (!id) return;
+  const label = cleanText(req.body?.label, 60) || 'API key';
+  // 40 hex chars from CSPRNG; the raw key is returned once and never stored.
+  const rawKey = crypto.randomBytes(20).toString('hex');
+  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+  try {
+    await execute(
+      "INSERT INTO genx_api_keys SET key_hash = ?, user = ?, label = ?, active = 'Y', created_date = NOW()",
+      [keyHash, id, label],
+    );
+    await adminLog(req, 'USERS', 'MODIFY', id, 'GENX ADD API KEY', 'INSERT INTO genx_api_keys', label);
+    return res.json({ ok: true, apiKey: rawKey, hashPrefix: keyHash.slice(0, 12), label });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'api_key_create_failed' });
+  }
+}
+
+async function revokeApiKey(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  const id = await apiKeyTargetGuard(req, res);
+  if (!id) return;
+  const prefix = cleanText(req.params.hash, 64).replace(/[^a-f0-9]/gi, '');
+  if (prefix.length < 8) return badRequest(res, 'invalid_key');
+  try {
+    const result = await execute(
+      'DELETE FROM genx_api_keys WHERE user = ? AND SUBSTRING(key_hash,1,12) = ? LIMIT 1',
+      [id, prefix.slice(0, 12)],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'key_not_found' });
+    await adminLog(req, 'USERS', 'MODIFY', id, 'GENX REVOKE API KEY', 'DELETE FROM genx_api_keys', prefix.slice(0, 12));
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'api_key_revoke_failed' });
   }
 }
 
@@ -14147,6 +14238,9 @@ app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
 app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
+app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
+app.post('/api/admin/users/:id/api-keys', requireAccess, createApiKey);
+app.delete('/api/admin/users/:id/api-keys/:hash', requireAccess, revokeApiKey);
 app.delete('/api/admin/users/:id', requireAccess, deleteUser);
 app.get('/api/admin/users/:id/ranks', requireAccess, getUserRanks);
 app.post('/api/admin/users/:id/ranks', requireAccess, saveUserRanks);

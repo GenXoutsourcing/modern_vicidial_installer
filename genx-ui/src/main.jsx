@@ -3801,6 +3801,96 @@ function CheckboxTextGroup({ field, value, onChange }) {
   );
 }
 
+// API keys for an APIUSERS integration account. The raw key is returned by
+// the server exactly once (on generate) and shown here for copy; afterward
+// only the hash prefix is listed. SuperAdmin-only surface.
+function ApiKeysPanel({ userId, token, onLogout }) {
+  const [keys, setKeys] = useState(null);
+  const [label, setLabel] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const payload = await apiFetch(`/admin/users/${encodeURIComponent(userId)}/api-keys`, token);
+      setKeys(payload.keys || []);
+    } catch (requestError) {
+      if (requestError.status === 401) { onLogout?.(); return; }
+      setError('Could not load API keys');
+    }
+  }, [userId, token, onLogout]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function generate() {
+    setBusy(true);
+    setError('');
+    setNewKey('');
+    try {
+      const payload = await apiFetch(`/admin/users/${encodeURIComponent(userId)}/api-keys`, token, {
+        method: 'POST',
+        body: JSON.stringify({ label }),
+      });
+      setNewKey(payload.apiKey || '');
+      setLabel('');
+      load();
+    } catch (requestError) {
+      if (requestError.status === 401) { onLogout?.(); return; }
+      setError('Could not generate key');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(hashPrefix) {
+    setBusy(true);
+    try {
+      await apiFetch(`/admin/users/${encodeURIComponent(userId)}/api-keys/${hashPrefix}`, token, { method: 'DELETE' });
+      load();
+    } catch (requestError) {
+      if (requestError.status === 401) { onLogout?.(); return; }
+      setError('Could not revoke key');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="campaign-tool-panel">
+      <div className="campaign-tool-head">
+        <div>
+          <p className="eyebrow">API Access</p>
+          <h3>API Keys</h3>
+        </div>
+        <ShieldCheck size={20} aria-hidden="true" />
+      </div>
+      <p className="action-copy">Keys let this account call the GenX API at /genxapi/api.php without a password. A key is shown once — copy it now.</p>
+      <div className="input-row">
+        <input type="text" value={label} placeholder="Label (e.g. CRM integration)" onChange={(event) => setLabel(event.target.value)} />
+        <button type="button" className="secondary-action compact-action" onClick={generate} disabled={busy}>
+          <Plus size={15} aria-hidden="true" /> Generate Key
+        </button>
+      </div>
+      {newKey && (
+        <p className="connection-summary" style={{ wordBreak: 'break-all' }}>
+          New key (copy now, not shown again): <strong>{newKey}</strong>
+        </p>
+      )}
+      {error && <p className="form-error">{error}</p>}
+      <div className="connection-lists">
+        {(keys || []).map((row) => (
+          <div className="tool-picker-item" key={row.hash_prefix} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>{row.label} — {row.hash_prefix}… {row.last_used ? `(used ${formatDateTime(row.last_used)})` : '(never used)'}</span>
+            <button type="button" className="row-action" onClick={() => revoke(row.hash_prefix)} disabled={busy}>Revoke</button>
+          </div>
+        ))}
+        {keys && !keys.length && <em>No API keys yet</em>}
+      </div>
+    </div>
+  );
+}
+
 function CampaignScopedTools({ admin, campaignId, user, onAction }) {
   const campaign = String(campaignId || '');
   const rowsForCampaign = (rows) => (rows || []).filter((row) => String(row.campaign_id || '') === campaign);
@@ -5086,6 +5176,11 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onSwitchAction={onSwitchAction}
             onNavigate={onNavigate}
           />
+        )}
+
+        {isEdit && action.entity === 'users' && hasAdminNav(user)
+          && form.user_group === admin?.apiUserGroup && admin?.apiUserGroup && (
+          <ApiKeysPanel userId={form.user} token={token} onLogout={onLogout} />
         )}
 
         {isEdit && action.entity === 'leadFilters' && (

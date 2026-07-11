@@ -46,6 +46,7 @@ function param($key, $default = '') {
 
 $user     = param('user');
 $pass     = param('pass');
+$api_key  = param('api_key');
 $function = param('function');
 $source   = substr(param('source', 'genxapi'), 0, 20);
 
@@ -108,11 +109,32 @@ function fail($mysqli, $user, $function, $reason, $source, $code = 403) {
 }
 
 /* ---- authentication + API-group gate ------------------------------------- */
-if ($user === '' || $pass === '' || $function === '') {
-    fail($mysqli, $user, $function, 'user, pass and function are required', $source, 400);
+// Two auth modes: an API key (preferred for integrations - no password on the
+// wire, revocable per-key) or legacy-style user + pass. Either resolves to a
+// vicidial_users row that must be active and in the API group.
+if ($function === '') {
+    fail($mysqli, $user, $function, 'function is required', $source, 400);
 }
 
 $apiGroup = api_group($mysqli);
+
+if ($api_key !== '') {
+    // Key auth: sha256(key) is stored, never the raw key. Resolve to a user.
+    $key_hash = hash('sha256', $api_key);
+    $stmt = $mysqli->prepare(
+        "SELECT user FROM genx_api_keys WHERE key_hash = ? AND active = 'Y' LIMIT 1");
+    $stmt->bind_param('s', $key_hash);
+    $stmt->execute();
+    $stmt->bind_result($k_user);
+    $key_ok = $stmt->fetch();
+    $stmt->close();
+    if (!$key_ok) fail($mysqli, $user, $function, 'invalid api key', $source);
+    $user = $k_user;
+    @$mysqli->query("UPDATE genx_api_keys SET last_used = NOW() WHERE key_hash = '"
+        . $mysqli->real_escape_string($key_hash) . "'");
+} elseif ($user === '' || $pass === '') {
+    fail($mysqli, $user, $function, 'api_key, or user and pass, are required', $source, 400);
+}
 
 $stmt = $mysqli->prepare(
     "SELECT user_group, active, `pass`, pass_hash, user_level, api_allowed_functions
@@ -127,9 +149,12 @@ if (!$found)                       fail($mysqli, $user, $function, 'invalid cred
 if ($u_active !== 'Y')             fail($mysqli, $user, $function, 'user not active', $source);
 if ($u_group !== $apiGroup)        fail($mysqli, $user, $function, 'user not in API group', $source);
 
-$pw_ok = password_matches($pass, $u_pass);
-if (!$pw_ok && $u_pass_hash)       $pw_ok = password_matches($pass, $u_pass_hash);
-if (!$pw_ok)                       fail($mysqli, $user, $function, 'invalid credentials', $source);
+// Password is only checked in user/pass mode; key auth already proved identity.
+if ($api_key === '') {
+    $pw_ok = password_matches($pass, $u_pass);
+    if (!$pw_ok && $u_pass_hash)   $pw_ok = password_matches($pass, $u_pass_hash);
+    if (!$pw_ok)                   fail($mysqli, $user, $function, 'invalid credentials', $source);
+}
 
 // api_allowed_functions gate: '' = blocked, 'ALL_FUNCTIONS' = any, else CSV.
 $allowed = trim((string)$u_allowed);
