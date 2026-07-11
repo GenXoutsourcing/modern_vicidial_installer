@@ -15125,9 +15125,14 @@ app.get('/api/dashboard', requireAccess, async (req, res) => {
   }
 });
 
+// The 30s catalog poll reads on the replica: its per-campaign/per-list lead
+// counts scan vicidial_list and were monopolizing primary pool connections at
+// scale. Save handlers still call adminData() directly (primary), so the
+// response returned right after an edit is never stale.
 app.get('/api/admin', requireAccess, async (req, res) => {
   try {
-    res.json({ ok: true, data: await adminData(req.genxUser) });
+    const data = await dbContext.run(reportPool, () => adminData(req.genxUser));
+    res.json({ ok: true, data });
   } catch (error) {
     res.status(500).json({ ok: false, error: 'admin_unavailable' });
   }
