@@ -7711,9 +7711,6 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
         <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
       </section>
 
-      <section className="admin-grid">
-        <CampaignPerformance rows={dashboard?.campaignPerformance || []} />
-      </section>
 
       <section className="report-hero">
         <div>
