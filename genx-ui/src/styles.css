@@ -867,21 +867,20 @@ body {
   flex: 0 0 auto;
   width: 168px;
 }
-.log-report .media-tools-grid {
-  grid-template-columns: repeat(auto-fit, minmax(240px, max-content));
-  justify-content: start;
+.log-report-top {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: start;
 }
-.log-report .media-tools-grid table {
+.log-report-top table {
   width: auto;
 }
-.log-report .media-tools-grid th,
-.log-report .media-tools-grid td {
-  padding: 8px 30px 8px 0;
+.log-report-top th,
+.log-report-top td {
+  padding: 8px 28px 8px 0;
   white-space: nowrap;
 }
 @media (max-width: 1180px) {
-  .log-report .media-tools-grid {
+  .log-report-top {
     grid-template-columns: 1fr;
   }
 }

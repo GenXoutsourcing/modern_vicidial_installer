@@ -13092,7 +13092,8 @@ function LogReportView({ token, onLogout, config }) {
           <p className="action-copy">{config.description}</p>
         </div>
       </section>
-      <Panel eyebrow="Filters" title="Date Range" icon={Search} className="admin-wide-panel">
+      <section className="admin-grid log-report-top">
+      <Panel eyebrow="Filters" title="Date Range" icon={Search}>
         <form
           className="entity-form report-filter-bar"
           onSubmit={(event) => {
@@ -13137,19 +13138,16 @@ function LogReportView({ token, onLogout, config }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      {data && (config.summaries || []).length > 0 && (
-        <section className="admin-grid media-tools-grid">
-          {config.summaries.map((summary) => (
-            <Panel key={summary.key} eyebrow="Summary" title={summary.title} icon={Activity}>
-              <DataTable
-                emptyLabel="No entries in the date range"
-                rows={(data[summary.key] || []).map((row, index) => ({ ...row, id: `${summary.key}-${index}` }))}
-                columns={summary.columns}
-              />
-            </Panel>
-          ))}
-        </section>
-      )}
+      {data && (config.summaries || []).map((summary) => (
+        <Panel key={summary.key} eyebrow="Summary" title={summary.title} icon={Activity}>
+          <DataTable
+            emptyLabel="No entries in the date range"
+            rows={(data[summary.key] || []).map((row, index) => ({ ...row, id: `${summary.key}-${index}` }))}
+            columns={summary.columns}
+          />
+        </Panel>
+      ))}
+      </section>
       {data && config.entriesKey && (
         <Panel
           eyebrow="Log"
@@ -13177,14 +13175,6 @@ const LOG_REPORT_CONFIGS = {
     filter: { param: 'dialstatus', label: 'Dialstatus' },
     entriesKey: 'entries',
     summaries: [
-      {
-        key: 'summary',
-        title: 'Dialstatus Summary',
-        columns: [
-          { key: 'dialstatus', label: 'Dialstatus', render: (row) => row.dialstatus || 'NONE' },
-          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-        ],
-      },
       {
         key: 'statuses',
         title: 'Dial Status Breakdown',
