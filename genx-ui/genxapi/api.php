@@ -101,6 +101,39 @@ function log_api($mysqli, $user, $function, $result, $reason, $source) {
     }
 }
 
+// Resolve gmt_offset_now by reusing VICIdial's own lookup_gmt() from
+// functions.php (DST-aware, DB-table driven) rather than reimplementing the
+// timezone logic. Getting this wrong shifts a lead's callable window, so we
+// use the exact resolver the dialer uses. Returns the offset, or the caller's
+// explicit override when provided.
+function resolve_gmt($mysqli, $phone_code, $phone_number, $state, $postal_code, $tz_method) {
+    // Standard (non-DST) server offset from the servers table, +1 if the
+    // server is currently observing DST - mirrors non_agent_api.php.
+    $std = 0.0;
+    if ($res = $mysqli->query("SELECT local_gmt FROM servers WHERE active='Y' LIMIT 1")) {
+        if ($row = $res->fetch_row()) $std = (float)$row[0];
+    }
+    if (date('I')) $std += 1;
+
+    $digits = preg_replace('/\D/', '', $phone_number);
+    $USarea = ($phone_code === '1' && strlen($digits) >= 10) ? substr($digits, 0, 3) : '';
+    $USprefix = ($phone_code === '1' && strlen($digits) >= 10) ? substr($digits, 3, 3) : '';
+
+    // functions.php is a pure library (no top-level side effects) and defines
+    // mysql_to_mysqli itself; lookup_gmt reads $link/$DB/$DBX/$tz_method from
+    // globals. Suppress legacy deprecation noise so it can't pollute output.
+    $GLOBALS['link'] = $mysqli;
+    $GLOBALS['DB'] = 0; $GLOBALS['DBX'] = 0;
+    $GLOBALS['tz_method'] = ($tz_method !== '') ? $tz_method : 'AREACODE';
+    $prev = error_reporting(E_ERROR | E_PARSE);
+    require_once('/var/www/html/vicidial/functions.php');
+    $gmt = lookup_gmt($phone_code, $USarea, $state, $std,
+        date('H'), date('i'), date('s'), date('n'), date('j'), date('Y'),
+        '', $postal_code, '', $USprefix);
+    error_reporting($prev);
+    return $gmt;
+}
+
 function fail($mysqli, $user, $function, $reason, $source, $code = 403) {
     http_response_code($code);
     log_api($mysqli, $user, $function, 'ERROR', $reason, $source);
@@ -247,6 +280,123 @@ switch (strtolower($function)) {
             $n++;
         }
         ok($mysqli, $user, $function, $source, "count|$n\nstatus|leads\n$rows");
+        break;
+    }
+
+    case 'add_lead': {
+        // Required.
+        $phone_number = preg_replace('/\D/', '', param('phone_number'));
+        $list_id      = preg_replace('/\D/', '', param('list_id'));
+        if ($phone_number === '' || strlen($phone_number) < 6) fail($mysqli, $user, $function, 'phone_number required', $source, 400);
+        if ($list_id === '') fail($mysqli, $user, $function, 'list_id required', $source, 400);
+
+        // List must exist; grab its campaign for duplicate scoping.
+        $stmt = $mysqli->prepare("SELECT campaign_id FROM vicidial_lists WHERE list_id = ? LIMIT 1");
+        $stmt->bind_param('s', $list_id);
+        $stmt->execute();
+        $stmt->bind_result($campaign_id);
+        if (!$stmt->fetch()) { $stmt->close(); fail($mysqli, $user, $function, 'list_id does not exist', $source, 400); }
+        $stmt->close();
+
+        // Optional fields.
+        $phone_code   = preg_replace('/\D/', '', param('phone_code')) ?: '1';
+        $vendor       = param('vendor_lead_code');
+        $source_id    = param('source_id');
+        $title        = param('title');
+        $first_name   = param('first_name');
+        $mi           = param('middle_initial');
+        $last_name    = param('last_name');
+        $address1     = param('address1');
+        $address2     = param('address2');
+        $address3     = param('address3');
+        $city         = param('city');
+        $state        = strtoupper(substr(param('state'), 0, 2));
+        $province     = param('province');
+        $postal_code  = param('postal_code');
+        $country_code = param('country_code');
+        $gender       = param('gender');
+        $dob          = param('date_of_birth');
+        $alt_phone    = preg_replace('/\D/', '', param('alt_phone'));
+        $email        = param('email');
+        $security     = param('security_phrase');
+        $comments     = param('comments');
+        $rank         = preg_replace('/\D/', '', param('rank')) ?: '0';
+        $owner        = param('owner');
+        $entry_list   = preg_replace('/\D/', '', param('entry_list_id'));
+        $dup_check    = strtoupper(param('duplicate_check'));
+
+        // Duplicate check (default: none, matching legacy). DUPLIST = same
+        // list, DUPCAMP = same campaign, DUPSYS = entire system.
+        if (in_array($dup_check, array('DUPLIST', 'DUPCAMP', 'DUPSYS'), true)) {
+            if ($dup_check === 'DUPLIST') {
+                $q = $mysqli->prepare("SELECT lead_id FROM vicidial_list WHERE phone_number = ? AND list_id = ? LIMIT 1");
+                $q->bind_param('ss', $phone_number, $list_id);
+            } elseif ($dup_check === 'DUPCAMP') {
+                $q = $mysqli->prepare("SELECT vl.lead_id FROM vicidial_list vl JOIN vicidial_lists vls ON vl.list_id = vls.list_id WHERE vl.phone_number = ? AND vls.campaign_id = ? LIMIT 1");
+                $q->bind_param('ss', $phone_number, $campaign_id);
+            } else {
+                $q = $mysqli->prepare("SELECT lead_id FROM vicidial_list WHERE phone_number = ? LIMIT 1");
+                $q->bind_param('s', $phone_number);
+            }
+            $q->execute();
+            $q->bind_result($dup_lead);
+            $is_dup = $q->fetch();
+            $q->close();
+            if ($is_dup) fail($mysqli, $user, $function, "duplicate phone_number ($dup_check) lead_id $dup_lead", $source, 409);
+        }
+
+        // gmt_offset_now: explicit override, else VICIdial's resolver.
+        $gmt_param = param('gmt_offset_now');
+        $gmt = ($gmt_param !== '' && is_numeric($gmt_param))
+            ? (float)$gmt_param
+            : resolve_gmt($mysqli, $phone_code, $phone_number, $state, $postal_code, param('tz_method'));
+
+        // Only valid DOB is written; otherwise the column keeps its default
+        // (avoids 0000-00-00 under strict SQL mode).
+        $dob_sql = preg_match('/^\d{4}-\d{2}-\d{2}$/', $dob) ? "date_of_birth='" . $mysqli->real_escape_string($dob) . "'," : '';
+        $entry_sql = ($entry_list !== '') ? "entry_list_id='" . $mysqli->real_escape_string($entry_list) . "'," : "entry_list_id='0',";
+        $e = function ($v) use ($mysqli) { return $mysqli->real_escape_string($v); };
+
+        $sql = "INSERT INTO vicidial_list SET "
+            . "phone_code='" . $e($phone_code) . "',"
+            . "phone_number='" . $e($phone_number) . "',"
+            . "list_id='" . $e($list_id) . "',"
+            . "status='NEW',"
+            . "user='" . $e($user) . "',"
+            . "vendor_lead_code='" . $e($vendor) . "',"
+            . "source_id='" . $e($source_id) . "',"
+            . "gmt_offset_now='" . $e((string)$gmt) . "',"
+            . "title='" . $e($title) . "',"
+            . "first_name='" . $e($first_name) . "',"
+            . "middle_initial='" . $e($mi) . "',"
+            . "last_name='" . $e($last_name) . "',"
+            . "address1='" . $e($address1) . "',"
+            . "address2='" . $e($address2) . "',"
+            . "address3='" . $e($address3) . "',"
+            . "city='" . $e($city) . "',"
+            . "state='" . $e($state) . "',"
+            . "province='" . $e($province) . "',"
+            . "postal_code='" . $e($postal_code) . "',"
+            . "country_code='" . $e($country_code) . "',"
+            . "gender='" . $e($gender) . "',"
+            . $dob_sql
+            . "alt_phone='" . $e($alt_phone) . "',"
+            . "email='" . $e($email) . "',"
+            . "security_phrase='" . $e($security) . "',"
+            . "comments='" . $e($comments) . "',"
+            . "called_since_last_reset='N',"
+            . "entry_date=NOW(),"
+            . "rank='" . $e($rank) . "',"
+            . "owner='" . $e($owner) . "',"
+            . $entry_sql
+            . "called_count='0'";
+
+        if (!$mysqli->query($sql)) {
+            fail($mysqli, $user, $function, 'lead insert failed', $source, 500);
+        }
+        $lead_id = $mysqli->insert_id;
+        ok($mysqli, $user, $function, $source,
+            "lead_id|$lead_id\nphone_number|$phone_number\nlist_id|$list_id\ngmt_offset_now|$gmt\nstatus|NEW\n");
         break;
     }
 
