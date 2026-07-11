@@ -13084,7 +13084,7 @@ function LogReportView({ token, onLogout, config }) {
   }, [load, today]);
 
   return (
-    <>
+    <div className="log-report">
       <section className="report-hero">
         <div>
           <p className="eyebrow">Logs and QA</p>
@@ -13164,7 +13164,7 @@ function LogReportView({ token, onLogout, config }) {
           />
         </Panel>
       )}
-    </>
+    </div>
   );
 }
 

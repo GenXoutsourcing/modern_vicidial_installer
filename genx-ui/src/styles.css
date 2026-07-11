@@ -853,6 +853,39 @@ body {
   }
 }
 
+/* Logs & QA reports: keep the filter row and the small summary/breakdown
+   tables compact instead of stretching edge-to-edge (matches the legacy
+   carrier report's tight tables). The raw entries table below stays full
+   width because it lives in its own admin-wide-panel, not this grid. */
+.log-report .report-filter-bar .field-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: end;
+}
+.log-report .report-filter-bar .field-grid > label {
+  flex: 0 0 auto;
+  width: 168px;
+}
+.log-report .media-tools-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, max-content));
+  justify-content: start;
+  align-items: start;
+}
+.log-report .media-tools-grid table {
+  width: auto;
+}
+.log-report .media-tools-grid th,
+.log-report .media-tools-grid td {
+  padding: 8px 30px 8px 0;
+  white-space: nowrap;
+}
+@media (max-width: 1180px) {
+  .log-report .media-tools-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .script-preview-frame {
   width: 100%;
   min-height: 320px;
