@@ -68,8 +68,9 @@ ensure_node
 # Prerequisites normally laid down by the base installer — added here too so
 # this script is self-sufficient on an EXISTING VICIdial server.
 ensure_audio_store_prereqs() {
-  if [ ! -x /usr/local/bin/vicidial-audio-store-dir ]; then
-    cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
+  # Always (re)write the helper so permission-policy fixes reach existing boxes
+  # on redeploy (the old install-if-missing guard left stale copies behind).
+  cat > /usr/local/bin/vicidial-audio-store-dir <<'AUDIOSTOREDIR'
 #!/bin/bash
 # Creates/permissions the VICIdial central sound store directory named in
 # system_settings.sounds_web_directory. DB settings come from
@@ -85,16 +86,19 @@ audio_dir=$(MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER"
 case "$audio_dir" in *[!a-zA-Z0-9_-]*) audio_dir='' ;; esac
 chown root:root /var/www/html
 chmod g-s /var/www/html
-chmod 0777 /var/www/html
+chmod 0755 /var/www/html
 if [ -n "$audio_dir" ]; then
     mkdir -p "/var/www/html/$audio_dir"
-    chown -R root:root "/var/www/html/$audio_dir"
-    chmod g-s "/var/www/html/$audio_dir"
-    chmod 0777 "/var/www/html/$audio_dir"
+    # Writers: the genx-ui service (audio-store uploads, runs as genx-ui) and
+    # legacy admin.php uploads (apache). Owner genx-ui + group apache with
+    # setgid/group-write covers both without a world-writable docroot.
+    if id genx-ui >/dev/null 2>&1; then store_owner=genx-ui; else store_owner=root; fi
+    chown -R "$store_owner":apache "/var/www/html/$audio_dir"
+    chmod 2775 "/var/www/html/$audio_dir"
+    find "/var/www/html/$audio_dir" -type f -exec chmod 0664 {} + 2>/dev/null
 fi
 AUDIOSTOREDIR
-    chmod 755 /usr/local/bin/vicidial-audio-store-dir
-  fi
+  chmod 755 /usr/local/bin/vicidial-audio-store-dir
 
   if ! crontab -l 2>/dev/null | grep -q 'vicidial-audio-store-dir'; then
     { crontab -l 2>/dev/null

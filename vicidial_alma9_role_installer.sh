@@ -714,7 +714,7 @@ fix_vicidial_web_permissions() {
     mkdir -p /var/www/html
     chown -R root:root /var/www/html
     find /var/www/html -type d -exec chmod g-s {} \;
-    find /var/www/html -type d -exec chmod 0777 {} \;
+    find /var/www/html -type d -exec chmod 0755 {} \;
     find /var/www/html -type f -exec chmod 644 {} \;
     if [ -d /var/www/html/agc ]; then
         touch /var/www/html/agc/vicidial_auth_entries.txt
@@ -740,13 +740,14 @@ configure_audio_store_directory() {
     audio_dir=$("${MYSQL[@]}" -Nse "use $VICIDIAL_DB_NAME; select sounds_web_directory from system_settings limit 1;" | tr -d '\r\n')
     if [ -n "$audio_dir" ]; then
         mkdir -p "/var/www/html/$audio_dir"
-        chown -R root:root "/var/www/html/$audio_dir"
-        chmod g-s "/var/www/html/$audio_dir"
-        chmod 0777 "/var/www/html/$audio_dir"
+        # Uploaders: legacy admin.php (apache) now; the genx-ui service user is
+        # added by install-genx-ui.sh's audio-store-dir helper when installed.
+        chown -R root:apache "/var/www/html/$audio_dir"
+        chmod 2775 "/var/www/html/$audio_dir"
     fi
     chown root:root /var/www/html
     chmod g-s /var/www/html
-    chmod 0777 /var/www/html
+    chmod 0755 /var/www/html
 }
 
 configure_pjsip_external_ip() {
@@ -1166,12 +1167,15 @@ audio_dir=$(MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER"
 case "$audio_dir" in *[!a-zA-Z0-9_-]*) audio_dir='' ;; esac
 chown root:root /var/www/html
 chmod g-s /var/www/html
-chmod 0777 /var/www/html
+chmod 0755 /var/www/html
 if [ -n "$audio_dir" ]; then
     mkdir -p "/var/www/html/$audio_dir"
-    chown -R root:root "/var/www/html/$audio_dir"
-    chmod g-s "/var/www/html/$audio_dir"
-    chmod 0777 "/var/www/html/$audio_dir"
+    # Writers: legacy admin.php uploads (apache) and, where installed, the
+    # genx-ui service user. Setgid + group-write instead of world-writable.
+    if id genx-ui >/dev/null 2>&1; then store_owner=genx-ui; else store_owner=root; fi
+    chown -R "$store_owner":apache "/var/www/html/$audio_dir"
+    chmod 2775 "/var/www/html/$audio_dir"
+    find "/var/www/html/$audio_dir" -type f -exec chmod 0664 {} + 2>/dev/null
 fi
 AUDIOSTOREDIR
     chmod 755 /usr/local/bin/vicidial-audio-store-dir

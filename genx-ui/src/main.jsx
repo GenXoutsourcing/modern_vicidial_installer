@@ -14241,7 +14241,10 @@ function AgentConsole({ token, authInfo, onExit }) {
   }, [live && Number(live.lead_id) ? 1 : 0, token]);
 
   // Legacy merge fields (--A--field--B--) used by scripts and web forms.
-  const mergeFields = useCallback((text) => String(text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
+  // escapeHtml is set when the result is rendered as HTML (script iframe):
+  // lead fields are customer-supplied data, so markup in them must render as
+  // text, not execute. URL consumers (web forms) get the raw values.
+  const mergeFields = useCallback((text, { escapeHtml = false } = {}) => String(text || '').replace(/--A--(\w+)--B--/g, (m, field) => {
     const merge = {
       ...(lead || {}),
       user: authInfo?.user?.user || '',
@@ -14260,7 +14263,10 @@ function AgentConsole({ token, authInfo, onExit }) {
       script_width: '100%',
       script_height: '400',
     };
-    return merge[field] != null ? String(merge[field]) : '';
+    const value = merge[field] != null ? String(merge[field]) : '';
+    return escapeHtml
+      ? value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+      : value;
   }), [lead, live, authInfo, inboundInfo]);
 
   // Dispo hotkeys: with the dispo grid open, pressing a mapped key submits.
@@ -15208,7 +15214,8 @@ function AgentConsole({ token, authInfo, onExit }) {
                   <iframe
                     title="Campaign script"
                     style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
-                    srcDoc={mergeFields(scriptData.script.script_text)}
+                    sandbox="allow-scripts"
+                    srcDoc={mergeFields(scriptData.script.script_text, { escapeHtml: true })}
                   />
                 )}
               </div>
