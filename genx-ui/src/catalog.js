@@ -112,3 +112,15 @@ export const REPORT_GROUPS = [
     ],
   },
 ];
+
+// Legacy report link catalog for the Admin Reports page (Admin nav section):
+// every real legacy URL above, rendered as an external link (view dropped).
+// The Reporting Center itself shows only native GenX report screens.
+export const LEGACY_REPORT_GROUPS = REPORT_GROUPS
+  .map((group) => ({
+    title: group.title,
+    items: group.items
+      .filter((item) => item.href.startsWith('/'))
+      .map(({ label, href }) => ({ label, href })),
+  }))
+  .filter((group) => group.items.length);

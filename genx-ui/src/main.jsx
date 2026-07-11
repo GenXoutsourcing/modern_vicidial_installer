@@ -48,7 +48,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { REPORT_GROUPS } from './catalog';
+import { REPORT_GROUPS, LEGACY_REPORT_GROUPS } from './catalog';
 import './styles.css';
 
 const API_BASE = `${import.meta.env.BASE_URL}api`;
@@ -228,6 +228,7 @@ const NAV_ITEMS = [
   { key: 'mediaTools', label: 'Media & Tools', eyebrow: 'Platform', title: 'Media and Tools', icon: SlidersHorizontal },
   { key: 'display', label: 'Settings Containers', eyebrow: 'Platform', title: 'Settings Containers', icon: LayoutDashboard },
   { key: 'systemSettings', label: 'System Settings', eyebrow: 'System', title: 'System Settings', icon: SlidersHorizontal },
+  { key: 'adminReports', label: 'Admin Reports', eyebrow: 'Reporting', title: 'Legacy Admin Reports', icon: ExternalLink },
 ];
 
 const NAV_GROUPS = [
@@ -236,7 +237,7 @@ const NAV_GROUPS = [
   { title: 'Campaigns', section: 'campaigns', keys: ['campaigns', 'statuses', 'callTimes', 'scripts', 'leadFilters'] },
   { title: 'Lists', section: 'lists', keys: ['lists', 'leadSearch', 'leadLoader', 'dnc', 'dropLists'] },
   { title: 'Inbound', section: 'inbound', keys: ['inbound', 'dids', 'callMenus', 'filterPhoneGroups'] },
-  { title: 'Admin', section: 'admin', keys: ['userGroups', 'phones', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display'] },
+  { title: 'Admin', section: 'admin', keys: ['userGroups', 'phones', 'shifts', 'system', 'systemSettings', 'mediaTools', 'display', 'adminReports'] },
   { title: 'Reports', section: 'reports', keys: ['reports', 'recordings'] },
 ];
 
@@ -7623,7 +7624,7 @@ function StatusesView({ admin, user, onAction }) {
   );
 }
 
-function CatalogPanels({ groups, query, emptyLabel, onNavigate }) {
+function CatalogPanels({ groups, query, emptyLabel, onNavigate, eyebrow = 'Reports' }) {
   const normalized = query.trim().toLowerCase();
   const filtered = groups
     .map((group) => ({
@@ -7642,7 +7643,7 @@ function CatalogPanels({ groups, query, emptyLabel, onNavigate }) {
   return (
     <section className="catalog-grid">
       {filtered.map((group) => (
-        <Panel key={group.title} eyebrow="Legacy" title={group.title} icon={ExternalLink}>
+        <Panel key={group.title} eyebrow={eyebrow} title={group.title} icon={ExternalLink}>
           <div className="link-list">
             {group.items.map((item) => (
               item.view ? (
@@ -7678,13 +7679,19 @@ function CatalogSearch({ value, onChange, placeholder }) {
   );
 }
 
+// The Reporting Center lists only native GenX report screens; the legacy
+// report links live on the Admin Reports page (Admin nav section).
+const NATIVE_REPORT_GROUPS = REPORT_GROUPS
+  .map((group) => ({ ...group, items: group.items.filter((item) => item.view) }))
+  .filter((group) => group.items.length);
+
 function reportGroupsForUser(user) {
   const scope = user?.permissions?.allowedReports;
-  if (Number(user?.userLevel || 0) >= 9 || scope?.all) return REPORT_GROUPS;
+  if (Number(user?.userLevel || 0) >= 9 || scope?.all) return NATIVE_REPORT_GROUPS;
   if (!user?.viewReports) return [];
   const allowed = (scope?.values || []).map((value) => value.toLowerCase());
-  if (!allowed.length) return REPORT_GROUPS;
-  return REPORT_GROUPS
+  if (!allowed.length) return NATIVE_REPORT_GROUPS;
+  return NATIVE_REPORT_GROUPS
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => allowed.some((value) => (
@@ -7696,6 +7703,25 @@ function reportGroupsForUser(user) {
     .filter((group) => group.items.length);
 }
 
+// Admin Reports: the reviewed legacy report pages, external links only.
+// Reached through the Admin nav section, so restricted groups never see it.
+function AdminReportsView() {
+  const [query, setQuery] = useState('');
+  return (
+    <>
+      <section className="report-hero">
+        <div>
+          <p className="eyebrow">Admin</p>
+          <h2>Legacy Admin Reports</h2>
+          <p className="action-copy">The original dialer report pages. Day-to-day reporting lives in the Reporting Center; these remain for side-by-side checks and the few tools without a native screen yet.</p>
+        </div>
+        <CatalogSearch value={query} onChange={setQuery} placeholder="Search legacy reports" />
+      </section>
+      <CatalogPanels groups={LEGACY_REPORT_GROUPS} query={query} emptyLabel="No legacy reports match that search" eyebrow="Legacy" />
+    </>
+  );
+}
+
 function ReportsView({ dashboard, admin, user, onNavigate }) {
   const [query, setQuery] = useState('');
   const metrics = dashboard?.metrics || {};
@@ -7705,7 +7731,7 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
   return (
     <>
       <section className="metric-grid admin-metric-grid" aria-label="Report metrics">
-        <MetricCard icon={FileText} label="Report Links" value={formatNumber(visibleReportCount)} detail="Reviewed legacy report entries" accent="#00d9ff" />
+        <MetricCard icon={FileText} label="Reports" value={formatNumber(visibleReportCount)} detail="Native GenX reports" accent="#00d9ff" />
         <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(metrics.callsToday)} detail={`${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`} accent="#73fbd3" />
         <MetricCard icon={Users} label="Users" value={formatNumber(admin?.counts?.users)} detail={`${formatNumber(admin?.counts?.activeUsers)} active`} accent="#a8c7ff" />
         <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
@@ -7716,7 +7742,7 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
         <div>
           <p className="eyebrow">Reports</p>
           <h2>Reporting Center</h2>
-          <p className="action-copy">Native GenX dashboards live here first; reviewed legacy report tools stay reachable while we rebuild each report experience.</p>
+          <p className="action-copy">GenX report screens, built for this platform. Legacy report pages moved to Admin Reports under the Admin section.</p>
         </div>
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
       </section>
@@ -16594,6 +16620,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
   if (activeView === 'recordings') return <RecordingsView admin={admin} token={token} />;
+  if (activeView === 'adminReports') return <AdminReportsView />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   return <CommandView dashboard={dashboard} admin={admin} />;
 }
