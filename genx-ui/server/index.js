@@ -346,6 +346,10 @@ const savedReportTableReady = (async () => {
          KEY owner_group (owner_group)
        )`,
     );
+    // feed_key authorizes unauthenticated scheduled fetches of this report
+    // (the legacy Automated Reports runner wgets the feed URL). Generated on
+    // first schedule; empty = no feed exposure for that report.
+    await execute("ALTER TABLE genx_saved_reports ADD COLUMN IF NOT EXISTS feed_key CHAR(40) NOT NULL DEFAULT ''");
     return true;
   } catch (error) {
     console.error('genx_saved_reports table unavailable; saved custom reports disabled', error.message);
@@ -4385,11 +4389,13 @@ const CUSTOM_REPORT_DATASETS = {
 };
 
 const CUSTOM_REPORT_MAX_ROWS = 5000;
+const CUSTOM_REPORT_FEED_MAX_ROWS = 50000;
 const CUSTOM_REPORT_MAX_DIMS = 3;
+const CUSTOM_FEED_RANGES = ['yesterday', 'today', 'last7days', 'last30days', 'month_to_date', 'last_month'];
 
-function customReportScope(req, ds, params) {
+function customReportScope(genxUser, ds, params) {
   if (!ds.scope) return '';
-  const perms = req.genxUser?.permissions || {};
+  const perms = genxUser?.permissions || {};
   const scope = ds.scope.type === 'campaigns' ? perms.allowedCampaigns
     : ds.scope.type === 'queueGroups' ? perms.allowedQueueGroups
       : perms.adminViewableGroups;
@@ -4452,23 +4458,13 @@ async function customReportMeta(req, res) {
   });
 }
 
-async function customReportRun(req, res) {
-  if (!requireModify(req, res, 'viewReports')) return;
-  const body = req.body || {};
-  const config = normalizeCustomReportConfig(body);
-  if (!config) return badRequest(res, 'unknown_dataset');
-  if (!config.measures.length) return badRequest(res, 'measures_required');
+// Shared executor for the interactive run endpoint and the scheduled feed.
+// genxUser supplies the ACL scope; config must already be registry-normalized.
+async function executeCustomReport(genxUser, config, { start, end, limit }) {
   const ds = CUSTOM_REPORT_DATASETS[config.dataset];
-
-  const today = new Date().toISOString().slice(0, 10);
-  const beginDate = cleanReportDate(body.begin_date, today);
-  const endDate = cleanReportDate(body.end_date, today);
-  const start = `${beginDate} ${cleanReportTime(body.begin_time, '00:00:00')}`;
-  const end = `${endDate} ${cleanReportTime(body.end_time, '23:59:59')}`;
-
   const extra = [];
   const extraParams = [];
-  const scopeClause = customReportScope(req, ds, extraParams);
+  const scopeClause = customReportScope(genxUser, ds, extraParams);
   if (scopeClause) extra.push(scopeClause);
   for (const [key, values] of Object.entries(config.filters)) {
     extra.push(`${ds.alias}.${ds.filters[key].column} IN (${values.map(() => '?').join(',')})`);
@@ -4485,28 +4481,210 @@ async function customReportRun(req, res) {
   ];
   const orderKey = config.order_by || config.measures[0];
   const orderDir = config.dimensions.includes(orderKey) && !config.order_by ? 'ASC' : config.order_dir.toUpperCase();
-  const limit = Math.min(Math.max(Number(body.limit) || 500, 1), CUSTOM_REPORT_MAX_ROWS);
+  const cap = Math.min(Math.max(Number(limit) || 500, 1), CUSTOM_REPORT_FEED_MAX_ROWS);
   const sql = `SELECT ${selects.join(', ')}
      FROM ${src.fromSql}
      WHERE ${src.dateWhere}
      ${config.dimensions.length ? `GROUP BY ${config.dimensions.map((key) => `\`${key}\``).join(', ')}` : ''}
      ORDER BY \`${orderKey}\` ${orderDir}
-     LIMIT ${limit + 1}`;
+     LIMIT ${cap + 1}`;
   const data = await rows(sql, src.params, []);
-  const truncated = data.length > limit;
-  if (truncated) data.length = limit;
-  return res.json({
-    ok: true,
-    dataset: config.dataset,
+  const truncated = data.length > cap;
+  if (truncated) data.length = cap;
+  return {
     columns: [
       ...config.dimensions.map((key) => ({ key, label: ds.dimensions[key].label })),
       ...config.measures.map((key) => ({ key, label: ds.measures[key].label })),
     ],
     rows: data,
     truncated,
+  };
+}
+
+async function customReportRun(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const body = req.body || {};
+  const config = normalizeCustomReportConfig(body);
+  if (!config) return badRequest(res, 'unknown_dataset');
+  if (!config.measures.length) return badRequest(res, 'measures_required');
+
+  const today = new Date().toISOString().slice(0, 10);
+  const beginDate = cleanReportDate(body.begin_date, today);
+  const endDate = cleanReportDate(body.end_date, today);
+  const start = `${beginDate} ${cleanReportTime(body.begin_time, '00:00:00')}`;
+  const end = `${endDate} ${cleanReportTime(body.end_time, '23:59:59')}`;
+  const limit = Math.min(Math.max(Number(body.limit) || 500, 1), CUSTOM_REPORT_MAX_ROWS);
+
+  const result = await executeCustomReport(req.genxUser, config, { start, end, limit });
+  return res.json({
+    ok: true,
+    dataset: config.dataset,
+    columns: result.columns,
+    rows: result.rows,
+    truncated: result.truncated,
     range: { beginDate, endDate },
     config,
   });
+}
+
+// Loads a user's ACL context by username (no password) for scheduled feed
+// runs, which execute with the saved report OWNER's scope — not whoever
+// happens to fetch the URL.
+async function loadUserContextByName(username) {
+  const [row] = await rows(
+    `SELECT u.*, ug.allowed_campaigns, ug.allowed_reports, ug.admin_viewable_groups,
+            ug.admin_viewable_call_times, ug.allowed_queue_groups
+     FROM vicidial_users u
+     LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
+     WHERE u.user = ? AND u.active = 'Y'
+     LIMIT 1`,
+    [String(username || '')],
+    [],
+  );
+  return row ? publicUser(row) : null;
+}
+
+// Named relative ranges for scheduled runs (a stored fixed date range would go
+// stale immediately). Dates use the same UTC-ISO convention as the report
+// defaults elsewhere in this file.
+function customFeedRange(rangeKey) {
+  const now = new Date();
+  const day = (date) => date.toISOString().slice(0, 10);
+  const daysAgo = (n) => day(new Date(now.getTime() - n * 86400000));
+  const today = day(now);
+  switch (rangeKey) {
+    case 'today': return { beginDate: today, endDate: today };
+    case 'last7days': return { beginDate: daysAgo(7), endDate: daysAgo(1) };
+    case 'last30days': return { beginDate: daysAgo(30), endDate: daysAgo(1) };
+    case 'month_to_date': return { beginDate: `${today.slice(0, 8)}01`, endDate: today };
+    case 'last_month': {
+      const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+      return { beginDate: day(first), endDate: day(last) };
+    }
+    case 'yesterday':
+    default: return { beginDate: daysAgo(1), endDate: daysAgo(1) };
+  }
+}
+
+// Unauthenticated CSV feed for the legacy Automated Reports runner
+// (AST_email_web_report.pl wget). Authorization is the per-report feed_key;
+// the report executes with the owner's ACL scope. Read-only, replica-routed.
+async function customReportFeed(req, res) {
+  await savedReportTableReady;
+  const id = Number(req.params.id || 0);
+  const key = String(req.query.key || '');
+  const deny = (message) => res.status(403).type('text/plain').send(`ERROR: ${message}`);
+  if (!id || !/^[a-f0-9]{40}$/i.test(key)) return deny('invalid feed request');
+  const [saved] = await rows(
+    'SELECT report_id, report_name, owner_user, config, feed_key FROM genx_saved_reports WHERE report_id = ? LIMIT 1',
+    [id],
+    [],
+  );
+  if (!saved || !/^[a-f0-9]{40}$/i.test(String(saved.feed_key || ''))) return deny('feed not enabled');
+  if (!safeEqual(digest(key, 'sha256'), digest(saved.feed_key, 'sha256'))) return deny('invalid feed key');
+
+  let config = null;
+  try { config = normalizeCustomReportConfig(JSON.parse(saved.config)); } catch (error) { config = null; }
+  if (!config || !config.measures.length) return deny('report configuration invalid');
+  const owner = await loadUserContextByName(saved.owner_user);
+  if (!owner || !owner.viewReports) return deny('report owner not allowed');
+
+  const rangeKey = cleanChoice(req.query.range, CUSTOM_FEED_RANGES, 'yesterday');
+  const { beginDate, endDate } = customFeedRange(rangeKey);
+  const result = await executeCustomReport(owner, config, {
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, limit: CUSTOM_REPORT_FEED_MAX_ROWS,
+  });
+
+  const escapeCell = (value) => {
+    const text = String(value ?? '');
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const lines = [result.columns.map((column) => escapeCell(column.label)).join(',')];
+  for (const row of result.rows) {
+    lines.push(result.columns.map((column) => escapeCell(row[column.key])).join(','));
+  }
+  const safeName = String(saved.report_name).replace(/[^-_0-9a-zA-Z]/g, '_').slice(0, 60) || 'report';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="genx_${safeName}_${beginDate}_${endDate}.csv"`);
+  return res.send(lines.join('\r\n'));
+}
+
+// Creates a vicidial_automated_reports row that emails this saved report on a
+// schedule through the stock scheduler (ADMIN_keepalive_ALL.pl spawns
+// AST_email_web_report.pl, which wgets the feed URL and emails the CSV).
+async function scheduleCustomReport(req, res) {
+  if (!requireModify(req, res, 'modifyAutoReports')) return;
+  await savedReportTableReady;
+  const id = Number(req.params.id || 0);
+  if (!id) return badRequest(res, 'invalid_report_id');
+  const [saved] = await rows(
+    'SELECT report_id, report_name, owner_user, owner_group, shared, feed_key FROM genx_saved_reports WHERE report_id = ? LIMIT 1',
+    [id],
+    [],
+  );
+  if (!saved) return res.status(404).json({ ok: false, error: 'report_not_found' });
+  const me = req.genxUser || {};
+  const visible = Number(me.userLevel || 0) >= 9
+    || saved.owner_user === me.user
+    || (saved.shared === 'Y' && saved.owner_group === (me.userGroup || ''));
+  if (!visible) return res.status(403).json({ ok: false, error: 'report_not_allowed' });
+
+  const body = req.body || {};
+  const emailTo = cleanText(body.email_to, 255).trim();
+  if (!emailTo) return badRequest(res, 'email_to_required');
+  const host = String(req.headers.host || '').replace(/[^-_.:a-zA-Z0-9]/g, '');
+  if (!host) return badRequest(res, 'host_unresolved');
+  const emailFrom = cleanText(body.email_from, 255).trim() || `reports@${host.split(':')[0]}`;
+  const range = cleanChoice(body.range, CUSTOM_FEED_RANGES, 'yesterday');
+  const time = String(body.time || '0700').replace(/[^0-9]/g, '').padStart(4, '0').slice(0, 4);
+  const weekdays = String(body.weekdays ?? '12345').replace(/[^0-6]/g, '') || '12345';
+
+  let feedKey = String(saved.feed_key || '');
+  if (!/^[a-f0-9]{40}$/i.test(feedKey)) {
+    feedKey = crypto.randomBytes(20).toString('hex');
+    await execute('UPDATE genx_saved_reports SET feed_key = ? WHERE report_id = ? LIMIT 1', [feedKey, id]);
+  }
+  // AST_email_web_report.pl passes report_url to a shell unquoted, so the
+  // stored URL uses the stock \& convention between query params.
+  // file_download=1 makes the runner attach the payload as a .csv file.
+  const feedUrl = `https://${host}/genx/api/reports/custom/feed/${id}?key=${feedKey}\\&range=${range}\\&file_download=1`;
+  const scheduleId = `GENXCR${id}X${crypto.randomBytes(3).toString('hex').toUpperCase()}`.slice(0, 30);
+  const scheduleName = cleanText(body.name, 100).trim() || `GenX: ${saved.report_name}`.slice(0, 100);
+  const filenameBase = String(saved.report_name).replace(/[^-_0-9a-zA-Z]/g, '_').slice(0, 60) || 'GenX_Report';
+
+  await execute(
+    `INSERT INTO vicidial_automated_reports
+     SET report_id = ?, report_name = ?, report_server = 'active_voicemail_server',
+         report_times = ?, report_weekdays = ?, report_monthdays = '',
+         report_destination = 'EMAIL', email_from = ?, email_to = ?, email_subject = ?,
+         ftp_server = '', ftp_user = '', ftp_pass = '', ftp_directory = '',
+         report_url = ?, run_now_trigger = ?, active = 'Y', user_group = '---ALL---',
+         filename_override = ?`,
+    [
+      scheduleId, scheduleName, time, weekdays, emailFrom, emailTo,
+      cleanText(body.email_subject, 255).trim() || `GenX Report: ${saved.report_name}`.slice(0, 255),
+      feedUrl, body.run_now ? 'Y' : 'N',
+      `${filenameBase}_--A--filedatetime--B--`,
+    ],
+  );
+  // AUTOREPORTS section is load-bearing: the runner resolves its wget auth
+  // user from this row and refuses to run without it.
+  await adminLog(req, 'AUTOREPORTS', 'ADD', scheduleId, 'GENX SCHEDULE CUSTOM REPORT', 'INSERT INTO vicidial_automated_reports', `${saved.report_name} -> ${emailTo}`);
+  return res.json({ ok: true, schedule_id: scheduleId, url: feedUrl });
+}
+
+async function listCustomReportSchedules(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const id = Number(req.params.id || 0);
+  if (!id) return badRequest(res, 'invalid_report_id');
+  const schedules = await rows(
+    `SELECT report_id, report_name, report_times, report_weekdays, active, email_to, report_last_run
+     FROM vicidial_automated_reports WHERE report_url LIKE ? ORDER BY report_id ASC LIMIT 100`,
+    [`%/reports/custom/feed/${id}?%`],
+    [],
+  );
+  return res.json({ ok: true, schedules });
 }
 
 async function listSavedCustomReports(req, res) {
@@ -11568,14 +11746,17 @@ async function saveAutomatedReport(req, res, mode) {
       if (!id || id.length < 2) return badRequest(res, 'invalid_report_id');
       const { assignments, values } = dynamicAssignments({ report_id: id, ...payload });
       await execute(`INSERT INTO vicidial_automated_reports SET ${assignments}`, values);
-      await adminLog(req, 'REPORTS', 'ADD', id, 'GENX ADD AUTOMATED REPORT', 'INSERT INTO vicidial_automated_reports', payload.report_name);
+      // Section MUST be AUTOREPORTS: AST_email_web_report.pl resolves its wget
+      // auth user from the newest AUTOREPORTS admin-log row for the report and
+      // refuses to run the report when none exists.
+      await adminLog(req, 'AUTOREPORTS', 'ADD', id, 'GENX ADD AUTOMATED REPORT', 'INSERT INTO vicidial_automated_reports', payload.report_name);
     } else {
       const id = cleanId(req.params.id, 30);
       if (!id) return badRequest(res, 'invalid_report_id');
       const { assignments, values } = dynamicAssignments(payload);
       const result = await execute(`UPDATE vicidial_automated_reports SET ${assignments} WHERE report_id = ?`, [...values, id]);
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'report_not_found' });
-      await adminLog(req, 'REPORTS', 'MODIFY', id, 'GENX MODIFY AUTOMATED REPORT', 'UPDATE vicidial_automated_reports', payload.report_name);
+      await adminLog(req, 'AUTOREPORTS', 'MODIFY', id, 'GENX MODIFY AUTOMATED REPORT', 'UPDATE vicidial_automated_reports', payload.report_name);
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
@@ -11590,7 +11771,7 @@ async function deleteAutomatedReport(req, res) {
   try {
     const result = await execute('DELETE FROM vicidial_automated_reports WHERE report_id = ? LIMIT 1', [id]);
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'report_not_found' });
-    await adminLog(req, 'REPORTS', 'DELETE', id, 'GENX DELETE AUTOMATED REPORT', 'DELETE FROM vicidial_automated_reports', id);
+    await adminLog(req, 'AUTOREPORTS', 'DELETE', id, 'GENX DELETE AUTOMATED REPORT', 'DELETE FROM vicidial_automated_reports', id);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'automated_report_delete_failed' });
@@ -14996,6 +15177,10 @@ app.get('/api/reports/custom/saved', requireAccess, listSavedCustomReports);
 app.post('/api/reports/custom/saved', requireAccess, saveCustomReport);
 app.put('/api/reports/custom/saved/:id', requireAccess, saveCustomReport);
 app.delete('/api/reports/custom/saved/:id', requireAccess, deleteCustomReport);
+app.get('/api/reports/custom/saved/:id/schedules', requireAccess, listCustomReportSchedules);
+app.post('/api/reports/custom/saved/:id/schedule', requireAccess, scheduleCustomReport);
+// Feed auth is the per-report key (fetched by the legacy report runner), not a session.
+app.get('/api/reports/custom/feed/:id', customReportFeed);
 // ---- Audio store (legacy vicidial/audio_store.php port) ----
 // Files live in a webroot dir (central-control compatible); rows mirror to
 // audio_store_details. Playback is served through an authenticated route.

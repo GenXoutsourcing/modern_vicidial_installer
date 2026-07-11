@@ -7750,6 +7750,11 @@ function CustomReportView({ token }) {
   const [saveName, setSaveName] = useState('');
   const [shared, setShared] = useState(true);
   const [activeSavedId, setActiveSavedId] = useState(null);
+  const [scheduleFor, setScheduleFor] = useState(null);
+  const [schedules, setSchedules] = useState([]);
+  const [scheduleForm, setScheduleForm] = useState({
+    time: '07:00', weekdays: '12345', range: 'yesterday', email_to: '', email_from: '', email_subject: '', run_now: false,
+  });
 
   const dataset = meta?.datasets?.find((item) => item.key === datasetKey) || null;
 
@@ -7849,9 +7854,55 @@ function CustomReportView({ token }) {
     try {
       await apiFetch(`/reports/custom/saved/${report.report_id}`, token, { method: 'DELETE' });
       if (activeSavedId === report.report_id) setActiveSavedId(null);
+      if (scheduleFor?.report_id === report.report_id) setScheduleFor(null);
       loadSaved();
     } catch (requestError) {
       setError(requestError.status === 403 ? 'Only the owner can delete this report' : 'Delete failed');
+    }
+  }
+
+  function loadSchedules(reportId) {
+    apiFetch(`/reports/custom/saved/${reportId}/schedules`, token)
+      .then((payload) => setSchedules(payload.schedules || []))
+      .catch(() => setSchedules([]));
+  }
+
+  function openSchedule(report) {
+    setScheduleFor(report);
+    setNotice('');
+    setError('');
+    loadSchedules(report.report_id);
+  }
+
+  async function submitSchedule(event) {
+    event?.preventDefault();
+    if (!scheduleFor) return;
+    if (!scheduleForm.email_to.trim()) {
+      setError('Enter at least one destination email');
+      return;
+    }
+    setError('');
+    try {
+      const payload = await apiFetch(`/reports/custom/saved/${scheduleFor.report_id}/schedule`, token, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...scheduleForm,
+          time: scheduleForm.time.replace(':', ''),
+        }),
+      });
+      setNotice(`Scheduled as ${payload.schedule_id}${scheduleForm.run_now ? ' - a test email is being generated now' : ''}`);
+      loadSchedules(scheduleFor.report_id);
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Your user cannot manage automated reports' : 'Schedule failed');
+    }
+  }
+
+  async function deleteSchedule(schedule) {
+    try {
+      await apiFetch(`/admin/automated-reports/${schedule.report_id}`, token, { method: 'DELETE' });
+      if (scheduleFor) loadSchedules(scheduleFor.report_id);
+    } catch (requestError) {
+      setError(requestError.status === 403 ? 'Your user cannot manage automated reports' : 'Schedule delete failed');
     }
   }
 
@@ -8001,6 +8052,7 @@ function CustomReportView({ token }) {
                 render: (row) => (
                   <span className="row-action-group">
                     <button type="button" className="row-action" onClick={() => loadReport(row)}>Load</button>
+                    <button type="button" className="row-action" onClick={() => openSchedule(row)}>Schedule</button>
                     <button type="button" className="row-action danger" onClick={() => deleteReport(row)}>
                       <Trash2 size={14} aria-hidden="true" />
                     </button>
@@ -8038,6 +8090,106 @@ function CustomReportView({ token }) {
           </div>
         </Panel>
       </section>
+
+      {scheduleFor && (
+        <section className="admin-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
+          <Panel
+            eyebrow="Custom Report"
+            title={`Email Schedule: ${scheduleFor.report_name}`}
+            icon={CalendarDays}
+            headerActions={(
+              <button type="button" className="row-action" onClick={() => setScheduleFor(null)}>Close</button>
+            )}
+          >
+            <form className="entity-form" onSubmit={submitSchedule}>
+              <div className="field-grid">
+                <label>
+                  <span>Send Time</span>
+                  <input type="time" value={scheduleForm.time} onChange={(event) => setScheduleForm({ ...scheduleForm, time: event.target.value })} />
+                </label>
+                <label>
+                  <span>Data Range</span>
+                  <select value={scheduleForm.range} onChange={(event) => setScheduleForm({ ...scheduleForm, range: event.target.value })}>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="today">Today (so far)</option>
+                    <option value="last7days">Last 7 Days</option>
+                    <option value="last30days">Last 30 Days</option>
+                    <option value="month_to_date">Month To Date</option>
+                    <option value="last_month">Last Month</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Days of Week</span>
+                  <div className="checkbox-grid" style={{ margin: 0 }}>
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name, index) => (
+                      <label key={name} className="checkbox-inline">
+                        <input
+                          type="checkbox"
+                          checked={scheduleForm.weekdays.includes(String(index))}
+                          onChange={() => setScheduleForm({
+                            ...scheduleForm,
+                            weekdays: scheduleForm.weekdays.includes(String(index))
+                              ? scheduleForm.weekdays.replace(String(index), '')
+                              : [...scheduleForm.weekdays, String(index)].sort().join(''),
+                          })}
+                        />
+                        <span>{name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </label>
+                <label>
+                  <span>Email To (comma-separated)</span>
+                  <input value={scheduleForm.email_to} onChange={(event) => setScheduleForm({ ...scheduleForm, email_to: event.target.value })} placeholder="ops@example.com" />
+                </label>
+                <label>
+                  <span>Email From (optional)</span>
+                  <input value={scheduleForm.email_from} onChange={(event) => setScheduleForm({ ...scheduleForm, email_from: event.target.value })} placeholder="reports@yourdomain" />
+                </label>
+                <label>
+                  <span>Subject (optional)</span>
+                  <input value={scheduleForm.email_subject} onChange={(event) => setScheduleForm({ ...scheduleForm, email_subject: event.target.value })} maxLength={255} />
+                </label>
+                <label className="checkbox-inline">
+                  <input type="checkbox" checked={scheduleForm.run_now} onChange={(event) => setScheduleForm({ ...scheduleForm, run_now: event.target.checked })} />
+                  <span>Also send a test email now</span>
+                </label>
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="primary-action">
+                  <CalendarDays size={16} aria-hidden="true" />
+                  Create Schedule
+                </button>
+              </div>
+            </form>
+          </Panel>
+          <Panel eyebrow="Custom Report" title="Existing Schedules" icon={Clock3}>
+            <DataTable
+              columns={[
+                { key: 'report_id', label: 'ID' },
+                { key: 'report_name', label: 'Name' },
+                { key: 'report_times', label: 'Time' },
+                { key: 'report_weekdays', label: 'Days' },
+                { key: 'email_to', label: 'Email To' },
+                { key: 'report_last_run', label: 'Last Run', render: (row) => row.report_last_run || 'Never' },
+                { key: 'active', label: 'Active' },
+                {
+                  key: 'actions',
+                  label: '',
+                  render: (row) => (
+                    <button type="button" className="row-action danger" onClick={() => deleteSchedule(row)}>
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
+                  ),
+                },
+              ]}
+              rows={schedules}
+              emptyLabel="No schedules for this report yet"
+            />
+            <p className="action-copy">Schedules run through Automated Reports (Media &amp; Tools) and email the report as a CSV attachment.</p>
+          </Panel>
+        </section>
+      )}
     </div>
   );
 }
