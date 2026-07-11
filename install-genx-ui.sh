@@ -227,7 +227,9 @@ EOF
 # docroot, so it is excluded from the /genx proxy above.
 cat > /etc/httpd/conf.d/genx-block-legacy-api.conf <<'BLOCKEOF'
 # Managed by modern_vicidial_installer/install-genx-ui.sh
-<LocationMatch "^/(agc/api|vicidial/non_agent_api|vicidial/qc_api)\.php$">
+# Match trailing PATH_INFO too (/agc/api.php/x) - anchoring on \.php$ alone
+# let cgi.fix_pathinfo execute the script via a suffix and dodge the block.
+<LocationMatch "^/(agc/api|vicidial/non_agent_api|vicidial/qc_api)\.php(/|$)">
     Require all denied
 </LocationMatch>
 <Directory "/var/www/html/genxapi">

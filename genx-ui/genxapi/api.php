@@ -90,7 +90,9 @@ function api_group($mysqli) {
 }
 
 function log_api($mysqli, $user, $function, $result, $reason, $source) {
-    $url = ($_SERVER['REQUEST_URI'] ?? '/genxapi/api.php');
+    // Log the path only, never the query string - it can carry api_key/pass
+    // when the caller authenticates via GET, and this row persists in the DB.
+    $url = strtok((string)($_SERVER['REQUEST_URI'] ?? '/genxapi/api.php'), '?');
     $web = ($_SERVER['HTTP_HOST'] ?? gethostname());
     if ($stmt = $mysqli->prepare(
         "INSERT INTO vicidial_api_log (user, api_date, api_script, function, result, result_reason, source, webserver, api_url)

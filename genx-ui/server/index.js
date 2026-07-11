@@ -3490,6 +3490,24 @@ async function saveUser(req, res, mode) {
     if (Number(target.user_level || 0) > Number(req.genxUser?.userLevel || 0)) {
       return res.status(403).json({ ok: false, error: 'user_above_your_level' });
     }
+  } else if (Number(req.genxUser?.userLevel || 0) < 9) {
+    // Non-restricted managers below SuperAdmin still can't act on an account
+    // above their own level, or on/into a user group outside their scope.
+    // (SuperAdmins, level 9, keep full reach.)
+    const scope = req.genxUser?.permissions?.adminViewableGroups;
+    if (mode !== 'create') {
+      const [target] = await rows('SELECT user_level, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+      if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+      if (Number(target.user_level || 0) > Number(req.genxUser?.userLevel || 0)) {
+        return res.status(403).json({ ok: false, error: 'user_above_your_level' });
+      }
+      if (!scopeAllows(scope, target.user_group)) {
+        return res.status(403).json({ ok: false, error: 'user_not_allowed' });
+      }
+    }
+    if (payload.user_group && !scopeAllows(scope, payload.user_group)) {
+      return res.status(403).json({ ok: false, error: 'user_group_not_allowed' });
+    }
   }
   if (mode !== 'create' && !req.genxUser?.permissions?.allowedQueueGroups?.all) {
     const [existingUser] = await rows(
@@ -11923,6 +11941,12 @@ async function getLeadCustomData(req, res) {
   if (!id) return badRequest(res, 'invalid_lead_id');
   const [lead] = await rows('SELECT lead_id, list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [id], []);
   if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  // Custom fields hold PII; scope to the manager's allowed lists like the
+  // lead detail/search endpoints do (null = full access).
+  const listIds = await allowedListIds(req.genxUser);
+  if (listIds && !listIds.map(String).includes(String(lead.list_id))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
   const defs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? ORDER BY field_rank, field_order, field_id LIMIT 200', [lead.list_id], []);
   let values = null;
   if (defs.length && await customTableExists(lead.list_id)) {
@@ -11942,6 +11966,11 @@ async function putLeadCustomData(req, res) {
   if (!id) return badRequest(res, 'invalid_lead_id');
   const [lead] = await rows('SELECT lead_id, list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [id], []);
   if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
+  // Scope writes to the manager's allowed lists (null = full access).
+  const listIds = await allowedListIds(req.genxUser);
+  if (listIds && !listIds.map(String).includes(String(lead.list_id))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
   const defs = await rows('SELECT * FROM vicidial_lists_fields WHERE list_id = ? LIMIT 200', [lead.list_id], []);
   if (!defs.length || !(await customTableExists(lead.list_id))) {
     return badRequest(res, 'no_custom_fields');
@@ -12919,6 +12948,12 @@ function userGroupPayload(body) {
 
 async function saveUserGroup(req, res, mode) {
   if (!requireModify(req, res, 'modifyUsergroups')) return;
+  // User groups carry the GenX nav-section layer (saveNavSections below), so a
+  // restricted manager editing one could grant their own group the admin
+  // section and escape the restricted role. Same guard as saveStatus/queue.
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'user_groups_admin_only' });
+  }
   const id = cleanId(mode === 'create' ? req.body?.user_group : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user_group');
   if (mode !== 'create' && !scopeAllows(req.genxUser?.permissions?.adminViewableGroups, id)) {
