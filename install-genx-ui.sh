@@ -229,6 +229,10 @@ cat > /etc/httpd/conf.d/genx-block-legacy-api.conf <<'BLOCKEOF'
 <LocationMatch "^/(agc/api|vicidial/non_agent_api|vicidial/qc_api)\.php$">
     Require all denied
 </LocationMatch>
+<Directory "/var/www/html/genxapi">
+    DirectoryIndex index.php
+    Options -Indexes
+</Directory>
 BLOCKEOF
 
 # Install the GenX API replacement + its self-hosted reference docs
