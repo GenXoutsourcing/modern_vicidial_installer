@@ -638,8 +638,12 @@ async function liveBoundary(table, dateCol) {
 }
 
 // table/dateCol are internal constants (never user input), so interpolating
-// them is safe; the date bounds are always bound as ? params.
-async function rangeSource({ table, dateCol, start, end, alias = 't' }) {
+// them is safe; the date bounds are always bound as ? params. extraWhere is an
+// optional predicate (unqualified column names, e.g. 'campaign_id IN (?,?)')
+// pushed into each UNION branch so a scoped report doesn't scan the whole
+// archive; its extraParams repeat per branch.
+async function rangeSource({ table, dateCol, start, end, alias = 't', extraWhere = '', extraParams = [] }) {
+  const andExtra = extraWhere ? ` AND ${extraWhere}` : '';
   let span = false; // false = live only, true = span live + archive
   if (await archiveTableExists(table)) {
     const boundary = await liveBoundary(table, dateCol);
@@ -648,15 +652,15 @@ async function rangeSource({ table, dateCol, start, end, alias = 't' }) {
   if (!span) {
     return {
       fromSql: `${table} ${alias}`,
-      dateWhere: `${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?`,
-      params: [start, end],
+      dateWhere: `${alias}.${dateCol} >= ? AND ${alias}.${dateCol} <= ?${andExtra}`,
+      params: [start, end, ...extraParams],
     };
   }
-  const branch = (t) => `SELECT * FROM ${t} WHERE ${dateCol} >= ? AND ${dateCol} <= ?`;
+  const branch = (t) => `SELECT * FROM ${t} WHERE ${dateCol} >= ? AND ${dateCol} <= ?${andExtra}`;
   return {
     fromSql: `(${branch(table)} UNION ALL ${branch(`${table}_archive`)}) ${alias}`,
     dateWhere: '1=1',
-    params: [start, end, start, end],
+    params: [start, end, ...extraParams, start, end, ...extraParams],
   };
 }
 
@@ -4186,6 +4190,26 @@ function cleanReportDate(value, fallback) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
 }
 
+function cleanReportTime(value, fallback) {
+  const text = cleanText(value, 8);
+  if (/^\d{2}:\d{2}:\d{2}$/.test(text)) return text;
+  if (/^\d{2}:\d{2}$/.test(text)) return `${text}:00`;
+  return fallback;
+}
+
+// Like parseReportDateRange but with optional begin_time/end_time (HH:MM[:SS]),
+// returning full datetime bounds. Reports that don't send times get the whole
+// day, so this stays identical to the date-only behavior by default.
+function parseReportDateTimeRange(req) {
+  const { beginDate, endDate } = parseReportDateRange(req);
+  return {
+    beginDate,
+    endDate,
+    start: `${beginDate} ${cleanReportTime(req.query?.begin_time, '00:00:00')}`,
+    end: `${endDate} ${cleanReportTime(req.query?.end_time, '23:59:59')}`,
+  };
+}
+
 function parseReportDateRange(req) {
   const today = new Date().toISOString().slice(0, 10);
   return {
@@ -6834,31 +6858,45 @@ async function dialLogReport(req, res) {
 // family): date range + optional filters, capped rows, GROUP BY summaries. ---
 async function carrierLogReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
-  const { beginDate, endDate } = parseReportDateRange(req);
+  const { beginDate, endDate, start, end } = parseReportDateTimeRange(req);
   const src = await rangeSource({
-    table: 'vicidial_carrier_log', dateCol: 'call_date',
-    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'vcl',
+    table: 'vicidial_carrier_log', dateCol: 'call_date', start, end, alias: 'vcl',
   });
   const dialstatus = cleanId(req.query?.dialstatus, 20);
   const filterSql = dialstatus ? ' AND dialstatus = ?' : '';
   const filterParams = dialstatus ? [dialstatus] : [];
-  const [entries, summary] = await Promise.all([
+  const p = () => [...src.params, ...filterParams];
+  const [entries, summary, sipCauses, statuses] = await Promise.all([
     rows(
       `SELECT uniqueid, call_date, server_ip, lead_id, hangup_cause, dialstatus, channel,
               dial_time, answered_time, sip_hangup_cause, sip_hangup_reason, caller_code
        FROM ${src.fromSql} WHERE ${src.dateWhere}${filterSql}
        ORDER BY call_date ASC LIMIT 2000`,
-      [...src.params, ...filterParams],
+      p(),
       [],
     ),
     rows(
       `SELECT dialstatus, COUNT(*) AS calls FROM ${src.fromSql}
        WHERE ${src.dateWhere}${filterSql} GROUP BY dialstatus ORDER BY calls DESC LIMIT 50`,
-      [...src.params, ...filterParams],
+      p(),
+      [],
+    ),
+    rows(
+      `SELECT sip_hangup_cause, sip_hangup_reason, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere}${filterSql} GROUP BY sip_hangup_cause, sip_hangup_reason
+       ORDER BY calls DESC LIMIT 100`,
+      p(),
+      [],
+    ),
+    rows(
+      `SELECT dialstatus, hangup_cause, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere}${filterSql} GROUP BY dialstatus, hangup_cause
+       ORDER BY calls DESC LIMIT 200`,
+      p(),
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return res.json({ ok: true, entries, summary, sipCauses, statuses, range: { beginDate, endDate } });
 }
 
 async function timeclockReport(req, res) {
@@ -6965,10 +7003,9 @@ async function transcriptsReport(req, res) {
 
 async function hangupCauseReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
-  const { beginDate, endDate } = parseReportDateRange(req);
+  const { beginDate, endDate, start, end } = parseReportDateTimeRange(req);
   const src = await rangeSource({
-    table: 'vicidial_carrier_log', dateCol: 'call_date',
-    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'vcl',
+    table: 'vicidial_carrier_log', dateCol: 'call_date', start, end, alias: 'vcl',
   });
   const [causes, sipCauses, statuses] = await Promise.all([
     rows(

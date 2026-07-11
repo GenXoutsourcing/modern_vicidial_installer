@@ -13051,16 +13051,20 @@ function LogReportView({ token, onLogout, config }) {
   const today = new Date().toISOString().slice(0, 10);
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+  const [beginTime, setBeginTime] = useState('00:00');
+  const [endTime, setEndTime] = useState('23:59');
   const [filterValue, setFilterValue] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async (begin, end, filter) => {
+  const load = useCallback(async (begin, end, filter, bTime, eTime) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams({ begin_date: begin, end_date: end });
+      if (config.datetime && bTime) params.set('begin_time', bTime);
+      if (config.datetime && eTime) params.set('end_time', eTime);
       if (config.filter && filter) params.set(config.filter.param, filter);
       const payload = await apiFetch(`${config.endpoint}?${params.toString()}`, token);
       setData(payload);
@@ -13076,7 +13080,7 @@ function LogReportView({ token, onLogout, config }) {
   }, [token, onLogout, config]);
 
   useEffect(() => {
-    load(today, today, '');
+    load(today, today, '', '00:00', '23:59');
   }, [load, today]);
 
   return (
@@ -13093,7 +13097,7 @@ function LogReportView({ token, onLogout, config }) {
           className="entity-form report-filter-bar"
           onSubmit={(event) => {
             event.preventDefault();
-            load(beginDate, endDate, filterValue);
+            load(beginDate, endDate, filterValue, beginTime, endTime);
           }}
         >
           <div className="field-grid">
@@ -13101,10 +13105,22 @@ function LogReportView({ token, onLogout, config }) {
               <span>Begin Date</span>
               <input type="date" value={beginDate} onChange={(event) => setBeginDate(event.target.value)} />
             </label>
+            {config.datetime && (
+              <label>
+                <span>Begin Time</span>
+                <input type="time" value={beginTime} onChange={(event) => setBeginTime(event.target.value)} />
+              </label>
+            )}
             <label>
               <span>End Date</span>
               <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
             </label>
+            {config.datetime && (
+              <label>
+                <span>End Time</span>
+                <input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
+              </label>
+            )}
             {config.filter && (
               <label>
                 <span>{config.filter.label}</span>
@@ -13155,18 +13171,39 @@ function LogReportView({ token, onLogout, config }) {
 const LOG_REPORT_CONFIGS = {
   reportCarrierLog: {
     title: 'Carrier Log',
-    description: 'Raw carrier-log entries with dialstatus and hangup causes.',
+    description: 'Raw carrier-log entries with dialstatus, hangup causes and SIP error reasons.',
     endpoint: '/reports/carrier-log',
+    datetime: true,
     filter: { param: 'dialstatus', label: 'Dialstatus' },
     entriesKey: 'entries',
-    summaries: [{
-      key: 'summary',
-      title: 'Dialstatus Summary',
-      columns: [
-        { key: 'dialstatus', label: 'Dialstatus', render: (row) => row.dialstatus || 'NONE' },
-        { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-      ],
-    }],
+    summaries: [
+      {
+        key: 'summary',
+        title: 'Dialstatus Summary',
+        columns: [
+          { key: 'dialstatus', label: 'Dialstatus', render: (row) => row.dialstatus || 'NONE' },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+      {
+        key: 'statuses',
+        title: 'Dial Status Breakdown',
+        columns: [
+          { key: 'hangup_cause', label: 'Hangup Cause', render: (row) => String(row.hangup_cause ?? 'NONE') },
+          { key: 'dialstatus', label: 'Dial Status', render: (row) => row.dialstatus || 'NONE' },
+          { key: 'calls', label: 'Count', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+      {
+        key: 'sipCauses',
+        title: 'SIP Error Reason Breakdown',
+        columns: [
+          { key: 'sip_hangup_cause', label: 'SIP Code', render: (row) => String(row.sip_hangup_cause ?? 'NONE') },
+          { key: 'sip_hangup_reason', label: 'SIP Hangup Reason' },
+          { key: 'calls', label: 'Count', render: (row) => formatNumber(row.calls) },
+        ],
+      },
+    ],
     columns: [
       { key: 'call_date', label: 'Date', render: (row) => formatDateTime(row.call_date) },
       { key: 'lead_id', label: 'Lead' },
@@ -13182,6 +13219,7 @@ const LOG_REPORT_CONFIGS = {
     title: 'Hangup Cause',
     description: 'Hangup cause and SIP cause distribution from the carrier log.',
     endpoint: '/reports/hangup-cause',
+    datetime: true,
     entriesKey: null,
     summaries: [
       {
