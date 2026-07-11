@@ -1069,6 +1069,12 @@ async function dashboardData(selectedRange = 'today') {
   const range = resolveRange(selectedRange);
   const outboundWhere = dateWhere('call_date', range);
   const inboundWhere = dateWhere('call_date', range);
+  // History aggregates (call logs, lead-status mix) run on the replica: they
+  // scan large MyISAM tables and were holding read locks on the primary that
+  // queued VDAD/keepalive writes behind them. Live-state reads
+  // (vicidial_live_agents, auto_calls, server heartbeats) stay on the primary
+  // because those are MEMORY tables whose replica copies reset on restart.
+  const onReplica = (fn) => dbContext.run(reportPool, fn);
   const [
     activeAgents,
     pausedAgents,
@@ -1100,9 +1106,9 @@ async function dashboardData(selectedRange = 'today') {
     scalar("SELECT COUNT(*) AS value FROM vicidial_inbound_groups WHERE active = 'Y'", [], 0),
     scalar("SELECT COUNT(*) AS value FROM vicidial_lists WHERE active = 'Y'", [], 0),
     scalar('SELECT COUNT(*) AS value FROM vicidial_list', [], 0),
-    scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${outboundWhere}`, [], 0),
-    scalar(`SELECT COUNT(*) AS value FROM vicidial_closer_log WHERE ${inboundWhere}`, [], 0),
-    scalar(
+    onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${outboundWhere}`, [], 0)),
+    onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_closer_log WHERE ${inboundWhere}`, [], 0)),
+    onReplica(() => scalar(
       `SELECT COALESCE(SUM(length_in_sec), 0) AS value
        FROM (
          SELECT length_in_sec FROM vicidial_log WHERE ${outboundWhere}
@@ -1111,11 +1117,11 @@ async function dashboardData(selectedRange = 'today') {
        ) c`,
       [],
       0,
-    ),
-    scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0),
+    )),
+    onReplica(() => scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0)),
     systemStatus(),
-    activitySeries(range),
-    requiredRows(
+    onReplica(() => activitySeries(range)),
+    onReplica(() => requiredRows(
       `SELECT campaign_id,
               COUNT(*) AS calls,
               COUNT(DISTINCT user) AS users,
@@ -1131,8 +1137,8 @@ async function dashboardData(selectedRange = 'today') {
        LIMIT 12`,
       [],
       [],
-    ),
-    requiredRows(
+    )),
+    onReplica(() => requiredRows(
       `SELECT status, COUNT(*) AS calls
        FROM (
          SELECT status FROM vicidial_log WHERE ${outboundWhere}
@@ -1144,8 +1150,8 @@ async function dashboardData(selectedRange = 'today') {
        LIMIT 10`,
       [],
       [],
-    ),
-    rows(
+    )),
+    onReplica(() => rows(
       `SELECT status, COUNT(*) AS leads
        FROM vicidial_list
        GROUP BY status
@@ -1153,7 +1159,7 @@ async function dashboardData(selectedRange = 'today') {
        LIMIT 10`,
       [],
       [],
-    ),
+    )),
     rows(
       `SELECT campaign_id, campaign_name, active, dial_method, hopper_level, lead_order
        FROM vicidial_campaigns
