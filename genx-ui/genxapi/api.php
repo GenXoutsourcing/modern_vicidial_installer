@@ -400,6 +400,160 @@ switch (strtolower($function)) {
         break;
     }
 
+    case 'update_lead': {
+        // Locate the lead: lead_id preferred, else phone_number (+ optional
+        // list_id when the number exists in several lists).
+        $lead_id = preg_replace('/\D/', '', param('lead_id'));
+        $lookup_phone = preg_replace('/\D/', '', param('phone_number_lookup'));
+        if ($lead_id === '' && $lookup_phone === '') {
+            fail($mysqli, $user, $function, 'lead_id or phone_number_lookup required', $source, 400);
+        }
+        if ($lead_id === '') {
+            $list_filter = preg_replace('/\D/', '', param('list_id_lookup'));
+            $sql = "SELECT lead_id FROM vicidial_list WHERE phone_number = '" . $mysqli->real_escape_string($lookup_phone) . "'";
+            if ($list_filter !== '') $sql .= " AND list_id = '" . $mysqli->real_escape_string($list_filter) . "'";
+            $sql .= ' ORDER BY lead_id DESC';
+            $res = $mysqli->query($sql);
+            $matches = array();
+            while ($res && ($r = $res->fetch_row())) $matches[] = $r[0];
+            if (!count($matches)) fail($mysqli, $user, $function, 'lead not found', $source, 404);
+            if (count($matches) > 1) fail($mysqli, $user, $function, 'multiple leads match (' . count($matches) . ') - use lead_id or list_id_lookup', $source, 409);
+            $lead_id = $matches[0];
+        }
+
+        $stmt = $mysqli->prepare('SELECT lead_id, phone_code, phone_number, state, postal_code FROM vicidial_list WHERE lead_id = ? LIMIT 1');
+        $stmt->bind_param('s', $lead_id);
+        $stmt->execute();
+        $stmt->bind_result($cur_id, $cur_code, $cur_phone, $cur_state, $cur_postal);
+        if (!$stmt->fetch()) { $stmt->close(); fail($mysqli, $user, $function, 'lead not found', $source, 404); }
+        $stmt->close();
+
+        // Whitelisted updatable fields; only params actually sent are written.
+        $updatable = array('phone_code', 'phone_number', 'title', 'first_name', 'middle_initial',
+            'last_name', 'address1', 'address2', 'address3', 'city', 'state', 'province',
+            'postal_code', 'country_code', 'gender', 'alt_phone', 'email', 'security_phrase',
+            'comments', 'vendor_lead_code', 'source_id', 'rank', 'owner', 'status', 'list_id');
+        $sets = array();
+        $sent = array();
+        foreach ($updatable as $field) {
+            if (!isset($_POST[$field]) && !isset($_GET[$field])) continue;
+            $value = param($field);
+            if ($field === 'phone_number' || $field === 'alt_phone') $value = preg_replace('/\D/', '', $value);
+            if ($field === 'phone_code' || $field === 'list_id' || $field === 'rank') $value = preg_replace('/\D/', '', $value);
+            if ($field === 'state') $value = strtoupper(substr($value, 0, 2));
+            if ($field === 'status') $value = strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $value), 0, 6));
+            if ($field === 'list_id') {
+                $chk = $mysqli->query("SELECT list_id FROM vicidial_lists WHERE list_id = '" . $mysqli->real_escape_string($value) . "' LIMIT 1");
+                if (!$chk || !$chk->num_rows) fail($mysqli, $user, $function, 'list_id does not exist', $source, 400);
+            }
+            $sets[] = "`$field` = '" . $mysqli->real_escape_string($value) . "'";
+            $sent[$field] = $value;
+        }
+        if (!count($sets)) fail($mysqli, $user, $function, 'no updatable fields sent', $source, 400);
+
+        // Re-resolve gmt_offset_now when anything location-relevant changed,
+        // using the same VICIdial resolver as add_lead. Explicit override wins.
+        $gmt_param = param('gmt_offset_now');
+        $touch_gmt = ($gmt_param !== '' && is_numeric($gmt_param));
+        $loc_changed = array_intersect(array_keys($sent), array('phone_code', 'phone_number', 'state', 'postal_code'));
+        $gmt = null;
+        if ($touch_gmt) {
+            $gmt = (float)$gmt_param;
+        } elseif (count($loc_changed)) {
+            $gmt = resolve_gmt(
+                $mysqli,
+                isset($sent['phone_code']) ? $sent['phone_code'] : ($cur_code ?: '1'),
+                isset($sent['phone_number']) ? $sent['phone_number'] : $cur_phone,
+                isset($sent['state']) ? $sent['state'] : $cur_state,
+                isset($sent['postal_code']) ? $sent['postal_code'] : $cur_postal,
+                param('tz_method'),
+            );
+        }
+        if ($gmt !== null) $sets[] = "gmt_offset_now = '" . $mysqli->real_escape_string((string)$gmt) . "'";
+
+        $sql = 'UPDATE vicidial_list SET ' . implode(', ', $sets)
+             . " WHERE lead_id = '" . $mysqli->real_escape_string($lead_id) . "' LIMIT 1";
+        if (!$mysqli->query($sql)) fail($mysqli, $user, $function, 'lead update failed', $source, 500);
+
+        $out = "lead_id|$lead_id\nfields_updated|" . implode(',', array_keys($sent)) . "\n";
+        if ($gmt !== null) $out .= "gmt_offset_now|$gmt\n";
+        ok($mysqli, $user, $function, $source, $out);
+        break;
+    }
+
+    case 'lead_info': {
+        $lead_id = preg_replace('/\D/', '', param('lead_id'));
+        $phone   = preg_replace('/\D/', '', param('phone_number'));
+        if ($lead_id === '' && $phone === '') {
+            fail($mysqli, $user, $function, 'lead_id or phone_number required', $source, 400);
+        }
+        $where = ($lead_id !== '')
+            ? "lead_id = '" . $mysqli->real_escape_string($lead_id) . "'"
+            : "phone_number = '" . $mysqli->real_escape_string($phone) . "'";
+        $res = $mysqli->query(
+            "SELECT lead_id, list_id, status, phone_code, phone_number, gmt_offset_now, title,
+                    first_name, middle_initial, last_name, address1, city, state, postal_code,
+                    vendor_lead_code, source_id, called_count, last_local_call_time, entry_date, owner, `user`
+               FROM vicidial_list WHERE $where ORDER BY lead_id DESC LIMIT 20");
+        $rows_out = '';
+        $n = 0;
+        while ($res && ($r = $res->fetch_row())) {
+            $rows_out .= implode('|', array_map(function ($v) { return str_replace(array("|", "\n"), array('', ' '), (string)$v); }, $r)) . "\n";
+            $n++;
+        }
+        if (!$n) fail($mysqli, $user, $function, 'lead not found', $source, 404);
+        ok($mysqli, $user, $function, $source,
+            "count|$n\nlead_id|list_id|status|phone_code|phone_number|gmt_offset_now|title|first_name|middle_initial|last_name|address1|city|state|postal_code|vendor_lead_code|source_id|called_count|last_local_call_time|entry_date|owner|user\n$rows_out");
+        break;
+    }
+
+    case 'dnc_add': {
+        $phone = preg_replace('/\D/', '', param('phone_number'));
+        if ($phone === '' || strlen($phone) < 6) fail($mysqli, $user, $function, 'phone_number required', $source, 400);
+        $campaign = strtoupper(preg_replace('/[^a-zA-Z0-9_-]/', '', param('campaign_id')));
+        if ($campaign !== '') {
+            $chk = $mysqli->query("SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = '" . $mysqli->real_escape_string($campaign) . "' LIMIT 1");
+            if (!$chk || !$chk->num_rows) fail($mysqli, $user, $function, 'campaign_id does not exist', $source, 400);
+            $stmt = $mysqli->prepare('INSERT IGNORE INTO vicidial_campaign_dnc (phone_number, campaign_id) VALUES (?, ?)');
+            $stmt->bind_param('ss', $phone, $campaign);
+        } else {
+            $stmt = $mysqli->prepare('INSERT IGNORE INTO vicidial_dnc (phone_number) VALUES (?)');
+            $stmt->bind_param('s', $phone);
+        }
+        $stmt->execute();
+        $added = $stmt->affected_rows > 0 ? 'Y' : 'N';
+        $stmt->close();
+        $scope = $campaign !== '' ? $campaign : 'SYSTEM';
+        ok($mysqli, $user, $function, $source, "phone_number|$phone\nscope|$scope\nadded|$added\n");
+        break;
+    }
+
+    case 'dnc_check': {
+        $phone = preg_replace('/\D/', '', param('phone_number'));
+        if ($phone === '') fail($mysqli, $user, $function, 'phone_number required', $source, 400);
+        $campaign = strtoupper(preg_replace('/[^a-zA-Z0-9_-]/', '', param('campaign_id')));
+        $stmt = $mysqli->prepare('SELECT COUNT(*) FROM vicidial_dnc WHERE phone_number = ?');
+        $stmt->bind_param('s', $phone);
+        $stmt->execute();
+        $stmt->bind_result($sys_count);
+        $stmt->fetch();
+        $stmt->close();
+        $camp_count = 0;
+        if ($campaign !== '') {
+            $stmt = $mysqli->prepare('SELECT COUNT(*) FROM vicidial_campaign_dnc WHERE phone_number = ? AND campaign_id = ?');
+            $stmt->bind_param('ss', $phone, $campaign);
+            $stmt->execute();
+            $stmt->bind_result($camp_count);
+            $stmt->fetch();
+            $stmt->close();
+        }
+        $in_dnc = ($sys_count > 0 || $camp_count > 0) ? 'Y' : 'N';
+        ok($mysqli, $user, $function, $source,
+            "phone_number|$phone\nin_dnc|$in_dnc\nsystem_dnc|" . ($sys_count > 0 ? 'Y' : 'N')
+            . "\ncampaign_dnc|" . ($camp_count > 0 ? 'Y' : 'N') . "\n");
+        break;
+    }
+
     default:
         fail($mysqli, $user, $function, 'function not implemented in GenX API v1', $source, 400);
 }
