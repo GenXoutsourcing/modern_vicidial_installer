@@ -481,7 +481,7 @@ function userCan(user, entity) {
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
-  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
+  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups) && hasAdminNav(user);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
   if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);
@@ -521,7 +521,7 @@ function userCanDelete(user, entity) {
   if (entity === 'groupAliases') return Boolean(user?.modifyPhones);
   if (entity === 'ipLists') return Boolean(user?.modifyIpLists);
   if (entity === 'cidGroups') return Boolean(user?.modifyCampaigns);
-  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups);
+  if (entity === 'queueGroups') return Boolean(user?.modifyIngroups) && hasAdminNav(user);
   if (entity === 'contacts') return Boolean(user?.modifyContacts);
   if (entity === 'languages') return Boolean(user?.modifyLanguages);
   if (entity === 'emailAccounts') return Boolean(user?.modifyEmailAccounts);

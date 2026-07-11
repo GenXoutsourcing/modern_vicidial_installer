@@ -10594,6 +10594,11 @@ async function deleteCidGroup(req, res) {
 
 async function saveQueueGroup(req, res, mode) {
   if (!requireModify(req, res, 'modifyIngroups')) return;
+  // Queue groups ride modify_ingroups (restricted managers keep it for the
+  // Inbound page), so they get the same admin-only split as global statuses.
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'queue_groups_admin_only' });
+  }
   const payload = {
     queue_group_name: cleanText(req.body?.queue_group_name, 40) || 'New Queue Group',
     included_campaigns: cleanText(req.body?.included_campaigns, 2000),
@@ -10624,6 +10629,9 @@ async function saveQueueGroup(req, res, mode) {
 
 async function deleteQueueGroup(req, res) {
   if (!requireModify(req, res, 'modifyIngroups')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'queue_groups_admin_only' });
+  }
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_queue_group');
   try {
