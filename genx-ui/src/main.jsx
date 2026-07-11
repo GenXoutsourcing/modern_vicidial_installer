@@ -16286,6 +16286,11 @@ function AdminShell({ token, user, onLogout }) {
             <div className="strip-items">
               {activeView === 'command' && <RangeControl value={range} onChange={setRange} />}
               {activeView === 'command' && <RefreshCountdown updatedAt={updatedAt} />}
+              {activeView === 'command' && (
+                <a href="/genxapi/" target="_blank" rel="noreferrer">
+                  <FileText size={16} aria-hidden="true" /> API Docs
+                </a>
+              )}
               <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
               <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
               <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.3</span>

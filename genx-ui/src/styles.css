@@ -469,6 +469,20 @@ body {
   font-weight: 680;
 }
 
+.strip-items a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue);
+  font-size: 0.88rem;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.strip-items a:hover {
+  text-decoration: underline;
+}
+
 .loading-band,
 .alert {
   margin-bottom: 16px;

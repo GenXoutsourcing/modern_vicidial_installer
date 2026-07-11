@@ -231,10 +231,12 @@ cat > /etc/httpd/conf.d/genx-block-legacy-api.conf <<'BLOCKEOF'
 </LocationMatch>
 BLOCKEOF
 
-# Install the GenX API replacement into the PHP docroot.
+# Install the GenX API replacement + its self-hosted reference docs
+# (index.php resolves the endpoint hostname from the request).
 if [ -f "$SCRIPT_DIR/genx-ui/genxapi/api.php" ]; then
     install -d -m 0755 /var/www/html/genxapi
     install -m 0644 "$SCRIPT_DIR/genx-ui/genxapi/api.php" /var/www/html/genxapi/api.php
+    install -m 0644 "$SCRIPT_DIR/genx-ui/genxapi/index.php" /var/www/html/genxapi/index.php
 fi
 
 # A slave DB that joins the cluster AFTER this web install would never be
