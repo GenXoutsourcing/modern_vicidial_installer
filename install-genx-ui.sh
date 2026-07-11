@@ -215,6 +215,7 @@ cat > "$APACHE_FILE" <<EOF
 # Managed by modern_vicidial_installer/install-genx-ui.sh
 ProxyPreserveHost On
 ProxyPass /genxapi/ !
+ProxyPass /genxguide/ !
 ProxyPass /genx/ http://127.0.0.1:$PORT/ retry=0 timeout=30
 ProxyPassReverse /genx/ http://127.0.0.1:$PORT/
 RedirectMatch 302 ^/genx$ /genx/
@@ -233,6 +234,10 @@ cat > /etc/httpd/conf.d/genx-block-legacy-api.conf <<'BLOCKEOF'
     DirectoryIndex index.php
     Options -Indexes
 </Directory>
+<Directory "/var/www/html/genxguide">
+    DirectoryIndex index.html
+    Options -Indexes
+</Directory>
 BLOCKEOF
 
 # Install the GenX API replacement + its self-hosted reference docs
@@ -241,6 +246,14 @@ if [ -f "$SCRIPT_DIR/genx-ui/genxapi/api.php" ]; then
     install -d -m 0755 /var/www/html/genxapi
     install -m 0644 "$SCRIPT_DIR/genx-ui/genxapi/api.php" /var/www/html/genxapi/api.php
     install -m 0644 "$SCRIPT_DIR/genx-ui/genxapi/index.php" /var/www/html/genxapi/index.php
+fi
+
+# Install the self-hosted Admin UI user guide (static HTML + screenshots),
+# linked from the Mission Control strip next to API Docs.
+if [ -f "$SCRIPT_DIR/genx-ui/guide/index.html" ]; then
+    install -d -m 0755 /var/www/html/genxguide /var/www/html/genxguide/img
+    install -m 0644 "$SCRIPT_DIR/genx-ui/guide/index.html" /var/www/html/genxguide/index.html
+    install -m 0644 "$SCRIPT_DIR"/genx-ui/guide/img/*.jpg /var/www/html/genxguide/img/
 fi
 
 # A slave DB that joins the cluster AFTER this web install would never be

@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowRightLeft,
   BarChart3,
+  BookOpen,
   CalendarDays,
   CircleDot,
   Clock3,
@@ -16289,6 +16290,11 @@ function AdminShell({ token, user, onLogout }) {
               {activeView === 'command' && (
                 <a href="/genxapi/" target="_blank" rel="noreferrer">
                   <FileText size={16} aria-hidden="true" /> API Docs
+                </a>
+              )}
+              {activeView === 'command' && (
+                <a href="/genxguide/" target="_blank" rel="noreferrer">
+                  <BookOpen size={16} aria-hidden="true" /> User Guide
                 </a>
               )}
               <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>

@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GenX Admin UI — Floor Manager User Guide</title>
+<style>
+  :root {
+    --bg: #050d16;
+    --panel: #0a1624;
+    --panel2: #0e1e30;
+    --border: #16324a;
+    --text: #d7e7f2;
+    --muted: #8fb0c4;
+    --accent: #29c4ff;
+    --accent2: #58e0c0;
+    --warn: #ffc46b;
+    --danger: #ff8f8f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .layout { display: flex; max-width: 1400px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 270px; flex-shrink: 0; height: 100vh; overflow-y: auto;
+    padding: 24px 18px; border-right: 1px solid var(--border);
+  }
+  nav.toc h2 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 18px 0 6px; }
+  nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); font-size: 14px; }
+  nav.toc a:hover { background: var(--panel2); color: var(--text); text-decoration: none; }
+  main { flex: 1; min-width: 0; padding: 32px 48px 96px; }
+  header.hero { border: 1px solid var(--border); background: linear-gradient(135deg, #0a1a2c, #071019); border-radius: 14px; padding: 28px 32px; margin-bottom: 36px; }
+  header.hero .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
+  header.hero h1 { margin: 6px 0 10px; font-size: 30px; }
+  header.hero p { color: var(--muted); max-width: 72ch; margin: 0; }
+  h2 { font-size: 24px; margin: 56px 0 8px; padding-top: 18px; border-top: 1px solid var(--border); }
+  h2 .chip { font-size: 11px; vertical-align: middle; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; margin-left: 10px; }
+  h3 { font-size: 18px; margin: 30px 0 8px; color: var(--accent2); }
+  p, li { color: var(--text); max-width: 90ch; }
+  .lead { color: var(--muted); }
+  img.shot {
+    display: block; width: 100%; max-width: 1100px; border: 1px solid var(--border);
+    border-radius: 10px; margin: 18px 0 6px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+  }
+  .caption { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
+  .card.tip { border-left: 4px solid var(--accent2); }
+  .card.warn { border-left: 4px solid var(--warn); }
+  .card.stop { border-left: 4px solid var(--danger); }
+  .card h4 { margin: 0 0 6px; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; }
+  .card.tip h4 { color: var(--accent2); }
+  .card.warn h4 { color: var(--warn); }
+  .card.stop h4 { color: var(--danger); }
+  .card p, .card li { font-size: 15px; }
+  ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.steps > li {
+    counter-increment: step; position: relative; padding: 10px 0 10px 52px; margin: 4px 0;
+    border-bottom: 1px dashed rgba(22,50,74,.6);
+  }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 10px;
+    width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    background: var(--panel2); color: var(--accent); border: 1px solid var(--border);
+    border-radius: 50%; font-weight: 700; font-size: 15px;
+  }
+  table.def { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  table.def th, table.def td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.def th { color: var(--accent); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+  table.def td:first-child { white-space: nowrap; font-weight: 600; color: var(--accent2); }
+  code, kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; font-size: 14px; }
+  .glossary dt { color: var(--accent2); font-weight: 700; margin-top: 14px; }
+  .glossary dd { margin: 2px 0 0 0; color: var(--text); max-width: 90ch; }
+  .pill { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; font-size: 13px; color: var(--accent2); }
+  footer { margin-top: 70px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+  @media (max-width: 900px) {
+    nav.toc { display: none; }
+    main { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <h2>Start Here</h2>
+  <a href="#welcome">Welcome</a>
+  <a href="#concepts">Dialer Concepts</a>
+  <a href="#login">Signing In</a>
+  <a href="#layout">Finding Your Way Around</a>
+  <a href="#dashboard">Mission Control</a>
+  <h2>Users</h2>
+  <a href="#users">Users</a>
+  <a href="#remote-agents">Remote Agents</a>
+  <h2>Campaigns</h2>
+  <a href="#campaigns">Campaigns</a>
+  <a href="#call-times">Call Times</a>
+  <a href="#scripts">Scripts</a>
+  <a href="#filters">Filters</a>
+  <h2>Lists</h2>
+  <a href="#lists">Lists</a>
+  <a href="#lead-search">Lead Search</a>
+  <a href="#lead-loader">Lead Loader</a>
+  <a href="#dnc">DNC</a>
+  <a href="#drop-lists">Drop Lists</a>
+  <h2>Inbound</h2>
+  <a href="#inbound">Inbound Groups</a>
+  <a href="#dids">DIDs</a>
+  <a href="#call-menus">Call Menus</a>
+  <a href="#filter-groups">Filter Groups</a>
+  <h2>Reports</h2>
+  <a href="#reports">Reports</a>
+  <a href="#recordings">Recordings</a>
+  <h2>Reference</h2>
+  <a href="#tasks">Everyday Tasks</a>
+  <a href="#permissions">What You Can't Do</a>
+</nav>
+<main>
+
+<header class="hero">
+  <div class="eyebrow">GenX Contact Center</div>
+  <h1>Admin UI — Floor Manager User Guide</h1>
+  <p>This guide walks you through every page of the GenX admin interface, written for someone
+  who has never operated a dialer before. It covers what each screen does, what every field
+  means, and step-by-step instructions for the jobs you'll do every day: managing agents,
+  running campaigns, loading leads, staying compliant, and pulling reports.</p>
+</header>
+
+<h2 id="welcome">Welcome</h2>
+<p>The GenX platform is an <strong>outbound and inbound call center dialer</strong>. In plain
+terms: you load lists of phone numbers (<em>leads</em>) into the system, the system dials them
+automatically, and when a real person answers, the call is instantly connected to one of your
+<em>agents</em>. The admin UI you're reading about is the control panel for all of that —
+your agents use a separate agent screen to take calls.</p>
+<p>As a floor manager your account belongs to the <span class="pill">ADMIN</span> group. You
+can manage day-to-day operations — agents, campaigns, leads, inbound routing, reports and
+recordings — while system-level settings (servers, carriers, phones, user groups) are handled
+by your system administrator. If a button or page mentioned by a colleague isn't visible to
+you, that's why: see <a href="#permissions">What You Can't Do</a>.</p>
+
+<h2 id="concepts">Dialer Concepts in Plain English</h2>
+<p class="lead">Ten terms cover almost everything. Skim these now — every page in this guide
+builds on them.</p>
+<dl class="glossary">
+  <dt>Lead</dt>
+  <dd>One phone number plus the person attached to it (name, address, notes, call history).
+  Leads are what the dialer dials.</dd>
+  <dt>List</dt>
+  <dd>A batch of leads, usually one file you loaded. Every lead lives in exactly one list, and
+  each list is attached to one campaign. Lists can be turned <strong>on</strong> (dialable) or
+  <strong>off</strong>.</dd>
+  <dt>Campaign</dt>
+  <dd>A calling project: which lists to dial, how fast, during which hours, and with what
+  recording rules. Agents log in to a campaign to take its calls.</dd>
+  <dt>Hopper</dt>
+  <dd>The campaign's short queue of "next numbers to dial." The system continuously refills it
+  from the campaign's active lists. If the hopper is empty, nothing dials — usually a sign your
+  lists are off, empty, or fully worked through.</dd>
+  <dt>Dial Level / Ratio</dt>
+  <dd>How many phone lines the dialer runs <em>per waiting agent</em>. At level 1.0 it dials one
+  number per free agent (safe). At 3.0 it dials three, expecting most calls to go unanswered.
+  Set it too high and answered calls have no agent available — those are <strong>drops</strong>,
+  which are bad for customers and for compliance.</dd>
+  <dt>Status</dt>
+  <dd>The outcome code stamped on a lead after each call — e.g. <code>NEW</code> (never called),
+  <code>NA</code> (no answer), <code>SALE</code>, <code>DNC</code>. Statuses drive reports and
+  decide whether a lead gets called again.</dd>
+  <dt>In-Group (Inbound Group)</dt>
+  <dd>A waiting queue for <em>incoming</em> calls. When customers call you, the in-group decides
+  which agents can take the call, the hold behavior, and what happens if nobody is available.</dd>
+  <dt>DID</dt>
+  <dd>A phone number that customers can dial to reach you ("Direct Inward Dialing"). Each DID
+  has a routing rule — typically "send callers to in-group X" or "play call menu Y."</dd>
+  <dt>DNC</dt>
+  <dd>The Do-Not-Call list. Numbers on it are never dialed. Keeping this accurate is a legal
+  requirement, not a preference.</dd>
+  <dt>Recording</dt>
+  <dd>Audio of a call, saved for quality review and disputes. Campaigns control when recording
+  happens (always, on demand, never).</dd>
+</dl>
+
+<h2 id="login">Signing In</h2>
+<img class="shot" src="img/01-login.jpg" alt="Login screen">
+<p class="caption">The Mission Control sign-in screen.</p>
+<ol class="steps">
+  <li>Open the admin address your administrator gave you in Chrome or Edge. It looks like
+  <code>https://admin.&lt;your-domain&gt;/genx/</code>.</li>
+  <li>Enter the <strong>Username</strong> and <strong>Password</strong> you were issued, then
+  click <strong>Enter</strong>.</li>
+  <li>You land on the <strong>Command</strong> dashboard (next section).</li>
+</ol>
+<div class="card warn">
+  <h4>If you can't log in</h4>
+  <p>Check that your browser didn't auto-fill someone else's username. If the login is rejected,
+  your account may be inactive or your password may have been reset — contact your system
+  administrator. Accounts also need admin level (7+); regular agent accounts cannot open this UI.</p>
+</div>
+
+<h2 id="layout">Finding Your Way Around</h2>
+<p>Every page shares the same frame:</p>
+<table class="def">
+  <tr><th>Area</th><th>What it does</th></tr>
+  <tr><td>Header bar</td><td>Shows your name and level (top right), database status
+  (<span class="pill">DB Online</span>), a refresh button, and the logout button (the arrow icon,
+  far right).</td></tr>
+  <tr><td>Sidebar</td><td>Navigation, grouped into <strong>Users</strong>, <strong>Campaigns</strong>,
+  <strong>Lists</strong>, <strong>Inbound</strong> and <strong>Reports</strong>. The highlighted
+  entry is the page you're on.</td></tr>
+  <tr><td>Workspace strip</td><td>Under the page title: last-updated time, and on the Command page a
+  date range picker (Today / 7 Days / 30 Days), an auto-refresh countdown, and links to the
+  <strong>API Docs</strong> and this <strong>User Guide</strong>.</td></tr>
+  <tr><td>Action bar</td><td>Most pages have a blue button top-right (e.g. <strong>+ Add List</strong>)
+  when you're allowed to create that type of item.</td></tr>
+</table>
+<div class="card tip">
+  <h4>Two habits worth forming</h4>
+  <p>1) Rows with a <strong>Manage</strong> button open an editor — that's how you change things.
+  2) After saving, watch the page refresh; if your change doesn't appear, hard-refresh the browser
+  (<kbd>Ctrl</kbd>+<kbd>F5</kbd>) before assuming it failed.</p>
+</div>
+
+<h2 id="dashboard">Mission Control (Command)<span class="chip">Live Operations</span></h2>
+<img class="shot" src="img/02-command.jpg" alt="Command dashboard">
+<p class="caption">The Command dashboard — your live view of the floor.</p>
+<p>This is your home page and the screen worth keeping open during the day. It refreshes itself
+every few seconds (see the "Refresh in…" countdown).</p>
+<h3>The seven cards</h3>
+<table class="def">
+  <tr><th>Card</th><th>Meaning</th></tr>
+  <tr><td>Agents Logged In</td><td>How many agents are on the system right now, and how many of
+  them are paused (logged in but not taking calls).</td></tr>
+  <tr><td>Calls Today</td><td>Total calls for the selected range, split outbound / inbound.</td></tr>
+  <tr><td>Talk Time</td><td>Total minutes agents spent talking, plus the average call length.</td></tr>
+  <tr><td>Current Dials</td><td>Calls the dialer has in flight <em>right now</em>, and how many are
+  connected to agents. If agents are waiting but this stays at 0, dialing has stalled — check that
+  your campaign is Active and its lists are on.</td></tr>
+  <tr><td>Active Users</td><td>Admin/agent accounts currently marked active.</td></tr>
+  <tr><td>Active Lists</td><td>Lists switched on for dialing, out of the total.</td></tr>
+  <tr><td>Total Leads</td><td>All leads across your lists.</td></tr>
+</table>
+<h3>Panels below the cards</h3>
+<ul>
+  <li><strong>Call Flow</strong> — a line graph of call volume across the hours of the day. A healthy
+  dialing day makes a visible hump; a flat line at zero means nothing is dialing.</li>
+  <li><strong>Campaign Throughput</strong> — per-campaign calls, agents, and talk time for the
+  selected range.</li>
+  <li><strong>Dialing Surface</strong> — every campaign with its dial <strong>mode</strong>,
+  <strong>hopper</strong> fill, list <strong>order</strong> and <strong>status</strong>. This is the
+  fastest place to confirm "is my campaign actually running?"</li>
+</ul>
+
+<h2 id="users">Users<span class="chip">Users section</span></h2>
+<img class="shot" src="img/03-users.jpg" alt="Users page">
+<p class="caption">Users and Permissions — one row per account you're allowed to see.</p>
+<p>These are the login accounts for your agents (and other managers at or below your level —
+higher-level accounts are hidden from you). The columns show each user's group, level, phone
+login, whether they can view reports, and whether the account is active. Inactive users are
+hidden by default — use <strong>Show Inactive</strong> to reveal them.</p>
+<h3>Editing a user</h3>
+<img class="shot" src="img/04-user-edit.jpg" alt="Manage User modal">
+<p class="caption">The Manage User editor as a floor manager sees it.</p>
+<ol class="steps">
+  <li>Click <strong>Manage</strong> on the user's row.</li>
+  <li>Change what you need (fields below), then click <strong>Save</strong>.</li>
+  <li>The agent must log out and back in to pick up permission-type changes.</li>
+</ol>
+<table class="def">
+  <tr><th>Field</th><th>What it means</th></tr>
+  <tr><td>User ID</td><td>The login username. Fixed once created — shown greyed-out.</td></tr>
+  <tr><td>New Password</td><td>Type here only when resetting a password; leave blank otherwise.</td></tr>
+  <tr><td>Full Name</td><td>Display name used in reports and agent lists.</td></tr>
+  <tr><td>Email</td><td>Optional contact email.</td></tr>
+  <tr><td>Level / User Group</td><td>The account's rank and permission group. Read-only for
+  floor managers — ask your administrator to change these.</td></tr>
+  <tr><td>Phone Login</td><td>The phone/webphone the agent's audio uses. Usually set once per
+  workstation; leave it alone unless you know the phone entry.</td></tr>
+  <tr><td>Status</td><td><strong>Active</strong> = can log in. Set to inactive to disable an
+  account without deleting anything.</td></tr>
+  <tr><td>Reports</td><td>Whether this user may open the reporting pages.</td></tr>
+  <tr><td>Hotkeys Active</td><td>Lets the agent hang up + disposition a call with one keystroke.</td></tr>
+  <tr><td>Agent Choose In-Groups</td><td>Whether the agent may pick which inbound queues they
+  take at login, instead of getting the campaign default.</td></tr>
+  <tr><td>Agent Choose Blended</td><td>Whether the agent may toggle blended (inbound + outbound)
+  calling at login.</td></tr>
+  <tr><td>Closer Default Blended</td><td>For closer/inbound agents: start in blended mode by default.</td></tr>
+</table>
+<p>The <strong>Connections</strong> strip at the top of the editor links to that user's
+stats, login history, callback holds, and admin-change audit trail.</p>
+<div class="card tip">
+  <h4>Deactivate, don't delete</h4>
+  <p>When someone leaves, set their Status to inactive. It blocks the login instantly while
+  keeping their call history and stats intact for reports. (Floor managers can't delete users
+  anyway — by design.)</p>
+</div>
+
+<h2 id="remote-agents">Remote Agents</h2>
+<img class="shot" src="img/05-remote-agents.jpg" alt="Remote Agents page">
+<p class="caption">Remote Agents — forwarding calls to people who aren't logged in to an agent screen.</p>
+<p>A remote agent is a phone number (like a cell phone) that receives dialer calls
+<em>without</em> the person using the agent screen. The dialer treats the entry as N always-available
+"agents" and forwards connected calls to the external number. You'll rarely need this; it exists
+for overflow or off-site staff. If you use it, remember the remote person gets no screen pop and
+no disposition step.</p>
+
+<h2 id="campaigns">Campaigns<span class="chip">Campaigns section</span></h2>
+<img class="shot" src="img/06-campaigns.jpg" alt="Campaigns page">
+<p class="caption">The Campaign Matrix — one row per campaign.</p>
+<p>The matrix shows each campaign's dial method, dial level, attached lists (active/total),
+lead count, live calls, recording mode and status. Row buttons: <strong>Basic</strong> opens the
+editor below; <strong>Copy</strong> clones the campaign's settings into a new campaign — handy
+for starting a new project from a proven setup.</p>
+<h3>The campaign editor (Basic)</h3>
+<img class="shot" src="img/07-campaign-basic.jpg" alt="Manage Campaign modal">
+<p class="caption">Manage Campaign — the fields floor managers touch day to day.</p>
+<table class="def">
+  <tr><th>Field</th><th>What it means</th></tr>
+  <tr><td>Campaign ID</td><td>Short fixed code (shown greyed-out once created).</td></tr>
+  <tr><td>Campaign Name / Description</td><td>Human-readable labels shown everywhere else.</td></tr>
+  <tr><td>Status</td><td><strong>Active</strong> = agents can log in to it and it can dial.
+  Set Inactive to shut a campaign down cleanly at day's end or between projects.</td></tr>
+  <tr><td>Dial Method</td><td><strong>RATIO</strong> = automatic dialing at the level below.
+  <strong>MANUAL</strong> = agents place each call themselves. Leave this alone unless you know
+  why you're changing it.</td></tr>
+  <tr><td>Auto Dial Level</td><td>Lines dialed per waiting agent (the "speed knob"). Start at 1,
+  raise gradually if agents sit idle, and watch your drop percentage as you go up.</td></tr>
+  <tr><td>Minimum Hopper Level</td><td>How many leads the system keeps staged and ready to dial.
+  The default is fine for most floors; raise it for very large agent counts.</td></tr>
+  <tr><td>List Order</td><td>The order leads are pulled from lists (DOWN = oldest first, UP = newest
+  first, plus randomized variants).</td></tr>
+  <tr><td>Call Time</td><td>The legal dialing window applied to every call — see
+  <a href="#call-times">Call Times</a>. <strong>Always confirm this before starting a new
+  campaign.</strong></td></tr>
+  <tr><td>Recording</td><td><strong>ALLCALLS</strong>/<strong>ALLFORCE</strong> = record everything,
+  <strong>ONDEMAND</strong> = agents press record, <strong>NEVER</strong> = no recording.</td></tr>
+  <tr><td>Allow Inbound</td><td>Lets this campaign's agents also take inbound queue calls (blended).</td></tr>
+</table>
+<p>The <strong>Connections</strong> area at the top of the editor shows the lists feeding this
+campaign and links straight to its hopper, real-time report, outbound report, status breakdown,
+callback holds and admin-change log.</p>
+<div class="card stop">
+  <h4>Log All Agents Out</h4>
+  <p>The <strong>Log All Agents Out</strong> button in the campaign editor force-logs every agent
+  off the campaign mid-call-cycle. It's for emergencies and end-of-shift cleanup when sessions are
+  stuck — not something to click during normal dialing.</p>
+</div>
+<div class="card warn">
+  <h4>Watch your drops</h4>
+  <p>Every time you raise Auto Dial Level, check the drop percentage in the Real-Time report over
+  the next 15–30 minutes. Regulators cap abandoned-call rates; a level that looked fine with 20
+  agents can be too hot with 8.</p>
+</div>
+
+<h2 id="call-times">Call Times</h2>
+<img class="shot" src="img/09-call-times.jpg" alt="Call Times page">
+<p class="caption">Call time schemes, per-state overrides, and holiday blocks.</p>
+<p>A <strong>call time</strong> is a named dialing window — for example <code>9am-9pm</code> —
+that a campaign points at. The dialer converts every lead to <em>the lead's own local time</em>
+and refuses to dial outside the window, so a New York lead and a California lead are each called
+at sensible local hours automatically.</p>
+<ul>
+  <li><strong>Call Times table</strong> — the schemes you can attach to campaigns. Times are shown
+  in 24-hour format (<code>900-2100</code> = 9:00 AM to 9:00 PM).</li>
+  <li><strong>State Call Times</strong> — stricter per-state rules layered on top (e.g. states that
+  forbid Sunday calling or cut off at 8 PM). These apply automatically when attached to a scheme.</li>
+  <li><strong>Holidays</strong> — date-specific blocks (e.g. no dialing on a national holiday).</li>
+</ul>
+<div class="card warn">
+  <h4>Compliance lives here</h4>
+  <p>Choosing the wrong call time on a campaign is one of the few mistakes that can create legal
+  exposure. If you're unsure which scheme a new campaign should use, ask before dialing — don't
+  guess.</p>
+</div>
+
+<h2 id="scripts">Scripts</h2>
+<img class="shot" src="img/10-scripts.jpg" alt="Scripts page">
+<p class="caption">Scripts — the text agents read on screen during calls.</p>
+<p>A script is the on-screen text an agent sees while on a call. Scripts can embed lead fields
+(the customer's name, city, etc.) that fill in automatically per call, so the agent greets
+"Hi, is this Maria?" instead of reading a blank template. Assign scripts on the campaign; edit
+their content here. Keep an inactive copy while drafting changes so you never edit the live
+script mid-shift.</p>
+
+<h2 id="filters">Filters</h2>
+<img class="shot" src="img/11-filters.jpg" alt="Filters page">
+<p class="caption">Lead Filters — rules that narrow which leads a campaign will dial.</p>
+<p>A filter is an extra condition attached to a campaign — "only leads in these area codes,"
+"skip leads called more than 5 times," and so on. Filters are written as database conditions
+and applied when the hopper loads. They're powerful but easy to get wrong: a bad filter silently
+stops all dialing. Treat this page as look-but-verify — coordinate with your administrator before
+changing filter logic.</p>
+
+<h2 id="lists">Lists<span class="chip">Lists section</span></h2>
+<img class="shot" src="img/12-lists.jpg" alt="Lists page">
+<p class="caption">Lists and Lead Inventory, with the Lead Share panel on the right.</p>
+<p>Every list row shows which campaign it feeds, its total leads, how many are <code>NEW</code>
+(never dialed), how many have been called, how many are currently dialable, the last call time,
+and whether the list is <strong>on or off</strong>. The Lead Share panel visualizes how your lead
+inventory is spread across lists.</p>
+<h3>Managing a list</h3>
+<ol class="steps">
+  <li>Click <strong>Manage</strong> on the list row (or <strong>+ Add List</strong> to create one).</li>
+  <li>Set the list name and description so the floor can recognize it later.</li>
+  <li>Point it at the right <strong>campaign</strong>.</li>
+  <li>Flip <strong>Active</strong> on when it's ready to dial; off to stop it.</li>
+  <li>Save.</li>
+</ol>
+<div class="card tip">
+  <h4>Lists are your on/off switch</h4>
+  <p>The cleanest way to control <em>what</em> is dialing is at the list level: campaign stays
+  active, and you turn individual lists on and off. "Hopper 0 / nothing dialing" almost always
+  means every list on the campaign is off, empty, or fully worked.</p>
+</div>
+
+<h2 id="lead-search">Lead Search</h2>
+<img class="shot" src="img/14-lead-search.jpg" alt="Lead Search page">
+<p class="caption">Find any lead you're allowed to see, then open and edit it.</p>
+<ol class="steps">
+  <li>Pick <strong>Search By</strong> — phone number, lead ID, or name.</li>
+  <li>Type the <strong>Search Value</strong> (for phone numbers, digits only).</li>
+  <li>Optionally limit to one <strong>List ID</strong>.</li>
+  <li>Click <strong>Search Leads</strong>. Matching leads appear below; open one to see the
+  full record and its complete call history, edit fields, or change its status.</li>
+</ol>
+<p>Typical uses: a customer asks to be called back at a different number (edit the phone),
+claims they already bought (check call history), or asks to never be called again (see
+<a href="#dnc">DNC</a> — don't just change the status).</p>
+
+<h2 id="lead-loader">Lead Loader</h2>
+<img class="shot" src="img/15-lead-loader.jpg" alt="Lead Loader page">
+<p class="caption">Load a CSV of new leads into a list.</p>
+<p>This is how new phone numbers enter the system. You need a CSV file (a spreadsheet saved as
+comma-separated values) with one lead per row — at minimum a phone number column.</p>
+<ol class="steps">
+  <li>Choose the destination <strong>List</strong>. Load into a fresh or clearly-named list —
+  never mix a new vendor file into an old list.</li>
+  <li>Set <strong>Duplicate Check</strong>: <strong>List</strong> (skip numbers already in this
+  list), <strong>Campaign</strong> (skip numbers anywhere in the campaign), <strong>System</strong>
+  (skip numbers anywhere at all), or none. When unsure, use Campaign.</li>
+  <li>Leave <strong>Phone Code</strong> at <code>1</code> for US/Canada numbers.</li>
+  <li>Leave <strong>Status</strong> at <code>NEW</code> so the dialer treats them as fresh.</li>
+  <li>Click <strong>Choose File</strong> and pick your CSV (or paste rows into the CSV Rows box).</li>
+  <li>Check the <strong>CSV Preview</strong> panel on the right — confirm the columns landed where
+  you expect (phone in the phone column, names lined up).</li>
+  <li>Click <strong>Load Leads</strong> and wait for the confirmation count.</li>
+</ol>
+<div class="card warn">
+  <h4>Load Access card says "No"?</h4>
+  <p>The <strong>Load Access</strong> card at the top shows whether your account has the
+  lead-loading permission. If it reads <strong>No</strong>, the form won't accept your upload —
+  ask your administrator to enable it for your account.</p>
+</div>
+
+<h2 id="dnc">DNC — Do Not Call</h2>
+<img class="shot" src="img/16-dnc.jpg" alt="DNC page">
+<p class="caption">Add numbers to the DNC list and check whether a number is blocked.</p>
+<p>When a customer says any version of "stop calling me," their number goes here —
+immediately, the same day. Numbers on the DNC list are never dialed again.</p>
+<h3>Adding numbers</h3>
+<ol class="steps">
+  <li>In <strong>Add / Remove Numbers</strong>, choose the <strong>Scope</strong>: the internal
+  system-wide DNC list (blocks the number everywhere) or a specific campaign's DNC list.
+  When in doubt, use the system list.</li>
+  <li>Set <strong>Action</strong> to <strong>Add to DNC</strong>.</li>
+  <li>Paste phone numbers, <strong>one per line</strong>, digits only.</li>
+  <li>Click <strong>Add to DNC</strong>.</li>
+</ol>
+<h3>Checking a number</h3>
+<p>Use <strong>DNC Log Search</strong> on the right: enter the number, click Search, and you'll
+see whether it's on the DNC list and when it got there. Use this when a customer claims they
+already asked to be removed.</p>
+<div class="card stop">
+  <h4>Removing numbers is restricted</h4>
+  <p>The <strong>Delete Access</strong> card shows <strong>No</strong> for floor managers: you can
+  add to DNC but not remove from it. If a number genuinely must come off the list, escalate to
+  your administrator.</p>
+</div>
+
+<h2 id="drop-lists">Drop Lists</h2>
+<img class="shot" src="img/17-drop-lists.jpg" alt="Drop Lists page">
+<p class="caption">Scheduled jobs that recycle dropped or status-matched calls into a callback list.</p>
+<p>A drop list is an automated job: on a schedule, it finds leads whose last call matched
+certain statuses (most commonly <em>dropped</em> calls — people who answered but got no agent)
+and moves them into a destination list for redial. It's how a floor makes sure dropped customers
+get a courtesy callback. Each row shows the destination list, the statuses it collects, its run
+times, the last run, and status. If the table is empty, none are configured.</p>
+
+<h2 id="inbound">Inbound Groups<span class="chip">Inbound section</span></h2>
+<img class="shot" src="img/18-inbound.jpg" alt="Inbound Groups page">
+<p class="caption">Inbound Group Routing — one row per queue, filterable by Phone / Email handling.</p>
+<p>In-groups are your incoming-call queues. The table shows each queue's handling type
+(<span class="pill">PHONE</span> or <span class="pill">CHAT</span>), routing rule
+(e.g. <code>longest_wait_time</code> — the customer waiting longest gets the next free agent),
+priority against other queues, the drop timer, and what happens when the timer expires or no
+agent is available (play a message, go to voicemail, etc.).</p>
+<img class="shot" src="img/19-ingroup-edit.jpg" alt="In-group editor">
+<p class="caption">The in-group editor.</p>
+<p>Click <strong>Manage</strong> to tune a queue: its name and active state, routing method, the
+drop timer (<strong>Drop Sec</strong> — how long a caller may wait), the drop action, hold music,
+and the no-agent behavior. Click <strong>+ Add In-Group</strong> to build a new queue, then point
+a DID at it so calls actually arrive.</p>
+
+<h2 id="dids">DIDs</h2>
+<img class="shot" src="img/20-dids.jpg" alt="DIDs page">
+<p class="caption">DID Routing — what happens to each inbound phone number you own.</p>
+<p>Every phone number customers can call is listed here with its routing target. Typical routes:
+straight to an <strong>in-group</strong> (queue), to a <strong>call menu</strong> ("press 1
+for…"), to a specific agent, or to an external number. To change where a number lands, Manage the
+DID and adjust its route — the change takes effect on the next call.</p>
+
+<h2 id="call-menus">Call Menus</h2>
+<img class="shot" src="img/21-call-menus.jpg" alt="Call Menus page">
+<p class="caption">Call Menu Routing — the "press 1 for sales, 2 for support" trees.</p>
+<p>A call menu plays a recorded prompt and routes callers based on the key they press. Each menu
+has a greeting recording, a timeout behavior (what happens if they press nothing), and one route
+per digit — to an in-group, another menu, a voicemail box, or an extension. Keep menus shallow:
+every extra layer costs you callers.</p>
+
+<h2 id="filter-groups">Filter Groups</h2>
+<img class="shot" src="img/22-filter-groups.jpg" alt="Filter Phone Groups page">
+<p class="caption">Filter Phone Groups — number lists used by inbound filtering.</p>
+<p>These are named collections of phone numbers used to treat certain inbound callers specially —
+for example, a VIP list that skips the queue or a block list that never reaches agents. You'll
+mostly view these; changes are usually coordinated with your administrator.</p>
+
+<h2 id="reports">Reports<span class="chip">Reports section</span></h2>
+<img class="shot" src="img/23-reports.jpg" alt="Reporting Center">
+<p class="caption">The Reporting Center: live panels on top, the full report catalog below.</p>
+<p>The top of the page mirrors Mission Control for the selected date range (call flow, status
+mix, live agents, dialing surface). Below it, the <strong>Reporting Center</strong> catalogs
+every report, grouped by area — use the search box to jump to one by name. The ones you'll use
+most as a floor manager:</p>
+<table class="def">
+  <tr><th>Report</th><th>Use it for</th></tr>
+  <tr><td>Real-Time Main</td><td>The live floor board: who's on a call, who's paused, current
+  drop rate. Keep it open on a wall monitor during dialing.</td></tr>
+  <tr><td>Campaign Summary</td><td>End-of-day campaign numbers: dials, contacts, drops, sales.</td></tr>
+  <tr><td>Outbound Calling</td><td>Outbound volume and outcomes over any date range.</td></tr>
+  <tr><td>Inbound Report / Service Level</td><td>Queue answer times, abandons, service level.</td></tr>
+  <tr><td>Agent Performance / Agent Time Detail</td><td>Per-agent calls, talk time, pause time,
+  dispositions — your coaching data.</td></tr>
+  <tr><td>User Timeclock</td><td>Login/logout times for payroll-style tracking.</td></tr>
+  <tr><td>Exports</td><td>Download raw calls/leads as files for spreadsheets.</td></tr>
+</table>
+
+<h2 id="recordings">Recordings</h2>
+<img class="shot" src="img/24-recordings.jpg" alt="Recordings page">
+<p class="caption">Recent recordings plus the searchable transcript library.</p>
+<p>The <strong>Recent Recording Log</strong> lists the latest call recordings — when the call
+started, its length, the file, the agent, and the lead. Click a file to listen or download.</p>
+<p>The <strong>Transcripts</strong> panel below it is the QA library: recordings that have been
+transcribed to text. Search for words spoken on calls (e.g. <code>cancel OR refund</code>) and
+click <strong>View</strong> to read the transcript alongside the audio. Blank search shows the
+latest transcripts.</p>
+<div class="card tip">
+  <h4>Finding a specific complaint call</h4>
+  <p>Customer says an agent promised something yesterday? Search the transcript library for a
+  phrase they quoted, or find the lead in <a href="#lead-search">Lead Search</a>, open its call
+  history, and match the timestamp against the recording log.</p>
+</div>
+
+<h2 id="tasks">Everyday Tasks — Quick Recipes</h2>
+<table class="def">
+  <tr><th>Task</th><th>Where / how</th></tr>
+  <tr><td>Reset an agent's password</td><td><a href="#users">Users</a> → Manage → type a New
+  Password → Save. Agent logs in with the new password immediately.</td></tr>
+  <tr><td>Disable a departed agent</td><td>Users → Manage → Status = Inactive → Save.</td></tr>
+  <tr><td>Speed dialing up / down</td><td><a href="#campaigns">Campaigns</a> → Basic → Auto Dial
+  Level. Small steps; watch drops in Real-Time Main.</td></tr>
+  <tr><td>Stop a campaign now</td><td>Campaigns → Basic → Status = Inactive → Save. (Or switch its
+  lists off to stop feeding the hopper while agents finish current calls.)</td></tr>
+  <tr><td>Load a new lead file</td><td><a href="#lead-loader">Lead Loader</a> — see the numbered
+  steps. Verify the preview before loading.</td></tr>
+  <tr><td>Customer says "stop calling"</td><td><a href="#dnc">DNC</a> → Add to DNC (system scope),
+  same day.</td></tr>
+  <tr><td>Fix a wrong phone number</td><td><a href="#lead-search">Lead Search</a> → find the lead →
+  edit the phone field → Save.</td></tr>
+  <tr><td>Check yesterday's numbers</td><td><a href="#reports">Reports</a> → Campaign Summary (or
+  Outbound Calling) with yesterday's date range.</td></tr>
+  <tr><td>Listen to a call</td><td><a href="#recordings">Recordings</a> → find it in the log or
+  search the transcripts.</td></tr>
+  <tr><td>Nothing is dialing — checklist</td><td>1) Campaign Active? 2) Lists on and holding NEW
+  leads? 3) Agents logged in and not paused? 4) Inside the campaign's Call Time window? 5) Hopper
+  above zero on the Dialing Surface?</td></tr>
+</table>
+
+<h2 id="permissions">What You Can't Do (and Who to Ask)</h2>
+<p>The ADMIN floor-manager role is deliberately scoped to day-to-day operations. The following
+are reserved for system administrators — if you need one of them, that's your escalation:</p>
+<ul>
+  <li><strong>No Admin section</strong> — user groups, phones, shifts, servers, system settings,
+  media tools and settings containers are not in your sidebar.</li>
+  <li><strong>Users</strong> — you can edit day-to-day agent settings, but not create or delete
+  accounts, and not change a user's level or group. Accounts above your level are invisible to you.</li>
+  <li><strong>No deletes</strong> — campaigns, lists, users, in-groups, DIDs and similar records
+  can be deactivated by you but only deleted by an administrator.</li>
+  <li><strong>Statuses</strong> — system-wide status definitions are admin-only.</li>
+  <li><strong>Queue Groups</strong> — visible on the Inbound page but read-only for floor managers.</li>
+  <li><strong>DNC removals</strong> — you can add numbers, not remove them.</li>
+  <li><strong>API access</strong> — the developer API is limited to dedicated integration accounts.</li>
+</ul>
+<div class="card tip">
+  <h4>Changes take effect at next login</h4>
+  <p>Permission and navigation changes (yours or an agent's) apply the next time that person logs
+  in — not to sessions already open.</p>
+</div>
+
+<footer>
+  GenX Contact Center — Admin UI User Guide · Written for the ADMIN (floor manager) role ·
+  Screenshots reflect GenX UI v0.3. The <a href="/genxapi/">API reference</a> covers the developer
+  interface.
+</footer>
+</main>
+</div>
+</body>
+</html>
