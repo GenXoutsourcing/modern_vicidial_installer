@@ -7699,7 +7699,6 @@ function reportGroupsForUser(user) {
 function ReportsView({ dashboard, admin, user, onNavigate }) {
   const [query, setQuery] = useState('');
   const metrics = dashboard?.metrics || {};
-  const rangeLabel = dashboard?.range?.label || 'Today';
   const reportGroups = reportGroupsForUser(user);
   const visibleReportCount = reportGroups.reduce((sum, group) => sum + group.items.length, 0);
 
@@ -7713,40 +7712,7 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
       </section>
 
       <section className="admin-grid">
-        <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
         <CampaignPerformance rows={dashboard?.campaignPerformance || []} />
-        <BreakdownPanel
-          eyebrow="Outcomes"
-          title="Call Status Mix"
-          icon={Gauge}
-          items={dashboard?.statusBreakdown || []}
-          valueKey="calls"
-          labelKey="status"
-          emptyLabel="No call statuses in this range"
-        />
-        <BreakdownPanel
-          eyebrow="Inventory"
-          title="Lead Status Mix"
-          icon={Database}
-          items={dashboard?.leadStatusBreakdown || []}
-          valueKey="leads"
-          labelKey="status"
-          emptyLabel="No lead statuses returned"
-        />
-        <Panel eyebrow="Agents" title="Live Agent Activity" icon={Headphones} className="admin-wide-panel">
-          <DataTable
-            emptyLabel="No live agents returned"
-            rows={(dashboard?.agents || []).map((row) => ({ ...row, id: `${row.user}-${row.campaign_id}-${row.server_ip}` }))}
-            columns={[
-              { key: 'user', label: 'Agent', render: (row) => <strong>{row.user}</strong> },
-              { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id || 'None' },
-              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status !== 'PAUSED'}>{row.status || row.pause_code || 'Ready'}</StatusPill> },
-              { key: 'calls_today', label: 'Calls', render: (row) => formatNumber(row.calls_today) },
-              { key: 'last_call_time', label: 'Last Call', render: (row) => durationLabel(row.last_call_time) },
-            ]}
-          />
-        </Panel>
-        <CampaignTable campaigns={dashboard?.campaigns || []} />
       </section>
 
       <section className="report-hero">
