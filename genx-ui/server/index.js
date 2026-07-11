@@ -4448,6 +4448,10 @@ async function campaignStatusListReport(req, res) {
   const campaignIds = campaignIdsRaw.filter((id) => allowedIds.has(id));
 
   const results = [];
+  // agent_log join target: live path joins the plain table (as before); when the
+  // range predates the live window it becomes a date-bounded live+archive union
+  // so handle_time still resolves for archived calls.
+  const alSrc = await rangeSource({ table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al' });
   for (const campaignId of campaignIds) {
     const statuses = await rows(
       `SELECT status, status_name, human_answered, sale, dnc, customer_contact, not_interested,
@@ -4467,28 +4471,36 @@ async function campaignStatusListReport(req, res) {
     );
     const listResults = [];
     for (const list of lists) {
+      const vlSrc = await rangeSource({
+        table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
+        extraWhere: 'vl.list_id = ?', extraParams: [list.list_id],
+      });
       const outbound = await rows(
         `SELECT vl.status AS status, COUNT(*) AS calls,
                 COALESCE(SUM(vl.length_in_sec), 0) AS duration,
                 COALESCE(SUM(CAST(al.talk_sec AS SIGNED) - CAST(al.dead_sec AS SIGNED)), 0) AS handle_time
-         FROM vicidial_log vl
-         LEFT JOIN vicidial_agent_log al
+         FROM ${vlSrc.fromSql}
+         LEFT JOIN ${alSrc.fromSql}
            ON al.lead_id = vl.lead_id AND al.uniqueid = vl.uniqueid AND al.user = vl.user
-         WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.list_id = ?
+         WHERE ${vlSrc.dateWhere}
          GROUP BY vl.status LIMIT 500`,
-        [begin, end, list.list_id],
+        [...vlSrc.fromParams, ...alSrc.fromParams, ...vlSrc.whereParams],
         [],
       );
+      const clSrc = await rangeSource({
+        table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+        extraWhere: 'cl.list_id = ?', extraParams: [list.list_id],
+      });
       const inbound = await rows(
         `SELECT cl.status AS status, COUNT(*) AS calls,
                 COALESCE(SUM(cl.length_in_sec), 0) AS duration,
                 COALESCE(SUM(CAST(al.talk_sec AS SIGNED) - CAST(al.dead_sec AS SIGNED)), 0) AS handle_time
-         FROM vicidial_closer_log cl
-         LEFT JOIN vicidial_agent_log al
+         FROM ${clSrc.fromSql}
+         LEFT JOIN ${alSrc.fromSql}
            ON al.lead_id = cl.lead_id AND al.uniqueid = cl.uniqueid AND al.user = cl.user
-         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.list_id = ?
+         WHERE ${clSrc.dateWhere}
          GROUP BY cl.status LIMIT 500`,
-        [begin, end, list.list_id],
+        [...clSrc.fromParams, ...alSrc.fromParams, ...clSrc.whereParams],
         [],
       );
       const merged = new Map();
@@ -5036,6 +5048,10 @@ async function outboundIntervalReport(req, res) {
     const systemIn = sqlStatusList(SYSTEM_RELEASE_STATUSES);
     const bucketExpr = `FLOOR(UNIX_TIMESTAMP(call_date) / ${intervalSec}) * ${intervalSec}`;
 
+    const vlSrc = await rangeSource({
+      table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
+      extraWhere: 'vl.campaign_id = ?', extraParams: [campaignId],
+    });
     const outbound = await rows(
       `SELECT ${bucketExpr} AS bucket, COUNT(*) AS calls,
               COALESCE(SUM(GREATEST(length_in_sec,0)),0) AS talk_seconds,
@@ -5044,15 +5060,19 @@ async function outboundIntervalReport(req, res) {
               COALESCE(SUM(status = 'NA'),0) AS na_calls,
               COALESCE(SUM(status IN (${saleIn})),0) AS sale_calls,
               COALESCE(SUM(status IN (${dncIn})),0) AS dnc_calls
-       FROM vicidial_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       FROM ${vlSrc.fromSql}
+       WHERE ${vlSrc.dateWhere}
        GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
-      [begin, end, campaignId],
+      vlSrc.params,
       [],
     );
 
     let inboundBuckets = [];
     if (includeRollover && dropGroups.length) {
+      const clSrc = await rangeSource({
+        table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+        extraWhere: `cl.campaign_id IN (${sqlStatusList(dropGroups)})`,
+      });
       inboundBuckets = await rows(
         `SELECT ${bucketExpr.replace(/call_date/g, 'cl.call_date')} AS bucket, COUNT(*) AS calls_in,
                 COALESCE(SUM(cl.status LIKE '%DROP%'),0) AS drops_in,
@@ -5061,25 +5081,29 @@ async function outboundIntervalReport(req, res) {
                 COALESCE(SUM(cl.status IN (${dncIn})),0) AS dnc_calls,
                 COALESCE(SUM(cl.status IN (${systemIn})),0) AS system_release,
                 COALESCE(SUM(cl.status = 'NA'),0) AS na_calls
-         FROM vicidial_closer_log cl
+         FROM ${clSrc.fromSql}
          LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
-         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${sqlStatusList(dropGroups)})
+         WHERE ${clSrc.dateWhere}
          GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
-        [begin, end],
+        [...clSrc.fromParams, ...clSrc.whereParams],
         [],
       );
     }
 
     const agentCampaigns = [campaignId, ...(includeRollover ? dropGroups : [])];
+    const alSrc = await rangeSource({
+      table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al',
+      extraWhere: `al.campaign_id IN (${agentCampaigns.map(() => '?').join(',')})`, extraParams: agentCampaigns,
+    });
     const agentBuckets = await rows(
       `SELECT FLOOR(UNIX_TIMESTAMP(event_time) / ${intervalSec}) * ${intervalSec} AS bucket,
               COALESCE(SUM(pause_sec + wait_sec + talk_sec + dispo_sec),0) AS login_seconds,
               COALESCE(SUM(pause_sec),0) AS pause_seconds
-       FROM vicidial_agent_log
-       WHERE event_time >= ? AND event_time <= ? AND campaign_id IN (${agentCampaigns.map(() => '?').join(',')})
+       FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere}
          AND pause_sec < 65000 AND wait_sec < 65000 AND talk_sec < 65000 AND dispo_sec < 65000
        GROUP BY bucket ORDER BY bucket ASC LIMIT 3000`,
-      [begin, end, ...agentCampaigns],
+      alSrc.params,
       [],
     );
 
@@ -5211,6 +5235,10 @@ async function inboundSummaryReport(req, res) {
   const answeredExpr = `status NOT IN (${unansweredIn})`;
   const dropExpr = "status IN ('DROP','XDROP') AND (length_in_sec <= 49999 OR length_in_sec IS NULL)";
   const statParams = [begin, end, ...groupIds];
+  const clSrc = await rangeSource({
+    table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+    extraWhere: `cl.campaign_id IN (${ph})`, extraParams: groupIds,
+  });
 
   const [perGroup, statusBreakdown, hourly, offeredRow] = await Promise.all([
     rows(
@@ -5221,26 +5249,26 @@ async function inboundSummaryReport(req, res) {
               COALESCE(SUM(${dropExpr}),0) AS drops,
               COALESCE(SUM(status IN ('DROP','XDROP') AND ((length_in_sec <= 49999 AND length_in_sec >= 5) OR length_in_sec IS NULL)),0) AS drops_5s,
               COALESCE(SUM(status IN ('DROP','XDROP') AND ((length_in_sec <= 49999 AND length_in_sec >= 10) OR length_in_sec IS NULL)),0) AS drops_10s
-       FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY campaign_id ORDER BY campaign_id ASC LIMIT 200`,
-      statParams,
+      clSrc.params,
       [],
     ),
     rows(
       `SELECT status, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
-       FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}
        GROUP BY status ORDER BY calls DESC LIMIT 200`,
-      statParams,
+      clSrc.params,
       [],
     ),
     rows(
       `SELECT DATE_FORMAT(call_date, '%Y-%m-%d %H:00') AS hour_slot, COUNT(*) AS calls,
               COALESCE(SUM(${answeredExpr}),0) AS answered,
               COALESCE(SUM(${dropExpr}),0) AS drops
-       FROM vicidial_closer_log WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}
        GROUP BY hour_slot ORDER BY hour_slot ASC LIMIT 1000`,
-      statParams,
+      clSrc.params,
       [],
     ),
     rows(
@@ -5290,7 +5318,10 @@ async function serviceLevelReport(req, res) {
     return res.status(403).json({ ok: false, error: 'group_not_allowed' });
   }
 
-  const params = [begin, end, groupId];
+  const clSrc = await rangeSource({
+    table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+    extraWhere: 'cl.campaign_id = ?', extraParams: [groupId],
+  });
   const [slots, days] = await Promise.all([
     rows(
       `SELECT FLOOR(TIME_TO_SEC(TIME(call_date)) / 900) AS slot, COUNT(*) AS calls,
@@ -5307,10 +5338,10 @@ async function serviceLevelReport(req, res) {
               COALESCE(SUM(queue_seconds > 80 AND queue_seconds <= 100),0) AS q100,
               COALESCE(SUM(queue_seconds > 100 AND queue_seconds <= 120),0) AS q120,
               COALESCE(SUM(queue_seconds > 120),0) AS q121
-       FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY slot ORDER BY slot ASC LIMIT 100`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
@@ -5320,10 +5351,10 @@ async function serviceLevelReport(req, res) {
               COALESCE(SUM(CASE WHEN status LIKE '%DROP%' THEN length_in_sec ELSE 0 END),0) AS drops_sec,
               COALESCE(SUM(queue_seconds > 0),0) AS holds,
               COALESCE(SUM(CASE WHEN queue_seconds > 0 THEN queue_seconds ELSE 0 END),0) AS hold_sec
-       FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+       FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY day ORDER BY day ASC LIMIT 400`,
-      params,
+      clSrc.params,
       [],
     ),
   ]);
@@ -5342,6 +5373,10 @@ async function inboundHourlyReport(req, res) {
 
   const results = [];
   for (const groupId of groupIds) {
+    const clSrc = await rangeSource({
+      table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+      extraWhere: 'cl.campaign_id = ?', extraParams: [groupId],
+    });
     const hours = await rows(
       `SELECT HOUR(cl.call_date) AS hour, COUNT(*) AS calls,
               COALESCE(SUM(cl.status LIKE '%DROP%'),0) AS drops,
@@ -5349,11 +5384,11 @@ async function inboundHourlyReport(req, res) {
               COALESCE(SUM(GREATEST(cl.length_in_sec - cl.queue_seconds - ROUND(COALESCE(ig.agent_alert_delay,0) / 1000), 0)),0) AS talk_sec,
               COALESCE(SUM(cl.queue_seconds),0) AS queue_sec,
               COALESCE(MAX(cl.queue_seconds),0) AS queue_max
-       FROM vicidial_closer_log cl
+       FROM ${clSrc.fromSql}
        LEFT JOIN vicidial_inbound_groups ig ON ig.group_id = cl.campaign_id
-       WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id = ?
+       WHERE ${clSrc.dateWhere}
        GROUP BY hour ORDER BY hour ASC LIMIT 30`,
-      [begin, end, groupId],
+      [...clSrc.fromParams, ...clSrc.whereParams],
       [],
     );
     const meta = groups.find((row) => String(row.group_id) === groupId);
@@ -5374,9 +5409,12 @@ async function inboundDailyReport(req, res) {
   if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
 
   const ph = groupIds.map(() => '?').join(',');
-  const params = [begin, end, ...groupIds];
   const slotExpr = hourly ? "DATE_FORMAT(call_date, '%Y-%m-%d %H:00')" : 'DATE(call_date)';
   const answeredExpr = `status NOT IN (${sqlStatusList(CLOSER_V2_UNANSWERED)})`;
+  const clSrc = await rangeSource({
+    table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+    extraWhere: `cl.campaign_id IN (${ph})`, extraParams: groupIds,
+  });
 
   const [slots, statusBreakdown, termReasons] = await Promise.all([
     rows(
@@ -5388,24 +5426,24 @@ async function inboundDailyReport(req, res) {
               COALESCE(SUM(CASE WHEN ${answeredExpr} THEN queue_seconds ELSE 0 END),0) AS answer_queue_sec,
               COALESCE(SUM(queue_seconds),0) AS queue_sec, COALESCE(MAX(queue_seconds),0) AS queue_max,
               COUNT(DISTINCT CASE WHEN user NOT IN ('', 'VDCL') THEN user END) AS agents
-       FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+       FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY slot ORDER BY slot ASC LIMIT 1000`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
-      `SELECT status, COUNT(*) AS calls FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+      `SELECT status, COUNT(*) AS calls FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY status ORDER BY calls DESC LIMIT 200`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
-      `SELECT term_reason, COUNT(*) AS calls FROM vicidial_closer_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})
+      `SELECT term_reason, COUNT(*) AS calls FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY term_reason ORDER BY calls DESC LIMIT 50`,
-      params,
+      clSrc.params,
       [],
     ),
   ]);
@@ -5440,42 +5478,48 @@ async function didStatsReport(req, res) {
   if (!didIds.length) return res.json({ ok: true, dids, sections: null, range: { beginDate, endDate } });
 
   const ph = didIds.map(() => '?').join(',');
-  const params = [begin, end, ...didIds];
+  const vdlSrc = await rangeSource({
+    table: 'vicidial_did_log', dateCol: 'call_date', start: begin, end, alias: 'vdl',
+    extraWhere: `vdl.did_id IN (${ph})`, extraParams: didIds,
+  });
+  // closer-log join target: plain table on the live path (join is by uniqueid,
+  // as before); date-bounded live+archive union when the range spans the archive.
+  const vclSrc = await rangeSource({ table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'vcl' });
   const [perDid, answered, routes, extensions, hourly] = await Promise.all([
     rows(
-      `SELECT did_id, COUNT(*) AS calls FROM vicidial_did_log
-       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+      `SELECT did_id, COUNT(*) AS calls FROM ${vdlSrc.fromSql}
+       WHERE ${vdlSrc.dateWhere}
        GROUP BY did_id ORDER BY calls DESC LIMIT 500`,
-      params,
+      vdlSrc.params,
       [],
     ),
     rows(
       `SELECT vdl.did_id, COUNT(*) AS answered, COALESCE(SUM(vcl.length_in_sec),0) AS talk_sec
-       FROM vicidial_did_log vdl, vicidial_closer_log vcl
-       WHERE vdl.uniqueid = vcl.uniqueid AND vdl.call_date >= ? AND vdl.call_date <= ? AND vdl.did_id IN (${ph})
+       FROM ${vdlSrc.fromSql}, ${vclSrc.fromSql}
+       WHERE vdl.uniqueid = vcl.uniqueid AND ${vdlSrc.dateWhere}
        GROUP BY vdl.did_id LIMIT 500`,
-      params,
+      [...vdlSrc.fromParams, ...vclSrc.fromParams, ...vdlSrc.whereParams],
       [],
     ),
     rows(
-      `SELECT did_id, did_route, COUNT(*) AS calls FROM vicidial_did_log
-       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+      `SELECT did_id, did_route, COUNT(*) AS calls FROM ${vdlSrc.fromSql}
+       WHERE ${vdlSrc.dateWhere}
        GROUP BY did_id, did_route ORDER BY did_id ASC, calls DESC LIMIT 1000`,
-      params,
+      vdlSrc.params,
       [],
     ),
     rows(
-      `SELECT did_id, extension, COUNT(*) AS calls FROM vicidial_did_log
-       WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+      `SELECT did_id, extension, COUNT(*) AS calls FROM ${vdlSrc.fromSql}
+       WHERE ${vdlSrc.dateWhere}
        GROUP BY did_id, extension ORDER BY did_id ASC, calls DESC LIMIT 1000`,
-      params,
+      vdlSrc.params,
       [],
     ),
     rows(
       `SELECT DATE_FORMAT(call_date, '%Y-%m-%d %H:00') AS hour_slot, COUNT(*) AS calls
-       FROM vicidial_did_log WHERE call_date >= ? AND call_date <= ? AND did_id IN (${ph})
+       FROM ${vdlSrc.fromSql} WHERE ${vdlSrc.dateWhere}
        GROUP BY hour_slot ORDER BY hour_slot ASC LIMIT 1000`,
-      params,
+      vdlSrc.params,
       [],
     ),
   ]);
@@ -5503,14 +5547,18 @@ async function didDetailReport(req, res) {
   if (!didIds.length) return res.json({ ok: true, dids, entries: null, range: { beginDate, endDate } });
 
   const ph = didIds.map(() => '?').join(',');
+  const vdlSrc = await rangeSource({
+    table: 'vicidial_did_log', dateCol: 'call_date', start: begin, end, alias: 'vdl',
+    extraWhere: `vdl.did_id IN (${ph})`, extraParams: didIds,
+  });
   const entries = await rows(
     `SELECT vdl.call_date, vdl.extension, vdl.server_ip, vdl.uniqueid, vdl.did_route, vdl.did_id,
             vdl.caller_id_number, vdl.caller_id_name, vdl.channel, d.did_pattern
-     FROM vicidial_did_log vdl
+     FROM ${vdlSrc.fromSql}
      LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
-     WHERE vdl.call_date >= ? AND vdl.call_date <= ? AND vdl.did_id IN (${ph})
+     WHERE ${vdlSrc.dateWhere}
      ORDER BY vdl.call_date ASC LIMIT 2000`,
-    [begin, end, ...didIds],
+    [...vdlSrc.fromParams, ...vdlSrc.whereParams],
     [],
   );
   return res.json({ ok: true, dids, entries, range: { beginDate, endDate } });
@@ -5653,10 +5701,14 @@ async function inboundForecastingReport(req, res) {
   if (!groupIds.length) return res.json({ ok: true, groups, sections: null, range: { beginDate, endDate } });
 
   const ph = groupIds.map(() => '?').join(',');
-  const params = [begin, end, ...groupIds];
-  const baseWhere = `length_in_sec IS NOT NULL AND call_date >= ? AND call_date <= ? AND campaign_id IN (${ph})`;
   const sets = await campaignStatusSets(groupIds);
   const saleIn = sqlStatusList(sets.sale);
+  const clSrc = await rangeSource({
+    table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+    extraWhere: `cl.campaign_id IN (${ph})`, extraParams: groupIds,
+  });
+  const baseWhere = `${clSrc.dateWhere} AND length_in_sec IS NOT NULL`;
+  const alSrc = await rangeSource({ table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al' });
 
   const [startHours, spillHours, avgRow, wrapRow] = await Promise.all([
     rows(
@@ -5664,35 +5716,35 @@ async function inboundForecastingReport(req, res) {
               COALESCE(SUM(status = 'DROP'),0) AS drops,
               COALESCE(SUM(CASE WHEN status = 'DROP' THEN len_start ELSE 0 END),0) AS drop_secs,
               COALESCE(SUM(status IN (${saleIn})),0) AS sales
-       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM vicidial_closer_log
+       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM ${clSrc.fromSql}
              WHERE ${baseWhere} AND status != 'AFTHRS') t
        GROUP BY start_hour ORDER BY start_hour ASC LIMIT 1000`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
       `SELECT end_hour, COUNT(*) AS calls, COALESCE(SUM(len_spill),0) AS secs,
               COALESCE(SUM(status = 'DROP'),0) AS drops,
               COALESCE(SUM(CASE WHEN status = 'DROP' THEN len_spill ELSE 0 END),0) AS drop_secs
-       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM vicidial_closer_log
+       FROM (SELECT ${FORECAST_HOUR_EXPRS} FROM ${clSrc.fromSql}
              WHERE ${baseWhere} AND status != 'AFTHRS') t
        WHERE len_spill > 0
        GROUP BY end_hour ORDER BY end_hour ASC LIMIT 1000`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
-      `SELECT AVG(length_in_sec) AS avg_length FROM vicidial_closer_log WHERE ${baseWhere}`,
-      params,
+      `SELECT AVG(length_in_sec) AS avg_length FROM ${clSrc.fromSql} WHERE ${baseWhere}`,
+      clSrc.params,
       [],
     ).then((result) => result[0] || {}),
     rows(
       `SELECT COUNT(DISTINCT cl.uniqueid) AS calls, COALESCE(SUM(al.dispo_sec),0) AS dispo_secs,
               COALESCE(SUM(al.talk_sec),0) AS talk_secs
-       FROM vicidial_closer_log cl JOIN vicidial_agent_log al ON al.uniqueid = cl.uniqueid
+       FROM ${clSrc.fromSql} JOIN ${alSrc.fromSql} ON al.uniqueid = cl.uniqueid
        WHERE cl.length_in_sec IS NOT NULL AND cl.user != 'VDCL'
-         AND cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${ph})`,
-      params,
+         AND ${clSrc.dateWhere}`,
+      [...clSrc.fromParams, ...alSrc.fromParams, ...clSrc.whereParams],
       [],
     ).then((result) => result[0] || {}),
   ]);
@@ -5799,14 +5851,8 @@ async function agentTimeDetailReport(req, res) {
   const end = `${endDate} 23:59:59`;
 
   const campaignId = cleanId(req.query?.campaign, 20);
-  const agentParams = [begin, end];
-  let campaignSql = '';
-  if (campaignId) {
-    if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
-      return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
-    }
-    campaignSql = ' AND campaign_id = ?';
-    agentParams.push(campaignId);
+  if (campaignId && !scopeAllows(req.genxUser?.permissions?.allowedCampaigns, campaignId)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
   const groupScopeParams = [];
   const groupScopeWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', groupScopeParams);
@@ -5814,6 +5860,19 @@ async function agentTimeDetailReport(req, res) {
   const campaignPickerParams = [];
   const campaignPickerWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignPickerParams);
   const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+
+  const campaignExtra = campaignId ? 'al.campaign_id = ?' : '';
+  const campaignExtraParams = campaignId ? [campaignId] : [];
+  const agentsSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al',
+    extraWhere: [campaignExtra, groupScopeWhere.replace(/user_group/g, 'al.user_group')].filter(Boolean).join(' AND '),
+    extraParams: [...campaignExtraParams, ...groupScopeParams],
+  });
+  const pausesSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al',
+    extraWhere: campaignExtra, extraParams: campaignExtraParams,
+  });
+  const parkSrc = await rangeSource({ table: 'park_log', dateCol: 'parked_time', start: begin, end, alias: 'pk' });
 
   const [campaigns, agents, logins, pauses, parks] = await Promise.all([
     rows(`SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignPickerWhere} ORDER BY campaign_id ASC LIMIT 500`, campaignPickerParams, []),
@@ -5823,11 +5882,11 @@ async function agentTimeDetailReport(req, res) {
               ${cap('al.wait_sec')} AS wait_sec, ${cap('al.talk_sec')} AS talk_sec,
               ${cap('al.dead_sec')} AS dead_sec, ${cap('al.dispo_sec')} AS dispo_sec,
               ${cap('al.pause_sec')} AS pause_sec
-       FROM vicidial_agent_log al
+       FROM ${agentsSrc.fromSql}
        LEFT JOIN vicidial_users u ON u.user = al.user
-       WHERE al.event_time >= ? AND al.event_time <= ?${campaignSql} AND ${groupScopeWhere.replace(/user_group/g, 'al.user_group')}
+       WHERE ${agentsSrc.dateWhere}
        GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
-      [...agentParams, ...groupScopeParams],
+      agentsSrc.params,
       [],
     ),
     rows(
@@ -5838,16 +5897,16 @@ async function agentTimeDetailReport(req, res) {
       [],
     ),
     rows(
-      `SELECT user, sub_status, COALESCE(SUM(pause_sec),0) AS pause_sec FROM vicidial_agent_log
-       WHERE event_time >= ? AND event_time <= ? AND pause_sec > 0 AND pause_sec < 65000${campaignSql}
+      `SELECT user, sub_status, COALESCE(SUM(pause_sec),0) AS pause_sec FROM ${pausesSrc.fromSql}
+       WHERE ${pausesSrc.dateWhere} AND pause_sec > 0 AND pause_sec < 65000
        GROUP BY user, sub_status ORDER BY user ASC LIMIT 5000`,
-      agentParams,
+      pausesSrc.params,
       [],
     ),
     rows(
-      `SELECT user, COUNT(*) AS parks, COALESCE(SUM(parked_sec),0) AS parked_sec FROM park_log
-       WHERE parked_time >= ? AND parked_time <= ? GROUP BY user LIMIT 2000`,
-      [begin, end],
+      `SELECT user, COUNT(*) AS parks, COALESCE(SUM(parked_sec),0) AS parked_sec FROM ${parkSrc.fromSql}
+       WHERE ${parkSrc.dateWhere} GROUP BY user LIMIT 2000`,
+      parkSrc.params,
       [],
     ),
   ]);
@@ -5887,18 +5946,23 @@ async function agentReportPickers(req) {
 async function agentStatusDetailReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
-  const filters = agentLogFilters(req, params);
+  const filterParams = [];
+  const filters = agentLogFilters(req, filterParams);
   if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   const campaigns = await agentReportPickers(req);
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'al',
+    extraWhere: filters, extraParams: filterParams,
+  });
 
   const entries = await rows(
     `SELECT al.user, u.full_name, al.status, COUNT(*) AS calls
-     FROM vicidial_agent_log al
+     FROM ${alSrc.fromSql}
      LEFT JOIN vicidial_users u ON u.user = al.user
-     WHERE al.event_time >= ? AND al.event_time <= ? AND al.status IS NOT NULL AND al.status != '' AND ${filters}
+     WHERE ${alSrc.dateWhere} AND al.status IS NOT NULL AND al.status != ''
      GROUP BY al.user, al.status ORDER BY al.user ASC, al.status ASC LIMIT 10000`,
-    params,
+    alSrc.params,
     [],
   );
   const haRows = await rows(
@@ -5921,11 +5985,16 @@ async function agentStatusDetailReport(req, res) {
 async function agentPerformanceReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
-  const filters = agentLogFilters(req, params);
+  const filterParams = [];
+  const filters = agentLogFilters(req, filterParams);
   if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   const campaigns = await agentReportPickers(req);
   const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'al',
+    extraWhere: filters, extraParams: filterParams,
+  });
 
   const [agents, statuses] = await Promise.all([
     rows(
@@ -5933,19 +6002,19 @@ async function agentPerformanceReport(req, res) {
               ${cap('al.pause_sec')} AS pause_sec, ${cap('al.wait_sec')} AS wait_sec,
               ${cap('al.talk_sec')} AS talk_sec, ${cap('al.dispo_sec')} AS dispo_sec,
               ${cap('al.dead_sec')} AS dead_sec
-       FROM vicidial_agent_log al
+       FROM ${alSrc.fromSql}
        LEFT JOIN vicidial_users u ON u.user = al.user
-       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       WHERE ${alSrc.dateWhere}
        GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
-      params,
+      alSrc.params,
       [],
     ),
     rows(
       `SELECT al.user, al.status, COUNT(*) AS calls
-       FROM vicidial_agent_log al
-       WHERE al.event_time >= ? AND al.event_time <= ? AND al.status IS NOT NULL AND al.status != '' AND ${filters}
+       FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere} AND al.status IS NOT NULL AND al.status != ''
        GROUP BY al.user, al.status LIMIT 10000`,
-      params,
+      alSrc.params,
       [],
     ),
   ]);
@@ -5977,23 +6046,26 @@ async function agentDispositionReport(req, res) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
 
-  const params = [begin, end, campaignId];
+  const vlSrc = await rangeSource({
+    table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
+    extraWhere: 'vl.campaign_id = ?', extraParams: [campaignId],
+  });
   const [agents, statuses] = await Promise.all([
     rows(
       `SELECT vl.user, u.full_name, COUNT(*) AS calls,
               COALESCE(SUM(vl.length_in_sec),0) AS talk_sec, COALESCE(AVG(vl.length_in_sec),0) AS avg_sec
-       FROM vicidial_log vl
+       FROM ${vlSrc.fromSql}
        LEFT JOIN vicidial_users u ON u.user = vl.user
-       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id = ?
+       WHERE ${vlSrc.dateWhere}
        GROUP BY vl.user ORDER BY calls DESC LIMIT 1000`,
-      params,
+      vlSrc.params,
       [],
     ),
     rows(
-      `SELECT user, status, COUNT(*) AS calls FROM vicidial_log
-       WHERE call_date >= ? AND call_date <= ? AND campaign_id = ?
+      `SELECT user, status, COUNT(*) AS calls FROM ${vlSrc.fromSql}
+       WHERE ${vlSrc.dateWhere}
        GROUP BY user, status LIMIT 10000`,
-      params,
+      vlSrc.params,
       [],
     ),
   ]);
@@ -6005,9 +6077,14 @@ async function agentDispositionReport(req, res) {
 async function teamPerformanceReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
-  const filters = agentLogFilters(req, params);
+  const filterParams = [];
+  const filters = agentLogFilters(req, filterParams);
   if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'al',
+    extraWhere: filters, extraParams: filterParams,
+  });
   const campaigns = await agentReportPickers(req);
   const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
   const saleRows = await rows(
@@ -6024,11 +6101,11 @@ async function teamPerformanceReport(req, res) {
             ${cap('al.pause_sec')} AS pause_sec, ${cap('al.wait_sec')} AS wait_sec,
             ${cap('al.talk_sec')} AS talk_sec, ${cap('al.dispo_sec')} AS dispo_sec,
             ${cap('al.dead_sec')} AS dead_sec
-     FROM vicidial_agent_log al
+     FROM ${alSrc.fromSql}
      LEFT JOIN vicidial_users u ON u.user = al.user
-     WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+     WHERE ${alSrc.dateWhere}
      GROUP BY al.user_group, al.user ORDER BY al.user_group ASC, al.user ASC LIMIT 3000`,
-    params,
+    alSrc.params,
     [],
   );
   return res.json({ ok: true, campaigns, range: { beginDate, endDate }, agents });
@@ -6056,23 +6133,27 @@ async function agentDaysReport(req, res) {
   }
   const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
 
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al',
+    extraWhere: 'al.user = ?', extraParams: [userId],
+  });
   const [days, dayStatuses, haRows] = await Promise.all([
     rows(
       `SELECT DATE_FORMAT(event_time, '%Y-%m-%d') AS day, COUNT(lead_id) AS calls,
               ${cap('pause_sec')} AS pause_sec, ${cap('wait_sec')} AS wait_sec,
               ${cap('talk_sec')} AS talk_sec, ${cap('dispo_sec')} AS dispo_sec,
               ${cap('dead_sec')} AS dead_sec
-       FROM vicidial_agent_log WHERE user = ? AND event_time >= ? AND event_time <= ?
+       FROM ${alSrc.fromSql} WHERE ${alSrc.dateWhere}
        GROUP BY day ORDER BY day ASC LIMIT 400`,
-      [userId, begin, end],
+      alSrc.params,
       [],
     ),
     rows(
       `SELECT DATE_FORMAT(event_time, '%Y-%m-%d') AS day, status, COUNT(*) AS calls
-       FROM vicidial_agent_log
-       WHERE user = ? AND event_time >= ? AND event_time <= ? AND status IS NOT NULL AND status != ''
+       FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere} AND status IS NOT NULL AND status != ''
        GROUP BY day, status ORDER BY day ASC LIMIT 5000`,
-      [userId, begin, end],
+      alSrc.params,
       [],
     ),
     rows(
@@ -6087,14 +6168,19 @@ async function agentDaysReport(req, res) {
   let events = null;
   const detailDay = cleanReportDate(req.query?.day, '');
   if (detailDay) {
+    const daySrc = await rangeSource({
+      table: 'vicidial_agent_log', dateCol: 'event_time',
+      start: `${detailDay} 00:00:00`, end: `${detailDay} 23:59:59`, alias: 'al',
+      extraWhere: 'al.user = ?', extraParams: [userId],
+    });
     events = await rows(
       `SELECT event_time, lead_id, campaign_id, pause_sec, wait_sec, talk_sec, dispo_sec, dead_sec,
               status, sub_status, user_group
-       FROM vicidial_agent_log
-       WHERE user = ? AND event_time >= ? AND event_time <= ?
+       FROM ${daySrc.fromSql}
+       WHERE ${daySrc.dateWhere}
          AND (pause_sec > 0 OR wait_sec > 0 OR talk_sec > 0 OR dispo_sec > 0)
        ORDER BY event_time DESC LIMIT 1000`,
-      [userId, `${detailDay} 00:00:00`, `${detailDay} 23:59:59`],
+      daySrc.params,
       [],
     );
   }
@@ -6296,6 +6382,18 @@ async function userStatsReport(req, res) {
   const [info] = await rows(`SELECT user, full_name, user_group, user_level, active FROM vicidial_users WHERE user = ? AND ${infoScope} LIMIT 1`, infoParams, []);
   if (!info) return res.status(404).json({ ok: false, error: 'user_not_found' });
 
+  const srcOpts = { dateCol: 'call_date', start: rangeStart, end: rangeEnd, extraWhere: 'vl.user = ?', extraParams: [userId], alias: 'vl' };
+  const vlSrc = await rangeSource({ ...srcOpts, table: 'vicidial_log' });
+  const clSrc = await rangeSource({ ...srcOpts, table: 'vicidial_closer_log' });
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time', start: rangeStart, end: rangeEnd, alias: 'al',
+    extraWhere: 'al.user = ?', extraParams: [userId],
+  });
+  const pkSrc = await rangeSource({
+    table: 'park_log', dateCol: 'parked_time', start: rangeStart, end: rangeEnd, alias: 'pk',
+    extraWhere: 'pk.user = ?', extraParams: [userId],
+  });
+
   const [liveRows, timeclockStatus, outbound, inbound, pauses, parks, loginEvents, timesheet, timeclockRows, closerChanges] = await Promise.all([
     rows(
       `SELECT status, campaign_id, lead_id, calls_today, conf_exten, extension, server_ip, closer_campaigns,
@@ -6307,33 +6405,33 @@ async function userStatsReport(req, res) {
     rows('SELECT event_date, status, ip_address FROM vicidial_timeclock_status WHERE user = ? LIMIT 1', [userId], []),
     rows(
       `SELECT status, COUNT(*) AS calls, SUM(length_in_sec) AS seconds
-       FROM vicidial_log WHERE user = ? AND call_date >= ? AND call_date <= ?
+       FROM ${vlSrc.fromSql} WHERE ${vlSrc.dateWhere}
        GROUP BY status ORDER BY status`,
-      [userId, rangeStart, rangeEnd],
+      vlSrc.params,
       [],
     ),
     rows(
       `SELECT status, COUNT(*) AS calls, SUM(length_in_sec - queue_seconds) AS seconds
-       FROM vicidial_closer_log WHERE user = ? AND call_date >= ? AND call_date <= ?
+       FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}
        GROUP BY status ORDER BY status`,
-      [userId, rangeStart, rangeEnd],
+      clSrc.params,
       [],
     ),
     rows(
       `SELECT al.sub_status, COUNT(*) AS segments, SUM(IF(al.pause_sec < 65000, al.pause_sec, 0)) AS pause_seconds,
               MAX(pc.pause_code_name) AS pause_code_name
-       FROM vicidial_agent_log al
+       FROM ${alSrc.fromSql}
        LEFT JOIN vicidial_pause_codes pc ON pc.pause_code = al.sub_status AND pc.campaign_id = al.campaign_id
-       WHERE al.user = ? AND al.event_time >= ? AND al.event_time <= ? AND al.sub_status IS NOT NULL AND al.sub_status != ''
+       WHERE ${alSrc.dateWhere} AND al.sub_status IS NOT NULL AND al.sub_status != ''
        GROUP BY al.sub_status ORDER BY pause_seconds DESC LIMIT 100`,
-      [userId, rangeStart, rangeEnd],
+      alSrc.params,
       [],
     ),
     rows(
-      `SELECT parked_time, status, lead_id, parked_sec FROM park_log
-       WHERE user = ? AND parked_time >= ? AND parked_time <= ?
+      `SELECT parked_time, status, lead_id, parked_sec FROM ${pkSrc.fromSql}
+       WHERE ${pkSrc.dateWhere}
        ORDER BY parked_time DESC LIMIT 200`,
-      [userId, rangeStart, rangeEnd],
+      pkSrc.params,
       [],
     ),
     rows(
@@ -6412,20 +6510,25 @@ async function performanceComparisonReport(req, res) {
   for (const daysBack of COMPARISON_WINDOWS) {
     const beginDay = new Date(new Date(`${endDate}T00:00:00Z`).getTime() - daysBack * 86400000)
       .toISOString().slice(0, 10);
-    const params = [`${beginDay} 00:00:00`, end];
-    const filters = agentLogFilters(req, params);
+    const filterParams = [];
+    const filters = agentLogFilters(req, filterParams);
     if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+    const alSrc = await rangeSource({
+      table: 'vicidial_agent_log', dateCol: 'event_time',
+      start: `${beginDay} 00:00:00`, end, alias: 'al',
+      extraWhere: filters, extraParams: filterParams,
+    });
     const agents = await rows(
       `SELECT al.user, u.full_name, COUNT(al.lead_id) AS calls,
               COALESCE(SUM(al.status IN (${saleIn})),0) AS sales,
               ${cap('al.talk_sec')} AS talk_sec, ${cap('al.pause_sec')} AS pause_sec,
               ${cap('al.wait_sec')} AS wait_sec, ${cap('al.dispo_sec')} AS dispo_sec,
               ${cap('al.dead_sec')} AS dead_sec
-       FROM vicidial_agent_log al
+       FROM ${alSrc.fromSql}
        LEFT JOIN vicidial_users u ON u.user = al.user
-       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       WHERE ${alSrc.dateWhere}
        GROUP BY al.user ORDER BY al.user ASC LIMIT 2000`,
-      params,
+      alSrc.params,
       [],
     );
     windows.push({ daysBack, beginDay, agents });
@@ -6438,32 +6541,37 @@ async function performanceComparisonReport(req, res) {
 async function userGroupHourlyReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const day = cleanReportDate(req.query?.date, new Date().toISOString().slice(0, 10));
-  const params = [`${day} 00:00:00`, `${day} 23:59:59`];
-  const filters = agentLogFilters(req, params);
+  const filterParams = [];
+  const filters = agentLogFilters(req, filterParams);
   if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   const campaigns = await agentReportPickers(req);
+  const alSrc = await rangeSource({
+    table: 'vicidial_agent_log', dateCol: 'event_time',
+    start: `${day} 00:00:00`, end: `${day} 23:59:59`, alias: 'al',
+    extraWhere: filters, extraParams: filterParams,
+  });
 
   const [hourly, totals, grand] = await Promise.all([
     rows(
       `SELECT al.user_group, SUBSTR(al.event_time, 12, 2) AS hour, COUNT(DISTINCT al.user) AS agents
-       FROM vicidial_agent_log al
-       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere}
        GROUP BY al.user_group, hour ORDER BY hour ASC, al.user_group ASC LIMIT 2000`,
-      params,
+      alSrc.params,
       [],
     ),
     rows(
       `SELECT al.user_group, COUNT(DISTINCT al.user) AS agents
-       FROM vicidial_agent_log al
-       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}
+       FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere}
        GROUP BY al.user_group ORDER BY al.user_group ASC LIMIT 500`,
-      params,
+      alSrc.params,
       [],
     ),
     rows(
-      `SELECT COUNT(DISTINCT al.user) AS agents FROM vicidial_agent_log al
-       WHERE al.event_time >= ? AND al.event_time <= ? AND ${filters}`,
-      params,
+      `SELECT COUNT(DISTINCT al.user) AS agents FROM ${alSrc.fromSql}
+       WHERE ${alSrc.dateWhere}`,
+      alSrc.params,
       [],
     ).then((result) => Number(result[0]?.agents || 0)),
   ]);
@@ -6533,16 +6641,20 @@ async function exportCallsReport(req, res) {
   const results = [];
   if (source !== 'INBOUND' && campaignIds.length) {
     const ph = campaignIds.map(() => '?').join(',');
+    const vlSrc = await rangeSource({
+      table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
+      extraWhere: `vl.campaign_id IN (${ph})`, extraParams: campaignIds,
+    });
     results.push(...await rows(
       `SELECT vl.call_date, vl.phone_number, vl.status, vl.user, vu.full_name, vl.campaign_id,
               vl.list_id, ${leadCols}, vl.length_in_sec, vl.user_group, vl.alt_dial,
               vl.lead_id, vl.uniqueid
-       FROM vicidial_log vl
+       FROM ${vlSrc.fromSql}
        JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
        LEFT JOIN vicidial_users vu ON vu.user = vl.user
-       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+       WHERE ${vlSrc.dateWhere}
        ORDER BY vl.call_date ASC LIMIT 100000`,
-      [begin, end, ...campaignIds],
+      [...vlSrc.fromParams, ...vlSrc.whereParams],
       [],
     ));
   }
@@ -6553,16 +6665,20 @@ async function exportCallsReport(req, res) {
     const groupIds = groupIdsRaw.filter((id) => allowedGroups.has(id));
     if (groupIds.length) {
       const ph = groupIds.map(() => '?').join(',');
+      const clSrc = await rangeSource({
+        table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl',
+        extraWhere: `cl.campaign_id IN (${ph})`, extraParams: groupIds,
+      });
       results.push(...await rows(
         `SELECT cl.call_date, cl.phone_number, cl.status, cl.user, vu.full_name, cl.campaign_id,
                 cl.list_id, ${leadCols}, cl.length_in_sec, cl.user_group, '' AS alt_dial,
                 cl.lead_id, cl.uniqueid
-         FROM vicidial_closer_log cl
+         FROM ${clSrc.fromSql}
          JOIN vicidial_list vi ON vi.lead_id = cl.lead_id
          LEFT JOIN vicidial_users vu ON vu.user = cl.user
-         WHERE cl.call_date >= ? AND cl.call_date <= ? AND cl.campaign_id IN (${ph})
+         WHERE ${clSrc.dateWhere}
          ORDER BY cl.call_date ASC LIMIT 100000`,
-        [begin, end, ...groupIds],
+        [...clSrc.fromParams, ...clSrc.whereParams],
         [],
       ));
     }
@@ -6664,6 +6780,14 @@ async function exportCallsCarrierReport(req, res) {
 
   const leadCols = 'vi.vendor_lead_code, vi.source_id, vi.gmt_offset_now, vi.phone_code, vi.title, vi.first_name, vi.middle_initial, vi.last_name, vi.address1, vi.address2, vi.address3, vi.city, vi.state, vi.province, vi.postal_code, vi.country_code, vi.gender, vi.date_of_birth, vi.alt_phone, vi.email, vi.security_phrase, vi.comments, vi.rank, vi.owner';
   const ph = campaignIds.map(() => '?').join(',');
+  const vlSrc = await rangeSource({
+    table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
+    extraWhere: `vl.campaign_id IN (${ph})`, extraParams: campaignIds,
+  });
+  // carrier_log/dial_log are on aggressive (daily) archive schedules, so these
+  // join targets almost always span live+archive for anything but today.
+  const vclSrc = await rangeSource({ table: 'vicidial_carrier_log', dateCol: 'call_date', start: begin, end, alias: 'vcl' });
+  const vdlSrc = await rangeSource({ table: 'vicidial_dial_log', dateCol: 'call_date', start: begin, end, alias: 'vdl' });
   const results = await rows(
     `SELECT vl.call_date, vl.phone_number, vl.status, vl.user, vu.full_name, vl.campaign_id,
             vl.list_id, ${leadCols}, vl.length_in_sec, vl.user_group, vl.alt_dial,
@@ -6677,16 +6801,16 @@ async function exportCallsCarrierReport(req, res) {
             vdl.channel AS dial_log_channel, vdl.context AS dial_log_context,
             vdl.timeout AS dial_log_timeout, vdl.outbound_cid,
             vdl.sip_hangup_cause AS dial_log_sip_hangup_cause, vdl.sip_hangup_reason AS dial_log_sip_hangup_reason
-     FROM vicidial_log vl
+     FROM ${vlSrc.fromSql}
      JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
      LEFT JOIN vicidial_users vu ON vu.user = vl.user
-     LEFT JOIN vicidial_carrier_log vcl
+     LEFT JOIN ${vclSrc.fromSql}
        ON SUBSTR(vcl.uniqueid, 1, 10) = SUBSTR(vl.uniqueid, 1, 10) AND vcl.lead_id = vl.lead_id
-     LEFT JOIN vicidial_dial_log vdl
+     LEFT JOIN ${vdlSrc.fromSql}
        ON vdl.caller_code = vcl.caller_code AND vdl.lead_id = vcl.lead_id
-     WHERE vl.call_date >= ? AND vl.call_date <= ? AND vl.campaign_id IN (${ph})
+     WHERE ${vlSrc.dateWhere}
      ORDER BY vl.call_date ASC LIMIT 100000`,
-    [begin, end, ...campaignIds],
+    [...vlSrc.fromParams, ...vclSrc.fromParams, ...vdlSrc.fromParams, ...vlSrc.whereParams],
     [],
   );
   await adminLog(req, 'REPORTS', 'EXPORT', '', 'GENX EXPORT CALLS CARRIER', 'SELECT FROM vicidial_log+carrier_log', `${results.length} rows`);
@@ -6721,22 +6845,22 @@ async function calledCountsReport(req, res) {
       listIds,
       [],
     ),
-    rows(
+    rangeSource({ table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl' }).then((vlSrc) => rows(
       `SELECT vi.list_id, COUNT(DISTINCT vl.lead_id) AS called_leads, COUNT(*) AS calls
-       FROM vicidial_log vl JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
-       WHERE vl.call_date >= ? AND vl.call_date <= ? AND vi.list_id IN (${ph})
+       FROM ${vlSrc.fromSql} JOIN vicidial_list vi ON vi.lead_id = vl.lead_id
+       WHERE ${vlSrc.dateWhere} AND vi.list_id IN (${ph})
        GROUP BY vi.list_id`,
-      [begin, end, ...listIds],
+      [...vlSrc.fromParams, ...vlSrc.whereParams, ...listIds],
       [],
-    ),
-    rows(
+    )),
+    rangeSource({ table: 'vicidial_closer_log', dateCol: 'call_date', start: begin, end, alias: 'cl' }).then((clSrc) => rows(
       `SELECT vi.list_id, COUNT(DISTINCT cl.lead_id) AS called_leads, COUNT(*) AS calls
-       FROM vicidial_closer_log cl JOIN vicidial_list vi ON vi.lead_id = cl.lead_id
-       WHERE cl.call_date >= ? AND cl.call_date <= ? AND vi.list_id IN (${ph})
+       FROM ${clSrc.fromSql} JOIN vicidial_list vi ON vi.lead_id = cl.lead_id
+       WHERE ${clSrc.dateWhere} AND vi.list_id IN (${ph})
        GROUP BY vi.list_id`,
-      [begin, end, ...listIds],
+      [...clSrc.fromParams, ...clSrc.whereParams, ...listIds],
       [],
-    ),
+    )),
   ]);
   const outMap = new Map(outboundCalled.map((row) => [String(row.list_id), row]));
   const inMap = new Map(inboundCalled.map((row) => [String(row.list_id), row]));
@@ -6849,26 +6973,31 @@ async function callbackHoldsDeactivate(req, res) {
 async function dialLogReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const serverIp = cleanText(req.query?.server_ip, 20).replace(/[^0-9.]/g, '');
   const hangupCause = cleanId(req.query?.sip_hangup_cause, 10);
-  let filterSql = '';
+  const extra = [];
+  const extraParams = [];
   if (serverIp) {
-    filterSql += ' AND server_ip = ?';
-    params.push(serverIp);
+    extra.push('vdl.server_ip = ?');
+    extraParams.push(serverIp);
   }
   if (hangupCause) {
-    filterSql += ' AND sip_hangup_cause = ?';
-    params.push(hangupCause);
+    extra.push('vdl.sip_hangup_cause = ?');
+    extraParams.push(hangupCause);
   }
+  const vdlSrc = await rangeSource({
+    table: 'vicidial_dial_log', dateCol: 'call_date',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'vdl',
+    extraWhere: extra.join(' AND '), extraParams,
+  });
   const [entries, servers] = await Promise.all([
     rows(
       `SELECT caller_code, lead_id, server_ip, call_date, extension, channel, context, timeout,
               outbound_cid, sip_hangup_cause, sip_hangup_reason, uniqueid
-       FROM vicidial_dial_log
-       WHERE call_date >= ? AND call_date <= ?${filterSql}
+       FROM ${vdlSrc.fromSql}
+       WHERE ${vdlSrc.dateWhere}
        ORDER BY call_date ASC LIMIT 2000`,
-      params,
+      vdlSrc.params,
       [],
     ),
     rows("SELECT server_ip, server_description FROM servers WHERE active_asterisk_server = 'Y' ORDER BY server_ip ASC LIMIT 100", [], []),
@@ -7057,25 +7186,24 @@ async function hangupCauseReport(req, res) {
 async function sipEventReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const sipEvent = cleanId(req.query?.sip_event, 20);
-  let filterSql = '';
-  if (sipEvent) {
-    filterSql = ' AND sip_event = ?';
-    params.push(sipEvent);
-  }
+  const src = await rangeSource({
+    table: 'vicidial_sip_event_log', dateCol: 'event_date',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'sel',
+    extraWhere: sipEvent ? 'sel.sip_event = ?' : '', extraParams: sipEvent ? [sipEvent] : [],
+  });
   const [entries, summary] = await Promise.all([
     rows(
       `SELECT sip_event_id, event_date, sip_event, uniqueid, server_ip, channel, caller_code, sip_call_id
-       FROM vicidial_sip_event_log WHERE event_date >= ? AND event_date <= ?${filterSql}
+       FROM ${src.fromSql} WHERE ${src.dateWhere}
        ORDER BY event_date ASC LIMIT 2000`,
-      params,
+      src.params,
       [],
     ),
     rows(
-      `SELECT sip_event, COUNT(*) AS events FROM vicidial_sip_event_log
-       WHERE event_date >= ? AND event_date <= ?${filterSql} GROUP BY sip_event ORDER BY events DESC LIMIT 50`,
-      params,
+      `SELECT sip_event, COUNT(*) AS events FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY sip_event ORDER BY events DESC LIMIT 50`,
+      src.params,
       [],
     ),
   ]);
@@ -7138,27 +7266,26 @@ async function recordingAccessReport(req, res) {
 async function apiLogReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const funcName = cleanText(req.query?.function, 40).replace(/[^-_A-Za-z0-9]/g, '');
-  let filterSql = '';
-  if (funcName) {
-    filterSql = ' AND `function` = ?';
-    params.push(funcName);
-  }
+  const src = await rangeSource({
+    table: 'vicidial_api_log', dateCol: 'api_date',
+    start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'al',
+    extraWhere: funcName ? 'al.`function` = ?' : '', extraParams: funcName ? [funcName] : [],
+  });
   const [entries, summary] = await Promise.all([
     rows(
       `SELECT api_id, api_date, user, agent_user, \`function\` AS api_function, value, result, result_reason,
               source, SUBSTRING(data, 1, 200) AS data, api_script, run_time
-       FROM vicidial_api_log WHERE api_date >= ? AND api_date <= ?${filterSql}
+       FROM ${src.fromSql} WHERE ${src.dateWhere}
        ORDER BY api_date DESC LIMIT 2000`,
-      params,
+      src.params,
       [],
     ),
     rows(
-      `SELECT \`function\` AS api_function, result, COUNT(*) AS calls FROM vicidial_api_log
-       WHERE api_date >= ? AND api_date <= ?${filterSql} GROUP BY \`function\`, result
+      `SELECT \`function\` AS api_function, result, COUNT(*) AS calls FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY \`function\`, result
        ORDER BY calls DESC LIMIT 100`,
-      params,
+      src.params,
       [],
     ),
   ]);
@@ -7279,19 +7406,22 @@ async function phoneStatsReport(req, res) {
   const serverIp = cleanText(req.query?.server_ip, 20).replace(/[^0-9.]/g, '');
   if (!extension || !serverIp) return res.json({ ok: true, phones, sections: null, range: { beginDate, endDate } });
 
-  const params = [extension, serverIp, begin, end];
+  const clSrc = await rangeSource({
+    table: 'call_log', dateCol: 'start_time', start: begin, end, alias: 'cl',
+    extraWhere: 'cl.extension = ? AND cl.server_ip = ?', extraParams: [extension, serverIp],
+  });
   const [byGroup, totals] = await Promise.all([
     rows(
       `SELECT channel_group, COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
-       FROM call_log WHERE extension = ? AND server_ip = ? AND start_time >= ? AND start_time <= ?
+       FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}
        GROUP BY channel_group ORDER BY channel_group ASC LIMIT 100`,
-      params,
+      clSrc.params,
       [],
     ),
     rows(
       `SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds
-       FROM call_log WHERE extension = ? AND server_ip = ? AND start_time >= ? AND start_time <= ?`,
-      params,
+       FROM ${clSrc.fromSql} WHERE ${clSrc.dateWhere}`,
+      clSrc.params,
       [],
     ).then((result) => result[0] || { calls: 0, seconds: 0 }),
   ]);
@@ -7370,13 +7500,16 @@ async function webserverUrlReport(req, res) {
       params,
       [],
     ),
-    rows(
-      `SELECT webserver, api_url, COUNT(*) AS hits FROM vicidial_api_log
-       WHERE api_date >= ? AND api_date <= ? GROUP BY webserver, api_url
+    rangeSource({
+      table: 'vicidial_api_log', dateCol: 'api_date',
+      start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, alias: 'al',
+    }).then((src) => rows(
+      `SELECT webserver, api_url, COUNT(*) AS hits FROM ${src.fromSql}
+       WHERE ${src.dateWhere} GROUP BY webserver, api_url
        ORDER BY webserver, api_url LIMIT 500`,
-      params,
+      src.params,
       [],
-    ),
+    )),
   ]);
   return res.json({ ok: true, loginUrls, apiUrls, range: { beginDate, endDate } });
 }
@@ -9835,56 +9968,71 @@ async function whiteboardReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
   const reportType = cleanChoice(req.query?.report_type, WHITEBOARD_REPORT_TYPES, 'DISPOSITION_TOTALS');
-  const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
-  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', params);
+  const start = `${beginDate} 00:00:00`;
+  const end = `${endDate} 23:59:59`;
+  const scopeParams = [];
+  const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', scopeParams);
 
   if (reportType === 'TEAM_PERFORMANCE_TOTALS') {
+    const vlSrc = await rangeSource({
+      table: 'vicidial_log', dateCol: 'call_date', start, end, alias: 'vl',
+      extraWhere: campaignWhere, extraParams: scopeParams,
+    });
     const items = await rows(
       `SELECT user_group, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
-       FROM vicidial_log
-       WHERE call_date BETWEEN ? AND ? AND ${campaignWhere}
+       FROM ${vlSrc.fromSql}
+       WHERE ${vlSrc.dateWhere}
        GROUP BY user_group ORDER BY calls DESC LIMIT 30`,
-      params,
+      vlSrc.params,
       [],
     );
     return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
   }
   if (reportType === 'INGROUP_PERFORMANCE_TOTALS') {
-    const groupParams = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
+    const groupParams = [];
     const groupWhere = scopeWhere(req.genxUser?.permissions?.allowedQueueGroups, 'campaign_id', groupParams);
+    const clSrc = await rangeSource({
+      table: 'vicidial_closer_log', dateCol: 'call_date', start, end, alias: 'cl',
+      extraWhere: groupWhere, extraParams: groupParams,
+    });
     const items = await rows(
       `SELECT campaign_id AS group_id, COUNT(*) AS calls,
               COALESCE(SUM(status NOT IN (${sqlStatusList(CLOSER_V2_UNANSWERED)})),0) AS answered,
               COALESCE(SUM(status LIKE '%DROP%'),0) AS drops
-       FROM vicidial_closer_log
-       WHERE call_date BETWEEN ? AND ? AND ${groupWhere}
+       FROM ${clSrc.fromSql}
+       WHERE ${clSrc.dateWhere}
        GROUP BY campaign_id ORDER BY calls DESC LIMIT 30`,
-      groupParams,
+      clSrc.params,
       [],
     );
     return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
   }
   if (reportType === 'DID_PERFORMANCE_TOTALS') {
+    const vdlSrc = await rangeSource({ table: 'vicidial_did_log', dateCol: 'call_date', start, end, alias: 'vdl' });
     const items = await rows(
       `SELECT d.did_pattern, d.did_description, COUNT(*) AS calls
-       FROM vicidial_did_log vdl LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
-       WHERE vdl.call_date BETWEEN ? AND ?
+       FROM ${vdlSrc.fromSql} LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
+       WHERE ${vdlSrc.dateWhere}
        GROUP BY vdl.did_id ORDER BY calls DESC LIMIT 30`,
-      [`${beginDate} 00:00:00`, `${endDate} 23:59:59`],
+      [...vdlSrc.fromParams, ...vdlSrc.whereParams],
       [],
     );
     return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
   }
+
+  const vlSrc = await rangeSource({
+    table: 'vicidial_log', dateCol: 'call_date', start, end, alias: 'vl',
+    extraWhere: campaignWhere, extraParams: scopeParams,
+  });
   if (reportType === 'AGENT_PERFORMANCE_TOTALS') {
     const items = await rows(
       `SELECT user, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
-       FROM vicidial_log
-       WHERE call_date BETWEEN ? AND ?
-         AND ${campaignWhere}
+       FROM ${vlSrc.fromSql}
+       WHERE ${vlSrc.dateWhere}
        GROUP BY user
        ORDER BY calls DESC
        LIMIT 30`,
-      params,
+      vlSrc.params,
       [],
     );
     return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
@@ -9892,13 +10040,12 @@ async function whiteboardReport(req, res) {
 
   const items = await rows(
     `SELECT status, COUNT(*) AS calls
-     FROM vicidial_log
-     WHERE call_date BETWEEN ? AND ?
-       AND ${campaignWhere}
+     FROM ${vlSrc.fromSql}
+     WHERE ${vlSrc.dateWhere}
      GROUP BY status
      ORDER BY calls DESC
      LIMIT 30`,
-    params,
+    vlSrc.params,
     [],
   );
   return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
