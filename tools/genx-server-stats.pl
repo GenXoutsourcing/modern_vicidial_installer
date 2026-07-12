@@ -38,7 +38,16 @@ close($la);
 $sysload =~ s/\D//g;
 $sysload = 0 unless length($sysload);
 
-# cpu_idle_percent: two /proc/stat samples 1 second apart.
+# cpu_idle_percent: averaged over the WHOLE minute, not a 1-second snapshot.
+# This script fires from cron at second :00 — the exact moment VICIdial's
+# minute-aligned jobs (hopper refill, adapt stats, keepalives) burst — so a
+# 1-second sample taken here systematically reported the burst as the box's
+# steady load (an idle DB primary read a constant ~19% while stock
+# AST_update boxes, which sample continuously, read 1%). Instead we diff
+# /proc/stat against the counters saved by the PREVIOUS run: a true ~60s
+# average, immune to the alignment. First run (no state file) falls back to
+# the old two-sample method.
+my $state_file = '/var/tmp/genx-server-stats.cpustat';
 sub cpu_sample {
     open(my $st, '<', '/proc/stat') or die "no /proc/stat\n";
     my @f = split(/\s+/, <$st>);
@@ -47,11 +56,27 @@ sub cpu_sample {
     my $total = 0; $total += $_ for @f[1..$#f];
     return ($idle, $total);
 }
-my ($idle1, $total1) = cpu_sample();
-sleep(1);
-my ($idle2, $total2) = cpu_sample();
-my $dt = $total2 - $total1;
-my $cpu_idle = $dt > 0 ? int(100 * ($idle2 - $idle1) / $dt) : 100;
+my ($idle_now, $total_now) = cpu_sample();
+my ($idle_prev, $total_prev);
+if (open(my $sf, '<', $state_file)) {
+    ($idle_prev, $total_prev) = split(/\s+/, <$sf> // '');
+    close($sf);
+}
+if (!defined $total_prev || !length($total_prev) || $total_now <= $total_prev) {
+    # No usable state (first run, or counters reset by a reboot): fall back
+    # to a 1-second sample just for this run.
+    ($idle_prev, $total_prev) = ($idle_now, $total_now);
+    sleep(1);
+    ($idle_now, $total_now) = cpu_sample();
+}
+my $dt = $total_now - $total_prev;
+my $cpu_idle = $dt > 0 ? int(100 * ($idle_now - $idle_prev) / $dt) : 100;
+$cpu_idle = 100 if $cpu_idle > 100;
+$cpu_idle = 0 if $cpu_idle < 0;
+if (open(my $sf, '>', $state_file)) {
+    print $sf "$idle_now $total_now\n";
+    close($sf);
+}
 
 # disk_usage: "N pct|" per df row, same as AST_update.pl's get_disk_space().
 my $disk_usage = '';
