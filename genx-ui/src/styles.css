@@ -1079,6 +1079,15 @@ body {
   margin-top: 10px;
 }
 
+.alt-mode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
 .alt-url-form .row-action-group {
   display: flex;
   justify-content: flex-end;

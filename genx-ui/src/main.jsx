@@ -2153,38 +2153,17 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'dial_timeout', label: 'Dial Timeout', type: 'number' },
       { key: 'dial_prefix', label: 'Dial Prefix' },
       { key: 'campaign_cid', label: 'Campaign CID' },
-      { key: 'available_only_ratio_tally', label: 'Available Only Tally', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'available_only_tally_threshold', label: 'Available Tally Threshold', type: 'select', options: enumOptions(ensureOption(TALLY_THRESHOLD_OPTIONS, form?.available_only_tally_threshold)) },
-      { key: 'available_only_tally_threshold_agents', label: 'Available Threshold Agents', type: 'select', options: enumOptions(ensureOption(TALLY_AGENT_OPTIONS, form?.available_only_tally_threshold_agents)) },
-      { key: 'dial_level_threshold', label: 'Dial Level Threshold', type: 'select', options: enumOptions(ensureOption(TALLY_THRESHOLD_OPTIONS, form?.dial_level_threshold)) },
-      { key: 'dial_level_threshold_agents', label: 'Dial Threshold Agents', type: 'select', options: enumOptions(ensureOption(TALLY_AGENT_OPTIONS, form?.dial_level_threshold_agents)) },
-      { key: 'dial_level_override', label: 'ADAPT Dial Level Override', type: 'select', options: flagOptions() },
-      { key: 'incall_tally_threshold_seconds', label: 'Agent In-Call Tally Seconds Threshold', type: 'number' },
-      { key: 'adaptive_dropped_percentage', label: 'Adaptive Drop %', type: 'select', options: dropPercentOptions(form?.adaptive_dropped_percentage) },
-      { key: 'adaptive_maximum_level', label: 'Adaptive Max Level', type: 'number', step: '0.1' },
-      { key: 'adaptive_latest_server_time', label: 'Latest Server Time' },
-      { key: 'adaptive_percentmax_percentage', label: 'Adapt Percent-Max %', type: 'select', options: enumOptions(ensureOption(['95', '90', '85', '80', '75', '70', '65', '60', '55', '50', '45', '40', '35', '30', '25', '20', '15', '10', '5'], form?.adaptive_percentmax_percentage)) },
-      { key: 'adaptive_intensity', label: 'Adaptive Intensity', type: 'select', options: labeledNumberOptions(40, -40, (value) => `${value} - ${value < 0 ? 'Less Intense' : value > 0 ? 'More Intense' : 'Balanced'}`, form?.adaptive_intensity) },
-      { key: 'adaptive_dl_diff_target', label: 'DL Diff Target', type: 'select', options: labeledNumberOptions(40, -40, (value) => `${value} - ${Math.abs(value)} ${value < 0 ? 'Agents Waiting' : value > 0 ? 'Calls Waiting' : 'Balanced'}`, form?.adaptive_dl_diff_target) },
-      { key: 'dl_diff_target_method', label: 'DL Diff Target Method', type: 'select', options: enumOptions(ensureOption(['ADAPT_CALC_ONLY', 'CALLS_PLACED'], form?.dl_diff_target_method)) },
-      { key: 'concurrent_transfers', label: 'Concurrent Transfers', type: 'select', options: enumOptions(ensureOption(CONCURRENT_TRANSFER_OPTIONS, form?.concurrent_transfers)) },
-      { key: 'drop_rate_group', label: 'Multiple Campaign Drop Rate Group', type: 'select', options: dropRateGroupOptions },
+      // Hidden from the Detail form (Steve 2026-07-12): tally/threshold,
+      // adaptive-tuning, concurrent-transfer and hopper-tuning knobs plus a
+      // batch of recording/script/AMD extras. Their values stay in form
+      // state, so the main Save resends them unchanged; the DB defaults (or
+      // legacy admin.php) still control them.
       { key: 'call_count_limit', label: 'Call Count Limit', type: 'number' },
       { key: 'call_count_target', label: 'Call Count Target', type: 'number' },
       { key: 'call_count_limit_restrict', label: 'Call Count Limit Manual Restrict', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'RESTRICT_ALL'], form?.call_count_limit_restrict)) },
-      { key: 'drop_lockout_time', label: 'Drop Lockout Time' },
-      { key: 'no_hopper_leads_logins', label: 'No Hopper Leads Logins', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'use_auto_hopper', label: 'Use Auto Hopper', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'auto_hopper_multi', label: 'Auto Hopper Multiplier', type: 'select', options: autoHopperMultiOptions(form?.auto_hopper_multi) },
-      { key: 'auto_trim_hopper', label: 'Auto Trim Hopper', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'hopper_vlc_dup_check', label: 'Hopper VLC Dup Check', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'hopper_drop_run_trigger', label: 'Hopper Drop-Run Trigger', type: 'select', options: [{ value: 'N', label: 'No Trigger' }, { value: 'Y', label: 'Trigger Drop-Run' }, { value: 'A', label: 'Trigger All Drops' }] },
       { key: 'reset_hopper', label: 'Force Reset of Hopper', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'auto_alt_dial', label: 'Auto Alt Dial', type: 'select', options: enumOptions(['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD']) },
       { key: 'auto_alt_dial_statuses', label: 'Auto Alt Statuses', wide: true },
-      { key: 'auto_alt_threshold', label: 'Auto Alt Dial Threshold', type: 'number' },
-      { key: 'alt_number_dialing', label: 'Manual Alt Num Dialing', type: 'select', options: enumOptions(ensureOption(['N', 'Y', 'SELECTED', 'SELECTED_TIMER_ALT', 'SELECTED_TIMER_ADDR3', 'UNSELECTED', 'UNSELECTED_TIMER_ALT', 'UNSELECTED_TIMER_ADDR3'], form?.alt_number_dialing)) },
-      { key: 'timer_alt_seconds', label: 'Timer Alt Seconds', type: 'number' },
       { section: 'Routing and Inbound' },
       { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
       { key: 'default_xfer_group', label: 'Default Xfer Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
@@ -2219,30 +2198,20 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'omit_phone_code', label: 'Omit Phone Code', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'agent_pause_codes_active', label: 'Pause Codes Active', type: 'select', options: enumOptions(['Y', 'N', 'FORCE']) },
       { section: 'Recording, Scripts, and Forms' },
-      { key: 'campaign_rec_exten', label: 'Recording Extension' },
       { key: 'campaign_vdad_exten', label: 'Routing Extension' },
       recordingField('campaign_rec_filename', 'Recording Filename', form?.campaign_rec_filename),
-      { key: 'allcalls_delay', label: 'All Calls Delay', type: 'number' },
-      { key: 'routing_initiated_recordings', label: 'Routing Initiated Recording', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'campaign_script', label: 'Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
       { key: 'campaign_script_two', label: 'Second Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
       { key: 'user_group_script', label: 'User Group Script Override', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
-      { key: 'script_tab_frame_size', label: 'Script Tab Frame Location', type: 'select', options: enumOptions(['DEFAULT', 'LEFT_EDGE']) },
-      { key: 'script_tab_height', label: 'Script Tab Height Override', type: 'number' },
       { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
       { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
       audioField('am_message_exten', 'Answering Machine Message', form?.am_message_exten),
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
-      { key: 'waitforsilence_options', label: 'WaitForSilence Options' },
-      { key: 'manual_vm_status_updates', label: 'Manual VM Status Updates', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
-      { key: 'am_message_wildcards', label: 'AM Message Wildcards', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { section: 'AMD and Voicemail Routing' },
       { key: 'amd_type', label: 'AMD Type', type: 'select', options: enumOptions(['AMD', 'CPD', 'KHOMP', 'ViciAMD']) },
       { key: 'amd_send_to_vmx', label: 'AMD Send to Action', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'amd_agent_route_options', label: 'AMD Agent Route Options', type: 'select', options: enumOptions(['ENABLED', 'PENDING', 'DISABLED']) },
       { key: 'amd_status_map', label: 'AMD Status Map', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'Default_AMD_status_map'], form?.amd_status_map)) },
-      { key: 'cpd_amd_action', label: 'CPD AMD Action', type: 'select', options: enumOptions(['DISABLED', 'DISPO', 'MESSAGE', 'INGROUP', 'CALLMENU']) },
-      { key: 'cpd_unknown_action', label: 'CPD Unknown Action', type: 'select', options: enumOptions(['DISABLED', 'DISPO', 'MESSAGE', 'INGROUP', 'CALLMENU']) },
       { key: 'amd_inbound_group', label: 'AMD Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'amd_callmenu', label: 'AMD Call Menu', type: callMenuNoneOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuNoneOptions, form?.amd_callmenu) },
       { key: 'leave_vm_message_group_id', label: 'VM Message Group', type: 'select', options: enumOptions(ensureOption(['---NONE---'], form?.leave_vm_message_group_id)) },
@@ -4275,31 +4244,52 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
         </div>
         <div className="entity-form">
           <div className="field-grid">
-            {config.fields.map(([key, label, urlType]) => (
-              <div key={key} className="wide-field url-field-block">
-                <label className="wide-field">
-                  <span>{label}</span>
-                  <textarea
-                    value={values[key]}
-                    onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
-                  />
-                </label>
-                {urlType && (
-                  <p className="field-hint">
-                    Type ALT above (and Save) to use multiple alternate URLs by status/list — manage them below.
-                  </p>
-                )}
-                {urlType && String(values[key] || '').trim().toUpperCase() === 'ALT' && (
-                  <AltUrlManager
-                    campaignId={campaignId}
-                    urlType={urlType}
-                    showTalkSec={urlType === 'dispo'}
-                    token={token}
-                    onLogout={onLogout}
-                  />
-                )}
-              </div>
-            ))}
+            {config.fields.map(([key, label, urlType]) => {
+              // In ALT mode the single-URL box disappears entirely — only the
+              // alternate-URL manager shows, so there's no confusion about
+              // which one the dialer uses. "Turn ALT Off" clears the field
+              // back to single-URL mode (remember to Save).
+              const isAlt = Boolean(urlType) && String(values[key] || '').trim().toUpperCase() === 'ALT';
+              return (
+                <div key={key} className="wide-field url-field-block">
+                  {!isAlt && (
+                    <label className="wide-field">
+                      <span>{label}</span>
+                      <textarea
+                        value={values[key]}
+                        onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                      />
+                    </label>
+                  )}
+                  {!isAlt && urlType && (
+                    <p className="field-hint">
+                      Type ALT above (and Save) to use multiple alternate URLs by status/list instead of a single URL.
+                    </p>
+                  )}
+                  {isAlt && (
+                    <div className="alt-mode-head">
+                      <span>{label}: <strong>ALT</strong> — using the alternate URLs below</span>
+                      <button
+                        type="button"
+                        className="secondary-action compact-action"
+                        onClick={() => setValues((current) => ({ ...current, [key]: '' }))}
+                      >
+                        Turn ALT Off
+                      </button>
+                    </div>
+                  )}
+                  {isAlt && (
+                    <AltUrlManager
+                      campaignId={campaignId}
+                      urlType={urlType}
+                      showTalkSec={urlType === 'dispo'}
+                      token={token}
+                      onLogout={onLogout}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
