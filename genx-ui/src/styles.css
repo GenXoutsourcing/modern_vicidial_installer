@@ -990,6 +990,27 @@ body {
   opacity: 0.62;
 }
 
+/* Campaign Basic lists: list button + activate/deactivate toggle per row. */
+.list-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-toggle-row .tool-picker-item {
+  flex: 1;
+}
+
+.list-toggle-row .row-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.list-toggle-row .list-toggle-on {
+  border-color: rgba(255, 122, 122, 0.5);
+  color: var(--red, #ff7a7a);
+}
+
 .tool-add-action {
   width: 100%;
 }

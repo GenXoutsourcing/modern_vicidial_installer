@@ -2142,7 +2142,15 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'campaign_allow_inbound', label: 'Allow Inbound', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
     ];
 
-    if (mode !== 'editDetail') return basicFields;
+    if (mode !== 'editDetail') {
+      // BASIC edit page is operational-only (Steve 2026-07-12): every field
+      // read-only except Auto Dial Level; full editing lives on the Detail
+      // page. Create mode keeps everything editable.
+      if (mode === 'edit') {
+        return basicFields.map((field) => (field.key === 'auto_dial_level' ? field : { ...field, disabled: true }));
+      }
+      return basicFields;
+    }
 
     return [
       { section: 'Basic Campaign' },
@@ -4064,7 +4072,9 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
 // Mirrors the cross-links at the bottom of legacy admin.php campaign modify:
 // lists within the campaign, live hopper view, real-time report, and the
 // log-all-agents-out action. Delete lives on the modal's standard delete button.
-function CampaignConnections({ campaignId, user, token, onNavigate, onLogout }) {
+// `basic` trims the strip to the operational trio (Hopper List, Real-Time
+// Report, Log All Agents Out) — the report deep-links only show on Detail.
+function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, basic = false }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
@@ -4109,26 +4119,30 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout }) 
           <Radio size={15} aria-hidden="true" />
           Real-Time Report
         </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportOutboundCalling')}>
-          <PhoneCall size={15} aria-hidden="true" />
-          Outbound Calling Report
-        </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportCampaignStatusList')}>
-          <Activity size={15} aria-hidden="true" />
-          Status List Report
-        </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportListCampaignStatuses', { campaignId: campaign })}>
-          <Gauge size={15} aria-hidden="true" />
-          Lead Statuses in Campaign
-        </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'campaign', id: campaign })}>
-          <Clock3 size={15} aria-hidden="true" />
-          CallBack Holds
-        </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'CAMPAIGNS', record: campaign })}>
-          <ShieldCheck size={15} aria-hidden="true" />
-          Admin Changes
-        </button>
+        {!basic && (
+          <>
+            <button type="button" className="row-action" onClick={() => onNavigate('reportOutboundCalling')}>
+              <PhoneCall size={15} aria-hidden="true" />
+              Outbound Calling Report
+            </button>
+            <button type="button" className="row-action" onClick={() => onNavigate('reportCampaignStatusList')}>
+              <Activity size={15} aria-hidden="true" />
+              Status List Report
+            </button>
+            <button type="button" className="row-action" onClick={() => onNavigate('reportListCampaignStatuses', { campaignId: campaign })}>
+              <Gauge size={15} aria-hidden="true" />
+              Lead Statuses in Campaign
+            </button>
+            <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'campaign', id: campaign })}>
+              <Clock3 size={15} aria-hidden="true" />
+              CallBack Holds
+            </button>
+            <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'CAMPAIGNS', record: campaign })}>
+              <ShieldCheck size={15} aria-hidden="true" />
+              Admin Changes
+            </button>
+          </>
+        )}
         {userCan(user, 'campaigns') && (
           <button
             type="button"
@@ -4146,13 +4160,23 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout }) 
   );
 }
 
-// Bottom section of the Manage Campaign modal: the campaign's lists plus a
-// per-status lead count breakdown across all of them.
+// Bottom section of the Manage Campaign modal: the campaign's lists with
+// per-list activate/deactivate toggles, plus a per-status lead breakdown
+// that counts ACTIVE lists only (server enforces the active filter).
 function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, onLogout }) {
   const campaign = String(campaignId || '');
-  const lists = (admin?.lists || []).filter((row) => String(row.campaign_id || '') === campaign);
+  // Local overrides so a toggle reflects immediately; admin.lists refreshes
+  // on its own 30s cycle and will agree by then.
+  const [activeOverride, setActiveOverride] = useState({});
+  const [toggling, setToggling] = useState('');
+  const [toggleError, setToggleError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const lists = (admin?.lists || [])
+    .filter((row) => String(row.campaign_id || '') === campaign)
+    .map((row) => ({ ...row, active: activeOverride[String(row.list_id)] ?? row.active }));
   const activeLists = lists.filter((row) => row.active === 'Y').length;
   const [breakdown, setBreakdown] = useState(null);
+  const canToggle = userCan(user, 'lists');
 
   useEffect(() => {
     let cancelled = false;
@@ -4169,7 +4193,29 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
     return () => {
       cancelled = true;
     };
-  }, [campaign, token, onLogout]);
+  }, [campaign, token, onLogout, refreshKey]);
+
+  async function toggleActive(row) {
+    const next = row.active === 'Y' ? 'N' : 'Y';
+    setToggling(String(row.list_id));
+    setToggleError('');
+    try {
+      await apiFetch(`/admin/lists/${encodeURIComponent(row.list_id)}/active`, token, {
+        method: 'POST',
+        body: JSON.stringify({ active: next }),
+      });
+      setActiveOverride((current) => ({ ...current, [String(row.list_id)]: next }));
+      setRefreshKey((current) => current + 1); // re-pull the active-only breakdown
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setToggleError(requestError.status === 403 ? 'Not permitted to change lists' : `List ${row.list_id} update failed`);
+    } finally {
+      setToggling('');
+    }
+  }
 
   if (!campaign) return null;
 
@@ -4188,22 +4234,34 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
             ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} in this campaign (${formatNumber(activeLists)} active)`
             : 'No lists point at this campaign yet'}
         </p>
-        {lists.slice(0, 10).map((row) => (
-          <button
-            type="button"
-            className="tool-picker-item"
-            key={row.list_id}
-            onClick={() => userCan(user, 'lists') && onSwitchAction('lists', 'edit', row)}
-            disabled={!userCan(user, 'lists')}
-          >
-            {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
-          </button>
+        {toggleError && <p className="form-error">{toggleError}</p>}
+        {lists.slice(0, 20).map((row) => (
+          <div className="list-toggle-row" key={row.list_id}>
+            <button
+              type="button"
+              className="tool-picker-item"
+              onClick={() => userCan(user, 'lists') && onSwitchAction('lists', 'edit', row)}
+              disabled={!userCan(user, 'lists')}
+            >
+              {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
+            </button>
+            {canToggle && (
+              <button
+                type="button"
+                className={row.active === 'Y' ? 'row-action list-toggle-on' : 'row-action'}
+                disabled={toggling === String(row.list_id)}
+                onClick={() => toggleActive(row)}
+              >
+                {toggling === String(row.list_id) ? '...' : row.active === 'Y' ? 'Deactivate' : 'Activate'}
+              </button>
+            )}
+          </div>
         ))}
       </div>
       {breakdown?.statuses?.length > 0 && (
         <>
           <p className="connection-summary">
-            Lead statuses across these lists ({formatNumber(breakdown.totalLeads)} leads)
+            Lead statuses across the active lists ({formatNumber(breakdown.totalLeads)} leads)
           </p>
           <DataTable
             columns={[
@@ -4222,7 +4280,7 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
         </>
       )}
       {breakdown && !breakdown.statuses?.length && lists.length > 0 && (
-        <p className="connection-summary">{breakdown.error ? 'Lead status counts unavailable' : 'No leads loaded yet'}</p>
+        <p className="connection-summary">{breakdown.error ? 'Lead status counts unavailable' : 'No leads in the active lists yet'}</p>
       )}
     </div>
   );
@@ -5251,7 +5309,11 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // Restricted managers (no Admin nav access) cannot delete users at all.
   const userDeleteBlocked = action.entity === 'users' && !hasAdminNav(user);
   const isOwnGroup = action.entity === 'userGroups' && String(form.user_group || '') === String(user?.userGroup || '');
-  const canDelete = isEdit && !isDetail && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup && !userDeleteBlocked;
+  // Campaign BASIC is operational-only (read-only except Auto Dial Level),
+  // so its Delete moved to the campaign DETAIL modal — the only entity where
+  // Detail carries Delete, because Basic was the only delete path.
+  const deleteMode = action.entity === 'campaigns' ? isDetail : !isDetail;
+  const canDelete = isEdit && deleteMode && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup && !userDeleteBlocked;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -5389,6 +5451,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onNavigate={onNavigate}
             onLogout={onLogout}
+            basic={!isDetail}
           />
         )}
 

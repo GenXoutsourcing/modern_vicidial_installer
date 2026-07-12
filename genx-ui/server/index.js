@@ -13281,6 +13281,26 @@ async function listWithScope(req, listId) {
   return { list };
 }
 
+// Flip a single list's active flag (the Manage Campaign Basic page's
+// activate/deactivate toggle). Deliberately NOT routed through saveList:
+// that handler rebuilds the FULL list payload with defaults for missing
+// fields, which would reset everything else on the row.
+async function setListActive(req, res) {
+  if (!requireModify(req, res, 'modifyLists')) return;
+  const id = cleanId(req.params.id, 30);
+  if (!id) return badRequest(res, 'invalid_list_id');
+  const scoped = await listWithScope(req, id);
+  if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
+  const active = req.body?.active === 'Y' ? 'Y' : 'N';
+  try {
+    await execute('UPDATE vicidial_lists SET active = ? WHERE list_id = ? LIMIT 1', [active, id]);
+    await adminLog(req, 'LISTS', 'MODIFY', id, 'GENX LIST ACTIVE TOGGLE', 'UPDATE vicidial_lists SET active', `active=${active}`);
+    return res.json({ ok: true, list_id: id, active });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'list_active_failed' });
+  }
+}
+
 // The five breakdowns at the bottom of legacy list modify (ADD=311):
 // statuses, timezones, owners, ranks and called-counts within the list.
 async function listStats(req, res) {
@@ -13511,7 +13531,10 @@ async function campaignLeadStatuses(req, res) {
   if (!scopeAllows(me.permissions?.allowedCampaigns, id)) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
-  const lists = await rows('SELECT list_id FROM vicidial_lists WHERE campaign_id = ? LIMIT 500', [id], []);
+  // ACTIVE lists only (Steve 2026-07-12): the Basic-page status breakdown
+  // reflects what the dialer can actually reach, so toggling a list off
+  // removes its leads from these counts.
+  const lists = await rows("SELECT list_id FROM vicidial_lists WHERE campaign_id = ? AND active = 'Y' LIMIT 500", [id], []);
   if (!lists.length) return res.json({ ok: true, statuses: [], totalLeads: 0 });
   const listIds = lists.map((row) => row.list_id);
   const ph = listIds.map(() => '?').join(',');
@@ -15544,6 +15567,7 @@ app.post('/api/admin/lists', requireAccess, (req, res) => saveList(req, res, 'cr
 app.put('/api/admin/lists/:id', requireAccess, (req, res) => saveList(req, res, 'update'));
 app.delete('/api/admin/lists/:id', requireAccess, deleteList);
 app.get('/api/admin/lists/:id/stats', requireAccess, listStats);
+app.post('/api/admin/lists/:id/active', requireAccess, setListActive);
 app.post('/api/admin/lists/:id/clear', requireAccess, clearList);
 app.post('/api/admin/lists/:id/reset', requireAccess, resetList);
 app.get('/api/admin/lists/:id/download', requireAccess, downloadList);
