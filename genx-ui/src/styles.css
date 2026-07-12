@@ -1021,6 +1021,26 @@ body {
   color: var(--red, #ff7a7a);
 }
 
+/* Manage Dial Statuses modal: two-column toggle grid. */
+.dial-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dial-status-grid .dial-status-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .dial-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .tool-add-action {
   width: 100%;
 }

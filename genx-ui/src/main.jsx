@@ -2106,18 +2106,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     };
   };
   const currentStatuses = campaignDialStatuses(form);
-  const statusNameMap = new Map([
-    ...(admin?.lookups?.statuses || []),
-    ...(admin?.lookups?.campaignStatuses || []),
-  ].map((item) => [String(item.status || ''), item.status_name || item.status]));
-  const addDialStatusOptions = statusOptionsForCampaign(admin, form?.campaign_id, currentStatuses);
-  const removeDialStatusOptions = [
-    { value: '', label: '- NONE -' },
-    ...currentStatuses.map((status) => ({
-      value: status,
-      label: `${status} - ${statusNameMap.get(status) || 'Campaign dial status'}`,
-    })),
-  ];
 
   if (entity === 'campaignCopy') {
     return [
@@ -2156,9 +2144,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { section: 'Basic Campaign' },
       ...basicFields.map((field) => ({ ...field, disabled: field.key === 'campaign_id' || field.disabled })),
       { section: 'Dialing and Hopper' },
+      // Dial statuses are managed through the Manage Dial Statuses modal
+      // (toggle grid, applies immediately) — the legacy one-at-a-time
+      // add/remove selects are gone.
       { key: '_dial_status_list', label: 'Current Dial Statuses', type: 'statusList', statuses: currentStatuses, wide: true },
-      { key: 'add_dial_status', label: 'Add A Dial Status to Call', type: 'select', options: addDialStatusOptions },
-      { key: 'remove_dial_status', label: 'Remove Dial Status', type: 'select', options: removeDialStatusOptions },
       { key: 'allow_closers', label: 'Allow Closers', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'next_agent_call', label: 'Next Agent Call', type: 'select', options: enumOptions(ensureOption(NEXT_AGENT_CALL_OPTIONS, form?.next_agent_call)) },
       { key: 'dial_timeout', label: 'Dial Timeout', type: 'number' },
@@ -4072,6 +4061,91 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
 // Mirrors the cross-links at the bottom of legacy admin.php campaign modify:
 // lists within the campaign, live hopper view, real-time report, and the
 // log-all-agents-out action. Delete lives on the modal's standard delete button.
+// Stacked modal on the campaign Detail page: every eligible status (system +
+// this campaign's own, minus the never-dialable INCALL/QUEUE/CBHOLD) with a
+// green Active / red Inactive toggle. Each click applies IMMEDIATELY via the
+// dial-status endpoint — same pattern as the Basic page's list toggles,
+// replacing the legacy pick-one-then-save add/remove selects.
+function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, onApply, onClose }) {
+  const [busyStatus, setBusyStatus] = useState('');
+  const [error, setError] = useState('');
+  const selected = new Set(current);
+  const excluded = new Set(['INCALL', 'QUEUE', 'CBHOLD']);
+  const entries = [];
+  const seen = new Set();
+  const push = (item, source) => {
+    const value = String(item?.status || '');
+    if (!value || seen.has(value) || excluded.has(value)) return;
+    seen.add(value);
+    entries.push({ status: value, name: item.status_name || source });
+  };
+  (admin?.lookups?.statuses || []).forEach((item) => push(item, 'System'));
+  (admin?.lookups?.campaignStatuses || [])
+    .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
+    .forEach((item) => push(item, 'Campaign'));
+  entries.sort((a, b) => a.status.localeCompare(b.status));
+
+  async function toggle(entry) {
+    const next = selected.has(entry.status) ? 'N' : 'Y';
+    setBusyStatus(entry.status);
+    setError('');
+    try {
+      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/dial-status`, token, {
+        method: 'POST',
+        body: JSON.stringify({ status: entry.status, active: next }),
+      });
+      onApply(payload.dial_statuses || []);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not permitted to change dial statuses' : `${entry.status} update failed`);
+    } finally {
+      setBusyStatus('');
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label="Manage Dial Statuses">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Dialing</p>
+            <h2>Dial Statuses — {campaignId}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <p className="connection-summary">
+          Green statuses are dialed by the hopper. Every click applies immediately — no separate save.
+        </p>
+        {error && <p className="form-error">{error}</p>}
+        <div className="dial-status-grid">
+          {entries.map((entry) => {
+            const active = selected.has(entry.status);
+            return (
+              <div className="list-toggle-row" key={entry.status}>
+                <span className="tool-picker-item dial-status-label">{entry.status} - {entry.name}</span>
+                <button
+                  type="button"
+                  className={active ? 'row-action list-toggle-active' : 'row-action list-toggle-inactive'}
+                  disabled={busyStatus === entry.status}
+                  onClick={() => toggle(entry)}
+                  title={active ? 'Click to stop dialing this status' : 'Click to dial this status'}
+                >
+                  {busyStatus === entry.status ? '...' : active ? 'Active' : 'Inactive'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
 function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, basic = false }) {
@@ -5279,6 +5353,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [error, setError] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [dialStatusModal, setDialStatusModal] = useState(false);
   const mode = action.mode || 'create';
   const fields = actionFields(action.entity, mode, admin, form, user);
   const label = entityLabel(action.entity);
@@ -5523,6 +5598,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
                         <span key={status}>{status}</span>
                       ))}
                       {!(field.statuses || []).length && <em>No dial statuses selected</em>}
+                      {field.key === '_dial_status_list' && action.entity === 'campaigns' && (
+                        <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
+                          <SlidersHorizontal size={14} aria-hidden="true" />
+                          Manage Dial Statuses
+                        </button>
+                      )}
                     </div>
                   ) : field.type === 'multiSelectText' ? (
                     <select
@@ -5604,6 +5685,21 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onSwitchAction={onSwitchAction}
             onLogout={onLogout}
+          />
+        )}
+        {dialStatusModal && (
+          <CampaignDialStatusModal
+            admin={admin}
+            campaignId={form.campaign_id}
+            current={campaignDialStatuses(form)}
+            token={token}
+            onLogout={onLogout}
+            onApply={(next) => setForm((current) => ({
+              ...current,
+              dial_status_list: next,
+              dial_statuses: next.length ? `${next.join(' ')} -` : '',
+            }))}
+            onClose={() => setDialStatusModal(false)}
           />
         )}
       </section>

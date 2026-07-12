@@ -3335,6 +3335,41 @@ async function dialStatusExistsForCampaign(campaignId, status) {
   return Boolean(match);
 }
 
+// Toggle ONE dial status on/off for a campaign — the Detail page's "Manage
+// Dial Statuses" modal applies each click immediately (same pattern as the
+// Basic page's list active toggles), instead of the pick-one/save legacy
+// add/remove flow. Reuses the same parse/format/validation helpers.
+async function campaignDialStatusToggle(req, res) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_campaign_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const status = cleanId(req.body?.status, 6);
+  if (!status) return badRequest(res, 'status_required');
+  const enable = req.body?.active === 'Y';
+  const [campaign] = await rows('SELECT dial_statuses FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [id], []);
+  if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+  let statuses = parseDialStatuses(campaign.dial_statuses);
+  if (enable) {
+    if (!(await dialStatusExistsForCampaign(id, status))) return badRequest(res, 'invalid_dial_status');
+    if (!statuses.includes(status)) statuses = [...statuses, status];
+  } else {
+    statuses = statuses.filter((item) => item !== status);
+  }
+  try {
+    await execute(
+      'UPDATE vicidial_campaigns SET dial_statuses = ?, campaign_changedate = NOW() WHERE campaign_id = ?',
+      [dialStatusesText(statuses), id],
+    );
+    await adminLog(req, 'CAMPAIGN_DIALSTATUS', 'MODIFY', id, 'GENX TOGGLE CAMPAIGN DIAL STATUS', 'UPDATE vicidial_campaigns SET dial_statuses', `${enable ? 'Added' : 'Removed'}: ${status}`);
+    return res.json({ ok: true, dial_statuses: statuses });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'dial_status_toggle_failed' });
+  }
+}
+
 async function applyCampaignDialStatusChanges(req, campaignId) {
   const addStatus = cleanId(req.body?.add_dial_status, 6);
   const removeStatus = cleanId(req.body?.remove_dial_status, 6);
@@ -15555,6 +15590,7 @@ app.put('/api/admin/campaigns/:id', requireAccess, (req, res) => saveCampaign(re
 app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
 app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
 app.get('/api/admin/campaigns/:id/lead-statuses', requireAccess, campaignLeadStatuses);
+app.post('/api/admin/campaigns/:id/dial-status', requireAccess, campaignDialStatusToggle);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
