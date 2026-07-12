@@ -4173,7 +4173,8 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
   const [refreshKey, setRefreshKey] = useState(0);
   const lists = (admin?.lists || [])
     .filter((row) => String(row.campaign_id || '') === campaign)
-    .map((row) => ({ ...row, active: activeOverride[String(row.list_id)] ?? row.active }));
+    .map((row) => ({ ...row, active: activeOverride[String(row.list_id)] ?? row.active }))
+    .sort((a, b) => Number(a.list_id) - Number(b.list_id)); // smallest list ID first
   const activeLists = lists.filter((row) => row.active === 'Y').length;
   const [breakdown, setBreakdown] = useState(null);
   const canToggle = userCan(user, 'lists');
