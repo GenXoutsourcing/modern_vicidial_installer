@@ -1003,11 +1003,21 @@ body {
 
 .list-toggle-row .row-action {
   flex: 0 0 auto;
+  min-width: 108px;
+  justify-content: center;
   white-space: nowrap;
 }
 
-.list-toggle-row .list-toggle-on {
-  border-color: rgba(255, 122, 122, 0.5);
+/* State-colored toggle: green = list active, red = deactivated. */
+.list-toggle-row .list-toggle-active {
+  border-color: rgba(115, 251, 211, 0.4);
+  background: rgba(115, 251, 211, 0.1);
+  color: var(--green);
+}
+
+.list-toggle-row .list-toggle-inactive {
+  border-color: rgba(255, 122, 122, 0.45);
+  background: rgba(255, 122, 122, 0.1);
   color: var(--red, #ff7a7a);
 }
 

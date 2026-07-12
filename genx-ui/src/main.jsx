@@ -4246,13 +4246,16 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
               {row.list_id} - {row.list_name || 'Unnamed list'} ({formatNumber(row.lead_count)} leads{row.active === 'Y' ? ', active' : ''})
             </button>
             {canToggle && (
+              /* Button shows the list's CURRENT state (green ACTIVE / red
+                 DEACTIVATED); clicking flips it. */
               <button
                 type="button"
-                className={row.active === 'Y' ? 'row-action list-toggle-on' : 'row-action'}
+                className={row.active === 'Y' ? 'row-action list-toggle-active' : 'row-action list-toggle-inactive'}
                 disabled={toggling === String(row.list_id)}
                 onClick={() => toggleActive(row)}
+                title={row.active === 'Y' ? 'Click to deactivate this list' : 'Click to activate this list'}
               >
-                {toggling === String(row.list_id) ? '...' : row.active === 'Y' ? 'Deactivate' : 'Activate'}
+                {toggling === String(row.list_id) ? '...' : row.active === 'Y' ? 'Active' : 'Deactivated'}
               </button>
             )}
           </div>
