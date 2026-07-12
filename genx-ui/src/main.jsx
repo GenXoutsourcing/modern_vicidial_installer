@@ -4078,6 +4078,9 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, ba
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
+  // Hopper List / Real-Time Report open stacked on TOP of the campaign
+  // modal instead of navigating away from it.
+  const [reportModal, setReportModal] = useState(''); // '' | 'hopper' | 'realtime'
 
   async function logoutAgents() {
     if (!confirmingLogout) {
@@ -4111,14 +4114,24 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, ba
         <Compass size={20} aria-hidden="true" />
       </div>
       <div className="connection-actions">
-        <button type="button" className="row-action" onClick={() => onNavigate('reportHopperList', { campaignId: campaign })}>
+        <button type="button" className="row-action" onClick={() => setReportModal('hopper')}>
           <Database size={15} aria-hidden="true" />
           Hopper List
         </button>
-        <button type="button" className="row-action" onClick={() => onNavigate('reportRealtimeMain')}>
+        {/* Real anchor so right/ctrl/middle-click opens the report in a new
+            tab (hash route); a plain left-click opens the stacked modal. */}
+        <a
+          href="#/reportRealtimeMain"
+          className="row-action"
+          onClick={(event) => {
+            if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            setReportModal('realtime');
+          }}
+        >
           <Radio size={15} aria-hidden="true" />
           Real-Time Report
-        </button>
+        </a>
         {!basic && (
           <>
             <button type="button" className="row-action" onClick={() => onNavigate('reportOutboundCalling')}>
@@ -4156,6 +4169,24 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, ba
         )}
         {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
+      {reportModal && (
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setReportModal(''))}>
+          <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={reportModal === 'hopper' ? 'Hopper List' : 'Real-Time Report'}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Report</p>
+                <h2>{reportModal === 'hopper' ? `Hopper List — ${campaign}` : 'Real-Time Report'}</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setReportModal('')} aria-label="Close" title="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
+            {reportModal === 'hopper'
+              ? <HopperListReportView token={token} initialCampaignId={campaign} />
+              : <RealtimeMainReportView token={token} user={user} />}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -5231,6 +5262,17 @@ function AudioChooserField({ field, value, token, onChange }) {
   );
 }
 
+// Sitewide modal behavior: clicking the dimmed area outside the panel closes
+// the modal. mousedown + target check so a press that STARTS inside the panel
+// (e.g. a text-selection drag that ends over the backdrop) never closes it.
+function backdropCloseProps(onClose) {
+  return {
+    onMouseDown: (event) => {
+      if (event.target === event.currentTarget) onClose();
+    },
+  };
+}
+
 function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, onSwitchAction, onNavigate }) {
   const [form, setForm] = useState(() => ({ ...actionDefaults(action.entity, admin), ...(action.row || {}) }));
   const [saving, setSaving] = useState(false);
@@ -5320,7 +5362,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const canDelete = isEdit && deleteMode && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup && !userDeleteBlocked;
 
   return (
-    <div className="modal-backdrop" role="presentation">
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
       <section className={`modal-panel ${isDetail ? 'detail-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`${isEdit ? 'Manage' : 'Add'} ${label}`}>
         <div className="modal-head">
           <div>
@@ -9172,7 +9214,7 @@ function AudioStorePanel({ user }) {
         </div>
       </Panel>
       {open && (
-        <div className="modal-backdrop" role="presentation">
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setOpen(false))}>
           <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label="Manage Audio Store">
             <div className="modal-head">
               <div>
@@ -16517,7 +16559,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       )}
       {/* Pause modal: pick a pause reason (legacy pause-code panel) */}
       {pauseModal && live && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setPauseModal(false)}>
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setPauseModal(false))}>
           <section
             className="modal-panel agn-modal"
             role="dialog"
@@ -16573,7 +16615,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       )}
       {/* Manual dial modal (legacy MANUAL DIAL popup) */}
       {dialModal && live && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setDialModal(false)}>
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setDialModal(false))}>
           <section
             className="modal-panel agn-modal"
             role="dialog"
@@ -16804,7 +16846,7 @@ function RecordingsView({ admin, token }) {
         />
       </Panel>
       {openTranscript && (
-        <div className="modal-backdrop" onClick={() => setOpenTranscript(null)}>
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setOpenTranscript(null))}>
           <div className="modal-panel detail-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
               <div>
