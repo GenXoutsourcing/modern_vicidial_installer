@@ -1021,6 +1021,17 @@ body {
   color: var(--red, #ff7a7a);
 }
 
+/* Hopper List: many narrow columns, often inside a modal — never wrap
+   mid-word in headers or cells; scroll horizontally instead. */
+.hopper-table .table-wrap {
+  overflow-x: auto;
+}
+
+.hopper-table th,
+.hopper-table td {
+  white-space: nowrap;
+}
+
 /* Manage Dial Statuses modal: two-column toggle grid. */
 .dial-status-grid {
   display: grid;

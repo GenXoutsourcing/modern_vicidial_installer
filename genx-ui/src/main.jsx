@@ -9009,7 +9009,8 @@ function HopperListReportView({ token, initialCampaignId }) {
     { key: 'priority', label: 'Priority' },
     { key: 'lead_id', label: 'Lead ID' },
     { key: 'list_id', label: 'List ID' },
-    { key: 'phone_number', label: 'Phone', render: (row) => (row.phone_code ? `${row.phone_number} (${row.phone_code})` : row.phone_number) },
+    // Country code shown only when it isn't 1 (US) — '+52 55...' etc.
+    { key: 'phone_number', label: 'Phone', render: (row) => (row.phone_code && String(row.phone_code) !== '1' ? `+${row.phone_code} ${row.phone_number}` : row.phone_number) },
     { key: 'state', label: 'State' },
     { key: 'status', label: 'Lead Status' },
     { key: 'called_count', label: 'Count' },
@@ -9027,11 +9028,6 @@ function HopperListReportView({ token, initialCampaignId }) {
         if (row.last_call_hours < 24) return `${row.last_call_hours} hrs ago`;
         return `${Math.floor(row.last_call_hours / 24)} days ago`;
       },
-    },
-    {
-      key: 'hopper_status',
-      label: 'Hopper Status',
-      render: (row) => (row.hopper_status === 'READY' ? row.hopper_status : `${row.hopper_status}${row.hopper_user ? ` (${row.hopper_user})` : ''}`),
     },
   ];
 
@@ -9077,7 +9073,7 @@ function HopperListReportView({ token, initialCampaignId }) {
         </section>
       )}
       {campaignId && entries && (
-        <Panel eyebrow="Results" title={`Hopper Entries (${formatNumber(entries.length)})`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Results" title={`Hopper Entries (${formatNumber(entries.length)})`} icon={Database} className="admin-wide-panel hopper-table">
           <DataTable
             emptyLabel="No leads currently in the hopper for that campaign/status"
             rows={entries.map((row) => ({ ...row, id: row.hopper_id }))}
