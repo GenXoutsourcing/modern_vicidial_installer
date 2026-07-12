@@ -3335,6 +3335,39 @@ async function dialStatusExistsForCampaign(campaignId, status) {
   return Boolean(match);
 }
 
+// Save the campaign's webform / call URLs from the Detail page's pill-button
+// modals (Webform URLs, Call URLs). Touches ONLY the URL columns that were
+// sent — the campaign's full-save path (campaignPayload) still carries these
+// fields too, and the client keeps its form state in sync after a modal
+// save so the two paths never fight.
+const CAMPAIGN_URL_FIELDS = [
+  'web_form_address', 'web_form_address_two', 'web_form_address_three',
+  'start_call_url', 'dispo_call_url', 'na_call_url',
+];
+async function saveCampaignUrls(req, res) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) return badRequest(res, 'invalid_campaign_id');
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
+  const [campaign] = await rows('SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [id], []);
+  if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
+  const payload = {};
+  for (const field of CAMPAIGN_URL_FIELDS) {
+    if (req.body?.[field] !== undefined) payload[field] = cleanText(req.body[field], 2000);
+  }
+  if (!Object.keys(payload).length) return badRequest(res, 'no_url_fields');
+  const { assignments, values } = dynamicAssignments(payload);
+  try {
+    await execute(`UPDATE vicidial_campaigns SET ${assignments}, campaign_changedate = NOW() WHERE campaign_id = ?`, [...values, id]);
+    await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX CAMPAIGN URLS', 'UPDATE vicidial_campaigns (URL fields)', Object.keys(payload).join(', '));
+    return res.json({ ok: true, urls: payload });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'campaign_urls_failed' });
+  }
+}
+
 // Toggle ONE dial status on/off for a campaign — the Detail page's "Manage
 // Dial Statuses" modal applies each click immediately (same pattern as the
 // Basic page's list active toggles), instead of the pick-one/save legacy
@@ -15591,6 +15624,7 @@ app.delete('/api/admin/campaigns/:id', requireAccess, deleteCampaign);
 app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaignAgents);
 app.get('/api/admin/campaigns/:id/lead-statuses', requireAccess, campaignLeadStatuses);
 app.post('/api/admin/campaigns/:id/dial-status', requireAccess, campaignDialStatusToggle);
+app.post('/api/admin/campaigns/:id/urls', requireAccess, saveCampaignUrls);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);

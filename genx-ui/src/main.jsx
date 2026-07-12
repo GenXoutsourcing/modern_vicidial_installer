@@ -2252,12 +2252,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
       { key: 'timer_action_destination', label: 'Timer Destination' },
       { key: 'web_form_target', label: 'Web Form Target' },
-      { key: 'web_form_address', label: 'Web Form URL', type: 'textarea', wide: true },
-      { key: 'web_form_address_two', label: 'Web Form URL 2', type: 'textarea', wide: true },
-      { key: 'web_form_address_three', label: 'Web Form URL 3', type: 'textarea', wide: true },
-      { key: 'start_call_url', label: 'Start Call URL', type: 'textarea', wide: true },
-      { key: 'dispo_call_url', label: 'Dispo Call URL', type: 'textarea', wide: true },
-      { key: 'na_call_url', label: 'No Agent URL', type: 'textarea', wide: true },
+      // Webform/call URLs moved to the Connections strip's "Webform URLs"
+      // and "Call URLs" pill modals — the values still live in form state
+      // (campaignPayload saves them on the main Save) but aren't rendered
+      // as form fields here.
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -4061,6 +4059,95 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
 // Mirrors the cross-links at the bottom of legacy admin.php campaign modify:
 // lists within the campaign, live hopper view, real-time report, and the
 // log-all-agents-out action. Delete lives on the modal's standard delete button.
+// Stacked modal for the Detail page's Webform URLs / Call URLs pill buttons:
+// three textareas + explicit Save that writes ONLY those columns (dedicated
+// endpoint), then syncs the parent form state so the campaign's main Save
+// doesn't resend stale values.
+const CAMPAIGN_URL_MODALS = {
+  webform: {
+    title: 'Webform URLs',
+    fields: [
+      ['web_form_address', 'Web Form URL'],
+      ['web_form_address_two', 'Web Form URL 2'],
+      ['web_form_address_three', 'Web Form URL 3'],
+    ],
+  },
+  callurls: {
+    title: 'Call URLs',
+    fields: [
+      ['start_call_url', 'Start Call URL'],
+      ['dispo_call_url', 'Dispo Call URL'],
+      ['na_call_url', 'No Agent URL'],
+    ],
+  },
+};
+
+function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, onClose }) {
+  const config = CAMPAIGN_URL_MODALS[kind];
+  const [values, setValues] = useState(() => Object.fromEntries(config.fields.map(([key]) => [key, urls?.[key] || ''])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/urls`, token, {
+        method: 'POST',
+        body: JSON.stringify(values),
+      });
+      onSaved(payload.urls || values);
+      onClose();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Not permitted to change campaign URLs' : 'The URLs were not saved');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={config.title}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Campaign {campaignId}</p>
+            <h2>{config.title}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="entity-form">
+          <div className="field-grid">
+            {config.fields.map(([key, label]) => (
+              <label key={key} className="wide-field">
+                <span>{label}</span>
+                <textarea
+                  value={values[key]}
+                  onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          <div className="modal-actions">
+            <span className="modal-actions-spacer" />
+            <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+            <button type="button" className="primary-action" disabled={saving} onClick={save}>
+              <Save size={18} aria-hidden="true" />
+              {saving ? 'Saving' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // Stacked modal on the campaign Detail page: every eligible status (system +
 // this campaign's own, minus the never-dialable INCALL/QUEUE/CBHOLD) with a
 // green Active / red Inactive toggle. Each click applies IMMEDIATELY via the
@@ -4148,7 +4235,7 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
 
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
-function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false }) {
+function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
@@ -4157,6 +4244,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
   // picker lives in the modal head, so its selection is owned here.
   const [reportModal, setReportModal] = useState(''); // '' | 'hopper' | 'realtime'
   const [hopperCampaign, setHopperCampaign] = useState('');
+  const [urlModal, setUrlModal] = useState(''); // '' | 'webform' | 'callurls'
 
   async function logoutAgents() {
     if (!confirmingLogout) {
@@ -4230,6 +4318,14 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
               <ShieldCheck size={15} aria-hidden="true" />
               Admin Changes
             </button>
+            <button type="button" className="row-action" onClick={() => setUrlModal('webform')}>
+              <ExternalLink size={15} aria-hidden="true" />
+              Webform URLs
+            </button>
+            <button type="button" className="row-action" onClick={() => setUrlModal('callurls')}>
+              <PhoneCall size={15} aria-hidden="true" />
+              Call URLs
+            </button>
           </>
         )}
         {userCan(user, 'campaigns') && (
@@ -4276,6 +4372,17 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
               : <RealtimeMainReportView token={token} user={user} />}
           </section>
         </div>
+      )}
+      {urlModal && (
+        <CampaignUrlModal
+          kind={urlModal}
+          campaignId={campaign}
+          urls={urls}
+          token={token}
+          onLogout={onLogout}
+          onSaved={(next) => onUrlsSaved?.(next)}
+          onClose={() => setUrlModal('')}
+        />
       )}
     </div>
   );
@@ -5590,6 +5697,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onNavigate={onNavigate}
             onLogout={onLogout}
             basic={!isDetail}
+            urls={form}
+            onUrlsSaved={(next) => setForm((current) => ({ ...current, ...next }))}
           />
         )}
 
