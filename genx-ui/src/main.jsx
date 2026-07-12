@@ -4148,13 +4148,15 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
 
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
-function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, basic = false }) {
+function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
   // Hopper List / Real-Time Report open stacked on TOP of the campaign
-  // modal instead of navigating away from it.
+  // modal instead of navigating away from it. The hopper modal's campaign
+  // picker lives in the modal head, so its selection is owned here.
   const [reportModal, setReportModal] = useState(''); // '' | 'hopper' | 'realtime'
+  const [hopperCampaign, setHopperCampaign] = useState('');
 
   async function logoutAgents() {
     if (!confirmingLogout) {
@@ -4188,7 +4190,7 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, ba
         <Compass size={20} aria-hidden="true" />
       </div>
       <div className="connection-actions">
-        <button type="button" className="row-action" onClick={() => setReportModal('hopper')}>
+        <button type="button" className="row-action" onClick={() => { setHopperCampaign(campaign); setReportModal('hopper'); }}>
           <Database size={15} aria-hidden="true" />
           Hopper List
         </button>
@@ -4249,14 +4251,28 @@ function CampaignConnections({ campaignId, user, token, onNavigate, onLogout, ba
             <div className="modal-head">
               <div>
                 <p className="eyebrow">Report</p>
-                <h2>{reportModal === 'hopper' ? `Hopper List — ${campaign}` : 'Real-Time Report'}</h2>
+                <h2>{reportModal === 'hopper' ? 'Hopper List' : 'Real-Time Report'}</h2>
+                {reportModal === 'hopper' && (
+                  <p className="action-copy">Live snapshot of leads currently loaded in the campaign's dialing hopper. Refreshes every 5 seconds.</p>
+                )}
               </div>
+              {reportModal === 'hopper' && (
+                <label className="hero-filter">
+                  <span>Campaign</span>
+                  <select value={hopperCampaign} onChange={(event) => setHopperCampaign(event.target.value)}>
+                    <option value="">Select a campaign...</option>
+                    {(admin?.campaigns || []).map((row) => (
+                      <option key={row.campaign_id} value={row.campaign_id}>{row.campaign_id} - {row.campaign_name || row.campaign_id}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button type="button" className="icon-button" onClick={() => setReportModal('')} aria-label="Close" title="Close">
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
             {reportModal === 'hopper'
-              ? <HopperListReportView token={token} initialCampaignId={campaign} />
+              ? <HopperListReportView token={token} embedded campaignId={hopperCampaign} />
               : <RealtimeMainReportView token={token} user={user} />}
           </section>
         </div>
@@ -5567,6 +5583,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
 
         {isEdit && action.entity === 'campaigns' && (
           <CampaignConnections
+            admin={admin}
             campaignId={form.campaign_id}
             user={user}
             token={token}
@@ -8992,11 +9009,15 @@ function AgentMonitorLogReportView({ token }) {
   );
 }
 
-function HopperListReportView({ token, initialCampaignId }) {
-  const [campaignId, setCampaignId] = useState(initialCampaignId || '');
+// `embedded` (campaign modal): the modal head already carries the title,
+// description and campaign picker, so the standalone hero is skipped and the
+// campaign comes in as a controlled prop.
+function HopperListReportView({ token, initialCampaignId, embedded = false, campaignId: controlledCampaignId }) {
+  const [localCampaignId, setLocalCampaignId] = useState(initialCampaignId || '');
+  const campaignId = embedded ? String(controlledCampaignId || '') : localCampaignId;
 
-  // Always fetch READY and HOLD — the metric cards split them; the old
-  // Status dropdown was removed as filter noise.
+  // Always fetch READY and HOLD together — no HCI in this build, so the
+  // split doesn't matter; one total tells the story.
   const params = new URLSearchParams({ status: 'READY_AND_HOLD' });
   if (campaignId) params.set('campaign_id', campaignId);
   const { data, error } = useLiveReport(`/reports/hopper-list?${params.toString()}`, token, 5000);
@@ -9034,30 +9055,30 @@ function HopperListReportView({ token, initialCampaignId }) {
 
   return (
     <>
-      <section className="report-hero">
-        <div>
-          <p className="eyebrow">Outbound and Lists</p>
-          <h2>Hopper List</h2>
-          <p className="action-copy">Live snapshot of leads currently loaded in a campaign's dialing hopper. Refreshes every 5 seconds.</p>
-        </div>
-        {/* Campaign picker lives in the hero — no separate Filters panel. */}
-        <label className="hero-filter">
-          <span>Campaign</span>
-          <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-            <option value="">Select a campaign...</option>
-            {campaigns.map((campaign) => (
-              <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.campaign_id} - {campaign.campaign_name}</option>
-            ))}
-          </select>
-        </label>
-      </section>
+      {!embedded && (
+        <section className="report-hero">
+          <div>
+            <p className="eyebrow">Outbound and Lists</p>
+            <h2>Hopper List</h2>
+            <p className="action-copy">Live snapshot of leads currently loaded in a campaign's dialing hopper. Refreshes every 5 seconds.</p>
+          </div>
+          {/* Campaign picker lives in the hero — no separate Filters panel. */}
+          <label className="hero-filter">
+            <span>Campaign</span>
+            <select value={campaignId} onChange={(event) => setLocalCampaignId(event.target.value)}>
+              <option value="">Select a campaign...</option>
+              {campaigns.map((campaign) => (
+                <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.campaign_id} - {campaign.campaign_name}</option>
+              ))}
+            </select>
+          </label>
+        </section>
+      )}
       {error && <p className="form-error">{error}</p>}
       {!campaignId && <div className="empty-state">Pick a campaign (top right) to view its live hopper list</div>}
       {campaignId && totals && (
         <section className="quick-stack">
           <MetricCard icon={Database} label="Total In Hopper" value={formatNumber(totals.total)} detail={`Campaign ${campaignId}`} accent="#00d9ff" />
-          {totals.ready !== null && <MetricCard icon={Database} label="READY" value={formatNumber(totals.ready)} detail="Ready to dial" accent="#73fbd3" />}
-          {totals.hold !== null && <MetricCard icon={Database} label="HOLD" value={formatNumber(totals.hold)} detail="On hold / queued" accent="#ffd166" />}
         </section>
       )}
       {campaignId && entries && (
