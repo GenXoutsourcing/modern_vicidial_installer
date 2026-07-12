@@ -8994,9 +8994,10 @@ function AgentMonitorLogReportView({ token }) {
 
 function HopperListReportView({ token, initialCampaignId }) {
   const [campaignId, setCampaignId] = useState(initialCampaignId || '');
-  const [status, setStatus] = useState('READY');
 
-  const params = new URLSearchParams({ status });
+  // Always fetch READY and HOLD — the metric cards split them; the old
+  // Status dropdown was removed as filter noise.
+  const params = new URLSearchParams({ status: 'READY_AND_HOLD' });
   if (campaignId) params.set('campaign_id', campaignId);
   const { data, error } = useLiveReport(`/reports/hopper-list?${params.toString()}`, token, 5000);
 
@@ -9039,32 +9040,19 @@ function HopperListReportView({ token, initialCampaignId }) {
           <h2>Hopper List</h2>
           <p className="action-copy">Live snapshot of leads currently loaded in a campaign's dialing hopper. Refreshes every 5 seconds.</p>
         </div>
+        {/* Campaign picker lives in the hero — no separate Filters panel. */}
+        <label className="hero-filter">
+          <span>Campaign</span>
+          <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+            <option value="">Select a campaign...</option>
+            {campaigns.map((campaign) => (
+              <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.campaign_id} - {campaign.campaign_name}</option>
+            ))}
+          </select>
+        </label>
       </section>
-      <Panel eyebrow="Filters" title="Campaign and Status" icon={Search} className="admin-wide-panel">
-        <div className="entity-form report-filter-bar">
-          <div className="field-grid">
-            <label>
-              <span>Campaign</span>
-              <select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-                <option value="">Select a campaign...</option>
-                {campaigns.map((campaign) => (
-                  <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.campaign_id} - {campaign.campaign_name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Status</span>
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="READY">READY</option>
-                <option value="HOLD">HOLD</option>
-                <option value="READY_AND_HOLD">READY and HOLD</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        {error && <p className="form-error">{error}</p>}
-      </Panel>
-      {!campaignId && <div className="empty-state">Select a campaign above to view its live hopper list</div>}
+      {error && <p className="form-error">{error}</p>}
+      {!campaignId && <div className="empty-state">Pick a campaign (top right) to view its live hopper list</div>}
       {campaignId && totals && (
         <section className="quick-stack">
           <MetricCard icon={Database} label="Total In Hopper" value={formatNumber(totals.total)} detail={`Campaign ${campaignId}`} accent="#00d9ff" />

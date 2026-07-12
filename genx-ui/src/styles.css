@@ -1021,6 +1021,20 @@ body {
   color: var(--red, #ff7a7a);
 }
 
+/* Compact select on the right side of a report hero (Hopper List). */
+.hero-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.hero-filter select {
+  min-height: 34px;
+}
+
 /* Hopper List: many narrow columns, often inside a modal — never wrap
    mid-word in headers or cells; scroll horizontally instead. */
 .hopper-table .table-wrap {
