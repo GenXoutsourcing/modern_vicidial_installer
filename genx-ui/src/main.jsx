@@ -1,3 +1,25 @@
+/**
+ * GenX UI frontend — the entire React app in one file, served at /genx/.
+ * It contains TWO applications that share helpers but render separately:
+ *   - Admin UI: AdminShell + the admin/report views (hash-routed as
+ *     #/viewKey — see viewFromHash/navigateTo; nav/catalog links are real
+ *     anchors so ctrl/middle-click opens new tabs).
+ *   - Agent UI: AgentApp/AgentConsole at /genx/agent — a port of the legacy
+ *     agc agent screen against /api/agent/*.
+ *
+ * Conventions worth knowing before editing:
+ *   - Dates: ALWAYS default from localDateStr()/localSqlNow() — VICIdial
+ *     stores DB-local times; toISOString() is the UTC day and breaks evening
+ *     shifts (see the comment on localDateStr).
+ *   - CSV: downloadCsv() neutralizes spreadsheet formula injection — route
+ *     any new export through it.
+ *   - Loaders: views that re-query on picker changes carry a seq/ref guard
+ *     against out-of-order responses; destructive actions must target the
+ *     LOADED entity (loadedUser/loadedTarget patterns), never live form
+ *     state.
+ *   - apiFetch() throws Error with .status and .message = server error code;
+ *     401 handling is per-view (onLogout).
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -338,9 +360,36 @@ async function apiFetch(path, token, options = {}) {
   return payload;
 }
 
+// VICIdial stores call_date/event_time in the DB server's LOCAL time, so date
+// pickers must default to the local calendar day. new Date().toISOString()
+// is the UTC day — after ~4-8pm in US timezones that is already "tomorrow",
+// and every report defaulting to it comes back empty for the current shift.
+// Always use this helper for default dates, never toISOString().slice(0,10).
+function localDateStr(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Local-time 'YYYY-MM-DD HH:MM:SS' — matches MySQL NOW() on a same-timezone
+// dialer. Used for legacy merge fields (--A--SQLdate--B--) that downstream
+// CRMs parse as server-local, so UTC here would be hours off.
+function localSqlNow(date = new Date()) {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${localDateStr(date)} ${hh}:${mm}:${ss}`;
+}
+
 function downloadCsv(filename, columns, dataRows) {
   const escapeCell = (value) => {
-    const text = String(value ?? '');
+    let text = String(value ?? '');
+    // Spreadsheet formula-injection guard: caller-ID names, lead fields etc.
+    // are externally controlled; a cell starting with = + - @ executes as a
+    // formula when the CSV is opened in Excel. Prefix a quote to neutralize
+    // (plain numbers like -5 are left alone).
+    if (/^[=+@-]/.test(text) && !/^-?\d*\.?\d+$/.test(text)) text = `'${text}`;
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   const header = columns.map((column) => escapeCell(column.label)).join(',');
@@ -398,8 +447,12 @@ function Login({ onLogin }) {
         body: JSON.stringify({ username, password }),
       });
       onLogin(payload.token || '', payload.user);
-    } catch (_error) {
-      setError('Credentials or user level were not accepted');
+    } catch (requestError) {
+      // Only a real 401 means bad credentials; a 502/network error during a
+      // deploy or outage must not send users off to reset their passwords.
+      setError(requestError.status === 401 || requestError.status === 403
+        ? 'Credentials or user level were not accepted'
+        : 'The server could not be reached - try again shortly');
     } finally {
       setLoading(false);
     }
@@ -632,6 +685,11 @@ function scopeValues(rawValue, allValue) {
   return raw.split(/\s+/).filter((item) => item && item !== '-');
 }
 
+// WARNING (legacy semantics, mirrored by the server): serializing an EMPTY
+// selection falls back to the ALL sentinel — deselecting every campaign in
+// 'Allowed Campaigns' grants access to ALL campaigns, not none. That is how
+// stock vicidial stores these fields; changing it here without changing the
+// server (and legacy admin.php) would only mask the widening on save.
 function scopeText(values, allValue, suffix = ' -') {
   if (allValue && values.includes(allValue)) return allValue;
   const cleanValues = values.filter(Boolean);
@@ -694,6 +752,11 @@ function autoDialLevelOptions(admin, currentValue) {
   const limit = Math.max(1, Number(admin?.lookups?.systemSettings?.autoDialLimit || 8));
   const values = ['0'];
   let level = 0;
+  // Irregular step ladder mirrors legacy admin.php's auto-dial-level dropdown
+  // increments exactly (0.1 to 3, 0.25 to 4, 0.5 to 5, 1 to 20, 2 to 40...),
+  // capped by system_settings.auto_dial_limit. Do not "simplify" to a uniform
+  // step: values legacy accepts would vanish from the list and ensureOption
+  // would prepend odd current values on every edit.
   while (level <= limit) {
     if (level < 1) level += 1;
     else if (level < 3) level += 0.1;
@@ -3693,6 +3756,10 @@ function entityId(entity, row) {
     inbound: row.group_id,
     dids: row.did_pattern,
     callMenus: row.menu_id,
+    // '__' composite keys are a WIRE CONTRACT: the server splits the URL id
+    // on '__' for these two entities (PUT/DELETE routing). Key parts must
+    // never contain '__' themselves; change the delimiter in both places or
+    // not at all.
     callMenuOptions: `${row.menu_id}__${row.option_value}`,
     phones: `${row.extension}__${row.server_ip}`,
     servers: row.server_id,
@@ -3769,7 +3836,14 @@ function CheckboxTextGroup({ field, value, onChange }) {
   const optionValues = options.map((option) => String(option.value));
 
   function updateValue(optionValue, checked) {
-    const nextValues = optionValues.filter((valueText) => (valueText === optionValue ? checked : selectedSet.has(valueText)));
+    // Keep stored values that are NOT in the visible option list (deleted
+    // records, or rows outside the editing manager's scope). Re-serializing
+    // only the visible boxes would silently strip those on any toggle.
+    const hidden = selectedValues.map(String).filter((valueText) => !optionValues.includes(valueText));
+    const nextValues = [
+      ...optionValues.filter((valueText) => (valueText === optionValue ? checked : selectedSet.has(valueText))),
+      ...hidden,
+    ];
     onChange(field.serialize ? field.serialize(nextValues) : scopeText(nextValues, field.allValue));
   }
 
@@ -3798,7 +3872,6 @@ function CheckboxTextGroup({ field, value, onChange }) {
           </button>
         );
       })}
-      {!options.length && <em className="check-grid-empty">No groups available</em>}
     </div>
   );
 }
@@ -5023,7 +5096,12 @@ function CallMenuConnections({ menuId, token, onLogout, onNavigate }) {
 // link that opens a filterable list of audio files (central store + asterisk
 // sounds dir); picking one fills the free-text input with the extension-less
 // sound name. Values stay hand-editable (pipe-separated lists etc).
+// Module-level cache so opening several audio fields in one editor doesn't
+// refetch; 60s TTL so files uploaded via the Audio Store show up without a
+// full page reload.
 let audioChoicesCache = null;
+let audioChoicesCacheAt = 0;
+const AUDIO_CHOICES_TTL_MS = 60000;
 
 function AudioChooserField({ field, value, token, onChange }) {
   const [open, setOpen] = useState(false);
@@ -5034,10 +5112,11 @@ function AudioChooserField({ field, value, token, onChange }) {
     event.preventDefault();
     const next = !open;
     setOpen(next);
-    if (next && !audioChoicesCache) {
+    if (next && (!audioChoicesCache || Date.now() - audioChoicesCacheAt > AUDIO_CHOICES_TTL_MS)) {
       try {
         const payload = await apiFetch('/admin/audio-files', token);
         audioChoicesCache = payload.files || [];
+        audioChoicesCacheAt = Date.now();
         setFiles(audioChoicesCache);
       } catch {
         setFiles([]);
@@ -6590,6 +6669,9 @@ function LeadSearchView({ admin, user, token, viewParams }) {
   const [customSaveState, setCustomSaveState] = useState('');
 
   const modifyLeads = Number(user?.modifyLeads || 0);
+  // Legacy modify_leads semantics: 0 = no lead-page access, 5 = restricted
+  // variant that may VIEW but never edit fields — that's why 5 is excluded
+  // here despite being >= 1. Don't normalize this to a plain >= 1.
   const canEdit = Number(user?.userLevel || 0) >= 9 || (modifyLeads >= 1 && modifyLeads !== 5);
   // Legacy: only modify_leads level 3/4 may edit individual log row statuses.
   const canEditLogs = Number(user?.userLevel || 0) >= 9 || modifyLeads === 3 || modifyLeads === 4;
@@ -6618,7 +6700,13 @@ function LeadSearchView({ admin, user, token, viewParams }) {
     }
   }
 
+  // Sequence guard: clicking View on lead A then quickly on lead B fires two
+  // overlapping fetches; without the seq check A's slower response (or its
+  // fire-and-forget custom-fields fetch) could land last and mix A's data
+  // into B's editor — Save Custom Fields would then write A's values onto B.
+  const detailSeq = useRef(0);
   const loadDetail = useCallback(async (leadId) => {
+    const seq = ++detailSeq.current;
     setError('');
     setSaveState('');
     setCustom(null);
@@ -6626,17 +6714,20 @@ function LeadSearchView({ admin, user, token, viewParams }) {
     setCustomSaveState('');
     try {
       const payload = await apiFetch(`/admin/leads/${encodeURIComponent(leadId)}`, token);
+      if (seq !== detailSeq.current) return;
       setDetail(payload);
       setForm({ ...payload.lead });
       setModifyLogs(false);
       setModifyCloserLogs(false);
       apiFetch(`/admin/leads/${encodeURIComponent(leadId)}/custom`, token)
         .then((customPayload) => {
+          if (seq !== detailSeq.current) return;
           setCustom(customPayload);
           setCustomForm({ ...(customPayload.values || {}) });
         })
-        .catch(() => setCustom(null));
+        .catch(() => { if (seq === detailSeq.current) setCustom(null); });
     } catch (requestError) {
+      if (seq !== detailSeq.current) return;
       setError(requestError.status === 404 ? 'Lead not found or not in your allowed lists' : 'The lead failed to load');
     }
   }, [token]);
@@ -7762,6 +7853,14 @@ const NATIVE_REPORT_GROUPS = REPORT_GROUPS
   .map((group) => ({ ...group, items: group.items.filter((item) => item.view) }))
   .filter((group) => group.items.length);
 
+// DISPLAY-SIDE convenience only — the server is the enforcing layer for
+// every report route. Legacy vicidial_user_groups.allowed_reports stores
+// legacy report NAMES, so native GenX screens are matched by fuzzy substring
+// against label/href/group title (a value like 'call' intentionally matches
+// several screens). A non-'all' scope that parses to zero values falls back
+// to showing everything, mirroring how legacy treats an unset field. Don't
+// "tighten" this into a security boundary or users lose links to screens the
+// server would happily serve them.
 function reportGroupsForUser(user) {
   const scope = user?.permissions?.allowedReports;
   if (Number(user?.userLevel || 0) >= 9 || scope?.all) return NATIVE_REPORT_GROUPS;
@@ -7835,9 +7934,13 @@ function ReportsView({ dashboard, admin, user, onNavigate }) {
 // user group by default). The server compiles the SQL; this view only ever
 // sends registry keys and filter values.
 function CustomReportView({ token }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [meta, setMeta] = useState(null);
   const [saved, setSaved] = useState([]);
+  // These defaults are keys into CUSTOM_REPORT_DATASETS in server/index.js —
+  // the server registry is the source of truth. Renaming a dataset/dimension/
+  // measure key server-side silently breaks this initial state (empty picker
+  // panels, first Run returns 400).
   const [datasetKey, setDatasetKey] = useState('outbound_calls');
   const [dims, setDims] = useState(['campaign_id']);
   const [measures, setMeasures] = useState(['calls', 'talk_sec']);
@@ -7855,6 +7958,11 @@ function CustomReportView({ token }) {
   const [activeSavedId, setActiveSavedId] = useState(null);
   const [scheduleFor, setScheduleFor] = useState(null);
   const [schedules, setSchedules] = useState([]);
+  // Wire formats dictated by vicidial_automated_reports (consumed by the
+  // stock ADMIN_keepalive_ALL.pl scheduler): weekdays is a concatenated
+  // digit string '0'=Sun..'6'=Sat ('12345' = Mon-Fri) and time is sent as
+  // 4-digit HHMM (the ':' is stripped on submit). Storing anything else
+  // creates schedule rows the cron runner silently never matches.
   const [scheduleForm, setScheduleForm] = useState({
     time: '07:00', weekdays: '12345', range: 'yesterday', email_to: '', email_from: '', email_subject: '', run_now: false,
   });
@@ -7886,6 +7994,10 @@ function CustomReportView({ token }) {
     setList(list.includes(key) ? list.filter((item) => item !== key) : [...list, key]);
   }
 
+  // Saved configs are deliberately DATE-FREE: schedules apply named relative
+  // ranges server-side (customFeedRange) and interactive users re-pick dates
+  // on load. Persisting beginDate/endDate here would make every scheduled
+  // feed email a permanently stale fixed range — this is not a lost field.
   function config() {
     return {
       dataset: datasetKey,
@@ -7914,7 +8026,14 @@ function CustomReportView({ token }) {
       setResult(payload);
     } catch (requestError) {
       setResult(null);
-      setError(requestError.status === 400 ? 'Pick at least one measure' : 'Report failed to run');
+      // Surface the server's specific 400 reason: a saved report whose
+      // dataset key was removed from the registry returns unknown_dataset,
+      // which must not be masked as a missing-measure complaint.
+      setError(requestError.status === 400
+        ? (requestError.message === 'unknown_dataset'
+          ? 'This report references a dataset that no longer exists - pick a dataset and re-save'
+          : 'Pick at least one measure')
+        : 'Report failed to run');
     } finally {
       setLoading(false);
     }
@@ -8002,6 +8121,10 @@ function CustomReportView({ token }) {
 
   async function deleteSchedule(schedule) {
     try {
+      // NAME COLLISION: schedule.report_id is a vicidial_automated_reports id
+      // (string like 'GENXCR12X...'), while a saved report's report_id (as in
+      // deleteReport/scheduleFor) is the numeric genx_saved_reports key. Two
+      // different tables — never pass one where the other is expected.
       await apiFetch(`/admin/automated-reports/${schedule.report_id}`, token, { method: 'DELETE' });
       if (scheduleFor) loadSchedules(scheduleFor.report_id);
     } catch (requestError) {
@@ -8316,7 +8439,15 @@ function useLiveReport(path, token, intervalMs = 5000) {
           setError('');
         }
       } catch (requestError) {
-        if (!cancelled) setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'Live data unavailable');
+        // These views run as always-on wallboards, so on 401 (8h token
+        // expired) say so explicitly instead of the generic message — the
+        // hook has no onLogout to call and would otherwise poll a dead
+        // session forever while showing frozen data.
+        if (!cancelled) {
+          setError(requestError.status === 403 ? 'Your user is not allowed to view reports'
+            : requestError.status === 401 ? 'Session expired - log in again'
+              : 'Live data unavailable');
+        }
       }
     }
     load();
@@ -8514,7 +8645,7 @@ const WHITEBOARD_REPORT_TYPES = [
 ];
 
 function WhiteboardReportView({ token }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [reportType, setReportType] = useState('DISPOSITION_TOTALS');
@@ -8582,7 +8713,7 @@ function WhiteboardReportView({ token }) {
 }
 
 function AgentMonitorLogReportView({ token }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [entries, setEntries] = useState(null);
@@ -8793,7 +8924,24 @@ function AudioStorePanel({ user }) {
   const [playing, setPlaying] = useState('');
   const [open, setOpen] = useState(false);
   const audioRef = useRef(null);
+  const audioUrlRef = useRef('');
   const token = window.localStorage.getItem(TOKEN_KEY) || '';
+
+  // Stop any preview and release its blob URL. Revoking only in onended
+  // (the old behavior) leaked the full .wav blob every time the user
+  // stopped early or switched files, and playback survived unmount.
+  const stopPlayback = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = '';
+    }
+  }, []);
+
+  useEffect(() => stopPlayback, [stopPlayback]);
 
   const load = useCallback(() => {
     apiFetch('/admin/audio-store', token).then(setStore).catch(() => {});
@@ -8823,7 +8971,7 @@ function AudioStorePanel({ user }) {
   }
 
   async function play(name) {
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    stopPlayback();
     if (playing === name) { setPlaying(''); return; }
     try {
       const response = await fetch(`${API_BASE}/admin/audio-store/file/${encodeURIComponent(name)}`, {
@@ -8833,8 +8981,9 @@ function AudioStorePanel({ user }) {
       const url = URL.createObjectURL(await response.blob());
       const audio = new Audio(url);
       audioRef.current = audio;
+      audioUrlRef.current = url;
       setPlaying(name);
-      audio.onended = () => { setPlaying(''); URL.revokeObjectURL(url); };
+      audio.onended = () => { setPlaying(''); stopPlayback(); };
       audio.play();
     } catch {
       setNote('Playback failed (format may not be browser-playable)');
@@ -9461,21 +9610,28 @@ function ListStatusesReportView({ token, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Each picker toggle fires load(); the seq guard drops out-of-order
+  // responses so a slow query for an old selection can't overwrite the data
+  // for the current one.
+  const loadSeq = useRef(0);
   const load = useCallback(async (listIds) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
       const query = listIds.length ? `?list_ids=${encodeURIComponent(listIds.join(','))}` : '';
       const payload = await apiFetch(`/reports/list-statuses${query}`, token);
+      if (seq !== loadSeq.current) return;
       setData(payload);
     } catch (requestError) {
+      if (seq !== loadSeq.current) return;
       if (requestError.status === 401) {
         onLogout?.();
         return;
       }
       setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [token, onLogout]);
 
@@ -9598,21 +9754,27 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Same out-of-order-response guard as ListStatusesReportView: every picker
+  // toggle refires load(), so only the newest request may write state.
+  const loadSeq = useRef(0);
   const load = useCallback(async (campaignIds) => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
       const query = campaignIds.length ? `?campaigns=${encodeURIComponent(campaignIds.join(','))}` : '';
       const payload = await apiFetch(`/reports/list-campaign-statuses${query}`, token);
+      if (seq !== loadSeq.current) return;
       setData(payload);
     } catch (requestError) {
+      if (seq !== loadSeq.current) return;
       if (requestError.status === 401) {
         onLogout?.();
         return;
       }
       setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [token, onLogout]);
 
@@ -9740,7 +9902,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
 // Native AST_campaign_status_list_report.php: per campaign and list, call
 // dispositions with duration/handle time plus status-flag percentages.
 function CampaignStatusListReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -10029,7 +10191,7 @@ function DialerInventoryReportView({ token, onLogout }) {
 // Native AST_VDADstats.php: campaign-level outbound calling stats with the
 // legacy TOTALS / HUMAN ANSWERS / DROPS / breakdown sections.
 function OutboundCallingReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -10183,7 +10345,7 @@ function OutboundCallingReportView({ token, onLogout }) {
 // Native AST_OUTBOUNDsummary_interval.php: per-interval calling breakdown with
 // the legacy column set (system/agent release, sales, DNC, NA%, drop%, times).
 function OutboundIntervalReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [interval, setIntervalLen] = useState('1800');
@@ -10219,10 +10381,12 @@ function OutboundIntervalReportView({ token, onLogout }) {
 
   const campaigns = data?.campaigns || [];
   const results = data?.results;
-  const bucketLabel = (bucket) => {
-    const date = new Date(Number(bucket) * 1000);
-    return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  // Prefer the server-rendered bucket_label (MySQL formats it in the dialer's
+  // local time): formatting the epoch with the browser's timezone shifts
+  // every interval for admins outside the server's zone. The Date fallback
+  // only covers rows from a pre-label server build.
+  const bucketLabel = (row) => row.bucket_label
+    || new Date(Number(row.bucket) * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   return (
     <>
@@ -10297,7 +10461,7 @@ function OutboundIntervalReportView({ token, onLogout }) {
               emptyLabel="No calls for this campaign in the date range"
               rows={campaign.buckets.map((row) => ({ ...row, id: String(row.bucket) }))}
               columns={[
-                { key: 'bucket', label: 'Interval', render: (row) => bucketLabel(row.bucket) },
+                { key: 'bucket', label: 'Interval', render: (row) => bucketLabel(row) },
                 { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
                 { key: 'system_release', label: 'System Release', render: (row) => formatNumber(row.system_release) },
                 { key: 'agent_release', label: 'Agent Release', render: (row) => formatNumber(row.calls - row.system_release) },
@@ -10326,7 +10490,7 @@ function OutboundIntervalReportView({ token, onLogout }) {
 // Native AST_source_vlc_status_report.php: leads by vendor_lead_code/source_id
 // crossed with disposition for the selected campaigns and entry-date range.
 function LeadSourceReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [groupBy, setGroupBy] = useState('vendor_lead_code');
@@ -10451,7 +10615,7 @@ function LeadSourceReportView({ token, onLogout }) {
 // Native AST_CLOSERstats_v2.php (PHONE in-groups): per-group inbound stats,
 // status breakdown and hourly distribution.
 function InboundSummaryReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -10598,7 +10762,7 @@ function slotLabel(slot) {
 // Native AST_CLOSER_service_level.php: queue-time histogram per quarter hour
 // plus per-day drop/hold/calltime totals for one in-group.
 function ServiceLevelReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [groupId, setGroupId] = useState('');
@@ -10718,7 +10882,7 @@ function ServiceLevelReportView({ token, onLogout }) {
 
 // Native AST_CLOSERsummary_hourly.php: per in-group hour-of-day breakdown.
 function InboundHourlyReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -10823,7 +10987,7 @@ function InboundHourlyReportView({ token, onLogout }) {
 // Native AST_inbound_daily_report.php: per-day (or per-hour) inbound totals
 // for the selected in-groups with status and term-reason breakdowns.
 function InboundDailyReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [hourly, setHourly] = useState(false);
@@ -10973,7 +11137,7 @@ function DidTogglePicker({ dids, selected, onChange }) {
 
 // Native merge of AST_DIDstats.php / AST_DIDstats_v2.php.
 function DidStatsReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -11103,7 +11267,7 @@ const DID_DETAIL_COLUMNS = [
 ];
 
 function DidDetailReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -11191,7 +11355,7 @@ function DidDetailReportView({ token, onLogout }) {
 // Native AST_IVRstats.php (in-group mode): IVR activity summaries from
 // live_inbound_log for the selected in-groups.
 function IvrReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -11297,7 +11461,7 @@ function IvrReportView({ token, onLogout }) {
 
 // Native AST_inbound_forecasting.php with the Erlang B/C math server-side.
 function InboundForecastingReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [erlangType, setErlangType] = useState('C');
@@ -11459,7 +11623,7 @@ function InboundForecastingReportView({ token, onLogout }) {
 // Native AST_agent_time_detail.php: per-agent time totals with pause-code and
 // park breakdowns.
 function AgentTimeDetailReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
@@ -11625,12 +11789,16 @@ function buildStatusMatrix(entries, nameKey = 'full_name') {
     bucket.counts[status] = (bucket.counts[status] || 0) + Number(row.calls || 0);
     bucket.total += Number(row.calls || 0);
   }
+  // Visible status COLUMNS are capped at 20 (alphabetical) to keep the
+  // matrix renderable, but each user's Total/HA still counts ALL statuses —
+  // so row totals can legitimately exceed the sum of the visible cells on
+  // systems with more than 20 statuses in range. Not a data bug.
   return { statuses: [...statusSet].sort().slice(0, 20), users: [...users.values()] };
 }
 
 // Native AST_agent_status_detail.php: user x status matrix from agent_log.
 function AgentStatusDetailReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
@@ -11708,7 +11876,7 @@ function AgentStatusDetailReportView({ token, onLogout }) {
 
 // Native AST_agent_performance_detail.php core: per-agent times + status matrix.
 function AgentPerformanceReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
@@ -11809,7 +11977,7 @@ function AgentPerformanceReportView({ token, onLogout }) {
 
 // Native AST_agent_disposition.php: one campaign, outbound-log agent stats.
 function AgentDispositionReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
@@ -11890,7 +12058,7 @@ function AgentDispositionReportView({ token, onLogout }) {
 
 // Native AST_team_performance_detail.php: per user-group and per-agent totals.
 function TeamPerformanceReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
@@ -11995,8 +12163,8 @@ function TeamPerformanceReportView({ token, onLogout }) {
 // Native merge of AST_agent_days_detail.php + AST_agent_days_time.php: one
 // agent per-day rollups with a per-day event drilldown.
 function AgentDaysReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const today = localDateStr();
+  const monthAgo = localDateStr(new Date(Date.now() - 29 * 86400000));
   const [beginDate, setBeginDate] = useState(monthAgo);
   const [endDate, setEndDate] = useState(today);
   const [userId, setUserId] = useState('');
@@ -12005,6 +12173,10 @@ function AgentDaysReportView({ token, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Range the displayed table was loaded with. The per-day Events drilldown
+  // must re-query with THIS range, not the live date inputs — the user may
+  // have edited the pickers without clicking Run Report.
+  const loadedRangeRef = useRef({ begin: '', end: '' });
   const load = useCallback(async (user, begin, end, day) => {
     setLoading(true);
     setError('');
@@ -12014,6 +12186,7 @@ function AgentDaysReportView({ token, onLogout }) {
       if (day) params.set('day', day);
       const payload = await apiFetch(`/reports/agent-days?${params.toString()}`, token);
       setData(payload);
+      loadedRangeRef.current = { begin, end };
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout?.();
@@ -12106,7 +12279,7 @@ function AgentDaysReportView({ token, onLogout }) {
                   className="row-action"
                   onClick={() => {
                     setDetailDay(row.day);
-                    load(s.userId, beginDate, endDate, row.day);
+                    load(s.userId, loadedRangeRef.current.begin, loadedRangeRef.current.end, row.day);
                   }}
                 >
                   Events
@@ -12237,11 +12410,16 @@ function UserGroupLoginReportView({ token, onLogout }) {
 // view: live status, per-status call totals, pause codes, time sheet,
 // login/logout events, park log and in-group changes for one user.
 function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [userId, setUserId] = useState(initialUser || '');
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState(null);
+  // The user whose data is actually displayed. Supervisor actions MUST target
+  // this, never the userId input state: changing the dropdown without
+  // clicking Run Report would otherwise send Emergency Logout / Pause to an
+  // agent whose data was never even loaded.
+  const [loadedUser, setLoadedUser] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -12253,6 +12431,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
       if (user) params.set('user', user);
       const payload = await apiFetch(`/reports/user-stats?${params.toString()}`, token);
       setData(payload);
+      setLoadedUser(user || '');
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout?.();
@@ -12285,15 +12464,20 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
   const [confirmLogout, setConfirmLogout] = useState(false);
 
   async function supervisorAction(path, body, label) {
+    if (!loadedUser) return;
     setActionState('working');
     try {
-      const payload = await apiFetch(`/admin/users/${encodeURIComponent(userId)}/${path}`, token, {
+      const payload = await apiFetch(`/admin/users/${encodeURIComponent(loadedUser)}/${path}`, token, {
         method: 'POST',
         body: JSON.stringify(body || {}),
       });
       setActionState(`${label} done${payload.status ? ` (${payload.status})` : ''}`);
-      load(userId, beginDate, endDate);
+      load(loadedUser, beginDate, endDate);
     } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
       setActionState(requestError.status === 403 ? `${label}: not permitted`
         : requestError.status === 404 ? `${label}: agent not logged in`
           : requestError.status === 409 ? `${label}: wrong timeclock state`
@@ -12608,7 +12792,7 @@ function UserLoginsReportView({ token, onLogout }) {
 // Native AST_performance_comparison_report.php: agent stats across the legacy
 // trailing windows.
 function PerformanceComparisonReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [endDate, setEndDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
   const [data, setData] = useState(null);
@@ -12714,7 +12898,7 @@ function PerformanceComparisonReportView({ token, onLogout }) {
 
 // Native AST_user_group_hourly_detail.php: distinct agents per group per hour.
 function UserGroupHourlyReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [date, setDate] = useState(today);
   const [campaignId, setCampaignId] = useState('');
   const [data, setData] = useState(null);
@@ -12818,7 +13002,7 @@ function UserGroupHourlyReportView({ token, onLogout }) {
 // downloads (ports of call_report_export.php, lead_report_export.php,
 // callbacks_export.php).
 function ExportsReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [campaignsSel, setCampaignsSel] = useState([]);
@@ -12962,7 +13146,7 @@ function ExportsReportView({ token, onLogout }) {
 
 // Native called_counts_multilist_report.php: leads with call activity per list.
 function CalledCountsReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [selected, setSelected] = useState([]);
@@ -13074,7 +13258,7 @@ function CalledCountsReportView({ token, onLogout }) {
 
 // Native AST_admin_report.php: administration change log.
 function AdminChangeLogReportView({ token, onLogout, initialSection, initialRecord }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [section, setSection] = useState(initialSection || '');
@@ -13197,9 +13381,15 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
   const [confirming, setConfirming] = useState('');
   const [actionState, setActionState] = useState('');
 
+  // The scope/id the displayed listing was loaded for. The bulk-deactivate
+  // action MUST use this, not the live form state: editing the ID field or
+  // flipping the Scope select without clicking Show Callbacks would
+  // otherwise mass-deactivate callbacks the admin never looked at.
+  const [loadedTarget, setLoadedTarget] = useState(null);
   const load = useCallback(async (scopeValue, idValue) => {
     if (!idValue) {
       setData(null);
+      setLoadedTarget(null);
       return;
     }
     setLoading(true);
@@ -13208,6 +13398,7 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
       const params = new URLSearchParams({ scope: scopeValue, id: idValue });
       const payload = await apiFetch(`/reports/callback-holds?${params.toString()}`, token);
       setData(payload);
+      setLoadedTarget({ scope: scopeValue, id: idValue });
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout?.();
@@ -13228,6 +13419,7 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
   }, [load, initialScope, initialId]);
 
   async function deactivate(window) {
+    if (!loadedTarget) return;
     if (confirming !== window) {
       setConfirming(window);
       return;
@@ -13237,10 +13429,10 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
     try {
       const payload = await apiFetch('/reports/callback-holds/deactivate', token, {
         method: 'POST',
-        body: JSON.stringify({ scope, id: holdId, window }),
+        body: JSON.stringify({ scope: loadedTarget.scope, id: loadedTarget.id, window }),
       });
       setActionState(`${formatNumber(payload.deactivated)} callback${payload.deactivated === 1 ? '' : 's'} made INACTIVE`);
-      load(scope, holdId);
+      load(loadedTarget.scope, loadedTarget.id);
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout?.();
@@ -13347,7 +13539,7 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
 
 // Native AST_dial_log_report.php: raw dial-log rows.
 function DialLogReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [serverIp, setServerIp] = useState('');
@@ -13444,7 +13636,7 @@ function DialLogReportView({ token, onLogout }) {
 }
 
 function TimeclockReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [userFilter, setUserFilter] = useState('');
@@ -13510,6 +13702,9 @@ function TimeclockReportView({ token, onLogout }) {
             { key: 'event_date', label: 'Date', render: (row) => formatDateTime(row.event_date) },
             { key: 'user', label: 'User' },
             { key: 'event', label: 'Event' },
+            // 65000s (~18h) is the legacy vicidial threshold for a bogus
+            // timeclock session (missed punch-out) — such LOGOUT rows show a
+            // blank Session on purpose, matching the stock timeclock report.
             { key: 'login_sec', label: 'Session', render: (row) => (row.event === 'LOGOUT' && row.login_sec < 65000 ? formatSeconds(row.login_sec) : '') },
             { key: 'ip_address', label: 'IP' },
             { key: 'manager_user', label: 'Manager', render: (row) => row.manager_user || '' },
@@ -13582,7 +13777,7 @@ function TimeclockStatusReportView({ token, onLogout }) {
 // Generic Logs-and-QA raw-log viewer: date range + optional text filter,
 // summary panels and a capped detail table, driven by a config object.
 function LogReportView({ token, onLogout, config }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [beginTime, setBeginTime] = useState('00:00');
@@ -13980,7 +14175,7 @@ const LOG_REPORT_CONFIGS = {
 
 // Native AST_server_performance.php: per-server load/CPU aggregates + series.
 function ServerPerformanceReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [serverIp, setServerIp] = useState('');
@@ -14098,7 +14293,7 @@ function ServerPerformanceReportView({ token, onLogout }) {
 
 // Native phone_stats.php: call_log stats for one phone extension.
 function PhoneStatsReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [phoneKey, setPhoneKey] = useState('');
@@ -14291,7 +14486,7 @@ function ProcessReportView({ token, onLogout }) {
 
 // Native sph_report.php: sales per hour from vicidial_agent_sph.
 function SphReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [shift, setShift] = useState('ALL');
@@ -14407,8 +14602,8 @@ const MAX_STATS_COLUMNS = [
 ];
 
 function MaxStatsReportView({ token, onLogout }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+  const today = localDateStr();
+  const monthAgo = localDateStr(new Date(Date.now() - 29 * 86400000));
   const [beginDate, setBeginDate] = useState(monthAgo);
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState(null);
@@ -14711,7 +14906,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [sidePanel, setSidePanel] = useState('');
   const [xferOptions, setXferOptions] = useState(null);
   const [callLog, setCallLog] = useState(null);
-  const [callLogDate, setCallLogDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [callLogDate, setCallLogDate] = useState(() => localDateStr());
   const [leadInfo, setLeadInfo] = useState(null);
   const [vmExten, setVmExten] = useState('');
   const [ingroupOptions, setIngroupOptions] = useState(null);
@@ -14829,7 +15024,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       uniqueid: live?.uniqueid || '',
       fronter: '',
       closer: authInfo?.user?.user || '',
-      SQLdate: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      SQLdate: localSqlNow(),
       epoch: String(Math.floor(Date.now() / 1000)),
       script_width: '100%',
       script_height: '400',
@@ -14848,17 +15043,24 @@ function AgentConsole({ token, authInfo, onExit }) {
       const hit = dispoHotkeys.find((h) => String(h.hotkey) === event.key);
       if (!hit) return;
       event.preventDefault();
+      // Same busy gate as the buttons (disabled={busy}): without it a quick
+      // double-press fires two dispo POSTs for the same lead.
+      if (busy) return;
       act('/agent/dispo', { status: hit.status, lead_id: lead.lead_id, comments: dispoComments }).then((payload) => {
         if (payload) {
           setLead(null);
           setDispoPick('');
+          // Clear per-call note state exactly like the manual Save button —
+          // a leftover comment must not attach to the NEXT call's dispo.
+          setCallbackTime('');
+          setDispoComments('');
           setMessage(`Dispositioned ${hit.status} (hotkey ${hit.hotkey}) — paused`);
         }
       });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [dispoHotkeys, lead ? lead.lead_id : 0, live?.status, dispoComments]);
+  }, [dispoHotkeys, lead ? lead.lead_id : 0, live?.status, dispoComments, busy]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -14948,6 +15150,17 @@ function AgentConsole({ token, authInfo, onExit }) {
     if (!live || mainTab !== 'script' || scriptData) return;
     apiFetch('/agent/script', token).then(setScriptData).catch(() => {});
   }, [live ? 1 : 0, mainTab === 'script' ? 1 : 0, token]);
+
+  // Script and transfer options are cached per campaign login. Drop them when
+  // the agent logs out (live goes null) so re-logging into a different
+  // campaign in the same console can't show the previous campaign's script
+  // or offer its transfer in-groups.
+  useEffect(() => {
+    if (!live) {
+      setScriptData(null);
+      setXferOptions(null);
+    }
+  }, [live ? 1 : 0]);
 
   // FORM tab: load custom fields whenever the tab opens on a lead.
   useEffect(() => {
@@ -15111,6 +15324,11 @@ function AgentConsole({ token, authInfo, onExit }) {
     }
   }, [live?.status, lead ? lead.lead_id : 0, Number(live?.preview_lead_id || 0) > 0 ? 1 : 0, webForms ? 1 : 0]);
 
+  // KNOWN LIMITATION: mixes client Date.now() with the server-written
+  // state_epoch, so workstation clock skew shifts the call/pause timers (a
+  // fast clock inflates them; the Math.max hides slow clocks). A proper fix
+  // needs a server-time offset captured at login — until then treat these
+  // timers as approximate.
   const stateSeconds = live ? Math.max(0, Math.floor(Date.now() / 1000) - Number(live.state_epoch || 0)) : 0;
 
   // Pause-code time limits (seconds): drive the countdown on the Paused badge.

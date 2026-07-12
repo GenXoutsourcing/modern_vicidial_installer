@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# install-genx-ui.sh — build + deploy the GenX UI onto a VICIdial web server.
+# Idempotent: safe to re-run for every deploy (the standard flow is
+# `git pull --ff-only && ./install-genx-ui.sh`). What it does:
+#   1. copies genx-ui/ into a timestamped /opt/genx-ui/releases/<ts> dir,
+#      npm ci + vite build there, then re-points the 'current' symlink
+#      (old releases pruned to the newest 3);
+#   2. writes /etc/genx-ui.env (DB creds read from /etc/astguiclient.conf;
+#      GENX_UI_DB_SLAVE_HOST auto-synced by the genx-ui-slave-sync cron);
+#   3. installs the systemd unit + Apache /genx/ proxy conf and restarts;
+#   4. health-checks /api/health (with retries — this script runs under
+#      set -e inside the role installer) and prints a settings preflight.
+# Debugging a failed deploy: journalctl -u genx-ui -n 50.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -164,7 +176,18 @@ release="$APP_ROOT/releases/$(date +%Y%m%d%H%M%S)"
 mkdir -p "$release"
 tar --exclude node_modules --exclude dist -C "$APP_SRC" -cf - . | tar -C "$release" -xf -
 
+# Prune superseded releases, keeping the 3 newest (the 'current' symlink is
+# re-pointed below). Each release carries a full node_modules, so without this
+# the disk fills and the recursive chown below gets slower every deploy.
+ls -1dt "$APP_ROOT"/releases/*/ 2>/dev/null | tail -n +4 | while read -r old_release; do
+  rm -rf "$old_release"
+done
+
 cd "$release"
+# KNOWN TRADE-OFF: npm ci/build run as root (the script requires root for
+# systemd/Apache anyway), which executes dependency lifecycle scripts with
+# root privileges. The lockfile pins the tree; if this ever moves to
+# unpinned installs, build as the genx-ui user or add --ignore-scripts.
 if [ -f package-lock.json ]; then
   npm ci
 else
@@ -298,8 +321,24 @@ systemctl enable --now genx-ui
 systemctl restart genx-ui
 systemctl reload httpd
 
-sleep 2
-curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null
+# Health check with retries: first boot can take more than a couple of
+# seconds (cold npm cache, genx_ui_sessions table creation, slow DB). This
+# script runs under set -e and is invoked from the role installer, so a
+# single premature curl failure here used to abort the ENTIRE cluster install
+# even though the service came up seconds later.
+health_ok=""
+for _try in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+    health_ok="yes"
+    break
+  fi
+  sleep 3
+done
+if [ -z "$health_ok" ]; then
+  echo "ERROR: genx-ui did not answer /api/health on port $PORT after 30s." >&2
+  echo "       Check: journalctl -u genx-ui -n 50" >&2
+  exit 1
+fi
 
 # Read-only report of the VICIdial settings genx-ui depends on — tells the
 # installer exactly what still needs configuring on a vanilla system.

@@ -1,3 +1,38 @@
+/**
+ * GenX UI backend — a single-file Express server over the VICIdial MySQL
+ * database (MyISAM), serving the React admin + agent UI at /genx/.
+ *
+ * Map of the file (search for these section markers / function names):
+ *   - config/pools ......... primary pool + optional reports replica; the
+ *                            AsyncLocalStorage dbContext routes rows() to the
+ *                            replica for /api/reports/* (writes via execute()
+ *                            ALWAYS hit the primary).
+ *   - async safety net ..... every registered route handler is wrapped so a
+ *                            rejected promise logs + 500s instead of killing
+ *                            the process (Express 4 doesn't catch these).
+ *   - sessions ............. in-memory Map + genx_ui_sessions persistence
+ *                            (survives service restarts; 8h TTL).
+ *   - rangeSource() ........ archive-aware FROM helper for report queries.
+ *                            READ ITS COMMENTS before touching any report
+ *                            SQL: the archive is a SUPERSET of live and the
+ *                            param ordering (fromParams -> join -> where) is
+ *                            load-bearing.
+ *   - admin CRUD ........... one save/delete pair per vicidial entity;
+ *                            permission gates mirror legacy admin.php
+ *                            (requireModify + scopedUserGroupAllowed).
+ *   - reports .............. ~60 native report handlers under /api/reports/*.
+ *   - custom reports ....... CUSTOM_REPORT_DATASETS whitelist registry +
+ *                            genx_saved_reports + the keyed CSV feed that the
+ *                            stock automated-report runner wgets.
+ *   - agent routes ......... /api/agent/*: a port of agc/vicidial.php's DB
+ *                            choreography (live_agents/agent_log state
+ *                            machine — see applyAgentStatus for the
+ *                            wait_epoch/pause_epoch convention).
+ *
+ * Debugging: service runs as genx-ui via systemd on 127.0.0.1:3200 behind
+ * Apache; `journalctl -u genx-ui` shows the safety-net error lines
+ * ('[genx-ui] ... handler error'). Env config lives in /etc/genx-ui.env.
+ */
 import express from 'express';
 import mysql from 'mysql2/promise';
 import crypto from 'node:crypto';
@@ -42,6 +77,44 @@ const config = {
 };
 
 const app = express();
+
+// --- Async-handler safety net -----------------------------------------------
+// Express 4 does NOT route a rejected promise from an async handler to any
+// error middleware: the rejection escapes as an unhandledRejection, which on
+// Node >= 15 kills the whole process — one DB hiccup in one bare `await
+// execute(...)` would drop every logged-in admin and agent on the box. Wrap
+// every registered route handler so an escaped rejection is logged and
+// answered with a clean 500 instead. Handlers still use their own try/catch
+// for specific error responses; this is the backstop, not the primary path.
+for (const method of ['get', 'post', 'put', 'delete', 'patch']) {
+  const original = app[method].bind(app);
+  app[method] = (routePath, ...handlers) => {
+    if (!handlers.length) return original(routePath); // app.get('setting') form
+    const guard = (fn) => (req, res, next) => {
+      try {
+        const out = fn(req, res, next);
+        if (out && typeof out.catch === 'function') {
+          out.catch((error) => {
+            console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+            if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
+          });
+        }
+      } catch (error) {
+        console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+        if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
+      }
+    };
+    return original(routePath, ...handlers.map((fn) => (typeof fn === 'function' ? guard(fn) : fn)));
+  };
+}
+
+// Last-resort backstop for async work outside a request (intervals, fire-and-
+// forget writes): log loudly, never exit. Without a listener Node >= 15
+// terminates the process on the first unhandled rejection.
+process.on('unhandledRejection', (reason) => {
+  console.error('[genx-ui] unhandled promise rejection:', reason);
+});
+
 const pool = mysql.createPool(config.db);
 const reportPool = config.dbSlave.host ? mysql.createPool(config.dbSlave) : pool;
 // Lets rows()/requiredRows() transparently target the report replica for the
@@ -52,6 +125,32 @@ function activePool() {
   return dbContext.getStore() || pool;
 }
 const sessions = new Map();
+
+// In-memory brute-force throttle for the two login endpoints (admin /login
+// and /agent/auth). Legacy VICIdial tracks failed_login_count in the DB;
+// this is the equivalent guard here: 10 failures per user+IP in 15 minutes
+// → 429 until the window rolls. Memory-only by design — a service restart
+// clears it, comparable to the legacy per-day reset.
+const loginFailures = new Map(); // 'user|ip' -> { count, firstAt }
+const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_FAIL_MAX = 10;
+function loginThrottled(key) {
+  const entry = loginFailures.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.firstAt > LOGIN_FAIL_WINDOW_MS) {
+    loginFailures.delete(key);
+    return false;
+  }
+  return entry.count >= LOGIN_FAIL_MAX;
+}
+function recordLoginFailure(key) {
+  const entry = loginFailures.get(key);
+  if (!entry || Date.now() - entry.firstAt > LOGIN_FAIL_WINDOW_MS) {
+    loginFailures.set(key, { count: 1, firstAt: Date.now() });
+  } else {
+    entry.count += 1;
+  }
+}
 const ranges = {
   today: { key: 'today', label: 'Today', days: 1 },
   '7d': { key: '7d', label: '7 Days', days: 7 },
@@ -597,9 +696,12 @@ async function authenticateVicidialUser(username, password) {
   return pub;
 }
 
+// Like rows(), scalar() must honor the AsyncLocalStorage report-pool context:
+// dashboard aggregates are wrapped in onReplica(() => scalar(...)) precisely
+// to keep full-table COUNT/SUM scans off the primary's MyISAM read locks.
 async function scalar(sql, params = [], fallback = 0) {
   try {
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await activePool().query(sql, params);
     const row = rows?.[0] || {};
     const value = row.value ?? Object.values(row)[0];
     return value ?? fallback;
@@ -643,6 +745,28 @@ const _archiveExistsCache = new Map();        // table -> boolean
 const _liveBoundaryCache = new Map();         // table -> { value, at }
 const LIVE_BOUNDARY_TTL_MS = 10 * 60 * 1000;  // boundary only moves when the nightly archive runs
 
+// Shared CSV cell escaper for every CSV emitter (custom-report feed,
+// csvExportSender, downloadList). RFC-4180 quoting PLUS spreadsheet
+// formula-injection neutralization: lead fields and caller-ID names are
+// externally controlled, and a cell starting with = + - @ executes as a
+// formula when the export is opened in Excel. Such cells get a leading
+// apostrophe (plain negative numbers are left alone).
+function csvCell(value) {
+  let text = value == null ? '' : String(value);
+  if (/^[=+@-]/.test(text) && !/^-?\d*\.?\d+$/.test(text)) text = `'${text}`;
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+// Local calendar day as 'YYYY-MM-DD'. VICIdial stores call_date/event_time in
+// the DB server's LOCAL time (installer pins the box and MySQL to one zone),
+// so report defaults must NEVER use toISOString() — that's the UTC day, which
+// is already "tomorrow" during evening shifts in negative-UTC timezones and
+// makes every defaulted "today" report come back empty.
+function localDateStr(date = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+}
+
 function sqlDateTime(value) {
   if (value == null) return null;
   if (!(value instanceof Date)) return String(value);
@@ -662,10 +786,20 @@ async function archiveTableExists(table) {
 async function liveBoundary(table, dateCol) {
   const cached = _liveBoundaryCache.get(table);
   if (cached && (Date.now() - cached.at) < LIVE_BOUNDARY_TTL_MS) return cached.value;
-  const [row] = await rows(`SELECT MIN(${dateCol}) AS mn FROM ${table}`, [], []);
-  const value = sqlDateTime(row?.mn);
-  _liveBoundaryCache.set(table, { value, at: Date.now() });
-  return value;
+  try {
+    // requiredRows (not rows) so a transient DB error is distinguishable from
+    // a legitimately empty live table. A null boundary makes rangeSource use
+    // '<= end' on the archive branch, which double-counts every row still in
+    // both tables — caching a null caused by an ERROR would serve doubled
+    // report numbers for the whole TTL. Errors fall back to the stale cached
+    // value (or null once, uncached, so the next call retries).
+    const [row] = await requiredRows(`SELECT MIN(${dateCol}) AS mn FROM ${table}`, []);
+    const value = sqlDateTime(row?.mn);
+    _liveBoundaryCache.set(table, { value, at: Date.now() });
+    return value;
+  } catch (error) {
+    return cached ? cached.value : null;
+  }
 }
 
 // table/dateCol are internal constants (never user input), so interpolating
@@ -1067,7 +1201,7 @@ async function activitySeries(range) {
   return Array.from({ length: range.days }, (_, index) => {
     const date = new Date();
     date.setDate(date.getDate() - (range.days - index - 1));
-    const key = date.toISOString().slice(0, 10);
+    const key = localDateStr(date);
     return {
       key,
       label: new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric' }).format(date),
@@ -1261,17 +1395,21 @@ async function adminData(user) {
   const didParams = [...didQueueParams, ...didUserGroupParams];
   const didWhere = `(${didQueueWhere} OR ${didUserGroupWhere})`;
   const phoneParams = [];
-  const phoneWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', phoneParams);
+  // Records created with the default user_group '---ALL---' are shared: stock
+  // admin.php ORs them into every group-scoped listing, so we must too or a
+  // scoped manager loses shared scripts/filters/etc. from listings AND from
+  // the campaign-edit lookups derived from these result sets.
+  const phoneWhere = `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', phoneParams)} OR user_group = '---ALL---')`;
   const serverParams = [];
-  const serverWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', serverParams);
+  const serverWhere = `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', serverParams)} OR user_group = '---ALL---')`;
   const carrierParams = [];
-  const carrierWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', carrierParams);
+  const carrierWhere = `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', carrierParams)} OR user_group = '---ALL---')`;
   const callTimeParams = [];
   const callTimeWhere = scopeWhere(user?.permissions?.adminViewableCallTimes, 'call_time_id', callTimeParams);
   const scriptParams = [];
-  const scriptWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', scriptParams);
+  const scriptWhere = `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', scriptParams)} OR user_group = '---ALL---')`;
   const filterParams = [];
-  const filterWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', filterParams);
+  const filterWhere = `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', filterParams)} OR user_group = '---ALL---')`;
   const callMenuParams = [];
   const callMenuScopeWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', callMenuParams);
   const callMenuWhere = `(${callMenuScopeWhere} OR user_group = '---ALL---')`;
@@ -2868,12 +3006,11 @@ async function adminData(user) {
 }
 
 function campaignPayload(body, currentUser) {
-  const codeText = (value, max = 40, fallback = '') => cleanText(value, max).replace(/[^-_.:| 0-9a-zA-Z]/g, '') || fallback;
+  // Use the module-level sanitizers (codeText/cleanExactChoice) — earlier
+  // local copies shadowed them, so a charset fix at the module level would
+  // silently not apply to the ~150 campaign fields sanitized here.
   const decimalText = (value, fallback = '0', max = 6) => cleanText(value, max).replace(/[^0-9.]/g, '') || fallback;
-  const exactChoice = (value, allowed, fallback, max = 60) => {
-    const next = codeText(value, max, fallback);
-    return allowed.includes(next) ? next : fallback;
-  };
+  const exactChoice = cleanExactChoice;
   const payload = {
     campaign_name: cleanText(body.campaign_name, 40) || 'New Campaign',
     campaign_description: cleanText(body.campaign_description, 255),
@@ -3163,6 +3300,12 @@ function campaignPayload(body, currentUser) {
     custom_four: cleanText(body.custom_four, 12000),
     custom_five: cleanText(body.custom_five, 12000),
   };
+  // Adaptive dial methods: the ADAPT algorithm OWNS auto_dial_level, so a
+  // submitted value is discarded unless the client sends the magic
+  // dial_level_override=1 body flag. The delete branch means "keep whatever
+  // the DB currently has" on UPDATE (on INSERT it falls to the column
+  // default) — do NOT "fix" it as a lost assignment. A floor of 1.0 is
+  // applied when starting below 1 so ADAPT has something to adapt from.
   if (/ADAPT/.test(detailPayload.dial_method) && cleanInt(body.dial_level_override, 0, 0, 1) < 1) {
     if (Number(detailPayload.auto_dial_level || 0) < 1) detailPayload.auto_dial_level = '1.0';
     else delete detailPayload.auto_dial_level;
@@ -4181,7 +4324,9 @@ function parseDncPhoneNumbers(raw) {
 }
 
 async function bulkDnc(req, res) {
-  const scope = cleanText(req.body?.scope, 8) || DNC_SYSTEM_SCOPE;
+  // Max 16: must fit the 15-char SYSTEM_INTERNAL sentinel intact — truncating
+  // it (this was 8) made isSystem always false and broke system DNC adds.
+  const scope = cleanText(req.body?.scope, 16) || DNC_SYSTEM_SCOPE;
   const isSystem = scope === DNC_SYSTEM_SCOPE;
   if (!requireModify(req, res, 'deleteFromDnc')) return;
   const action = req.body?.action === 'delete' ? 'delete' : 'add';
@@ -4234,13 +4379,16 @@ async function dncSearch(req, res) {
   if (!requireModify(req, res, 'deleteFromDnc')) return;
   const phone = cleanText(req.query?.phone, 18).replace(/[^0-9]/g, '');
   if (phone.length < 3) return badRequest(res, 'phone_search_too_short');
+  // Prefix match: the UI advertises partial search (3+ digits). LIKE 'nnn%'
+  // still uses the phone_number index; a bare equality silently returned
+  // nothing for partial input.
   const entries = await rows(
     `SELECT campaign_id, action, action_date, user
      FROM vicidial_dnc_log
-     WHERE phone_number = ?
+     WHERE phone_number LIKE ?
      ORDER BY action_date DESC
      LIMIT 200`,
-    [phone],
+    [`${phone}%`],
     [],
   );
   return res.json({ ok: true, entries });
@@ -4275,7 +4423,7 @@ function parseReportDateTimeRange(req) {
 }
 
 function parseReportDateRange(req) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   return {
     beginDate: cleanReportDate(req.query?.begin_date, today),
     endDate: cleanReportDate(req.query?.end_date, today),
@@ -4525,7 +4673,7 @@ async function customReportRun(req, res) {
   if (!config) return badRequest(res, 'unknown_dataset');
   if (!config.measures.length) return badRequest(res, 'measures_required');
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const beginDate = cleanReportDate(body.begin_date, today);
   const endDate = cleanReportDate(body.end_date, today);
   const start = `${beginDate} ${cleanReportTime(body.begin_time, '00:00:00')}`;
@@ -4566,7 +4714,7 @@ async function loadUserContextByName(username) {
 // defaults elsewhere in this file.
 function customFeedRange(rangeKey) {
   const now = new Date();
-  const day = (date) => date.toISOString().slice(0, 10);
+  const day = (date) => localDateStr(date);
   const daysAgo = (n) => day(new Date(now.getTime() - n * 86400000));
   const today = day(now);
   switch (rangeKey) {
@@ -4613,10 +4761,7 @@ async function customReportFeed(req, res) {
     start: `${beginDate} 00:00:00`, end: `${endDate} 23:59:59`, limit: CUSTOM_REPORT_FEED_MAX_ROWS,
   });
 
-  const escapeCell = (value) => {
-    const text = String(value ?? '');
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
+  const escapeCell = csvCell; // shared: RFC-4180 + formula-injection guard
   const lines = [result.columns.map((column) => escapeCell(column.label)).join(',')];
   for (const row of result.rows) {
     lines.push(result.columns.map((column) => escapeCell(row[column.key])).join(','));
@@ -4650,7 +4795,13 @@ async function scheduleCustomReport(req, res) {
   const body = req.body || {};
   const emailTo = cleanText(body.email_to, 255).trim();
   if (!emailTo) return badRequest(res, 'email_to_required');
-  const host = String(req.headers.host || '').replace(/[^-_.:a-zA-Z0-9]/g, '');
+  // The feed URL (which embeds the secret feed_key) is stored in the DB and
+  // wget-ed server-side by the report runner on every schedule. Prefer the
+  // configured public host: deriving it from the client-controlled Host
+  // header would let a crafted request point the runner (and the key) at an
+  // attacker-chosen hostname. The header is only a fallback for installs
+  // that haven't set GENX_UI_PUBLIC_HOST (Apache's ServerName then bounds it).
+  const host = String(process.env.GENX_UI_PUBLIC_HOST || req.headers.host || '').replace(/[^-_.:a-zA-Z0-9]/g, '');
   if (!host) return badRequest(res, 'host_unresolved');
   const emailFrom = cleanText(body.email_from, 255).trim() || `reports@${host.split(':')[0]}`;
   const range = cleanChoice(body.range, CUSTOM_FEED_RANGES, 'yesterday');
@@ -5086,6 +5237,13 @@ function ctWindow(row, prefix, dayIndex) {
 function gmtOffsetSlots() {
   const slots = [];
   const now = Date.now();
+  // Two encoding contracts here, both inherited from the vicidial schema:
+  // 1. `hour` is an HHMM integer (hour*100 + minutes, e.g. 930, 2115) —
+  //    vicidial_call_times stores ct_*_start/stop the same way, which is why
+  //    plain >=/< comparisons in ctWindow work.
+  // 2. `gmt` must be toFixed(2): vicidial_list.gmt_offset_now values are
+  //    strings with exactly two decimals ('-4.00'), matched by string.
+  // Changing either representation silently breaks call-time matching.
   for (let p = 13; p > -13; p -= 0.25) {
     const t = new Date(now + p * 3600000);
     slots.push({ gmt: p.toFixed(2), day: t.getUTCDay(), hour: t.getUTCHours() * 100 + t.getUTCMinutes() });
@@ -5096,7 +5254,7 @@ function gmtOffsetSlots() {
 async function holidayWindowToday(holidayList) {
   const ids = String(holidayList || '').split('|').map((item) => cleanId(item, 30)).filter(Boolean);
   if (!ids.length) return null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   const [holiday] = await rows(
     `SELECT holiday_id, ct_default_start, ct_default_stop FROM vicidial_call_time_holidays
      WHERE holiday_id IN (${ids.map(() => '?').join(',')}) AND holiday_status = 'ACTIVE' AND holiday_date = ?
@@ -5184,7 +5342,7 @@ async function callTimeGmtCondition(callTimeId) {
 // list matching statuses + call-time window + campaign limits + filter SQL.
 async function dialableLeadCount(list, statuses, campaign, gmtCondition, extraSql) {
   if (!list || list.active !== 'Y') return 0;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   if (list.expiration_date && String(list.expiration_date).slice(0, 10) < today) return 0;
   const statusIn = statuses.length
     ? statuses.map((status) => `'${String(status).replace(/[^-_0-9A-Za-z]/g, '')}'`).join(',')
@@ -5196,7 +5354,12 @@ async function dialableLeadCount(list, statuses, campaign, gmtCondition, extraSq
   const dropLockout = Number(campaign.drop_lockout_time || 0);
   if (dropLockout > 0) {
     const seconds = Math.floor(dropLockout * 3600);
-    where += ` AND ((status IN ('DROP','XDROP') AND last_local_call_time < CONCAT(DATE_ADD(NOW(), INTERVAL -${seconds} SECOND), ' ', CURTIME())) OR status NOT IN ('DROP','XDROP'))`;
+    // Straight datetime comparison. The legacy CONCAT(CURDATE-based, CURTIME)
+    // pattern glued a date to a time; porting it onto NOW() produced the
+    // malformed literal 'YYYY-MM-DD HH:MM:SS HH:MM:SS' that only "worked" via
+    // MySQL's silent truncation and could NULL out under strict comparison,
+    // dropping the DROP/XDROP lockout entirely.
+    where += ` AND ((status IN ('DROP','XDROP') AND last_local_call_time < DATE_SUB(NOW(), INTERVAL ${seconds} SECOND)) OR status NOT IN ('DROP','XDROP'))`;
   }
   if (extraSql) where += ` AND ${extraSql}`;
   const [row] = await rows(`SELECT COUNT(*) AS cnt FROM vicidial_list WHERE ${where}`, [list.list_id], []);
@@ -5221,6 +5384,10 @@ async function inventoryListRow(campaign, list, inventoryStatuses, inactiveStatu
     totalCalls += Number(row.called_count || 0) * Number(row.leads || 0);
   }
   const callCountLimit = Number(campaign.call_count_limit || 0);
+  // Legacy "one-off" rule is limit MINUS ONE (leads with at least one dial
+  // remaining beyond the next call) — the apparent off-by-one is intentional.
+  // With call_count_limit unset (0) this degenerates to called_count < -1,
+  // deliberately forcing the ONEOFF column to 0.
   const oneoffSql = `${filterSql ? `${filterSql} AND ` : ''}(called_count < ${callCountLimit - 1})`;
   const [dialable, dialableNoFilter, oneoff, inactiveDialable] = await Promise.all([
     dialableLeadCount(list, inventoryStatuses, campaign, gmtCondition, filterSql),
@@ -5275,6 +5442,11 @@ async function inventoryCampaignContext(campaignId, override24) {
       [campaign.lead_filter_id],
       [],
     );
+    // lead_filter_sql is raw SQL BY PRODUCT DESIGN (stock vicidial lead
+    // filters are admin-authored WHERE fragments, gated by modify_filters).
+    // It runs here under the reports DB user for any viewReports caller, so
+    // that DB user must stay read-only. The backslash strip mirrors the
+    // legacy sanitization.
     if (filter?.lead_filter_sql) filterSql = `(${String(filter.lead_filter_sql).replace(/\\/g, '')})`;
   }
   const gmtCondition = override24 ? null : await callTimeGmtCondition(campaign.local_call_time);
@@ -5463,13 +5635,12 @@ async function outboundCallingReport(req, res) {
 
   const one = async (sql, params) => (await rows(sql, params, []))[0] || {};
   const [
-    totals, haAgent, haAll, ansAgent, amCalls, drops, naStats, bdnStats,
+    totals, haAgent, haAll, amCalls, drops, naStats, bdnStats,
     termReasons, agentTime, statusBreakdown, listBreakdown, carrierBreakdown,
   ] = await Promise.all([
     one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere}`, logParams),
     one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
     one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status IN (${haIn})`, logParams),
-    one(`SELECT COUNT(*) AS calls FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${haIn})`, logParams),
     one(`SELECT COUNT(*) AS calls FROM ${logFrom} WHERE ${logWhere} AND user != 'VDAD' AND status IN (${amIn})`, logParams),
     one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status = 'DROP' AND (length_in_sec <= 6000 OR length_in_sec IS NULL)`, logParams),
     one(`SELECT COUNT(*) AS calls, COALESCE(SUM(length_in_sec),0) AS seconds FROM ${logFrom} WHERE ${logWhere} AND status IN (${sqlStatusList(VDAD_NA_STATUSES)}) AND (length_in_sec <= 60 OR length_in_sec IS NULL)`, logParams),
@@ -5484,8 +5655,18 @@ async function outboundCallingReport(req, res) {
     rows(
       `SELECT vl.status, COUNT(*) AS calls, COALESCE(SUM(vl.length_in_sec),0) AS seconds, s.status_name, s.category
        FROM ${vlSrc.fromSql}
-       LEFT JOIN (SELECT status, status_name, category FROM vicidial_statuses
-                  UNION SELECT status, status_name, category FROM vicidial_campaign_statuses WHERE campaign_id IN (${ph})) s
+       LEFT JOIN (
+         /* One row per status or the join multiplies the call counts when a
+            status exists in both vicidial_statuses and a campaign override
+            (or in several selected campaigns). Campaign rows (pri 0) win. */
+         SELECT status,
+                SUBSTRING_INDEX(GROUP_CONCAT(status_name ORDER BY pri SEPARATOR '\n'), '\n', 1) AS status_name,
+                SUBSTRING_INDEX(GROUP_CONCAT(category ORDER BY pri SEPARATOR '\n'), '\n', 1) AS category
+         FROM (SELECT 1 AS pri, status, status_name, category FROM vicidial_statuses
+               UNION ALL
+               SELECT 0 AS pri, status, status_name, category FROM vicidial_campaign_statuses WHERE campaign_id IN (${ph})) su
+         GROUP BY status
+       ) s
          ON s.status = vl.status
        WHERE ${vlSrc.dateWhere}
        GROUP BY vl.status ORDER BY vl.status ASC LIMIT 200`,
@@ -5546,6 +5727,9 @@ async function outboundCallingReport(req, res) {
     );
   }
 
+  // ansAgent was a byte-identical duplicate of the haAgent scan (one of the
+  // heaviest queries in this report); reuse its calls count instead.
+  const ansAgent = { calls: Number(haAgent.calls || 0) };
   return res.json({
     ok: true,
     campaigns,
@@ -5594,8 +5778,13 @@ async function outboundIntervalReport(req, res) {
       table: 'vicidial_log', dateCol: 'call_date', start: begin, end, alias: 'vl',
       extraWhere: 'vl.campaign_id = ?', extraParams: [campaignId],
     });
+    // bucket_label is formatted by MySQL in DB-local time. The client must
+    // display it verbatim: rendering the epoch bucket with the browser's
+    // timezone shifts every interval for admins not in the dialer's zone.
     const outbound = await rows(
-      `SELECT ${bucketExpr} AS bucket, COUNT(*) AS calls,
+      `SELECT ${bucketExpr} AS bucket,
+              DATE_FORMAT(FROM_UNIXTIME(${bucketExpr}), '%b %e, %H:%i') AS bucket_label,
+              COUNT(*) AS calls,
               COALESCE(SUM(GREATEST(length_in_sec,0)),0) AS talk_seconds,
               COALESCE(SUM(status LIKE '%DROP%'),0) AS drops,
               COALESCE(SUM(status IN (${systemIn})),0) AS system_release,
@@ -5639,6 +5828,7 @@ async function outboundIntervalReport(req, res) {
     });
     const agentBuckets = await rows(
       `SELECT FLOOR(UNIX_TIMESTAMP(event_time) / ${intervalSec}) * ${intervalSec} AS bucket,
+              DATE_FORMAT(FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(event_time) / ${intervalSec}) * ${intervalSec}), '%b %e, %H:%i') AS bucket_label,
               COALESCE(SUM(pause_sec + wait_sec + talk_sec + dispo_sec),0) AS login_seconds,
               COALESCE(SUM(pause_sec),0) AS pause_seconds
        FROM ${alSrc.fromSql}
@@ -5737,8 +5927,10 @@ async function leadSourceReport(req, res) {
       )
       : [];
     const statuses = await rows(
-      `SELECT status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
-       UNION SELECT status, status_name FROM vicidial_statuses LIMIT 500`,
+      `SELECT status, status_name FROM (
+         SELECT 0 AS pri, status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
+         UNION SELECT 1 AS pri, status, status_name FROM vicidial_statuses
+       ) u ORDER BY pri ASC LIMIT 500`,
       [campaignId],
       [],
     );
@@ -6100,6 +6292,11 @@ async function didDetailReport(req, res) {
      LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
      WHERE ${vdlSrc.dateWhere}
      ORDER BY vdl.call_date ASC LIMIT 2000`,
+    // Bind order is load-bearing: fromParams (the union branches), then any
+    // JOIN binds (none here — a parameterized join condition must be spliced
+    // BETWEEN these arrays), then whereParams. In live mode fromParams is
+    // empty and the date binds live in whereParams, so appending a join bind
+    // at the end would shift every value one position.
     [...vdlSrc.fromParams, ...vdlSrc.whereParams],
     [],
   );
@@ -6410,11 +6607,20 @@ async function agentTimeDetailReport(req, res) {
     extraWhere: [campaignExtra, groupScopeWhere.replace(/user_group/g, 'al.user_group')].filter(Boolean).join(' AND '),
     extraParams: [...campaignExtraParams, ...groupScopeParams],
   });
+  // Every section carries the adminViewableGroups scope, not just the agents
+  // table — otherwise the response leaks pause/timeclock/park data for users
+  // outside the requesting manager's viewable groups even when the UI table
+  // doesn't render them.
   const pausesSrc = await rangeSource({
     table: 'vicidial_agent_log', dateCol: 'event_time', start: begin, end, alias: 'al',
-    extraWhere: campaignExtra, extraParams: campaignExtraParams,
+    extraWhere: [campaignExtra, groupScopeWhere.replace(/user_group/g, 'al.user_group')].filter(Boolean).join(' AND '),
+    extraParams: [...campaignExtraParams, ...groupScopeParams],
   });
   const parkSrc = await rangeSource({ table: 'park_log', dateCol: 'parked_time', start: begin, end, alias: 'pk' });
+  const loginScopeParams = [];
+  const loginScopeWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', loginScopeParams);
+  const parkScopeParams = [];
+  const parkScopeWhere = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'u.user_group', parkScopeParams);
 
   const [campaigns, agents, logins, pauses, parks] = await Promise.all([
     rows(`SELECT campaign_id FROM vicidial_campaigns WHERE ${campaignPickerWhere} ORDER BY campaign_id ASC LIMIT 500`, campaignPickerParams, []),
@@ -6433,9 +6639,9 @@ async function agentTimeDetailReport(req, res) {
     ),
     rows(
       `SELECT user, COALESCE(SUM(login_sec),0) AS login_sec FROM vicidial_timeclock_log
-       WHERE event IN ('LOGIN','START') AND event_date >= ? AND event_date <= ?
+       WHERE event IN ('LOGIN','START') AND event_date >= ? AND event_date <= ? AND ${loginScopeWhere}
        GROUP BY user LIMIT 2000`,
-      [begin, end],
+      [begin, end, ...loginScopeParams],
       [],
     ),
     rows(
@@ -6446,9 +6652,11 @@ async function agentTimeDetailReport(req, res) {
       [],
     ),
     rows(
-      `SELECT user, COUNT(*) AS parks, COALESCE(SUM(parked_sec),0) AS parked_sec FROM ${parkSrc.fromSql}
-       WHERE ${parkSrc.dateWhere} GROUP BY user LIMIT 2000`,
-      parkSrc.params,
+      `SELECT pk.user, COUNT(*) AS parks, COALESCE(SUM(pk.parked_sec),0) AS parked_sec FROM ${parkSrc.fromSql}
+       LEFT JOIN vicidial_users u ON u.user = pk.user
+       WHERE ${parkSrc.dateWhere} AND ${parkScopeWhere}
+       GROUP BY pk.user LIMIT 2000`,
+      [...parkSrc.params, ...parkScopeParams],
       [],
     ),
   ]);
@@ -7035,7 +7243,7 @@ const COMPARISON_WINDOWS = [0, 1, 2, 3, 5, 10, 30];
 
 async function performanceComparisonReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
-  const endDate = cleanReportDate(req.query?.end_date, new Date().toISOString().slice(0, 10));
+  const endDate = cleanReportDate(req.query?.end_date, localDateStr());
   const end = `${endDate} 23:59:59`;
   const campaigns = await agentReportPickers(req);
   const cap = (column) => `COALESCE(SUM(CASE WHEN ${column} < 65000 THEN ${column} ELSE 0 END),0)`;
@@ -7082,7 +7290,7 @@ async function performanceComparisonReport(req, res) {
 // user group per hour of one day.
 async function userGroupHourlyReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
-  const day = cleanReportDate(req.query?.date, new Date().toISOString().slice(0, 10));
+  const day = cleanReportDate(req.query?.date, localDateStr());
   const filterParams = [];
   const filters = agentLogFilters(req, filterParams);
   if (!filters) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
@@ -7127,10 +7335,7 @@ async function userGroupHourlyReport(req, res) {
 function csvExportSender(req, res, filename, columns, dataRows) {
   const hideLead = Boolean(req.genxUser?.adminHideLeadData);
   const phoneMode = req.genxUser?.adminHidePhoneData || '0';
-  const escapeCell = (value) => {
-    const text = value == null ? '' : String(value);
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
+  const escapeCell = csvCell; // shared: RFC-4180 + formula-injection guard
   const lines = [columns.join(',')];
   for (const row of dataRows) {
     lines.push(columns.map((column) => {
@@ -7472,6 +7677,9 @@ const CALLBACK_HOLD_SCOPES = {
 };
 
 async function callbackHoldsReport(req, res) {
+  // Callback listings expose lead_ids, agents and free-text comments — gate
+  // on viewReports like every sibling report handler.
+  if (!requireModify(req, res, 'viewReports')) return;
   const scope = CALLBACK_HOLD_SCOPES[String(req.query?.scope || '')];
   const id = cleanText(req.query?.id, 40);
   if (!scope || !id) return badRequest(res, 'scope_and_id_required');
@@ -8210,6 +8418,10 @@ async function buildWebphoneUrl(phone, userGroup, confExten, reqHost) {
 
   const codecs = String(phone.codecs_list || '').replace(/[ \-&]/g, '');
   const b64 = (v) => Buffer.from(String(v == null ? '' : v)).toString('base64');
+  // NOTE: phone_login appears twice, matching the legacy webphone URL
+  // builder's output byte-for-byte. ViciPhone tolerates the duplicate; if
+  // you're diffing against legacy and expected a different second field,
+  // this is why. Left as-is until verified against every webphone build.
   const params = `phone_login=${b64(phone.extension)}&phone_login=${b64(phone.extension)}`
     + `&phone_pass=${b64(phone.conf_secret)}&server_ip=${b64(webphoneServerIp)}`
     + `&callerid=${b64(phone.outbound_cid)}&protocol=${b64(phone.protocol)}`
@@ -8225,6 +8437,10 @@ async function agentAuth(req, res) {
   const userLogin = cleanId(req.body?.user, 20);
   const userPass = String(req.body?.pass || '');
   if (!userLogin || !userPass) return badRequest(res, 'all_fields_required');
+  const throttleKey = `${userLogin}|${req.ip}`;
+  if (loginThrottled(throttleKey)) {
+    return res.status(429).json({ ok: false, error: 'too_many_attempts' });
+  }
 
   const [userRow] = await rows(
     `SELECT u.user, u.pass, u.full_name, u.user_level, u.user_group, u.active,
@@ -8238,8 +8454,10 @@ async function agentAuth(req, res) {
   );
   if (!userRow || userRow.active !== 'Y' || Number(userRow.user_level || 0) < 1
     || !passwordMatches(userPass, userRow.pass)) {
+    recordLoginFailure(throttleKey);
     return res.status(401).json({ ok: false, error: 'invalid_user_credentials' });
   }
+  loginFailures.delete(throttleKey);
 
   if (!phoneLogin) {
     phoneLogin = String(userRow.phone_login || '').trim();
@@ -8284,6 +8502,11 @@ async function agentAuth(req, res) {
     agentPhone: { ...phone, pass: undefined },
     // Kept for script/web-form --A--pass--B-- merges after a page reload
     // (legacy vicidial.php embeds it in the page for the whole session).
+    // TRADE-OFF: persistSession() writes this session to genx_ui_sessions,
+    // so the plaintext password is readable by anything with SELECT on that
+    // table (replica, backups) for the session's 8h TTL — wider exposure
+    // than legacy's page-embedded copy. Revisit if the merge fields can be
+    // served without it.
     userPass,
     expiresAt: Date.now() + config.sessionTtlMs,
     persistedAt: Date.now(),
@@ -8425,16 +8648,15 @@ async function agentLogin(req, res) {
       "DELETE FROM web_client_sessions WHERE extension = ? AND server_ip = ? AND program = 'vicidial'",
       [phone.extension, phone.server_ip],
     );
+    // Column-less INSERT depends on web_client_sessions' exact column order
+    // (extension, server_ip, program, connect_date, session_name) matching
+    // the stock schema — a reordered/extended table would silently write
+    // values into the wrong fields.
     await execute(
       "INSERT INTO web_client_sessions VALUES (?, ?, 'vicidial', NOW(), ?)",
       [phone.extension, phone.server_ip, sessionName],
     );
 
-    const [callsRow] = await rows(
-      'SELECT COUNT(lead_id) AS calls FROM vicidial_agent_log WHERE user = ? AND event_time >= CURDATE() AND lead_id IS NOT NULL',
-      [user],
-      [],
-    );
     const autodial = campaign.dial_method === 'MANUAL' ? 'N' : 'Y';
     const closerCampaigns = String(campaign.closer_campaigns || '').trim();
 
@@ -8830,7 +9052,15 @@ async function applyAgentStatus(user, userGroup, target, pauseType = 'AGENT') {
     [],
   );
   if (target === 'READY') {
-    if (log && (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch))) {
+    // agent_log state machine: every segment INSERT in this file seeds
+    // wait_epoch = pause_epoch = nowEpoch, meaning "paused, wait not started".
+    // wait_epoch <= pause_epoch  => still in the pause phase: close it out
+    //                               (book pause_sec, start the wait at now).
+    // wait_epoch >  pause_epoch  => READY already ran for this segment.
+    // The comparison MUST be <= — with a strict < this branch never fired
+    // (equal epochs from the seed) and the whole pause got booked as wait_sec
+    // by the next PAUSE, zeroing pause time in every agent-time report.
+    if (log && (!Number(log.wait_epoch) || Number(log.wait_epoch) <= Number(log.pause_epoch))) {
       const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
       await execute('UPDATE vicidial_agent_log SET pause_sec = ?, wait_epoch = ? WHERE agent_log_id = ?', [Math.max(pauseSec, 0), nowEpoch, log.agent_log_id]);
     }
@@ -8841,10 +9071,19 @@ async function applyAgentStatus(user, userGroup, target, pauseType = 'AGENT') {
     return agentLiveRow(user);
   }
 
-  // PAUSE
-  if (log && Number(log.wait_epoch) && !Number(log.wait_sec)) {
-    const waitSec = nowEpoch - Number(log.wait_epoch || nowEpoch);
-    await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(waitSec, 0), log.agent_log_id]);
+  // PAUSE: close out the previous segment before opening a fresh one.
+  // Symmetric with the READY/logout branches: a segment still in its pause
+  // phase (wait_epoch <= pause_epoch, e.g. a re-pause or supervisor pause on
+  // an already-paused agent) books pause_sec; only a segment whose wait
+  // actually started (READY ran) books wait_sec.
+  if (log) {
+    if (!Number(log.wait_epoch) || Number(log.wait_epoch) <= Number(log.pause_epoch)) {
+      const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
+      await execute('UPDATE vicidial_agent_log SET pause_sec = ?, wait_epoch = ? WHERE agent_log_id = ?', [Math.max(pauseSec, 0), nowEpoch, log.agent_log_id]);
+    } else if (!Number(log.wait_sec)) {
+      const waitSec = nowEpoch - Number(log.wait_epoch || nowEpoch);
+      await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(waitSec, 0), log.agent_log_id]);
+    }
   }
   const inserted = await execute(
     `INSERT INTO vicidial_agent_log
@@ -8907,7 +9146,10 @@ async function agentLogout(req, res) {
       [],
     );
     if (log) {
-      if (!Number(log.wait_epoch) || Number(log.wait_epoch) < Number(log.pause_epoch)) {
+      // Same wait_epoch <= pause_epoch convention as applyAgentStatus READY:
+      // equal epochs mean the segment is still PAUSED, so book pause_sec and
+      // tag the LOGOUT; only a segment that actually went READY books wait.
+      if (!Number(log.wait_epoch) || Number(log.wait_epoch) <= Number(log.pause_epoch)) {
         const pauseSec = (nowEpoch - Number(log.pause_epoch || nowEpoch)) + Number(log.pause_sec || 0);
         await execute("UPDATE vicidial_agent_log SET wait_epoch = ?, pause_sec = ?, sub_status = IF(sub_status = '' OR sub_status IS NULL, 'LOGOUT', sub_status) WHERE agent_log_id = ?", [nowEpoch, Math.max(pauseSec, 0), log.agent_log_id]);
       } else if (!Number(log.wait_sec)) {
@@ -9157,12 +9399,34 @@ async function agentChatSend(req, res) {
     let chatManager;
     if (chatId > 0) {
       const [chat] = await rows(
-        'SELECT manager, allow_replies FROM vicidial_manager_chats WHERE manager_chat_id = ? LIMIT 1',
+        `SELECT manager, allow_replies, selected_agents, selected_user_groups, selected_campaigns
+         FROM vicidial_manager_chats WHERE manager_chat_id = ? LIMIT 1`,
         [chatId],
         [],
       );
       if (!chat) return res.status(404).json({ ok: false, error: 'chat_not_found' });
       if (chat.allow_replies !== 'Y') return res.status(403).json({ ok: false, error: 'replies_disabled' });
+      // Membership check: chat ids are small auto-increments, so without this
+      // any agent could post into (and, via the per-participant log rows
+      // below, permanently join) any other team's chat. The sender must be
+      // the chat's manager, addressed by the chat's agent/user-group/campaign
+      // selection, or already a logged participant.
+      const inList = (listText, value) => Boolean(value) && String(listText || '').includes(`|${value}|`);
+      const liveRow = await agentLiveRow(user);
+      let member = chat.manager === user
+        || inList(chat.selected_agents, user)
+        || inList(chat.selected_user_groups, req.genxUser.userGroup || '')
+        || inList(chat.selected_user_groups, '---ALL---')
+        || (liveRow && inList(chat.selected_campaigns, liveRow.campaign_id));
+      if (!member) {
+        const [logRow] = await rows(
+          'SELECT user FROM vicidial_manager_chat_log WHERE manager_chat_id = ? AND user = ? LIMIT 1',
+          [chatId, user],
+          [],
+        );
+        member = Boolean(logRow);
+      }
+      if (!member) return res.status(403).json({ ok: false, error: 'not_chat_participant' });
       chatManager = chat.manager || '';
     } else {
       // Agent-initiated chat to a manager (legacy chat_db_query.php line ~258).
@@ -9295,6 +9559,10 @@ async function timeclockLastEvent(user) {
   const now = new Date();
   const hhmm = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
   const boundary = new Date(now);
+  // Seconds are set to 10 (not 0) so punches written in the boundary second
+  // itself still count toward the closing day — mirrors the legacy timeclock
+  // end-of-day handling. Normalizing to 0 changes which LOGIN counts as
+  // "today" for events logged exactly at the boundary.
   boundary.setHours(Number(eod.slice(0, 2)), Number(eod.slice(2, 4)), 10, 0);
   if (hhmm < eod) boundary.setDate(boundary.getDate() - 1);
   const [row] = await rows(
@@ -9462,7 +9730,10 @@ async function agentThreewayDial(req, res) {
   );
   // Short numbers are internal dialplan extens — no campaign dial prefix.
   const prefix = number.length >= 8 && camp?.dial_prefix && camp.dial_prefix !== 'X' ? camp.dial_prefix : '';
-  const phoneCode = number.length >= 10 && camp?.omit_phone_code !== 'Y' ? '1' : '';
+  // Prepend the US country code only for exactly-10-digit numbers (legacy
+  // behavior): an 11-digit number already starting with 1 must not get a
+  // second one, and longer international numbers carry their own code.
+  const phoneCode = number.length === 10 && camp?.omit_phone_code !== 'Y' ? '1' : '';
   const context = req.agentPhone?.ext_context || 'default';
   const dialStr = `${prefix}${phoneCode}${number}`;
   const queryCID = `DXvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
@@ -9637,6 +9908,11 @@ async function agentParkCustomer(req, res) {
       const channel = await agentCustomerChannel(live);
       if (!channel) return res.status(409).json({ ok: false, error: 'customer_channel_not_found' });
       const queryCID = `LPvdcW${nowEpoch}${String(user).slice(0, 6)}`.slice(0, 20);
+      // Column-less INSERT: order must match the stock parked_channels
+      // schema (channel, server_ip, extension, filename, parked_by,
+      // parked_time). The grab-back query reads parked_by by NAME, so a
+      // column-order change here strands parked calls — and the .catch
+      // below would hide the insert error.
       await execute(
         'INSERT INTO parked_channels VALUES (?, ?, ?, ?, ?, NOW())',
         [channel, live.server_ip, live.callerid || '', parkFile, user],
@@ -9745,9 +10021,9 @@ async function agentCallLog(req, res) {
   if (ug?.agent_call_log_view !== 'Y' || Number.isNaN(days) || days < 0) {
     return res.json({ ok: true, enabled: false, rows: [] });
   }
-  let date = cleanReportDate(req.query?.date, new Date().toISOString().slice(0, 10));
+  let date = cleanReportDate(req.query?.date, localDateStr());
   if (days > 0) {
-    const oldest = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const oldest = localDateStr(new Date(Date.now() - days * 86400000));
     if (date < oldest) date = oldest;
   }
   const out = await rows(
@@ -10248,6 +10524,15 @@ async function agentDialNext(req, res) {
 
   req.body = { ...req.body, lead_id: hop.lead_id };
   // Mark the hopper row DONE once the dial goes out (legacy VDhopper flow).
+  //
+  // CONTRACT: agentManualDial, when invoked through this shim, may respond
+  // ONLY via res.json(...) or res.status(n).json(...). Any other res method
+  // (send, set, chained status().send, sendFile) resolves nothing — the
+  // Promise never settles, this request hangs forever, and the claimed
+  // hopper row is stranded in QUEUE. The {...res} spread copies only own
+  // properties, so prototype methods are NOT carried over; and the
+  // httpStatus key added below is deliberately smuggled into the payload so
+  // the caller can distinguish error responses.
   const result = await new Promise((resolve) => {
     const shim = {
       ...res,
@@ -10277,14 +10562,18 @@ async function agentPreviewSkip(req, res) {
   }
   const prevStatus = cleanId(req.body?.prev_status, 8) || 'NEW';
 
+  // Capture the lead's real attempt count for the skip log (legacy manDiaLskip
+  // records it) before the decrement below rewrites it.
+  const [leadRow] = await rows('SELECT called_count FROM vicidial_list WHERE lead_id = ? LIMIT 1', [previewLead], []);
+  const previousCalledCount = Number(leadRow?.called_count || 0);
   await execute(
     'UPDATE vicidial_list SET status = ?, called_count = GREATEST(called_count - 1, 0), user = ? WHERE lead_id = ?',
     [prevStatus, user, previewLead],
   );
   await execute("UPDATE vicidial_live_agents SET lead_id = 0, preview_lead_id = '0' WHERE user = ?", [user]);
   await execute(
-    'INSERT INTO vicidial_agent_skip_log SET campaign_id = ?, previous_status = ?, previous_called_count = 0, user = ?, lead_id = ?, event_date = NOW()',
-    [live.campaign_id, prevStatus, user, previewLead],
+    'INSERT INTO vicidial_agent_skip_log SET campaign_id = ?, previous_status = ?, previous_called_count = ?, user = ?, lead_id = ?, event_date = NOW()',
+    [live.campaign_id, prevStatus, previousCalledCount, user, previewLead],
   ).catch(() => {});
   return res.json({ ok: true, live: await agentLiveRow(user) });
 }
@@ -10439,11 +10728,21 @@ async function agentHangup(req, res) {
       [user],
       [],
     );
-    const [autoCall] = await rows(
-      'SELECT channel, server_ip FROM vicidial_auto_calls WHERE callerid = ? OR uniqueid = ? LIMIT 1',
-      [live.callerid || '', live.uniqueid || ''],
-      [],
-    );
+    // Only match auto_calls on keys we actually have. On a previewed (not
+    // yet dialed) lead both callerid and uniqueid are '' — an unguarded
+    // OR-match would then hit some other campaign's still-ringing call
+    // (uniqueid stays '' until answer) and hang up a random customer.
+    const callKeys = [];
+    const callConds = [];
+    if (live.callerid) { callConds.push('callerid = ?'); callKeys.push(live.callerid); }
+    if (live.uniqueid && String(live.uniqueid) !== '0') { callConds.push('uniqueid = ?'); callKeys.push(live.uniqueid); }
+    const [autoCall] = callConds.length
+      ? await rows(
+        `SELECT channel, server_ip FROM vicidial_auto_calls WHERE ${callConds.join(' OR ')} LIMIT 1`,
+        callKeys,
+        [],
+      )
+      : [];
     const channel = autoCall?.channel || liveChan?.channel || '';
     if (channel) {
       await execute(
@@ -10556,6 +10855,8 @@ async function whiteboardReport(req, res) {
        FROM ${vdlSrc.fromSql} LEFT JOIN vicidial_inbound_dids d ON d.did_id = vdl.did_id
        WHERE ${vdlSrc.dateWhere}
        GROUP BY vdl.did_id ORDER BY calls DESC LIMIT 30`,
+      // fromParams -> (join binds would go here) -> whereParams; see the
+      // DID detail query above for why this order must not change.
       [...vdlSrc.fromParams, ...vdlSrc.whereParams],
       [],
     );
@@ -10625,6 +10926,14 @@ async function getUserRanks(req, res) {
   if (!requireModify(req, res, 'modifyUsers')) return;
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user_id');
+  // Same target-user group scoping as saveUserRanks/deleteUser: a group-scoped
+  // manager must not read rank assignments of users outside their viewable
+  // groups.
+  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, target.user_group)) {
+    return res.status(403).json({ ok: false, error: 'user_not_allowed' });
+  }
 
   const campaignParams = [id];
   const campaignWhere = scopeWhere(req.genxUser?.permissions?.allowedCampaigns, 'campaign_id', campaignParams);
@@ -10846,6 +11155,11 @@ async function deleteScript(req, res) {
   if (!requireModify(req, res, 'deleteScripts')) return;
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_script_id');
+  // Mirror saveScript's group scope: a manager who can't OPEN another
+  // group's script must not be able to delete it either.
+  if (!scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_scripts', 'script_id', id))) {
+    return res.status(403).json({ ok: false, error: 'script_not_allowed' });
+  }
   try {
     const result = await execute('DELETE FROM vicidial_scripts WHERE script_id = ? LIMIT 1', [id]);
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'script_not_found' });
@@ -10890,6 +11204,10 @@ async function testLeadFilter(req, res) {
   if (!filterSql) return res.json({ ok: true, matches: 0, empty_filter: true });
   // A WHERE fragment cannot write, and the pool rejects stacked statements;
   // just refuse separators/comments (status values like 'DROP' are fine).
+  // KNOWN LIMITATION (same surface as stock vicidial): subqueries are legal
+  // filter SQL, so anyone with modify_filters can build a boolean oracle
+  // over any table this DB user can read. The real boundary is the DB
+  // user's grants — keep it away from mysql.* and other databases.
   if (/;|--|\/\*|\binto\s+(outfile|dumpfile)\b/i.test(filterSql)) {
     return res.status(400).json({ ok: false, error: 'filter_sql_not_testable' });
   }
@@ -10906,6 +11224,10 @@ async function deleteLeadFilter(req, res) {
   if (!requireModify(req, res, 'deleteFilters')) return;
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_filter_id');
+  // Mirror saveLeadFilter's group scope check.
+  if (!scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_lead_filters', 'lead_filter_id', id))) {
+    return res.status(403).json({ ok: false, error: 'lead_filter_not_allowed' });
+  }
   try {
     const result = await execute('DELETE FROM vicidial_lead_filters WHERE lead_filter_id = ? LIMIT 1', [id]);
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'filter_not_found' });
@@ -11015,6 +11337,10 @@ async function deleteCarrier(req, res) {
   if (!id || id.length < 2) return badRequest(res, 'invalid_carrier_id');
   const [carrier] = await rows('SELECT carrier_id, server_ip FROM vicidial_server_carriers WHERE carrier_id = ? LIMIT 1', [id], []);
   if (!carrier) return res.status(404).json({ ok: false, error: 'carrier_not_found' });
+  // Mirror saveCarrier's group scope check.
+  if (!scopedUserGroupAllowed(req.genxUser, await recordUserGroup('vicidial_server_carriers', 'carrier_id', id))) {
+    return res.status(403).json({ ok: false, error: 'carrier_not_allowed' });
+  }
   try {
     await execute('DELETE FROM vicidial_server_carriers WHERE carrier_id = ?', [id]);
     if (carrier.server_ip === '0.0.0.0') {
@@ -11144,7 +11470,7 @@ async function saveRemoteAgent(req, res, mode) {
       const result = await execute(`INSERT INTO vicidial_remote_agents SET ${assignments}`, values);
       await adminLog(req, 'REMOTEAGENTS', 'ADD', String(result.insertId), 'GENX ADD REMOTE AGENT', 'INSERT INTO vicidial_remote_agents', payload.user_start);
     } else {
-      const id = cleanInt(req.params.id, 0, 1, 999999999);
+      const id = cleanInt(req.params.id, 0, 0, 999999999);
       if (!id) return badRequest(res, 'invalid_remote_agent_id');
       const result = await execute(`UPDATE vicidial_remote_agents SET ${assignments} WHERE remote_agent_id = ?`, [...values, id]);
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'remote_agent_not_found' });
@@ -11159,8 +11485,15 @@ async function saveRemoteAgent(req, res, mode) {
 // Legacy ADD=61111: delete the remote agent row.
 async function deleteRemoteAgent(req, res) {
   if (!requireModify(req, res, 'deleteRemoteAgents')) return;
-  const id = cleanInt(req.params.id, 0, 1, 999999999);
+  const id = cleanInt(req.params.id, 0, 0, 999999999);
   if (!id) return badRequest(res, 'invalid_remote_agent_id');
+  // Mirror saveRemoteAgent's campaign scope: deletion is bounded by the same
+  // allowed-campaigns check as editing.
+  const [ra] = await rows('SELECT campaign_id FROM vicidial_remote_agents WHERE remote_agent_id = ? LIMIT 1', [id], []);
+  if (!ra) return res.status(404).json({ ok: false, error: 'remote_agent_not_found' });
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, ra.campaign_id)) {
+    return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+  }
   try {
     const result = await execute('DELETE FROM vicidial_remote_agents WHERE remote_agent_id = ? LIMIT 1', [id]);
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'remote_agent_not_found' });
@@ -11209,7 +11542,8 @@ async function saveDropList(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'drop_list_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'drop_list_exists' : 'drop_list_save_failed' });
   }
 }
 
@@ -11252,7 +11586,8 @@ async function savePhoneAlias(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'phone_alias_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'phone_alias_exists' : 'phone_alias_save_failed' });
   }
 }
 
@@ -11297,7 +11632,8 @@ async function saveGroupAlias(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'group_alias_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'group_alias_exists' : 'group_alias_save_failed' });
   }
 }
 
@@ -11366,7 +11702,8 @@ async function saveIpList(req, res, mode) {
     await adminLog(req, 'IPLISTS', 'MODIFY', id, 'GENX SYNC IP LIST ENTRIES', 'REPLACE vicidial_ip_list_entries', `${entryCount} entries`);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'ip_list_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'ip_list_exists' : 'ip_list_save_failed' });
   }
 }
 
@@ -11412,7 +11749,8 @@ async function saveCidGroup(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'cid_group_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'cid_group_exists' : 'cid_group_save_failed' });
   }
 }
 
@@ -11461,7 +11799,8 @@ async function saveQueueGroup(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'queue_group_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'queue_group_exists' : 'queue_group_save_failed' });
   }
 }
 
@@ -11508,7 +11847,7 @@ async function saveContact(req, res, mode) {
       const result = await execute(`INSERT INTO contact_information SET ${assignments}`, values);
       await adminLog(req, 'CONTACTS', 'ADD', String(result.insertId), 'GENX ADD CONTACT', 'INSERT INTO contact_information', `${payload.first_name} ${payload.last_name}`);
     } else {
-      const id = cleanInt(req.params.id, 0, 1, 999999999);
+      const id = cleanInt(req.params.id, 0, 0, 999999999);
       if (!id) return badRequest(res, 'invalid_contact_id');
       const result = await execute(`UPDATE contact_information SET ${assignments} WHERE contact_id = ?`, [...values, id]);
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'contact_not_found' });
@@ -11522,7 +11861,7 @@ async function saveContact(req, res, mode) {
 
 async function deleteContact(req, res) {
   if (!requireModify(req, res, 'modifyContacts')) return;
-  const id = cleanInt(req.params.id, 0, 1, 999999999);
+  const id = cleanInt(req.params.id, 0, 0, 999999999);
   if (!id) return badRequest(res, 'invalid_contact_id');
   try {
     const result = await execute('DELETE FROM contact_information WHERE contact_id = ? LIMIT 1', [id]);
@@ -11559,7 +11898,8 @@ async function saveLanguage(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'language_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'language_exists' : 'language_save_failed' });
   }
 }
 
@@ -11617,7 +11957,8 @@ async function saveEmailAccount(req, res, mode) {
     }
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
-    return res.status(500).json({ ok: false, error: 'email_account_save_failed' });
+    const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
+    return res.status(status).json({ ok: false, error: status === 409 ? 'email_account_exists' : 'email_account_save_failed' });
   }
 }
 
@@ -11647,9 +11988,10 @@ async function saveVoicemailBox(req, res, mode) {
     user_group: cleanId(req.body?.user_group, 20) || '---ALL---',
     on_login_report: ynFlag(req.body?.on_login_report, 'N'),
   };
-  if (mode !== 'create' || payload.pass) {
-    if (!payload.pass && mode === 'create') return badRequest(res, 'missing_pass');
-  }
+  // A new voicemail box must ship with a password — it becomes an Asterisk
+  // voicemail account. (The old nested guard here was unreachable and let
+  // empty-password boxes through.)
+  if (mode === 'create' && !payload.pass) return badRequest(res, 'missing_pass');
   if (mode !== 'create' && !payload.pass) delete payload.pass;
   try {
     if (mode === 'create') {
@@ -12200,6 +12542,11 @@ async function allowedListIds(user) {
   if (!scope || scope.all) return null;
   const params = [];
   const where = scopeWhere(scope, 'campaign_id', params);
+  // HARD CAP: a manager scoped to campaigns owning MORE than 5000 lists gets
+  // a truncated scope — leads in the lists past the cap become invisible in
+  // lead search/detail/update (fail-closed, presents as "random leads
+  // missing"). Large installs that hit this should replace the IN-list with
+  // a JOIN against vicidial_lists in the consuming queries.
   const listRows = await rows(`SELECT list_id FROM vicidial_lists WHERE ${where} LIMIT 5000`, params, []);
   return listRows.map((row) => String(row.list_id));
 }
@@ -12226,7 +12573,17 @@ function maskLeadRow(req, row) {
   return lead;
 }
 
+// Lead pages share the legacy modify_leads gate: 0 = no lead-page access at
+// all (read included), 5 = a restricted variant that also must not open the
+// pages. Levels 1-4 differ only in what they may CHANGE (enforced in the
+// update handlers); level 9 admins always pass.
+function leadPageAccessAllowed(user) {
+  const modifyLeads = Number(user?.modifyLeads || 0);
+  return Number(user?.userLevel || 0) >= 9 || (modifyLeads >= 1 && modifyLeads !== 5);
+}
+
 async function adminLeadSearch(req, res) {
+  if (!leadPageAccessAllowed(req.genxUser)) return res.status(403).json({ ok: false, error: 'lead_access_denied' });
   const type = String(req.query?.type || 'phone');
   const q = cleanText(req.query?.q, 80);
   const listId = cleanId(req.query?.list_id, 12);
@@ -12267,6 +12624,7 @@ async function adminLeadSearch(req, res) {
 }
 
 async function adminLeadDetail(req, res) {
+  if (!leadPageAccessAllowed(req.genxUser)) return res.status(403).json({ ok: false, error: 'lead_access_denied' });
   const id = Number(req.params.id) || 0;
   if (!id) return badRequest(res, 'invalid_lead_id');
   const listIds = await allowedListIds(req.genxUser);
@@ -12349,7 +12707,10 @@ async function adminLeadUpdate(req, res) {
     if (field === 'phone_number' && (req.genxUser?.adminHidePhoneData || '0') !== '0') continue;
     if (field === 'comments') {
       payload[field] = cleanText(body[field], 255);
-    } else if (field === 'rank' || field === 'called_count') {
+    } else if (field === 'rank') {
+      // called_count is deliberately NOT editable here (it's not in
+      // LEAD_UPDATE_FIELDS): the dialer owns it, and a client sending it is
+      // silently ignored rather than coerced.
       payload[field] = Math.trunc(Number(body[field]) || 0);
     } else {
       payload[field] = cleanText(body[field], field === 'email' || field === 'vendor_lead_code' ? 250 : 100);
@@ -12604,7 +12965,10 @@ async function applyCustomFieldDdl(listId, def) {
     await pool.query(createSql);
     ddlRan.push(createSql);
   } else if (dbBacked) {
-    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
+    // Escape LIKE wildcards: '_' matches any char, so a label like 'field_1'
+    // would match an existing 'field21' column and turn the ADD into a
+    // failing MODIFY.
+    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [String(def.field_label).replace(/[%_\\]/g, '\\$&')], []);
     const alterSql = `ALTER TABLE ${table} ${columnRow ? 'MODIFY' : 'ADD'} ${columnSql}`;
     await pool.query(alterSql);
     ddlRan.push(alterSql);
@@ -12616,7 +12980,8 @@ async function dropCustomFieldColumnAndDef(listId, def) {
   let ddlRan = '';
   if (customFieldIsDbBacked(def) && await customTableExists(listId)) {
     const table = quoteId(customTable(listId));
-    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [def.field_label], []);
+    // Same LIKE-wildcard escaping as applyCustomFieldDdl.
+    const [columnRow] = await rows(`SHOW COLUMNS FROM ${table} LIKE ?`, [String(def.field_label).replace(/[%_\\]/g, '\\$&')], []);
     if (columnRow) {
       ddlRan = `ALTER TABLE ${table} DROP ${quoteId(def.field_label)}`;
       await pool.query(ddlRan);
@@ -12760,6 +13125,7 @@ async function deleteListCustomField(req, res) {
 
 // Per-lead custom data: read and write the lead's row in custom_<list_id>.
 async function getLeadCustomData(req, res) {
+  if (!leadPageAccessAllowed(req.genxUser)) return res.status(403).json({ ok: false, error: 'lead_access_denied' });
   const id = Number(req.params.id) || 0;
   if (!id) return badRequest(res, 'invalid_lead_id');
   const [lead] = await rows('SELECT lead_id, list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [id], []);
@@ -12959,6 +13325,32 @@ async function listStats(req, res) {
 }
 
 // Legacy ADD=611: delete the list record, its hopper rows and all its leads.
+// Purge the leads' rows in their custom_<entry_list_id> tables. MUST run
+// BEFORE the vicidial_list rows are deleted — the JOIN is the only way to
+// find which custom rows belong to this list, so deleting leads first
+// strands the custom-field PII forever with no key left to identify it.
+async function purgeCustomFieldRows(listId) {
+  const [settings] = await rows('SELECT custom_fields_enabled FROM system_settings LIMIT 1', [], []);
+  if (Number(settings?.custom_fields_enabled || 0) < 1) return;
+  const entryLists = await rows(
+    'SELECT DISTINCT entry_list_id FROM vicidial_list WHERE list_id = ? AND entry_list_id > 0 LIMIT 200',
+    [listId],
+    [],
+  );
+  for (const entry of entryLists) {
+    const entryListId = String(entry.entry_list_id || '').replace(/[^0-9]/g, '');
+    if (!entryListId) continue;
+    const tables = await rows('SHOW TABLES LIKE ?', [`custom_${entryListId}`], []);
+    if (!tables.length) continue;
+    await execute(
+      `DELETE cf FROM ${quoteId(`custom_${entryListId}`)} cf
+       JOIN vicidial_list l ON l.lead_id = cf.lead_id
+       WHERE l.list_id = ?`,
+      [listId],
+    ).catch(() => {});
+  }
+}
+
 async function deleteList(req, res) {
   if (!requireModify(req, res, 'deleteLists')) return;
   const id = cleanId(req.params.id, 30);
@@ -12966,6 +13358,7 @@ async function deleteList(req, res) {
   const scoped = await listWithScope(req, id);
   if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
   try {
+    await purgeCustomFieldRows(id);
     await execute('DELETE FROM vicidial_lists WHERE list_id = ? LIMIT 1', [id]);
     await execute('DELETE FROM vicidial_hopper WHERE list_id = ?', [id]).catch(() => {});
     await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
@@ -12989,28 +13382,7 @@ async function clearList(req, res) {
   if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
   try {
     await execute('DELETE FROM vicidial_hopper WHERE list_id = ?', [id]).catch(() => {});
-
-    const [settings] = await rows('SELECT custom_fields_enabled FROM system_settings LIMIT 1', [], []);
-    if (Number(settings?.custom_fields_enabled || 0) > 0) {
-      const entryLists = await rows(
-        'SELECT DISTINCT entry_list_id FROM vicidial_list WHERE list_id = ? AND entry_list_id > 0 LIMIT 200',
-        [id],
-        [],
-      );
-      for (const entry of entryLists) {
-        const entryListId = String(entry.entry_list_id || '').replace(/[^0-9]/g, '');
-        if (!entryListId) continue;
-        const tables = await rows('SHOW TABLES LIKE ?', [`custom_${entryListId}`], []);
-        if (!tables.length) continue;
-        await execute(
-          `DELETE cf FROM ${quoteId(`custom_${entryListId}`)} cf
-           JOIN vicidial_list l ON l.lead_id = cf.lead_id
-           WHERE l.list_id = ?`,
-          [id],
-        ).catch(() => {});
-      }
-    }
-
+    await purgeCustomFieldRows(id);
     const result = await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
     await adminLog(req, 'LISTS', 'DELETE', id, 'GENX CLEAR LIST', 'DELETE FROM vicidial_list WHERE list_id', `${result.affectedRows} leads`);
     return res.json({ ok: true, cleared: result.affectedRows, data: await adminData(req.genxUser) });
@@ -13059,10 +13431,7 @@ async function downloadList(req, res) {
 
   const hideLead = Boolean(req.genxUser?.adminHideLeadData);
   const phoneMode = req.genxUser?.adminHidePhoneData || '0';
-  const escapeCell = (value) => {
-    const text = value == null ? '' : String(value);
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
+  const escapeCell = csvCell; // shared: RFC-4180 + formula-injection guard
   const lines = [LIST_DOWNLOAD_COLUMNS.join(',')];
   for (const lead of leads) {
     lines.push(LIST_DOWNLOAD_COLUMNS.map((column) => {
@@ -13154,8 +13523,10 @@ async function campaignLeadStatuses(req, res) {
       [],
     ),
     rows(
-      `SELECT status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
-       UNION SELECT status, status_name FROM vicidial_statuses LIMIT 500`,
+      `SELECT status, status_name FROM (
+         SELECT 0 AS pri, status, status_name FROM vicidial_campaign_statuses WHERE campaign_id = ?
+         UNION SELECT 1 AS pri, status, status_name FROM vicidial_statuses
+       ) u ORDER BY pri ASC LIMIT 500`,
       [id],
       [],
     ),
@@ -14908,7 +15279,7 @@ function leadRecyclePayload(body) {
 
 async function saveLeadRecycle(req, res, mode) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
-  const id = mode === 'create' ? 0 : cleanInt(req.params.id, 0, 1, 999999999);
+  const id = mode === 'create' ? 0 : cleanInt(req.params.id, 0, 0, 999999999);
   const payload = leadRecyclePayload(req.body || {});
   if (!payload.status) return badRequest(res, 'status_required');
   if (!campaignToolAllowed(req.genxUser, payload.campaign_id)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
@@ -15109,10 +15480,16 @@ app.get('/api/session', requireAccess, (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
+    const throttleKey = `${cleanId(req.body?.username, 20)}|${req.ip}`;
+    if (loginThrottled(throttleKey)) {
+      return res.status(429).json({ ok: false, error: 'too_many_attempts' });
+    }
     const user = await authenticateVicidialUser(req.body?.username, req.body?.password);
     if (!user) {
+      recordLoginFailure(throttleKey);
       return res.status(401).json({ ok: false, error: 'invalid_credentials_or_level' });
     }
+    loginFailures.delete(throttleKey);
 
     const token = createSession(user);
     return res.json({ ok: true, token, user, minUserLevel: config.minUserLevel });

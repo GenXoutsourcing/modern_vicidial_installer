@@ -13,6 +13,11 @@ echo "VICIdial role-aware installation for AlmaLinux 9/RockyLinux 9"
 
 DEFAULT_CRON_DB_PASS="1234"
 DEFAULT_CUSTOM_DB_PASS="custom1234"
+# 10.10.10.15 is the placeholder IP baked into stock VICIdial's
+# first_server_install.sql seed data; the confbridge INSERTs below reuse it
+# and ADMIN_update_server_ip.pl then rewrites everything to this server's
+# real IP. Leftover 10.10.10.15 rows after an install mean that rewrite step
+# failed. Do not change unless the stock seed SQL changes.
 OLD_SERVER_IP="${OLD_SERVER_IP:-10.10.10.15}"
 REBOOT_AFTER_INSTALL="${REBOOT_AFTER_INSTALL:-yes}"
 CERTBOT_STAGING="${CERTBOT_STAGING:-no}"
@@ -60,6 +65,13 @@ if [ -r /etc/os-release ]; then
     fi
 fi
 
+# NOTE: the steps below mutate the system BEFORE the role-summary
+# confirmation prompt (locale, timezone, SELinux off; the hostname prompt
+# later also applies immediately). Answering "no" at the summary does NOT
+# roll these back. Warn up front so a look-around run is an informed choice.
+echo "NOTE: continuing past this point sets locale/timezone, disables SELinux,"
+echo "      and applies the hostname you enter — even if you cancel at the"
+echo "      final confirmation. Ctrl+C now to leave the system untouched."
 dnf install -y glibc-langpack-en dnf-plugins-core yum-utils
 localectl set-locale en_US.UTF-8 || true
 timedatectl set-timezone America/New_York || true
@@ -85,9 +97,22 @@ prompt_secret() {
     local prompt_text=$2
     local default_value=$3
     local input
-    read -s -p "$prompt_text: " input
-    echo
-    export $varname="${input:-$default_value}"
+    # Reject ' " \ and backtick: these passwords are interpolated into SQL
+    # heredocs (CREATE USER ... IDENTIFIED BY '$PASS', vicibox registry
+    # INSERTs) and config files. An unescaped quote would abort the install
+    # halfway with users half-created — refuse it up front instead.
+    while true; do
+        read -s -p "$prompt_text: " input
+        echo
+        input="${input:-$default_value}"
+        case "$input" in
+            *"'"*|*'"'*|*'\'*|*'`'*)
+                echo "Password may not contain quotes, backslashes or backticks. Try again." ;;
+            *)
+                break ;;
+        esac
+    done
+    export $varname="$input"
 }
 
 yes_no() {
@@ -377,7 +402,11 @@ connect_cluster_db() {
     prompt VICIDIAL_DB_PORT "Cluster database port" "$VICIDIAL_DB_PORT"
     prompt CLUSTER_DB_USER "Cluster database user" "$CLUSTER_DB_USER"
     prompt_secret CRON_DB_PASS "Cluster database password for $CLUSTER_DB_USER (Enter for default $DEFAULT_CRON_DB_PASS)" "$DEFAULT_CRON_DB_PASS"
-    MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+    # Password via MYSQL_PWD (exported below), never -p on the command line —
+    # a -p"pass" argument is visible in /proc/<pid>/cmdline to every local
+    # user for each of the dozens of mysql calls in a join install.
+    export MYSQL_PWD="$CRON_DB_PASS"
+    MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER")
 
     while ! cluster_mysql_available; do
         echo "ERROR: Cannot connect to MySQL at $VICIDIAL_DB_HOST:$VICIDIAL_DB_PORT as $CLUSTER_DB_USER."
@@ -388,7 +417,8 @@ connect_cluster_db() {
         fi
         prompt VICIDIAL_DB_HOST "Existing cluster database IP/host" "$VICIDIAL_DB_HOST"
         prompt_secret CRON_DB_PASS "Cluster database password for $CLUSTER_DB_USER (Enter to keep previous)" "$CRON_DB_PASS"
-        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+        export MYSQL_PWD="$CRON_DB_PASS"
+        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER")
     done
     echo "Cluster database connection OK."
 }
@@ -401,7 +431,8 @@ fetch_cluster_credentials() {
     row=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT field5, field7, field9 FROM vicibox WHERE server_type='Database' AND field3='local' ORDER BY server_id LIMIT 1;" 2>/dev/null | head -1) || true
     if [ -n "$row" ]; then
         IFS=$'\t' read -r CRON_DB_PASS CUSTOM_DB_PASS SLAVE_DB_PASS <<< "$row"
-        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER" -p"$CRON_DB_PASS")
+        export MYSQL_PWD="$CRON_DB_PASS"
+        MYSQL=(mysql -h "$VICIDIAL_DB_HOST" -P "$VICIDIAL_DB_PORT" -u "$CLUSTER_DB_USER")
         if ! cluster_mysql_available; then
             echo "ERROR: Credentials from the cluster vicibox registry no longer connect. Fix the registry or firewall and rerun."
             exit 1
@@ -412,7 +443,10 @@ fetch_cluster_credentials() {
         prompt_secret CUSTOM_DB_PASS "custom DB password for this cluster (Enter for default $DEFAULT_CUSTOM_DB_PASS)" "$DEFAULT_CUSTOM_DB_PASS"
     fi
 
-    schema_ver=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT db_schema_version FROM system_settings LIMIT 1;" | tr -d '\r\n')
+    # '|| true' so a failed query reaches the tailored error below — without
+    # it, set -e kills the script inside the command substitution and the
+    # user only sees the generic ERR-trap line number.
+    schema_ver=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT db_schema_version FROM system_settings LIMIT 1;" 2>/dev/null | tr -d '\r\n' || true)
     if [ -z "$schema_ver" ]; then
         echo "ERROR: Could not read system_settings from the cluster database $VICIDIAL_DB_NAME."
         exit 1
@@ -827,6 +861,13 @@ SET default_phone_registration_password='${reg_pass}',
 MYSQLPASSDEFAULTS
 }
 
+# Called THREE times on purpose — do not "deduplicate":
+#  1. after schema import (before install.pl): seeds system_settings defaults
+#     so install.pl runs with them; its UPDATE servers matches nothing yet.
+#  2. after install.pl: install.pl created this server's servers row and
+#     overwrote several settings — re-assert ours (conf_engine, alt IPs...).
+#  3. after the WebRTC/cert step: vicidial-enable-webrtc.sh rewrites
+#     server/web settings again; the final pass restores our values on top.
 apply_vicidial_database_defaults() {
     local server_ip=$1
     local cert_domain=$2
@@ -1360,6 +1401,10 @@ dnf install -y kernel-devel-$(uname -r) kernel-headers-$(uname -r) || dnf instal
 dnf --enablerepo=crb install libsrtp-devel -y
 dnf install -y vsftpd lftp || dnf install -y vsftpd
 
+# DELIBERATE: root password SSH login stays enabled — GenX ops relies on it
+# together with the VB-firewall/ViciWhite dynamic IP whitelist (SSH is only
+# reachable from whitelisted IPs; see the firewall block near the end of this
+# script). If the whitelist model ever changes, revisit this line first.
 sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 
 dnf install -y httpd mod_ssl nano chkconfig atop mytop
@@ -1758,10 +1803,18 @@ cd /usr/src/astguiclient/trunk
 # This block is safe if the installer is run again on a server where the asterisk DB already exists.
 if [ "$CLUSTER_JOIN" != "yes" ]; then
 
+# NOTE: MYSQL is the mode-dependent admin connection used by every later DB
+# step (configure_audio_store_directory, secure_vicidial_default_passwords,
+# register_selected_vicibox_roles, ...): root@localhost on a fresh/primary
+# install (set here), cron@cluster-master in join mode (set in
+# validate_db_settings). Password always travels via MYSQL_PWD, never -p,
+# so it can't be read from the process list.
 if [ -z "$MYSQL_ROOT_PASS" ]; then
+    unset MYSQL_PWD
     MYSQL=(mysql -u root)
 else
-    MYSQL=(mysql -u root -p"$MYSQL_ROOT_PASS")
+    export MYSQL_PWD="$MYSQL_ROOT_PASS"
+    MYSQL=(mysql -u root)
 fi
 
 "${MYSQL[@]}" << MYSQLCREOF
@@ -1791,7 +1844,16 @@ SET GLOBAL connect_timeout=60;
 MYSQLCREOF
 
 # Import schema only if this is a fresh asterisk database. Reimporting on reruns causes duplicate table/key errors.
-if "${MYSQL[@]}" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$VICIDIAL_DB_NAME' AND table_name='system_settings';" | grep -q '^0$'; then
+# Connectivity is verified FIRST: a failed mysql command produces empty output,
+# which the count check below would silently misread as "existing DB" and skip
+# the import on a completely empty server — the install then dies much later
+# in the password/defaults steps with a misleading error.
+if ! table_count=$("${MYSQL[@]}" -Nse "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$VICIDIAL_DB_NAME' AND table_name='system_settings';"); then
+    echo "ERROR: Cannot query MariaDB as the configured admin user."
+    echo "       Check that mariadb is running and MYSQL_ROOT_PASS is correct."
+    exit 1
+fi
+if [ "$table_count" = "0" ]; then
     echo "Fresh asterisk DB detected. Importing VICIdial schema..."
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" < /usr/src/astguiclient/trunk/extras/MySQL_AST_CREATE_tables.sql
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" < /usr/src/astguiclient/trunk/extras/first_server_install.sql
@@ -1910,7 +1972,16 @@ configure_agc_options
 
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
 # Force DAHDI timing on telephony servers only; other roles rely on res_timing_timerfd.
-sed -i '$ a\ noload => res_timing_timerfd.so\ noload => res_timing_kqueue.so\ noload => res_timing_pthread.so' /etc/asterisk/modules.conf
+# NOTE: the previous 'sed $ a\ ...' one-liner collapsed all three noload
+# directives into ONE malformed line (backslash-space is an escaped space to
+# sed, not a newline), so the timing modules were never actually noloaded —
+# and it re-appended on every rerun. printf + a grep guard is idempotent.
+if ! grep -q '^noload => res_timing_timerfd.so' /etc/asterisk/modules.conf; then
+  printf '%s\n' \
+    'noload => res_timing_timerfd.so' \
+    'noload => res_timing_kqueue.so' \
+    'noload => res_timing_pthread.so' >> /etc/asterisk/modules.conf
+fi
 fi # ROLE_TELEPHONY timing config
 
 if [ "$CLUSTER_JOIN" != "yes" ]; then
@@ -2136,6 +2207,10 @@ CRONTAB
 fi
 fi
 
+# VB-firewall dynamic-whitelist crons only make sense when the built-in
+# firewall is enabled; on a firewall-disabled role they would hammer a dead
+# firewalld six times a minute forever and fill root's mail with errors.
+if [ "$ROLE_FIREWALL_ENABLED" = "yes" ]; then
 cat <<CRONTAB >> /root/crontab-file
 
 ### Dynportal
@@ -2148,6 +2223,7 @@ cat <<CRONTAB >> /root/crontab-file
 * * * * * sleep 50; /usr/bin/VB-firewall --white --dynamic --quiet
 
 CRONTAB
+fi
 
 crontab /root/crontab-file
 crontab -l
@@ -2495,6 +2571,14 @@ fi
 register_selected_vicibox_roles
 
 if [ "$ROLE_FIREWALL_ENABLED" = "yes" ]; then
+    # LOCKED-DOWN POSTURE — read before debugging "the web UI is unreachable":
+    # http/https/ssh/cockpit are REMOVED from the public zone on purpose.
+    # All admin/agent access flows through the VB-firewall dynamic whitelist
+    # (ViciWhite crons above + dynportal on 446): users hit the dynportal,
+    # authenticate, and their IP gets opened. The static accept IPs below are
+    # GenX management/office/VPN addresses so ops can always reach the box
+    # even if VB-firewall or the dynportal breaks — that is the recovery
+    # path. Review/replace these for customer installs.
     systemctl enable firewalld
     systemctl start firewalld
     firewall-cmd --add-service=http --permanent --zone=trusted
@@ -2517,6 +2601,11 @@ else
     systemctl disable firewalld || true
 fi
 
+# Wide-open spool permissions mirror the stock VICIdial/ViciBox install:
+# recording mixing crons, Asterisk (as its own user) and Apache all write
+# under /var/spool/asterisk, and stock scripts assume 777 here. Known
+# trade-off: recordings are readable by any local account — tightening this
+# requires re-testing AST_CRON_audio_1_move/2_mix on every role.
 chmod -R 777 /var/spool/asterisk/
 chown -R apache:apache /var/spool/asterisk/
 
@@ -2527,7 +2616,11 @@ chown -R apache:apache /var/spool/asterisk/
 # Cluster-wide settings: only the primary-DB install may set these. A joining
 # server must never repoint voicemail/sounds for the whole cluster to itself.
 if [ "$CLUSTER_JOIN" != "yes" ] && { [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; }; then
-    "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname', sounds_central_control_active='1';"
+    # sounds_web_server must use the SSL domain, matching the join path above:
+    # telephony servers fetch central sounds over https, and the Let's Encrypt
+    # cert is issued for $DOMAINNAME — pointing this at the (often internal)
+    # $hostname breaks TLS validation for the whole cluster's sound sync.
+    "${MYSQL[@]}" -e "use $VICIDIAL_DB_NAME; update system_settings set webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://${DOMAINNAME:-$hostname}', sounds_central_control_active='1';"
 fi
 # Voicemail must live on a box that runs Asterisk: a non-telephony primary
 # (DB+Web combo) leaves it unset so the first telephony join claims it.

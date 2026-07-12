@@ -1,3 +1,8 @@
+// Report catalog shared by the nav and the Reports search screen.
+// REPORT_GROUPS is the master list: items with a `view` key are native GenX
+// screens (the value must match a case in AdminShell's view switch);
+// LEGACY_REPORT_GROUPS at the bottom is DERIVED from it with the view keys
+// dropped, feeding the Admin Reports page's links to legacy PHP pages.
 export const REPORT_GROUPS = [
   {
     // href doubles as extra search keywords for the catalog filter; the

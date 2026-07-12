@@ -8,11 +8,12 @@
  * GET or POST) so existing client code adapts with only a URL change, but
  * access is gated to the configured API user group and every call is logged.
  *
- * v1 exposes read functions only. Write functions (add_lead, update_lead,
- * etc.) are deliberately not implemented yet: doing them correctly requires
- * GMT/call-time handling that has legal-calling-hour implications, so they get
- * their own reviewed pass. Unknown/unimplemented functions return an explicit
- * error rather than silently doing nothing.
+ * Exposes read functions AND a reviewed set of write functions (add_lead,
+ * update_lead, dnc_add) — the writes include the GMT/call-time handling
+ * (resolve_gmt) that legal calling hours require. Anyone auditing or
+ * firewalling this endpoint must treat it as a mutation surface, not
+ * read-only. Unknown/unimplemented functions return an explicit error
+ * rather than silently doing nothing.
  */
 
 header('Content-Type: text/plain; charset=utf-8');
@@ -181,15 +182,18 @@ $found = $stmt->fetch();
 $stmt->close();
 
 if (!$found)                       fail($mysqli, $user, $function, 'invalid credentials', $source);
-if ($u_active !== 'Y')             fail($mysqli, $user, $function, 'user not active', $source);
-if ($u_group !== $apiGroup)        fail($mysqli, $user, $function, 'user not in API group', $source);
 
-// Password is only checked in user/pass mode; key auth already proved identity.
+// In user/pass mode the password is verified BEFORE any account-state error
+// is returned: distinct 'not active' / 'not in API group' messages ahead of
+// the password check let an unauthenticated caller map which usernames exist
+// and are API-enabled. Key auth already proved identity above.
 if ($api_key === '') {
     $pw_ok = password_matches($pass, $u_pass);
     if (!$pw_ok && $u_pass_hash)   $pw_ok = password_matches($pass, $u_pass_hash);
     if (!$pw_ok)                   fail($mysqli, $user, $function, 'invalid credentials', $source);
 }
+if ($u_active !== 'Y')             fail($mysqli, $user, $function, 'user not active', $source);
+if ($u_group !== $apiGroup)        fail($mysqli, $user, $function, 'user not in API group', $source);
 
 // api_allowed_functions gate: '' = blocked, 'ALL_FUNCTIONS' = any, else CSV.
 $allowed = trim((string)$u_allowed);
@@ -201,7 +205,7 @@ if (strtoupper($allowed) !== 'ALL_FUNCTIONS') {
     }
 }
 
-/* ---- function dispatch (read-only in v1) --------------------------------- */
+/* ---- function dispatch (reads + reviewed writes) -------------------------- */
 function ok($mysqli, $user, $function, $source, $body) {
     log_api($mysqli, $user, $function, 'SUCCESS', '', $source);
     echo "SUCCESS: $function\n";

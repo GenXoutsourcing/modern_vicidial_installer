@@ -43,7 +43,6 @@ $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'your-host', ENT_QUOTES);
       --code-bg: #0a1216;
       --code-ink: #cddbe1;
       --ink: #e5edf1;
-      --muted: #90a2 ac;
       --muted: #90a2ac;
       --border: #24363f;
       --accent: #38cfe4;
