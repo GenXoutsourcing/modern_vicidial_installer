@@ -4074,13 +4074,165 @@ const CAMPAIGN_URL_MODALS = {
   },
   callurls: {
     title: 'Call URLs',
+    // Third element = vicidial_url_multi url_type: these three support the
+    // legacy 'ALT' convention (type ALT in the field -> alternate URL rows).
     fields: [
-      ['start_call_url', 'Start Call URL'],
-      ['dispo_call_url', 'Dispo Call URL'],
-      ['na_call_url', 'No Agent URL'],
+      ['start_call_url', 'Start Call URL', 'start'],
+      ['dispo_call_url', 'Dispo Call URL', 'dispo'],
+      ['na_call_url', 'No Agent URL', 'noagent'],
     ],
   },
 };
+
+// Alternate URLs editor (legacy admin_url_multi.php): shown under a Call URL
+// textarea whose value is the literal 'ALT'. Rows fire in rank order when
+// the disposition matches url_statuses ('---ALL---' = any), the lead's list
+// is in url_lists (blank = all lists) and talk time >= Min Talk Sec.
+const ALT_URL_EMPTY = {
+  url_id: null, active: 'Y', url_rank: '1', url_statuses: '---ALL---',
+  url_lists: '', url_call_length: '0', url_description: '', url_address: '',
+};
+
+function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
+  const [entries, setEntries] = useState(null);
+  const [draft, setDraft] = useState(ALT_URL_EMPTY);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi?url_type=${urlType}`, token)
+      .then((payload) => setEntries(payload.entries || []))
+      .catch((requestError) => {
+        if (requestError.status === 401) onLogout();
+        setEntries([]);
+      });
+  }, [campaignId, urlType, token, onLogout]);
+  useEffect(load, [load]);
+
+  async function saveDraft() {
+    setBusy(true);
+    setError('');
+    try {
+      const body = JSON.stringify({ ...draft, url_type: urlType });
+      if (draft.url_id) {
+        await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi/${draft.url_id}`, token, { method: 'PUT', body });
+      } else {
+        await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi`, token, { method: 'POST', body });
+      }
+      setDraft(ALT_URL_EMPTY);
+      load();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout();
+        return;
+      }
+      setError(requestError.message === 'url_address_required' ? 'URL is required (5+ characters)'
+        : requestError.message === 'url_description_required' ? 'Description is required'
+          : 'The alternate URL was not saved');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(entry) {
+    try {
+      await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi/${entry.url_id}`, token, { method: 'DELETE' });
+      if (draft.url_id === entry.url_id) setDraft(ALT_URL_EMPTY);
+      load();
+    } catch (requestError) {
+      if (requestError.status === 401) onLogout();
+    }
+  }
+
+  return (
+    <div className="alt-url-manager">
+      <p className="connection-summary">
+        Alternate URLs ({entries ? entries.length : '...'}) — fired in rank order when the disposition matches
+        Statuses ('---ALL---' = any), the lead's list is in Lists (blank = all lists)
+        {showTalkSec ? ' and talk time reached Min Talk Sec' : ''}. Every matching URL fires.
+      </p>
+      {entries && entries.length > 0 && (
+        <DataTable
+          columns={[
+            { key: 'url_rank', label: 'Rank' },
+            { key: 'url_statuses', label: 'Statuses' },
+            { key: 'url_lists', label: 'Lists', render: (row) => row.url_lists || 'ALL' },
+            ...(showTalkSec ? [{ key: 'url_call_length', label: 'Min Talk Sec' }] : []),
+            { key: 'url_description', label: 'Description' },
+            { key: 'url_address', label: 'URL', render: (row) => <span className="alt-url-cell" title={row.url_address}>{row.url_address}</span> },
+            { key: 'active', label: 'Active', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+            {
+              key: 'actions',
+              label: '',
+              render: (row) => (
+                <RowActions>
+                  <ManageButton onClick={() => setDraft({
+                    url_id: row.url_id, active: row.active, url_rank: String(row.url_rank),
+                    url_statuses: row.url_statuses || '---ALL---', url_lists: row.url_lists || '',
+                    url_call_length: String(row.url_call_length || 0),
+                    url_description: row.url_description || '', url_address: row.url_address || '',
+                  })}>Edit</ManageButton>
+                  <ManageButton onClick={() => remove(row)} icon={Trash2}>Delete</ManageButton>
+                </RowActions>
+              ),
+            },
+          ]}
+          rows={entries.map((row) => ({ ...row, id: row.url_id }))}
+          emptyLabel="No alternate URLs defined yet"
+        />
+      )}
+      <div className="entity-form alt-url-form">
+        <div className="field-grid">
+          <label>
+            <span>Rank</span>
+            <input type="number" value={draft.url_rank} onChange={(event) => setDraft((d) => ({ ...d, url_rank: event.target.value }))} />
+          </label>
+          <label>
+            <span>Statuses (space-separated, or ---ALL---)</span>
+            <input type="text" value={draft.url_statuses} onChange={(event) => setDraft((d) => ({ ...d, url_statuses: event.target.value }))} />
+          </label>
+          <label>
+            <span>Lists (space-separated IDs, blank = all)</span>
+            <input type="text" value={draft.url_lists} onChange={(event) => setDraft((d) => ({ ...d, url_lists: event.target.value }))} />
+          </label>
+          {showTalkSec && (
+            <label>
+              <span>Min Talk Sec</span>
+              <input type="number" value={draft.url_call_length} onChange={(event) => setDraft((d) => ({ ...d, url_call_length: event.target.value }))} />
+            </label>
+          )}
+          <label>
+            <span>Description</span>
+            <input type="text" value={draft.url_description} onChange={(event) => setDraft((d) => ({ ...d, url_description: event.target.value }))} />
+          </label>
+          <label>
+            <span>Active</span>
+            <select value={draft.active} onChange={(event) => setDraft((d) => ({ ...d, active: event.target.value }))}>
+              <option value="Y">Active</option>
+              <option value="N">Inactive</option>
+            </select>
+          </label>
+          <label className="wide-field">
+            <span>URL</span>
+            <textarea value={draft.url_address} onChange={(event) => setDraft((d) => ({ ...d, url_address: event.target.value }))} />
+          </label>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <div className="row-action-group">
+          {draft.url_id && (
+            <button type="button" className="secondary-action compact-action" onClick={() => setDraft(ALT_URL_EMPTY)}>
+              Cancel Edit
+            </button>
+          )}
+          <button type="button" className="primary-action compact-action" disabled={busy} onClick={saveDraft}>
+            <Save size={14} aria-hidden="true" />
+            {busy ? 'Saving' : draft.url_id ? `Update #${draft.url_id}` : 'Add Alternate URL'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, onClose }) {
   const config = CAMPAIGN_URL_MODALS[kind];
@@ -4123,14 +4275,30 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
         </div>
         <div className="entity-form">
           <div className="field-grid">
-            {config.fields.map(([key, label]) => (
-              <label key={key} className="wide-field">
-                <span>{label}</span>
-                <textarea
-                  value={values[key]}
-                  onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
-                />
-              </label>
+            {config.fields.map(([key, label, urlType]) => (
+              <div key={key} className="wide-field url-field-block">
+                <label className="wide-field">
+                  <span>{label}</span>
+                  <textarea
+                    value={values[key]}
+                    onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                  />
+                </label>
+                {urlType && (
+                  <p className="field-hint">
+                    Type ALT above (and Save) to use multiple alternate URLs by status/list — manage them below.
+                  </p>
+                )}
+                {urlType && String(values[key] || '').trim().toUpperCase() === 'ALT' && (
+                  <AltUrlManager
+                    campaignId={campaignId}
+                    urlType={urlType}
+                    showTalkSec={urlType === 'dispo'}
+                    token={token}
+                    onLogout={onLogout}
+                  />
+                )}
+              </div>
             ))}
           </div>
           {error && <p className="form-error">{error}</p>}

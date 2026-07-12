@@ -3335,6 +3335,113 @@ async function dialStatusExistsForCampaign(campaignId, status) {
   return Boolean(match);
 }
 
+// --- Alternate call URLs (vicidial_url_multi) --------------------------------
+// Legacy behavior (admin_url_multi.php + vdc_db_query.php): setting a
+// campaign's start/dispo/na_call_url to the literal 'ALT' makes the dialer
+// use vicidial_url_multi rows instead — active rows in url_rank order, and
+// EVERY row fires whose url_statuses contains the call's disposition (or
+// '---ALL---'), whose url_lists contains the lead's list (empty = all
+// lists), and whose url_call_length <= the call's talk seconds. These
+// endpoints manage those rows for the Call URLs modal's ALT editor.
+const URL_MULTI_TYPES = { start: 'start', dispo: 'dispo', noagent: 'noagent' };
+
+function urlMultiGate(req, res) {
+  if (!requireModify(req, res, 'modifyCampaigns')) return null;
+  const id = cleanId(req.params.id, 20);
+  if (!id || id.length < 2) {
+    badRequest(res, 'invalid_campaign_id');
+    return null;
+  }
+  if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
+    res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+    return null;
+  }
+  return id;
+}
+
+async function listUrlMulti(req, res) {
+  const id = urlMultiGate(req, res);
+  if (!id) return;
+  const urlType = URL_MULTI_TYPES[String(req.query?.url_type || '')];
+  if (!urlType) return badRequest(res, 'invalid_url_type');
+  const entries = await rows(
+    `SELECT url_id, active, url_rank, url_statuses, url_lists, url_call_length, url_description, url_address
+     FROM vicidial_url_multi
+     WHERE campaign_id = ? AND entry_type = 'campaign' AND url_type = ?
+     ORDER BY url_rank ASC, url_id ASC LIMIT 1000`,
+    [id, urlType],
+    [],
+  );
+  return res.json({ ok: true, entries });
+}
+
+// Field charsets mirror legacy admin_url_multi.php's preg_replace rules.
+function urlMultiPayload(body) {
+  return {
+    active: body?.active === 'N' ? 'N' : 'Y',
+    url_rank: cleanInt(body?.url_rank, 1, -99, 999),
+    url_statuses: cleanText(body?.url_statuses, 1000).replace(/[^-_ 0-9a-zA-Z]/g, '') || '---ALL---',
+    url_lists: cleanText(body?.url_lists, 1000).replace(/[^-_ 0-9]/g, ''),
+    url_call_length: cleanInt(body?.url_call_length, 0, 0, 32000),
+    url_description: cleanText(body?.url_description, 255).replace(/[^-,._ 0-9a-zA-Z]/g, ''),
+    url_address: cleanText(body?.url_address, 8000).replace(/[<>'"\\;]/g, ''),
+  };
+}
+
+async function saveUrlMulti(req, res, mode) {
+  const id = urlMultiGate(req, res);
+  if (!id) return;
+  const urlType = URL_MULTI_TYPES[String(req.body?.url_type || '')];
+  if (!urlType) return badRequest(res, 'invalid_url_type');
+  const payload = urlMultiPayload(req.body);
+  if (payload.url_address.length < 5) return badRequest(res, 'url_address_required');
+  if (!payload.url_description) return badRequest(res, 'url_description_required');
+  try {
+    if (mode === 'create') {
+      const result = await execute(
+        `INSERT INTO vicidial_url_multi SET campaign_id = ?, entry_type = 'campaign', url_type = ?,
+           active = ?, url_rank = ?, url_statuses = ?, url_lists = ?, url_call_length = ?, url_description = ?, url_address = ?`,
+        [id, urlType, payload.active, payload.url_rank, payload.url_statuses, payload.url_lists,
+          payload.url_call_length, payload.url_description, payload.url_address],
+      );
+      await adminLog(req, 'CAMPAIGNS', 'ADD', id, 'GENX ADD ALT URL', `INSERT vicidial_url_multi ${urlType}`, payload.url_description);
+      return res.json({ ok: true, url_id: result.insertId });
+    }
+    const urlId = cleanInt(req.params.urlId, 0, 0, 999999999);
+    if (!urlId) return badRequest(res, 'invalid_url_id');
+    const result = await execute(
+      `UPDATE vicidial_url_multi SET active = ?, url_rank = ?, url_statuses = ?, url_lists = ?,
+         url_call_length = ?, url_description = ?, url_address = ?
+       WHERE url_id = ? AND campaign_id = ? AND entry_type = 'campaign' AND url_type = ? LIMIT 1`,
+      [payload.active, payload.url_rank, payload.url_statuses, payload.url_lists, payload.url_call_length,
+        payload.url_description, payload.url_address, urlId, id, urlType],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'url_not_found' });
+    await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX MODIFY ALT URL', `UPDATE vicidial_url_multi ${urlType} #${urlId}`, payload.url_description);
+    return res.json({ ok: true, url_id: urlId });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'url_multi_save_failed' });
+  }
+}
+
+async function deleteUrlMulti(req, res) {
+  const id = urlMultiGate(req, res);
+  if (!id) return;
+  const urlId = cleanInt(req.params.urlId, 0, 0, 999999999);
+  if (!urlId) return badRequest(res, 'invalid_url_id');
+  try {
+    const result = await execute(
+      "DELETE FROM vicidial_url_multi WHERE url_id = ? AND campaign_id = ? AND entry_type = 'campaign' LIMIT 1",
+      [urlId, id],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'url_not_found' });
+    await adminLog(req, 'CAMPAIGNS', 'DELETE', id, 'GENX DELETE ALT URL', 'DELETE FROM vicidial_url_multi', String(urlId));
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'url_multi_delete_failed' });
+  }
+}
+
 // Save the campaign's webform / call URLs from the Detail page's pill-button
 // modals (Webform URLs, Call URLs). Touches ONLY the URL columns that were
 // sent — the campaign's full-save path (campaignPayload) still carries these
@@ -15625,6 +15732,10 @@ app.post('/api/admin/campaigns/:id/logout-agents', requireAccess, logoutCampaign
 app.get('/api/admin/campaigns/:id/lead-statuses', requireAccess, campaignLeadStatuses);
 app.post('/api/admin/campaigns/:id/dial-status', requireAccess, campaignDialStatusToggle);
 app.post('/api/admin/campaigns/:id/urls', requireAccess, saveCampaignUrls);
+app.get('/api/admin/campaigns/:id/url-multi', requireAccess, listUrlMulti);
+app.post('/api/admin/campaigns/:id/url-multi', requireAccess, (req, res) => saveUrlMulti(req, res, 'create'));
+app.put('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, (req, res) => saveUrlMulti(req, res, 'update'));
+app.delete('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, deleteUrlMulti);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
