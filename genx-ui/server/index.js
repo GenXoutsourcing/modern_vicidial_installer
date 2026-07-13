@@ -7408,6 +7408,9 @@ async function blindMonitor(req, res) {
     const padUser = String(u.user).padStart(8, '0').slice(0, 8);
     const callerCode = `${cidPrefix}${Math.floor(Date.now() / 1000)}${padUser}`;
     const [agentRow] = await rows('SELECT user, campaign_id, status, lead_id FROM vicidial_live_agents WHERE conf_exten = ? AND server_ip = ? LIMIT 1', [sessionId, serverIp], []);
+    if (agentRow && !(await agentControlAllowed(u, agentRow.user))) {
+      return res.status(403).json({ ok: false, error: 'agent_not_in_scope' });
+    }
     await execute(
       `INSERT INTO vicidial_manager
          (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
@@ -13569,14 +13572,24 @@ async function deleteSettingsContainer(req, res) {
 
 // System Settings: single-row table, ~248 columns. Column list and types come
 // from SHOW COLUMNS so the editor stays correct across Vicidial upgrades.
+// Secret-bearing settings columns are masked on read; the save path skips
+// the mask sentinel so an untouched masked field can never overwrite the
+// real value with asterisks.
+const SETTINGS_SECRET_RE = /pass|secret|token|systemkey|api_key|apikey/i;
+const SETTINGS_MASK = '********';
+
 async function getSystemSettings(req, res) {
   if (Number(req.genxUser?.userLevel || 0) < 9) return res.status(403).json({ ok: false, error: 'permission_denied' });
   try {
     const columns = await rows('SHOW COLUMNS FROM system_settings', [], []);
     const [settings] = await rows('SELECT * FROM system_settings LIMIT 1', [], []);
+    const masked = { ...(settings || {}) };
+    for (const key of Object.keys(masked)) {
+      if (SETTINGS_SECRET_RE.test(key) && masked[key]) masked[key] = SETTINGS_MASK;
+    }
     return res.json({
       ok: true,
-      settings: settings || {},
+      settings: masked,
       columns: columns.map((column) => ({ field: column.Field, type: column.Type })),
     });
   } catch (error) {
@@ -13596,6 +13609,9 @@ async function saveSystemSettings(req, res) {
       const type = allowed.get(key);
       if (!type) continue;
       let value = String(rawValue ?? '');
+      // A masked secret coming back unchanged is the read-side sentinel,
+      // not a real edit — never write it over the stored value.
+      if (value === SETTINGS_MASK) continue;
       if (/int\(/.test(type) || /decimal|float|double/.test(type)) {
         value = value.replace(/[^-0-9.]/g, '') || '0';
       } else {
@@ -14015,10 +14031,25 @@ async function emergencyLogoutLiveAgent(req, agent, nowEpoch, inactiveEpoch) {
 }
 
 // Legacy user_status.php per-user emergency logout.
+// Agent-control actions (logout/pause/monitor/timeclock) act on OTHER
+// people's live sessions — scope the target to the editor's admin-viewable
+// user groups so a manager can't control agents outside their groups.
+// SuperAdmins keep full reach; an unknown target falls through so the
+// handler's own not-found path answers.
+async function agentControlAllowed(genxUser, targetUser) {
+  if (Number(genxUser?.userLevel || 0) >= 9) return true;
+  const [target] = await rows('SELECT user_group FROM vicidial_users WHERE user = ? LIMIT 1', [targetUser], []);
+  if (!target) return true;
+  return scopeAllows(genxUser?.permissions?.adminViewableGroups, target.user_group);
+}
+
 async function emergencyLogoutUser(req, res) {
   if (!requireModify(req, res, 'modifyUsers')) return;
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user_id');
+  if (!(await agentControlAllowed(req.genxUser, id))) {
+    return res.status(403).json({ ok: false, error: 'agent_not_in_scope' });
+  }
   try {
     const [agent] = await rows(
       `SELECT user, campaign_id, UNIX_TIMESTAMP(last_update_time) AS last_update_epoch, conf_exten, server_ip
@@ -14046,6 +14077,9 @@ async function externalPauseUser(req, res) {
   const id = cleanId(req.params.id, 20);
   const action = req.body?.action === 'RESUME' ? 'RESUME' : 'PAUSE';
   if (!id) return badRequest(res, 'invalid_user_id');
+  if (!(await agentControlAllowed(u, id))) {
+    return res.status(403).json({ ok: false, error: 'agent_not_in_scope' });
+  }
   try {
     const epoch = Math.floor(Date.now() / 1000);
     const result = await execute('UPDATE vicidial_live_agents SET external_pause = ? WHERE user = ?', [`${action}!${epoch}`, id]);
@@ -14070,6 +14104,10 @@ async function managerTimeclock(req, res) {
   try {
     const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
     if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
+    if (Number(u?.userLevel || 0) < 9
+      && !scopeAllows(u?.permissions?.adminViewableGroups, target.user_group)) {
+      return res.status(403).json({ ok: false, error: 'agent_not_in_scope' });
+    }
     const nowEpoch = Math.floor(Date.now() / 1000);
     const ip = cleanText(req.ip || '', 15);
     let [tcStatus] = await rows('SELECT status, event_epoch FROM vicidial_timeclock_status WHERE user = ? LIMIT 1', [id], []);

@@ -781,6 +781,14 @@ function Login({ onLogin }) {
   );
 }
 
+// Data-driven URLs (recording locations, campaign web forms) may only open
+// over http(s) — a stored javascript: URL would otherwise run on click with
+// the admin session's privileges.
+function safeHttpUrl(raw) {
+  const url = String(raw || '').trim();
+  return /^https?:\/\//i.test(url) ? url : '';
+}
+
 function userCan(user, entity) {
   if (Number(user?.userLevel || 0) >= 9) return true;
   if (entity === 'campaignCopy') return Boolean(user?.modifyCampaigns);
@@ -8125,7 +8133,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
                 {
                   key: 'location',
                   label: 'Listen',
-                  render: (row) => (row.location ? <a className="row-action" href={row.location} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> Open</a> : '—'),
+                  render: (row) => (safeHttpUrl(row.location) ? <a className="row-action" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> Open</a> : '—'),
                 },
               ]}
             />
@@ -16432,7 +16440,10 @@ function AgentConsole({ token, authInfo, onExit }) {
     else if (wantsWebform) {
       const wanted = base === 'WEBFORMTWO' ? 'Web Form 2' : base === 'WEBFORMTHREE' ? 'Web Form 3' : 'Web Form';
       const form = (webForms.forms || []).find((f) => f.label === wanted);
-      if (form) window.open(mergeFields(form.url), webForms.target || '_blank');
+      if (form) {
+        const dest = safeHttpUrl(mergeFields(form.url));
+        if (dest) window.open(dest, webForms.target || '_blank');
+      }
     }
   }, [live?.status, lead ? lead.lead_id : 0, Number(live?.preview_lead_id || 0) > 0 ? 1 : 0, webForms ? 1 : 0]);
 
@@ -17066,7 +17077,10 @@ function AgentConsole({ token, authInfo, onExit }) {
                     type="button"
                     key={f.label}
                     className="agn-chip link"
-                    onClick={() => window.open(mergeFields(f.url), webForms.target || '_blank')}
+                    onClick={() => {
+                      const dest = safeHttpUrl(mergeFields(f.url));
+                      if (dest) window.open(dest, webForms.target || '_blank');
+                    }}
                   >
                     <ExternalLink size={11} aria-hidden="true" /> {f.label}
                   </button>
