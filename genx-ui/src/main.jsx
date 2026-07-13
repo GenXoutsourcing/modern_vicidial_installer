@@ -22,6 +22,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+// Single version source: bump genx-ui/package.json and tag the repo.
+import { version as APP_VERSION } from '../package.json';
 import {
   Activity,
   ArrowRightLeft,
@@ -773,6 +775,7 @@ function Login({ onLogin }) {
             </button>
           </form>
         )}
+        <p className="login-version">GenX UI v{APP_VERSION}</p>
       </section>
     </main>
   );
@@ -18232,7 +18235,7 @@ function AdminShell({ token, user, onLogout }) {
               )}
               <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
               <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
-              <span><Sparkles size={16} aria-hidden="true" /> GenX UI v0.3</span>
+              <span><Sparkles size={16} aria-hidden="true" /> GenX UI v{APP_VERSION}</span>
             </div>
           </section>
 
