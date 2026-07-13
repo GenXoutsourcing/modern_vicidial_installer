@@ -2117,8 +2117,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       ...extra,
     };
   };
-  const currentStatuses = campaignDialStatuses(form);
-
   if (entity === 'campaignCopy') {
     return [
       { key: 'campaign_id', label: 'New Campaign ID' },
@@ -2164,10 +2162,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
       { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
       { section: 'Dialing and Hopper' },
-      // Dial statuses are managed through the Manage Dial Statuses modal
-      // (toggle grid, applies immediately) — the legacy one-at-a-time
-      // add/remove selects are gone.
-      { key: '_dial_status_list', label: 'Current Dial Statuses', type: 'statusList', statuses: currentStatuses, wide: true },
+      // Dial statuses moved to their own card at the top of the Detail
+      // modal (Manage Dial Statuses toggle grid, applies immediately).
       { key: 'allow_closers', label: 'Allow Closers', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'next_agent_call', label: 'Next Agent Call', type: 'select', options: enumOptions(ensureOption(NEXT_AGENT_CALL_OPTIONS, form?.next_agent_call)) },
       { key: 'dial_timeout', label: 'Dial Timeout', type: 'number' },
@@ -6008,6 +6004,28 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             <X size={18} aria-hidden="true" />
           </button>
         </div>
+
+        {isDetail && action.entity === 'campaigns' && (
+          <div className="campaign-tool-panel">
+            <div className="campaign-tool-head">
+              <div>
+                <p className="eyebrow">Dialing</p>
+                <h3>Current Dial Statuses</h3>
+              </div>
+              <SlidersHorizontal size={20} aria-hidden="true" />
+            </div>
+            <div className="status-chip-list">
+              {campaignDialStatuses(form).map((status) => (
+                <span key={status}>{status}</span>
+              ))}
+              {!campaignDialStatuses(form).length && <em>No dial statuses selected</em>}
+              <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
+                <SlidersHorizontal size={14} aria-hidden="true" />
+                Manage Dial Statuses
+              </button>
+            </div>
+          </div>
+        )}
 
         {isDetail && action.entity === 'campaigns' && (
           <CampaignScopedTools
