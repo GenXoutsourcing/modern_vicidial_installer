@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GenX Admin UI — SuperAdmin Guide</title>
+<style>
+  :root {
+    --bg: #050d16;
+    --panel: #0a1624;
+    --panel2: #0e1e30;
+    --border: #16324a;
+    --text: #d7e7f2;
+    --muted: #8fb0c4;
+    --accent: #29c4ff;
+    --accent2: #58e0c0;
+    --warn: #ffc46b;
+    --danger: #ff8f8f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .layout { display: flex; max-width: 1400px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 270px; flex-shrink: 0; height: 100vh; overflow-y: auto;
+    padding: 24px 18px; border-right: 1px solid var(--border);
+  }
+  nav.toc h2 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin: 18px 0 6px; }
+  nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); font-size: 14px; }
+  nav.toc a:hover { background: var(--panel2); color: var(--text); text-decoration: none; }
+  main { flex: 1; min-width: 0; padding: 32px 48px 96px; }
+  header.hero { border: 1px solid var(--border); background: linear-gradient(135deg, #0a1a2c, #071019); border-radius: 14px; padding: 28px 32px; margin-bottom: 36px; }
+  header.hero .eyebrow { color: var(--accent); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
+  header.hero h1 { margin: 6px 0 10px; font-size: 30px; }
+  header.hero p { color: var(--muted); max-width: 72ch; margin: 0; }
+  h2 { font-size: 24px; margin: 56px 0 8px; padding-top: 18px; border-top: 1px solid var(--border); }
+  h2 .chip { font-size: 11px; vertical-align: middle; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; margin-left: 10px; }
+  h3 { font-size: 18px; margin: 30px 0 8px; color: var(--accent2); }
+  p, li { color: var(--text); max-width: 90ch; }
+  .lead { color: var(--muted); }
+  img.shot {
+    display: block; width: 100%; max-width: 1100px; border: 1px solid var(--border);
+    border-radius: 10px; margin: 18px 0 6px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+  }
+  .caption { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin: 18px 0; }
+  .card.tip { border-left: 4px solid var(--accent2); }
+  .card.warn { border-left: 4px solid var(--warn); }
+  .card.stop { border-left: 4px solid var(--danger); }
+  .card h4 { margin: 0 0 6px; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; }
+  .card.tip h4 { color: var(--accent2); }
+  .card.warn h4 { color: var(--warn); }
+  .card.stop h4 { color: var(--danger); }
+  .card p, .card li { font-size: 15px; }
+  ol.steps { counter-reset: step; list-style: none; padding-left: 0; }
+  ol.steps > li {
+    counter-increment: step; position: relative; padding: 10px 0 10px 52px; margin: 4px 0;
+    border-bottom: 1px dashed rgba(22,50,74,.6);
+  }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 10px;
+    width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    background: var(--panel2); color: var(--accent); border: 1px solid var(--border);
+    border-radius: 50%; font-weight: 700; font-size: 15px;
+  }
+  table.def { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 15px; }
+  table.def th, table.def td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.def th { color: var(--accent); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+  table.def td:first-child { white-space: nowrap; font-weight: 600; color: var(--accent2); }
+  code, kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; font-size: 14px; }
+  .glossary dt { color: var(--accent2); font-weight: 700; margin-top: 14px; }
+  .glossary dd { margin: 2px 0 0 0; color: var(--text); max-width: 90ch; }
+  .pill { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; font-size: 13px; color: var(--accent2); }
+  footer { margin-top: 70px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+  @media (max-width: 900px) {
+    nav.toc { display: none; }
+    main { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <h2>Start Here</h2>
+  <a href="#welcome">The Role Model</a>
+  <a href="#login">Signing In</a>
+  <a href="#accounts">Account Policy</a>
+  <h2>Access Control</h2>
+  <a href="#groups">User Groups &amp; GenX Permissions</a>
+  <a href="#statuses">Statuses</a>
+  <h2>Platform</h2>
+  <a href="#phones">Phones</a>
+  <a href="#shifts">Shifts</a>
+  <a href="#system">System</a>
+  <a href="#settings">Settings Containers</a>
+  <a href="#media">Media &amp; Tools</a>
+  <h2>Reports &amp; API</h2>
+  <a href="#admin-reports">Admin Reports (Legacy)</a>
+  <a href="#api">The GenX API</a>
+  <h2>Reference</h2>
+  <a href="#versioning">Versions</a>
+  <a href="index.html">← Floor Manager Guide</a>
+</nav>
+<main>
+
+<header class="hero">
+  <div class="eyebrow">GenX Contact Center</div>
+  <h1>Admin UI — SuperAdmin Guide</h1>
+  <p>This guide covers the parts of the GenX admin interface that only SuperAdmins can see:
+  access control, platform configuration, and the API. It assumes you already know the
+  day-to-day screens — those are covered in the
+  <a href="index.html">Floor Manager guide</a>, and everything there applies to you too.</p>
+</header>
+
+<h2 id="welcome">The Role Model</h2>
+<p>Every account belongs to a user group, and the group decides what its members can see and
+do. The platform ships with five roles:</p>
+<table class="def">
+  <tr><th>Group</th><th>Who</th><th>Access</th></tr>
+  <tr><td>SUPERADMIN</td><td>GenX technicians</td><td>Everything, in both the admin console and the agent screen. The only role that sees the Admin section of the sidebar.</td></tr>
+  <tr><td>ADMIN</td><td>The client's managers — the highest role a client account should ever have</td><td>Users, campaigns, lists, inbound, and reports. No deletes, no platform settings; the group's flag template re-applies these limits every time a member is saved.</td></tr>
+  <tr><td>SUPERVISORS</td><td>Floor supervisors</td><td>Reports and recordings only, plus live listen/barge on agents.</td></tr>
+  <tr><td>QC</td><td>Quality control</td><td>Reports and recordings only — no live monitoring.</td></tr>
+  <tr><td>AGENTS</td><td>Everyone taking calls</td><td>The agent screen only. Agent accounts cannot open the admin console at all.</td></tr>
+</table>
+<div class="card warn">
+  <h4>The one rule that matters</h4>
+  <p>Client accounts top out at <strong>ADMIN</strong>. SUPERADMIN is for GenX staff. If a
+  client asks for something the ADMIN role can't do, that's a conversation with GenX, not a
+  group change.</p>
+</div>
+
+<h2 id="login">Signing In</h2>
+<p>Everyone uses the same sign-in page. Because your account can use both interfaces, you get
+a destination choice after your password is accepted:</p>
+<img class="shot" src="img/sa-00-choice.jpg" alt="SuperAdmin destination choice">
+<p class="caption">SuperAdmins choose between the admin console and the agent screen — useful
+for testing what agents experience.</p>
+
+<h2 id="accounts">Account Policy</h2>
+<p>New accounts bootstrap the same way the platform itself does:</p>
+<ol class="steps">
+  <li>Create the user and leave the password blank — the system assigns <code>1234</code>
+  and arms a forced password change.</li>
+  <li>The person signs in once with <code>1234</code>, is required to set a real password
+  (8–30 characters), and lands wherever their role belongs.</li>
+  <li>Need to reset someone? Set their password back to <code>1234</code> and flip
+  <strong>Force Password Change at Next Login</strong> to Yes. Floor managers can do this
+  for their agents too.</li>
+</ol>
+
+<h2 id="groups">User Groups &amp; GenX Permissions<span class="chip">Admin section</span></h2>
+<img class="shot" src="img/sa-01-groups.jpg" alt="User Groups page">
+<p class="caption">Groups page — every group's scope and nav access at a glance.</p>
+<p>Open a group and scroll to the <strong>GenX Permissions</strong> section. Three controls
+define the role:</p>
+<table class="def">
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td>Nav Menu Access</td><td>Which sidebar sections the group's members see (users, campaigns, lists, inbound, admin, reports). Groups without the admin section are "restricted managers" — they also get the reduced essential-only user form.</td></tr>
+  <tr><td>UI Access</td><td>Which interface members may sign in to: admin console only, agent screen only, or both. This is how AGENTS accounts are locked out of the console and manager accounts are kept off the agent screen.</td></tr>
+  <tr><td>Flag template</td><td>A fixed set of permission flags stamped onto every member each time they're saved, so the role is enforced by the group rather than hand-set per user. The shipped ADMIN/SUPERVISORS/QC/AGENTS templates implement the role table above.</td></tr>
+</table>
+<img class="shot" src="img/sa-02-group-edit.jpg" alt="Group edit modal with GenX Permissions">
+<p class="caption">The group modal — GenX Permissions live at the bottom.</p>
+<div class="card stop">
+  <h4>Assignment is guarded</h4>
+  <p>Only SuperAdmins can put users into groups that carry admin nav access (including
+  APIUSERS). Restricted managers can neither create users in, nor move users into, those
+  groups — the server enforces it even against direct API calls.</p>
+</div>
+
+<h2 id="statuses">Statuses<span class="chip">SuperAdmin only</span></h2>
+<img class="shot" src="img/sa-03-statuses.jpg" alt="Statuses page">
+<p class="caption">System statuses and status groups.</p>
+<p>System-wide statuses and status groups are SuperAdmin territory — changing them affects
+every campaign and report on the platform. Campaign-specific statuses are managed inside each
+campaign's Detail page (floor managers handle those themselves).</p>
+
+<h2 id="phones">Phones</h2>
+<img class="shot" src="img/sa-04-phones.jpg" alt="Phones page">
+<p class="caption">SIP phone entries — each webphone or hard phone registers through one of these.</p>
+<p>Phone entries live on a specific telephony server. If an agent's webphone won't register,
+check that their phone entry points at an <em>active</em> telephony server — a phone entry on
+a web or database box will never register.</p>
+
+<h2 id="shifts">Shifts</h2>
+<img class="shot" src="img/sa-05-shifts.jpg" alt="Shifts page">
+<p class="caption">Shift windows that can be enforced per user group.</p>
+
+<h2 id="system">System<span class="chip">Servers, carriers, templates</span></h2>
+<img class="shot" src="img/sa-06-system.jpg" alt="System page">
+<p class="caption">Carriers, conference templates, and server administration.</p>
+<p>The <strong>System Servers</strong> panel on Mission Control (SuperAdmin-only) is the
+health view: every server reports a heartbeat, CPU load, and disk usage each minute.</p>
+<table class="def">
+  <tr><th>Pill</th><th>Meaning</th></tr>
+  <tr><td>Online</td><td>Heartbeat within the last 15 seconds.</td></tr>
+  <tr><td>DOWN</td><td>No heartbeat for 15+ seconds — treat as an outage, check the box.</td></tr>
+  <tr><td>Off</td><td>Deliberately deactivated in the servers table.</td></tr>
+  <tr><td>HD Usage red</td><td>A filesystem at 85%+ — recordings and logs will eventually fill it.</td></tr>
+</table>
+
+<h2 id="settings">Settings Containers</h2>
+<img class="shot" src="img/sa-07-settings.jpg" alt="Settings Containers page">
+<p class="caption">Free-form configuration containers used by dialplan and feature hooks.</p>
+
+<h2 id="media">Media &amp; Tools</h2>
+<img class="shot" src="img/sa-08-media-tools.jpg" alt="Media and Tools page">
+<p class="caption">Audio store, email accounts, voicemail, music-on-hold, TTS, IP lists.</p>
+<div class="card stop">
+  <h4>ViciWhite is the cluster's front door</h4>
+  <p>The <strong>ViciWhite</strong> IP list feeds the firewall on every server. Removing an
+  entry can cut a server — or you — off from the cluster. Add before you remove, and never
+  delete an entry you can't identify.</p>
+</div>
+<p>The <strong>Audio Store</strong> is the central library for campaign audio: upload here and
+every telephony server syncs a copy within a minute.</p>
+
+<h2 id="admin-reports">Admin Reports<span class="chip">Legacy</span></h2>
+<img class="shot" src="img/sa-09-admin-reports.jpg" alt="Admin Reports page">
+<p class="caption">Links into the legacy VICIdial report pages.</p>
+<p>Everything in the Reporting Center is native GenX. This page collects the remaining
+<em>legacy</em> reports that haven't been ported yet — they open the classic UI in a new tab
+and require a VICIdial web login.</p>
+
+<h2 id="api">The GenX API</h2>
+<p>External integrations authenticate with API keys against <code>/genxapi/</code> (docs are
+self-hosted at that address). The moving parts:</p>
+<ol class="steps">
+  <li>Create a service account in the <strong>APIUSERS</strong> group — the only group whose
+  members can use the API. One account per integration keeps the audit trail clean.</li>
+  <li>Open that user and use the <strong>API Keys</strong> panel to generate a key. The raw
+  key is shown once — copy it then; only a fingerprint is stored.</li>
+  <li>Client ADMIN accounts can also open API service accounts to rotate or revoke keys —
+  self-service — but only SuperAdmins can create the accounts themselves.</li>
+</ol>
+
+<h2 id="versioning">Versions</h2>
+<p>The running version shows in the Mission Control strip and on the sign-in page
+(<span class="pill">GenX UI v1.0.0-rc.1</span> style). Release notes live in the repository's
+<code>CHANGELOG.md</code>; releases are tagged <code>v&lt;version&gt;</code>.</p>
+
+<footer>
+  GenX Contact Center — SuperAdmin Guide · See also the
+  <a href="index.html">Floor Manager guide</a> for the everyday screens.
+</footer>
+
+</main>
+</div>
+</body>
+</html>

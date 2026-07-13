@@ -83,5 +83,50 @@ await view('/filterPhoneGroups', '22-filter-groups');
 await view('/reports', '23-reports');
 await view('/recordings', '24-recordings', 2000);
 
+// SuperAdmin guide shots (guide/superadmin.html) — needs a SUPERADMIN
+// account (standing test login 8888). Skipped when GENX_SA_PASS is unset.
+const SA_USER = process.env.GENX_SA_USER || '8888';
+const SA_PASS = process.env.GENX_SA_PASS;
+if (SA_PASS) {
+  const sa = await browser.newPage({ viewport: { width: 1720, height: 950 }, ignoreHTTPSErrors: true });
+  const saShot = (name) => sa.screenshot({ path: `out/${name}.jpg`, type: 'jpeg', quality: 82, fullPage: true });
+  const saSettle = async (ms = 1200) => {
+    await sa.waitForLoadState('networkidle').catch(() => {});
+    await sa.waitForTimeout(ms);
+  };
+  const saView = async (hash, name, ms) => {
+    await sa.evaluate((h) => { window.location.hash = h; }, hash);
+    await saSettle(ms);
+    await saShot(name);
+  };
+  await sa.goto(BASE, { waitUntil: 'networkidle' });
+  await saSettle(800);
+  await sa.fill('#vicidial-user', SA_USER);
+  await sa.fill('#vicidial-password', SA_PASS);
+  await sa.click('button.primary-action');
+  await saSettle(1500);
+  // SuperAdmins have both-UI access, so the sign-in shows the destination
+  // choice — capture it, then continue into the console.
+  await saShot('sa-00-choice');
+  try { await sa.locator('button:has-text("Admin Console")').first().click({ timeout: 4000 }); } catch {}
+  await saSettle(3000);
+  await saView('/userGroups', 'sa-01-groups');
+  try {
+    await sa.locator('table button:has-text("Manage")').first().click({ timeout: 4000 });
+    await saSettle();
+    await saShot('sa-02-group-edit');
+    await sa.keyboard.press('Escape');
+    await saSettle(600);
+  } catch {}
+  await saView('/statuses', 'sa-03-statuses');
+  await saView('/phones', 'sa-04-phones');
+  await saView('/shifts', 'sa-05-shifts');
+  await saView('/system', 'sa-06-system', 2000);
+  await saView('/systemSettings', 'sa-07-settings');
+  await saView('/mediaTools', 'sa-08-media-tools', 2000);
+  await saView('/adminReports', 'sa-09-admin-reports');
+  await sa.close();
+}
+
 await browser.close();
 console.log(`done: ${fs.readdirSync('out').length} screenshots in ./out`);
