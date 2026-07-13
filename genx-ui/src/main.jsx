@@ -2198,18 +2198,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'inbound_no_agents_no_dial_threshold', label: 'Inbound No-Agents No-Dial Threshold', type: 'number' },
       { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
       ...(form?.allow_closers === 'Y' ? [{ key: 'xfer_groups', label: 'Allowed Transfer Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true }] : []),
-      { key: 'dial_timeout_lead_container', label: 'Dial Timeout Lead Container', type: 'select', options: enumOptions(ensureOption(['DISABLED'], form?.dial_timeout_lead_container)) },
       { key: 'cid_group_id', label: 'CID Group', type: 'select', options: cidGroupOptions },
       { key: 'cid_group_id_two', label: 'CID Group Failover', type: 'select', options: withCurrentOption(cidGroupOptions, form?.cid_group_id_two) },
-      { key: 'safe_harbor_exten', label: 'Safe Harbor Exten' },
-      audioField('safe_harbor_audio', 'Safe Harbor Audio', form?.safe_harbor_audio),
-      { key: 'safe_harbor_audio_field', label: 'Safe Harbor Audio Field', type: 'select', options: enumOptions(ensureOption(LEAD_FIELD_OPTIONS, form?.safe_harbor_audio_field)) },
-      { key: 'safe_harbor_menu_id', label: 'Safe Harbor Call Menu', type: callMenuOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuOptions, form?.safe_harbor_menu_id) },
       voicemailField('voicemail_ext', 'Voicemail', form?.voicemail_ext),
       mohField('park_file_name', 'Park Music-on-Hold', form?.park_file_name),
-      { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
-      { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
-      { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
       { key: 'use_custom_cid', label: 'Custom CallerID', type: 'select', options: enumOptions(ensureOption(CUSTOM_CID_OPTIONS, form?.use_custom_cid)) },
       { key: 'agent_search_method', label: 'Agent Search Override', type: 'select', options: [{ value: '', label: 'DISABLED' }, ...enumOptions(AGENT_SEARCH_OPTIONS.filter(Boolean))] },
       { key: 'agent_hangup_route', label: 'Agent Hangup Route', type: 'select', options: enumOptions(ensureOption(AGENT_HANGUP_ROUTE_OPTIONS, form?.agent_hangup_route)) },
@@ -2242,6 +2234,17 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       // strip's "Webform URLs" and "Call URLs" pill modals — the values
       // still live in form state (campaignPayload saves them on the main
       // Save) but aren't rendered as form fields here.
+      // PILL_SECTIONS pulls this whole section out of the main form into
+      // the Connections strip's "Compliance" pill modal.
+      { section: 'Compliance' },
+      { key: 'dial_timeout_lead_container', label: 'Dial Timeout Lead Container', type: 'select', options: enumOptions(ensureOption(['DISABLED'], form?.dial_timeout_lead_container)) },
+      { key: 'safe_harbor_exten', label: 'Safe Harbor Exten' },
+      audioField('safe_harbor_audio', 'Safe Harbor Audio', form?.safe_harbor_audio),
+      { key: 'safe_harbor_audio_field', label: 'Safe Harbor Audio Field', type: 'select', options: enumOptions(ensureOption(LEAD_FIELD_OPTIONS, form?.safe_harbor_audio_field)) },
+      { key: 'safe_harbor_menu_id', label: 'Safe Harbor Call Menu', type: callMenuOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuOptions, form?.safe_harbor_menu_id) },
+      { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
+      { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
+      { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -5802,7 +5805,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // modal (opened from the Connections strip). The fields keep editing the
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
-  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls'] : [];
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance'] : [];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
