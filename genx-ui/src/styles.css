@@ -781,6 +781,17 @@ body {
   gap: 4px;
 }
 
+/* Row labels splitting the Connections strip into Reports and Activity vs
+   Campaign Settings pill groups. */
+.connection-group-label {
+  margin: 0 0 -6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 820;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .connection-summary {
   color: var(--muted);
   font-size: 0.84rem;

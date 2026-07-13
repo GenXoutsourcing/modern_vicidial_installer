@@ -2172,6 +2172,9 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'dial_timeout', label: 'Dial Timeout', type: 'number' },
       { key: 'dial_prefix', label: 'Dial Prefix' },
       { key: 'campaign_cid', label: 'Campaign CID' },
+      { key: 'cid_group_id', label: 'CID Group', type: 'select', options: cidGroupOptions },
+      { key: 'cid_group_id_two', label: 'CID Group Failover', type: 'select', options: withCurrentOption(cidGroupOptions, form?.cid_group_id_two) },
+      { key: 'use_custom_cid', label: 'Custom CallerID', type: 'select', options: enumOptions(ensureOption(CUSTOM_CID_OPTIONS, form?.use_custom_cid)) },
       // Hidden from the Detail form (Steve 2026-07-12): tally/threshold,
       // adaptive-tuning, concurrent-transfer and hopper-tuning knobs plus a
       // batch of recording/script/AMD extras. Their values stay in form
@@ -2196,11 +2199,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'inbound_no_agents_no_dial_threshold', label: 'Inbound No-Agents No-Dial Threshold', type: 'number' },
       { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
       ...(form?.allow_closers === 'Y' ? [{ key: 'xfer_groups', label: 'Allowed Transfer Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true }] : []),
-      { key: 'cid_group_id', label: 'CID Group', type: 'select', options: cidGroupOptions },
-      { key: 'cid_group_id_two', label: 'CID Group Failover', type: 'select', options: withCurrentOption(cidGroupOptions, form?.cid_group_id_two) },
       voicemailField('voicemail_ext', 'Voicemail', form?.voicemail_ext),
       mohField('park_file_name', 'Park Music-on-Hold', form?.park_file_name),
-      { key: 'use_custom_cid', label: 'Custom CallerID', type: 'select', options: enumOptions(ensureOption(CUSTOM_CID_OPTIONS, form?.use_custom_cid)) },
       { key: 'agent_search_method', label: 'Agent Search Override', type: 'select', options: [{ value: '', label: 'DISABLED' }, ...enumOptions(AGENT_SEARCH_OPTIONS.filter(Boolean))] },
       { key: 'agent_hangup_route', label: 'Agent Hangup Route', type: 'select', options: enumOptions(ensureOption(AGENT_HANGUP_ROUTE_OPTIONS, form?.agent_hangup_route)) },
       routeTargetField(form?.agent_hangup_route, 'agent_hangup_value', 'Agent Hangup Value', form?.agent_hangup_value),
@@ -2211,14 +2211,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'agent_pause_codes_active', label: 'Pause Codes Active', type: 'select', options: enumOptions(['Y', 'N', 'FORCE']) },
       // AMD fields moved to the Connections strip's "AMD" pill modal
       // (Steve 2026-07-12); only the voicemail/timer knobs remain inline.
-      { section: 'Voicemail and Timers' },
+      { section: 'Voicemail' },
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
       { key: 'leave_vm_message_group_id', label: 'VM Message Group', type: 'select', options: enumOptions(ensureOption(['---NONE---'], form?.leave_vm_message_group_id)) },
       { key: 'leave_vm_no_dispo', label: 'Leave VM No Dispo', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
-      { key: 'timer_action', label: 'Timer Action', type: 'select', options: enumOptions(ensureOption(TIMER_ACTION_OPTIONS, form?.timer_action)) },
-      { key: 'timer_action_message', label: 'Timer Message' },
-      { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
-      { key: 'timer_action_destination', label: 'Timer Destination' },
       // Webform/call URLs AND web_form_target moved to the Connections
       // strip's "Webform URLs" and "Call URLs" pill modals — the values
       // still live in form state (campaignPayload saves them on the main
@@ -2234,6 +2230,12 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
+      { key: 'call_limit_24hour_method', label: '24h Limit Method', type: 'select', options: enumOptions(['DISABLED', 'PHONE_NUMBER', 'LEAD']) },
+      { key: 'call_limit_24hour_scope', label: '24h Limit Scope', type: 'select', options: enumOptions(['SYSTEM_WIDE', 'CAMPAIGN_LISTS']) },
+      { key: 'call_limit_24hour', label: '24h Limit', type: 'number' },
+      { key: 'call_limit_24hour_override', label: '24h Limit Override', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'ENABLED'], form?.call_limit_24hour_override)) },
+      { key: 'daily_phone_number_call_limit', label: 'Daily Phone Limit', type: 'number' },
+      { key: 'call_log_days', label: 'Call Log Days', type: 'number' },
       { section: 'CRM' },
       { key: 'crm_popup_login', label: 'CRM Popup Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'crm_login_address', label: 'CRM Popup Address', wide: true },
@@ -2252,6 +2254,9 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'list_order_mix', label: 'List Mix', type: 'select', options: withCurrentOption([{ value: 'DISABLED', label: 'DISABLED' }, ...(admin?.lookups?.listMixes || []).filter((item) => String(item.campaign_id || '') === String(form?.campaign_id || '')).map((item) => ({ value: String(item.vcl_id || ''), label: `${item.vcl_id} - ${item.vcl_name || item.status || ''}` }))], form?.list_order_mix) },
       { key: 'lead_order_randomize', label: 'Lead Order Randomize', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'lead_order_secondary', label: 'Secondary Lead Order', type: 'select', options: enumOptions(['LEAD_ASCEND', 'LEAD_DESCEND', 'CALLTIME_ASCEND', 'CALLTIME_DESCEND', 'VENDOR_ASCEND', 'VENDOR_DESCEND']) },
+      { key: 'lead_filter_id', label: 'Lead Filter', type: leadFilterOptions.length ? 'select' : 'text', options: leadFilterOptions },
+      { key: 'display_dialable_count', label: 'Display Dialable Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'display_leads_count', label: 'Display Leads Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -2281,10 +2286,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'hangup_xfer_record_start', label: 'Hangup Xfer Recording Start', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'agent_xfer_validation', label: 'Transfer In-Group Validation', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
-      { section: 'Lead Control and Callbacks' },
-      { key: 'lead_filter_id', label: 'Lead Filter', type: leadFilterOptions.length ? 'select' : 'text', options: leadFilterOptions },
-      { key: 'display_dialable_count', label: 'Display Dialable Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'display_leads_count', label: 'Display Leads Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      // 'Lead Control and Callbacks' dissolved: lead filter + display
+      // counts joined the List Controls pill, everything else is the
+      // Callbacks pill.
+      { section: 'Callbacks' },
       { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'scheduled_callbacks_alert', label: 'Callback Alert', type: 'select', options: enumOptions(ensureOption(SCHEDULED_CALLBACK_ALERT_OPTIONS, form?.scheduled_callbacks_alert)) },
       { key: 'scheduled_callbacks_email_alert', label: 'Callback Email Alert', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -2303,7 +2308,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'show_previous_callback', label: 'Show Previous Callback', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'next_dial_my_callbacks', label: 'Next Dial My Callbacks', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'callback_dnc', label: 'Callback DNC', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
-      { section: 'Dead Call and Limit Handling' },
+      { section: 'Dead Call Handling' },
       { key: 'disable_dispo_screen', label: 'Disable Dispo Screen', type: 'select', options: enumOptions(['DISPO_ENABLED', 'DISPO_DISABLED', 'DISPO_SELECT_DISABLED']) },
       { key: 'disable_dispo_status', label: 'Disable Dispo Status' },
       { key: 'script_top_dispo', label: 'Script on top of Dispo', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -2326,12 +2331,27 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'in_man_dial_next_ready_seconds', label: 'InMan Forced Ready Seconds', type: 'number' },
       { key: 'in_man_dial_next_ready_seconds_override', label: 'InMan Forced Ready Override', type: 'select', options: enumOptions(ensureOption(['DISABLED'], form?.in_man_dial_next_ready_seconds_override)) },
       { key: 'customer_gone_seconds', label: 'Customer Gone Warning Seconds', type: 'number' },
-      { section: 'Agent Screen and Limits' },
+      { key: 'timer_action', label: 'Timer Action', type: 'select', options: enumOptions(ensureOption(TIMER_ACTION_OPTIONS, form?.timer_action)) },
+      { key: 'timer_action_message', label: 'Timer Message' },
+      { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
+      { key: 'timer_action_destination', label: 'Timer Destination' },
+      { section: 'Agent Limits' },
       { key: 'wrapup_seconds', label: 'Wrapup Seconds', type: 'number' },
       { key: 'wrapup_message', label: 'Wrapup Message' },
       { key: 'wrapup_bypass', label: 'Wrapup Bypass', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'pause_after_each_call', label: 'Pause After Each Call', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'pause_after_next_call', label: 'Pause After Next Call', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
+      { key: 'ready_max_logout', label: 'Ready Max Logout', type: 'number' },
+      { key: 'max_logged_in_agents', label: 'Max Logged-In Agents', type: 'number' },
+      { key: 'auto_pause_precall', label: 'Auto Pause Pre-Call Work', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'auto_resume_precall', label: 'Auto Resume Pre-Call Work', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'auto_pause_precall_code', label: 'Auto Pause Pre-Call Code' },
+      { key: 'campaign_stats_refresh', label: 'Campaign Stats Refresh', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'realtime_agent_time_stats', label: 'Real-Time Agent Time Stats', type: 'select', options: enumOptions(['DISABLED', 'WAIT_CUST_ACW', 'WAIT_CUST_ACW_PAUSE', 'CALLS_WAIT_CUST_ACW_PAUSE']) },
+      { key: 'disable_alter_custdata', label: 'Disable Alter Customer Data', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'disable_alter_custphone', label: 'Disable Alter Customer Phone', type: 'select', options: enumOptions(['Y', 'N', 'HIDE']) },
+      { key: 'no_hopper_dialing', label: 'No Hopper Dialing', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { section: 'Manual Dial' },
       { key: 'manual_dial_prefix', label: 'Manual Dial Prefix' },
       { key: 'manual_preview_dial', label: 'Manual Preview Dial', type: 'select', options: enumOptions(['DISABLED', 'PREVIEW_AND_SKIP', 'PREVIEW_ONLY']) },
       { key: 'manual_dial_call_time_check', label: 'Manual Dial Call Time Check', type: 'select', options: enumOptions(['DISABLED', 'ENABLED']) },
@@ -2341,6 +2361,18 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'manual_dial_hopper_check', label: 'Manual Hopper Check', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'manual_auto_next', label: 'Manual Auto Next', type: 'number' },
       { key: 'manual_auto_show', label: 'Manual Auto Show', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'manual_dial_override', label: 'Manual Dial Override', type: 'select', options: enumOptions(['NONE', 'ALLOW_ALL', 'DISABLE_ALL']) },
+      { key: 'manual_dial_override_field', label: 'Manual Dial Override Field', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
+      { key: 'manual_dial_search_checkbox', label: 'Manual Dial Search Checkbox', type: 'select', options: enumOptions(['SELECTED', 'SELECTED_RESET', 'SELECTED_LOCK', 'UNSELECTED', 'UNSELECTED_RESET', 'UNSELECTED_LOCK']) },
+      { key: 'manual_dial_lead_id', label: 'Manual Dial by Lead ID', type: 'select', options: enumOptions(['Y', 'N', 'ONLY']) },
+      { key: 'api_manual_dial', label: 'Manual Dial API', type: 'select', options: enumOptions(['STANDARD', 'QUEUE', 'QUEUE_AND_AUTOCALL']) },
+      { key: 'manual_dial_cid', label: 'Manual Dial CID', type: 'select', options: enumOptions(['CAMPAIGN', 'AGENT_PHONE', 'AGENT_PHONE_OVERRIDE']) },
+      { key: 'manual_minimum_attempt_seconds', label: 'Manual Minimum Attempt Seconds', type: 'number' },
+      { key: 'manual_minimum_answer_seconds', label: 'Manual Minimum Answer Seconds', type: 'number' },
+      { key: 'post_phone_time_diff_alert', label: 'Phone Post Time Difference Alert', type: 'select', options: enumOptions(['ENABLED', 'OUTSIDE_CALLTIME_ONLY', 'OUTSIDE_CALLTIME_PHONE', 'OUTSIDE_CALLTIME_POSTAL', 'OUTSIDE_CALLTIME_BOTH', 'DISABLED']) },
+      { key: 'in_group_dial', label: 'In-Group Manual Dial', type: 'select', options: enumOptions(['DISABLED', 'MANUAL_DIAL', 'NO_DIAL', 'BOTH']) },
+      { key: 'in_group_dial_select', label: 'In-Group Manual Dial Select', type: 'select', options: enumOptions(['CAMPAIGN_SELECTED', 'ALL_USER_GROUP']) },
+      { section: 'Agent Screen' },
       { key: 'agent_clipboard_copy', label: 'Clipboard Copy Field', type: 'select', options: clipboardFieldOptions },
       { key: 'agent_lead_search', label: 'Agent Lead Search', type: 'select', options: enumOptions(['ENABLED', 'LIVE_CALL_INBOUND', 'LIVE_CALL_INBOUND_AND_MANUAL', 'DISABLED']) },
       { key: 'agent_lead_search_method', label: 'Agent Lead Search Method', type: 'select', options: enumOptions(ensureOption(AGENT_LEAD_SEARCH_METHOD_OPTIONS, form?.agent_lead_search_method)) },
@@ -2364,27 +2396,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'calls_waiting_vl_two', label: 'Calls Queue Extra Column 2', type: 'select', options: enumOptions(ensureOption(QUEUE_FIELD_OPTIONS, form?.calls_waiting_vl_two)) },
       { key: 'grab_calls_in_queue', label: 'Agent Grab Calls in Queue', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'call_requeue_button', label: 'Agent Call Re-Queue Button', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'ready_max_logout', label: 'Ready Max Logout', type: 'number' },
-      { key: 'max_logged_in_agents', label: 'Max Logged-In Agents', type: 'number' },
-      { key: 'auto_pause_precall', label: 'Auto Pause Pre-Call Work', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'auto_resume_precall', label: 'Auto Resume Pre-Call Work', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'auto_pause_precall_code', label: 'Auto Pause Pre-Call Code' },
-      { key: 'campaign_stats_refresh', label: 'Campaign Stats Refresh', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'realtime_agent_time_stats', label: 'Real-Time Agent Time Stats', type: 'select', options: enumOptions(['DISABLED', 'WAIT_CUST_ACW', 'WAIT_CUST_ACW_PAUSE', 'CALLS_WAIT_CUST_ACW_PAUSE']) },
-      { key: 'disable_alter_custdata', label: 'Disable Alter Customer Data', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'disable_alter_custphone', label: 'Disable Alter Customer Phone', type: 'select', options: enumOptions(['Y', 'N', 'HIDE']) },
-      { key: 'no_hopper_dialing', label: 'No Hopper Dialing', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'manual_dial_override', label: 'Manual Dial Override', type: 'select', options: enumOptions(['NONE', 'ALLOW_ALL', 'DISABLE_ALL']) },
-      { key: 'manual_dial_override_field', label: 'Manual Dial Override Field', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
-      { key: 'manual_dial_search_checkbox', label: 'Manual Dial Search Checkbox', type: 'select', options: enumOptions(['SELECTED', 'SELECTED_RESET', 'SELECTED_LOCK', 'UNSELECTED', 'UNSELECTED_RESET', 'UNSELECTED_LOCK']) },
-      { key: 'manual_dial_lead_id', label: 'Manual Dial by Lead ID', type: 'select', options: enumOptions(['Y', 'N', 'ONLY']) },
-      { key: 'api_manual_dial', label: 'Manual Dial API', type: 'select', options: enumOptions(['STANDARD', 'QUEUE', 'QUEUE_AND_AUTOCALL']) },
-      { key: 'manual_dial_cid', label: 'Manual Dial CID', type: 'select', options: enumOptions(['CAMPAIGN', 'AGENT_PHONE', 'AGENT_PHONE_OVERRIDE']) },
-      { key: 'manual_minimum_attempt_seconds', label: 'Manual Minimum Attempt Seconds', type: 'number' },
-      { key: 'manual_minimum_answer_seconds', label: 'Manual Minimum Answer Seconds', type: 'number' },
-      { key: 'post_phone_time_diff_alert', label: 'Phone Post Time Difference Alert', type: 'select', options: enumOptions(['ENABLED', 'OUTSIDE_CALLTIME_ONLY', 'OUTSIDE_CALLTIME_PHONE', 'OUTSIDE_CALLTIME_POSTAL', 'OUTSIDE_CALLTIME_BOTH', 'DISABLED']) },
-      { key: 'in_group_dial', label: 'In-Group Manual Dial', type: 'select', options: enumOptions(['DISABLED', 'MANUAL_DIAL', 'NO_DIAL', 'BOTH']) },
-      { key: 'in_group_dial_select', label: 'In-Group Manual Dial Select', type: 'select', options: enumOptions(['CAMPAIGN_SELECTED', 'ALL_USER_GROUP']) },
       // Former 'Compliance and Enhancements' section, now the Agent
       // Controls pill (Steve 2026-07-12); User Group moved to Basic
       // Campaign.
@@ -2403,13 +2414,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'status_display_ingroup', label: 'Status Display Ingroup', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'mute_recordings', label: 'Mute Recordings', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'shared_dial_rank', label: 'Shared Dial Rank', type: 'select', options: numberRangeOptions(0, 99, 1, form?.shared_dial_rank) },
-      { key: 'call_limit_24hour_method', label: '24h Limit Method', type: 'select', options: enumOptions(['DISABLED', 'PHONE_NUMBER', 'LEAD']) },
-      { key: 'call_limit_24hour_scope', label: '24h Limit Scope', type: 'select', options: enumOptions(['SYSTEM_WIDE', 'CAMPAIGN_LISTS']) },
-      { key: 'call_limit_24hour', label: '24h Limit', type: 'number' },
-      { key: 'call_limit_24hour_override', label: '24h Limit Override', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'ENABLED'], form?.call_limit_24hour_override)) },
       { key: 'show_confetti', label: 'Confetti', type: 'select', options: enumOptions(['DISABLED', 'SALES', 'CALLBACKS', 'SALES_AND_CALLBACKS']) },
-      { key: 'daily_phone_number_call_limit', label: 'Daily Phone Limit', type: 'number' },
-      { key: 'call_log_days', label: 'Call Log Days', type: 'number' },
       { key: 'hangup_again_link', label: 'Hangup Again Link', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'agent_allow_group_alias', label: 'Group Alias Allowed', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'extension_appended_cidname', label: 'Extension Append CID', type: 'select', options: enumOptions(['Y', 'N', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN']) },
@@ -4593,10 +4598,11 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       <div className="campaign-tool-head">
         <div>
           <p className="eyebrow">Connections</p>
-          <h3>Hopper, reports and live activity</h3>
+          <h3>{basic ? 'Hopper, reports and live activity' : 'Reports, live activity and campaign settings'}</h3>
         </div>
         <Compass size={20} aria-hidden="true" />
       </div>
+      {!basic && <p className="connection-group-label">Reports and Activity</p>}
       <div className="connection-actions">
         <button type="button" className="row-action" onClick={() => { setHopperCampaign(campaign); setReportModal('hopper'); }}>
           <Database size={15} aria-hidden="true" />
@@ -4628,20 +4634,6 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
               <ShieldCheck size={15} aria-hidden="true" />
               Admin Changes
             </a>
-            <button type="button" className="row-action" onClick={() => setUrlModal('webform')}>
-              <ExternalLink size={15} aria-hidden="true" />
-              Webform URLs
-            </button>
-            <button type="button" className="row-action" onClick={() => setUrlModal('callurls')}>
-              <PhoneCall size={15} aria-hidden="true" />
-              Call URLs
-            </button>
-            {(extraActions || []).map((item) => (
-              <button key={item.label} type="button" className="row-action" onClick={item.onClick}>
-                <ArrowRightLeft size={15} aria-hidden="true" />
-                {item.label}
-              </button>
-            ))}
           </>
         )}
         {userCan(user, 'campaigns') && (
@@ -4657,6 +4649,27 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
         )}
         {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
+      {!basic && (
+        <>
+          <p className="connection-group-label">Campaign Settings</p>
+          <div className="connection-actions">
+            <button type="button" className="row-action" onClick={() => setUrlModal('webform')}>
+              <ExternalLink size={15} aria-hidden="true" />
+              Webform URLs
+            </button>
+            <button type="button" className="row-action" onClick={() => setUrlModal('callurls')}>
+              <PhoneCall size={15} aria-hidden="true" />
+              Call URLs
+            </button>
+            {(extraActions || []).map((item) => (
+              <button key={item.label} type="button" className="row-action" onClick={item.onClick}>
+                <ArrowRightLeft size={15} aria-hidden="true" />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {reportModal && (
         <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setReportModal(''))}>
           <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={REPORT_MODAL_TITLES[reportModal]}>
@@ -5817,7 +5830,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // modal (opened from the Connections strip). The fields keep editing the
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
-  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls', 'Agent Controls'] : [];
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns'
+    ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls', 'Agent Controls', 'Agent Screen', 'Manual Dial', 'Callbacks', 'Dead Call Handling']
+    : [];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
