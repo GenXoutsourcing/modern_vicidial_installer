@@ -507,6 +507,57 @@ async function genxNavPermissionRows() {
   }
 }
 
+// GenX permission: which UI a group's members may sign in to. 'agent' locks
+// the group to the agent screen, 'admin' to the admin console; unset/'both'
+// allows either (the legacy-compatible default for groups without a row, so
+// installs that never configure this keep today's behavior).
+const UI_ACCESS_VALUES = ['agent', 'admin', 'both'];
+
+function parseUiAccess(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  return UI_ACCESS_VALUES.includes(value) ? value : 'both';
+}
+
+async function uiAccessFor(userGroup) {
+  if (!(await permTableReady)) return 'both';
+  try {
+    const [permRows] = await pool.query(
+      "SELECT perm_value FROM genx_group_permissions WHERE user_group = ? AND permission = 'ui_access' LIMIT 1",
+      [userGroup || ''],
+    );
+    return parseUiAccess(permRows?.[0]?.perm_value);
+  } catch {
+    return 'both';
+  }
+}
+
+async function saveUiAccess(userGroup, rawValue) {
+  if (rawValue === undefined || !(await permTableReady)) return;
+  const value = parseUiAccess(rawValue);
+  try {
+    if (value === 'both') {
+      await execute("DELETE FROM genx_group_permissions WHERE user_group = ? AND permission = 'ui_access'", [userGroup]);
+    } else {
+      await execute(
+        "REPLACE INTO genx_group_permissions (user_group, permission, perm_value) VALUES (?, 'ui_access', ?)",
+        [userGroup, value],
+      );
+    }
+  } catch { /* best effort, same as nav sections */ }
+}
+
+async function genxUiAccessRows() {
+  if (!(await permTableReady)) return new Map();
+  try {
+    const [permRows] = await pool.query(
+      "SELECT user_group, perm_value FROM genx_group_permissions WHERE permission = 'ui_access'",
+    );
+    return new Map((permRows || []).map((row) => [row.user_group, parseUiAccess(row.perm_value)]));
+  } catch {
+    return new Map();
+  }
+}
+
 // GenX permission: a group's flag_template forces a set of vicidial_users
 // columns to fixed values for every member. This makes a role (e.g. the
 // ADMIN floor-manager profile) group-enforced rather than hand-set per user:
@@ -690,6 +741,11 @@ async function authenticateVicidialUser(username, password) {
   if (user.active !== 'Y') return null;
   if (Number(user.user_level || 0) < config.minUserLevel) return null;
   if (!passwordMatches(password, user.pass)) return null;
+
+  // Agent-screen-only groups can't open the admin console; return a marker
+  // (not null) so the login route can point the user at the agent page
+  // instead of reporting bad credentials.
+  if ((await uiAccessFor(user.user_group)) === 'agent') return { loginError: 'agent_account' };
 
   const pub = publicUser(user);
   pub.navSections = await navSectionsFor(user.user_group);
@@ -2888,6 +2944,7 @@ async function adminData(user) {
   // GenX nav gating lives in genx_group_permissions; surface each group's
   // setting so the User Groups edit modal can show and change it.
   const navPerms = await genxNavPermissionRows();
+  const uiPerms = await genxUiAccessRows();
   const leadCounts = await leadCountsPromise;
   const apiGroupName = await apiUserGroup();
 
@@ -2955,7 +3012,11 @@ async function adminData(user) {
       };
     }),
     inboundGroups,
-    userGroups: userGroups.map((row) => ({ ...row, genx_nav_sections: navPerms.get(row.user_group) || '' })),
+    userGroups: userGroups.map((row) => ({
+      ...row,
+      genx_nav_sections: navPerms.get(row.user_group) || '',
+      genx_ui_access: uiPerms.get(row.user_group) || 'both',
+    })),
     dids,
     phones,
     scripts,
@@ -4090,17 +4151,24 @@ async function saveUser(req, res, mode) {
 }
 
 // API-key management. Keys belong to a user; that user must be in the API
-// group (only SuperAdmins reach this page, so no extra role check needed
-// beyond modifyUsers). Only the sha256 hash is ever stored.
+// group. Client admins (modify_users, no admin nav) manage keys too — key
+// rotation is self-service — but only on targets at or below their own
+// level, so an L8 can't mint keys on an L9 service account. Only the
+// sha256 hash is ever stored.
 async function apiKeyTargetGuard(req, res) {
   if (!(await apiKeyTableReady)) { res.status(503).json({ ok: false, error: 'api_keys_unavailable' }); return null; }
   const id = cleanId(req.params.id, 20);
   if (!id) { badRequest(res, 'invalid_user'); return null; }
-  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  const [target] = await rows('SELECT user, user_group, user_level FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
   if (!target) { res.status(404).json({ ok: false, error: 'user_not_found' }); return null; }
   const apiGroup = await apiUserGroup();
   if (!apiGroup || target.user_group !== apiGroup) {
     res.status(400).json({ ok: false, error: 'user_not_in_api_group' });
+    return null;
+  }
+  if (Number(req.genxUser?.userLevel || 0) < 9
+    && Number(target.user_level || 0) > Number(req.genxUser?.userLevel || 0)) {
+    res.status(403).json({ ok: false, error: 'permission_denied' });
     return null;
   }
   return id;
@@ -8695,6 +8763,12 @@ async function agentAuth(req, res) {
     return res.status(401).json({ ok: false, error: 'invalid_user_credentials' });
   }
   loginFailures.delete(throttleKey);
+
+  // Mirror of the admin-side ui_access gate: admin-console-only groups
+  // (managers, QC) can't take calls on the agent screen.
+  if ((await uiAccessFor(userRow.user_group)) === 'admin') {
+    return res.status(403).json({ ok: false, error: 'admin_account' });
+  }
 
   if (!phoneLogin) {
     phoneLogin = String(userRow.phone_login || '').trim();
@@ -14491,6 +14565,7 @@ async function saveUserGroup(req, res, mode) {
     }
 
     await saveNavSections(id, req.body?.genx_nav_sections);
+    await saveUiAccess(id, req.body?.genx_ui_access);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
@@ -15804,6 +15879,12 @@ app.post('/api/login', async (req, res) => {
       return res.status(429).json({ ok: false, error: 'too_many_attempts' });
     }
     const user = await authenticateVicidialUser(req.body?.username, req.body?.password);
+    // Correct credentials on an agent-screen-only account: not a failure,
+    // just the wrong door — tell the client which one to use.
+    if (user?.loginError) {
+      loginFailures.delete(throttleKey);
+      return res.status(403).json({ ok: false, error: user.loginError });
+    }
     if (!user) {
       recordLoginFailure(throttleKey);
       return res.status(401).json({ ok: false, error: 'invalid_credentials_or_level' });

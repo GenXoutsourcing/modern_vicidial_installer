@@ -450,9 +450,11 @@ function Login({ onLogin }) {
     } catch (requestError) {
       // Only a real 401 means bad credentials; a 502/network error during a
       // deploy or outage must not send users off to reset their passwords.
-      setError(requestError.status === 401 || requestError.status === 403
-        ? 'Credentials or user level were not accepted'
-        : 'The server could not be reached - try again shortly');
+      setError(requestError.message === 'agent_account'
+        ? 'This is an agent account - sign in on the Agent screen instead'
+        : requestError.status === 401 || requestError.status === 403
+          ? 'Credentials or user level were not accepted'
+          : 'The server could not be reached - try again shortly');
     } finally {
       setLoading(false);
     }
@@ -1382,6 +1384,7 @@ function actionDefaults(entity, admin) {
       user_group: '',
       group_name: '',
       genx_nav_sections: 'ALL',
+      genx_ui_access: 'both',
       allowed_campaigns: '-ALL-CAMPAIGNS-',
       allowed_reports: 'ALL REPORTS',
       admin_viewable_groups: '---ALL---',
@@ -2779,6 +2782,11 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'admin_home_url', label: 'Admin Home URL', wide: true },
       { section: 'GenX Permissions' },
       { key: 'genx_nav_sections', label: 'Nav Menu Access', type: 'checkboxGroupText', options: NAV_SECTION_OPTIONS, values: navSectionValues, serialize: (values) => values.join(','), wide: true },
+      { key: 'genx_ui_access', label: 'UI Access', type: 'select', options: [
+        { value: 'both', label: 'Admin console and agent screen' },
+        { value: 'admin', label: 'Admin console only' },
+        { value: 'agent', label: 'Agent screen only' },
+      ] },
     ];
   }
 
@@ -6109,7 +6117,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           />
         )}
 
-        {isEdit && action.entity === 'users' && hasAdminNav(user)
+        {/* Client admins (modify_users) self-serve key rotation on API
+            accounts; the server guard mirrors this and caps target level. */}
+        {isEdit && action.entity === 'users' && (hasAdminNav(user) || user?.modifyUsers)
           && form.user_group === admin?.apiUserGroup && admin?.apiUserGroup && (
           <ApiKeysPanel userId={form.user} token={token} onLogout={onLogout} />
         )}
@@ -15521,6 +15531,7 @@ function AgentLoginPage({ onAuthed }) {
     invalid_user_credentials: 'Invalid user login or password',
     all_fields_required: 'User login and password are required',
     phone_login_required: 'No phone set on this user — enter phone credentials',
+    admin_account: 'This account uses the admin console — sign in on the admin page',
   };
 
   // Auth once per set of credentials; reused between Refresh and Submit.
