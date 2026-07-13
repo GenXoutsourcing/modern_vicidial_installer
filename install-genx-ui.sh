@@ -243,7 +243,10 @@ cat > "$APACHE_FILE" <<EOF
 ProxyPreserveHost On
 ProxyPass /genxapi/ !
 ProxyPass /genxguide/ !
-ProxyPass /genx/ http://127.0.0.1:$PORT/ retry=0 timeout=30
+# timeout raised from 30: multi-month archive-spanning report queries on
+# 20M+ row datasets legitimately run past 30s cold (found at-scale on the
+# fresh cluster rebuild — the proxy 502'd a report db2 was still serving).
+ProxyPass /genx/ http://127.0.0.1:$PORT/ retry=0 timeout=120
 ProxyPassReverse /genx/ http://127.0.0.1:$PORT/
 RedirectMatch 302 ^/genx$ /genx/
 EOF
