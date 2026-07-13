@@ -730,6 +730,61 @@ async function execute(sql, params = []) {
   return result;
 }
 
+// --- Shared TTL cache for expensive aggregates -------------------------------
+// The admin catalog and dashboard poll from every open browser tab; without
+// this, each tab re-runs multi-million-row GROUP BY scans every cycle.
+// Concurrent callers share ONE in-flight promise, so N tabs cost one scan
+// per TTL window. Failures are not cached. The loader runs under the pool
+// context of the first caller (polls run on the replica).
+const queryCache = new Map();
+function cachedQuery(key, ttlMs, loader) {
+  const hit = queryCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.promise;
+  const promise = Promise.resolve().then(loader);
+  queryCache.set(key, { expires: Date.now() + ttlMs, promise });
+  promise.catch(() => queryCache.delete(key));
+  return promise;
+}
+function bustQueryCache(prefix) {
+  for (const key of queryCache.keys()) {
+    if (key.startsWith(prefix)) queryCache.delete(key);
+  }
+}
+
+// Per-list lead counts (the heaviest catalog aggregate: a full vicidial_list
+// scan — 10M+ rows on large clients). One cached scan feeds both the lists
+// catalog and the per-campaign totals. Lead-writing handlers bust it.
+function listLeadCountCache() {
+  return cachedQuery('leadCounts', 60_000, async () => {
+    const [counts, lists] = await Promise.all([
+      rows(
+        `SELECT list_id,
+                COUNT(*) AS lead_count,
+                SUM(status = 'NEW') AS new_leads,
+                SUM(called_count > 0) AS called_leads
+         FROM vicidial_list
+         GROUP BY list_id`,
+        [],
+        [],
+      ),
+      rows('SELECT list_id, campaign_id FROM vicidial_lists', [], []),
+    ]);
+    const perList = new Map(counts.map((row) => [String(row.list_id), {
+      lead_count: Number(row.lead_count || 0),
+      new_leads: Number(row.new_leads || 0),
+      called_leads: Number(row.called_leads || 0),
+    }]));
+    const perCampaign = new Map();
+    for (const list of lists) {
+      const entry = perList.get(String(list.list_id));
+      if (!entry) continue;
+      const key = String(list.campaign_id || '');
+      perCampaign.set(key, (perCampaign.get(key) || 0) + entry.lead_count);
+    }
+    return { perList, perCampaign };
+  });
+}
+
 // --- Archive-aware reporting ------------------------------------------------
 // When a log table is archived (rows moved to <table>_archive on a schedule),
 // a report reading only the live table loses history past the archive window.
@@ -1251,7 +1306,6 @@ async function dashboardData(selectedRange = 'today') {
     callSeries,
     campaignPerformance,
     statusBreakdown,
-    leadStatusBreakdown,
     campaigns,
     agents,
   ] = await Promise.all([
@@ -1276,7 +1330,9 @@ async function dashboardData(selectedRange = 'today') {
       [],
       0,
     )),
-    onReplica(() => scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0)),
+    // recording_log has no start_time index — this is a full scan, so it is
+    // shared across tabs and refreshed at most every 30s.
+    onReplica(() => cachedQuery(`recordingsRange:${range}`, 30_000, () => scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0))),
     systemStatus(),
     onReplica(() => activitySeries(range)),
     onReplica(() => requiredRows(
@@ -1305,15 +1361,6 @@ async function dashboardData(selectedRange = 'today') {
        ) c
        GROUP BY status
        ORDER BY calls DESC, status ASC
-       LIMIT 10`,
-      [],
-      [],
-    )),
-    onReplica(() => rows(
-      `SELECT status, COUNT(*) AS leads
-       FROM vicidial_list
-       GROUP BY status
-       ORDER BY leads DESC, status ASC
        LIMIT 10`,
       [],
       [],
@@ -1374,10 +1421,6 @@ async function dashboardData(selectedRange = 'today') {
       ...item,
       calls: Number(item.calls || 0),
     })),
-    leadStatusBreakdown: leadStatusBreakdown.map((item) => ({
-      ...item,
-      leads: Number(item.leads || 0),
-    })),
     campaigns,
     agents,
   };
@@ -1434,6 +1477,9 @@ async function adminData(user) {
   const shiftWhere = `(${shiftScopeWhere} OR user_group = '---ALL---')`;
   const campaignStatusParams = [];
   const campaignStatusWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', campaignStatusParams);
+  // Kick off the cached lead-count scan concurrently with the catalog reads;
+  // the catalog queries themselves no longer touch vicidial_list.
+  const leadCountsPromise = listLeadCountCache();
   const [
     campaigns,
     users,
@@ -1778,7 +1824,6 @@ async function adminData(user) {
               c.campaign_changedate,
               COALESCE(list_counts.list_count, 0) AS list_count,
               COALESCE(list_counts.active_list_count, 0) AS active_list_count,
-              COALESCE(lead_counts.lead_count, 0) AS lead_count,
               COALESCE(live_counts.live_agents, 0) AS live_agents,
               COALESCE(status_counts.status_count, 0) AS status_count,
               COALESCE(hotkey_counts.hotkey_count, 0) AS hotkey_count,
@@ -1793,12 +1838,6 @@ async function adminData(user) {
          FROM vicidial_lists
          GROUP BY campaign_id
        ) list_counts ON list_counts.campaign_id = c.campaign_id
-       LEFT JOIN (
-         SELECT lists.campaign_id, COUNT(leads.lead_id) AS lead_count
-         FROM vicidial_lists lists
-         LEFT JOIN vicidial_list leads ON leads.list_id = lists.list_id
-         GROUP BY lists.campaign_id
-       ) lead_counts ON lead_counts.campaign_id = c.campaign_id
        LEFT JOIN (
          SELECT campaign_id, COUNT(*) AS live_agents
          FROM vicidial_live_agents
@@ -2026,19 +2065,8 @@ async function adminData(user) {
               l.weekday_resets_container,
               l.cache_count,
               l.cache_count_new,
-              l.cache_count_dialable_new,
-              COALESCE(leads.lead_count, 0) AS lead_count,
-              COALESCE(leads.new_leads, 0) AS new_leads,
-              COALESCE(leads.called_leads, 0) AS called_leads
+              l.cache_count_dialable_new
        FROM vicidial_lists l
-       LEFT JOIN (
-         SELECT list_id,
-                COUNT(*) AS lead_count,
-                SUM(status = 'NEW') AS new_leads,
-         SUM(called_count > 0) AS called_leads
-         FROM vicidial_list
-         GROUP BY list_id
-       ) leads ON leads.list_id = l.list_id
        WHERE ${listWhere}
        ORDER BY l.active DESC, l.list_id DESC
        LIMIT 100`,
@@ -2065,7 +2093,9 @@ async function adminData(user) {
               vicidial_id,
               server_ip
        FROM recording_log
-       ORDER BY start_time DESC
+       -- recording_id is the insert-ordered PK; start_time has NO index, so
+       -- ordering by it sorted the whole table on every catalog refresh.
+       ORDER BY recording_id DESC
        LIMIT 60`,
       [],
       [],
@@ -2858,6 +2888,7 @@ async function adminData(user) {
   // GenX nav gating lives in genx_group_permissions; surface each group's
   // setting so the User Groups edit modal can show and change it.
   const navPerms = await genxNavPermissionRows();
+  const leadCounts = await leadCountsPromise;
   const apiGroupName = await apiUserGroup();
 
   return {
@@ -2902,7 +2933,7 @@ async function adminData(user) {
       dial_status_list: parseDialStatuses(item.dial_statuses),
       list_count: Number(item.list_count || 0),
       active_list_count: Number(item.active_list_count || 0),
-      lead_count: Number(item.lead_count || 0),
+      lead_count: leadCounts.perCampaign.get(String(item.campaign_id)) || 0,
       live_agents: Number(item.live_agents || 0),
       status_count: Number(item.status_count || 0),
       hotkey_count: Number(item.hotkey_count || 0),
@@ -2911,15 +2942,18 @@ async function adminData(user) {
       mix_count: Number(item.mix_count || 0),
     })),
     users,
-    lists: lists.map((item) => ({
-      ...item,
-      cache_count: Number(item.cache_count || 0),
-      cache_count_new: Number(item.cache_count_new || 0),
-      cache_count_dialable_new: Number(item.cache_count_dialable_new || 0),
-      lead_count: Number(item.lead_count || 0),
-      new_leads: Number(item.new_leads || 0),
-      called_leads: Number(item.called_leads || 0),
-    })),
+    lists: lists.map((item) => {
+      const counts = leadCounts.perList.get(String(item.list_id)) || { lead_count: 0, new_leads: 0, called_leads: 0 };
+      return {
+        ...item,
+        cache_count: Number(item.cache_count || 0),
+        cache_count_new: Number(item.cache_count_new || 0),
+        cache_count_dialable_new: Number(item.cache_count_dialable_new || 0),
+        lead_count: counts.lead_count,
+        new_leads: counts.new_leads,
+        called_leads: counts.called_leads,
+      };
+    }),
     inboundGroups,
     userGroups: userGroups.map((row) => ({ ...row, genx_nav_sections: navPerms.get(row.user_group) || '' })),
     dids,
@@ -4500,6 +4534,7 @@ async function loadLeads(req, res) {
 
     await execute('UPDATE vicidial_lists SET list_changedate = NOW() WHERE list_id = ?', [listId]);
     await adminLog(req, 'LEADS', 'LOAD', listId, 'GENX LOAD LEADS', 'INSERT INTO vicidial_list', `${inserted} loaded, ${skipped.length} skipped`);
+    bustQueryCache('leadCounts');
 
     return res.json({
       ok: true,
@@ -13585,6 +13620,7 @@ async function deleteList(req, res) {
     await execute('DELETE FROM vicidial_hopper WHERE list_id = ?', [id]).catch(() => {});
     await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
     await adminLog(req, 'LISTS', 'DELETE', id, 'GENX DELETE LIST', 'DELETE FROM vicidial_lists/vicidial_hopper/vicidial_list', id);
+    bustQueryCache('leadCounts');
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'list_delete_failed' });
@@ -13607,6 +13643,7 @@ async function clearList(req, res) {
     await purgeCustomFieldRows(id);
     const result = await execute('DELETE FROM vicidial_list WHERE list_id = ?', [id]);
     await adminLog(req, 'LISTS', 'DELETE', id, 'GENX CLEAR LIST', 'DELETE FROM vicidial_list WHERE list_id', `${result.affectedRows} leads`);
+    bustQueryCache('leadCounts');
     return res.json({ ok: true, cleared: result.affectedRows, data: await adminData(req.genxUser) });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'list_clear_failed' });
