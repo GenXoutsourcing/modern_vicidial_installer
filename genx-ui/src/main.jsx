@@ -8052,10 +8052,12 @@ function UserGroupsView({ admin, user, onAction }) {
                   </>
                 ),
               },
-              { key: 'allowed_campaigns', label: 'Campaigns', render: (row) => row.allowed_campaigns || 'None' },
-              { key: 'allowed_reports', label: 'Reports', render: (row) => row.allowed_reports || 'None' },
-              { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => row.admin_viewable_groups || 'None' },
-              { key: 'allowed_queue_groups', label: 'Queues', render: (row) => row.allowed_queue_groups || 'None' },
+              // Raw legacy scope text (" -ALL-CAMPAIGNS- - -") reads as
+              // garbage — parse it and show a clean label or the id list.
+              { key: 'allowed_campaigns', label: 'Campaigns', render: (row) => { const v = scopeValues(row.allowed_campaigns, '-ALL-CAMPAIGNS-'); return !v.length ? 'None' : v[0] === '-ALL-CAMPAIGNS-' ? 'All Campaigns' : v.join(', '); } },
+              { key: 'allowed_reports', label: 'Reports', render: (row) => { const v = scopeValues(row.allowed_reports, 'ALL REPORTS'); return !v.length ? 'None' : v[0] === 'ALL REPORTS' ? 'All Reports' : v.join(', '); } },
+              { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => { const v = scopeValues(row.admin_viewable_groups, '---ALL---'); return !v.length ? 'None' : v[0] === '---ALL---' ? 'All Groups' : v.join(', '); } },
+              { key: 'allowed_queue_groups', label: 'Queues', render: (row) => { const v = scopeValues(row.allowed_queue_groups, '---ALL---'); return !v.length ? 'None' : v[0] === '---ALL---' ? 'All Queues' : v.join(', '); } },
               { key: 'shift_enforcement', label: 'Shift', render: (row) => row.shift_enforcement || 'OFF' },
               {
                 key: 'genx_nav_sections',
