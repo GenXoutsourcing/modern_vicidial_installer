@@ -15658,6 +15658,48 @@ async function saveCampaignStatus(req, res, mode) {
   }
 }
 
+// Campaign-scoped tool rows (statuses, hotkeys, recycle, pause codes, list
+// mixes) key on (campaign_id, <id>). DELETE carries no body, so the campaign
+// arrives as a ?campaign_id= query param — the id alone is NOT unique across
+// campaigns and deleting by it would hit another campaign's row.
+const CAMPAIGN_TOOL_DELETES = {
+  pauseCodes: { table: 'vicidial_pause_codes', idCol: 'pause_code', cleanKey: (raw) => cleanId(raw, 6), section: 'PAUSECODES', label: 'PAUSE CODE', err: 'pause_code' },
+  campaignHotkeys: { table: 'vicidial_campaign_hotkeys', idCol: 'hotkey', cleanKey: cleanHotkey, section: 'CAMPAIGN_HOTKEYS', label: 'CAMPAIGN HOTKEY', err: 'hotkey' },
+  leadRecycle: { table: 'vicidial_lead_recycle', idCol: 'recycle_id', cleanKey: (raw) => cleanInt(raw, 0, 0, 999999999) || '', section: 'LEADRECYCLE', label: 'LEAD RECYCLE', err: 'lead_recycle' },
+  listMixes: { table: 'vicidial_campaigns_list_mix', idCol: 'vcl_id', cleanKey: (raw) => cleanId(raw, 20), section: 'LISTMIX', label: 'LIST MIX', err: 'list_mix' },
+  campaignStatuses: { table: 'vicidial_campaign_statuses', idCol: 'status', cleanKey: (raw) => cleanId(raw, 6), section: 'CAMPAIGN_STATUS', label: 'CAMPAIGN STATUS', err: 'campaign_status' },
+};
+
+async function deleteCampaignTool(req, res, entity) {
+  const tool = CAMPAIGN_TOOL_DELETES[entity];
+  // Same modify gates as the matching save handler: campaign statuses also
+  // accept modifyStatuses, the rest are modifyCampaigns-only.
+  if (entity === 'campaignStatuses') {
+    if (!canModify(req.genxUser, 'modifyStatuses') && !canModify(req.genxUser, 'modifyCampaigns')) {
+      return res.status(403).json({ ok: false, error: 'permission_denied' });
+    }
+  } else if (!requireModify(req, res, 'modifyCampaigns')) return;
+  const id = tool.cleanKey(req.params.id);
+  const campaignId = cleanId(req.query.campaign_id, 20);
+  if (!id) return badRequest(res, `invalid_${tool.err}`);
+  if (!campaignId) return badRequest(res, 'campaign_required');
+  if (!campaignToolAllowed(req.genxUser, campaignId)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+
+  try {
+    const result = await execute(
+      `DELETE FROM ${tool.table}
+       WHERE campaign_id = ?
+         AND ${tool.idCol} = ?`,
+      [campaignId, id],
+    );
+    if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: `${tool.err}_not_found` });
+    await adminLog(req, tool.section, 'DELETE', campaignId, `GENX DELETE ${tool.label}`, `DELETE FROM ${tool.table}`, String(id));
+    return res.json({ ok: true, data: await adminData(req.genxUser) });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: `${tool.err}_delete_failed` });
+  }
+}
+
 app.get('/api/health', async (_req, res) => {
   try {
     const system = await systemStatus();
@@ -16246,16 +16288,21 @@ app.post('/api/admin/shifts', requireAccess, (req, res) => saveShift(req, res, '
 app.put('/api/admin/shifts/:id', requireAccess, (req, res) => saveShift(req, res, 'update'));
 app.post('/api/admin/pause-codes', requireAccess, (req, res) => savePauseCode(req, res, 'create'));
 app.put('/api/admin/pause-codes/:id', requireAccess, (req, res) => savePauseCode(req, res, 'update'));
+app.delete('/api/admin/pause-codes/:id', requireAccess, (req, res) => deleteCampaignTool(req, res, 'pauseCodes'));
 app.post('/api/admin/campaign-hotkeys', requireAccess, (req, res) => saveCampaignHotkey(req, res, 'create'));
 app.put('/api/admin/campaign-hotkeys/:id', requireAccess, (req, res) => saveCampaignHotkey(req, res, 'update'));
+app.delete('/api/admin/campaign-hotkeys/:id', requireAccess, (req, res) => deleteCampaignTool(req, res, 'campaignHotkeys'));
 app.post('/api/admin/lead-recycle', requireAccess, (req, res) => saveLeadRecycle(req, res, 'create'));
 app.put('/api/admin/lead-recycle/:id', requireAccess, (req, res) => saveLeadRecycle(req, res, 'update'));
+app.delete('/api/admin/lead-recycle/:id', requireAccess, (req, res) => deleteCampaignTool(req, res, 'leadRecycle'));
 app.post('/api/admin/list-mixes', requireAccess, (req, res) => saveListMix(req, res, 'create'));
 app.put('/api/admin/list-mixes/:id', requireAccess, (req, res) => saveListMix(req, res, 'update'));
+app.delete('/api/admin/list-mixes/:id', requireAccess, (req, res) => deleteCampaignTool(req, res, 'listMixes'));
 app.post('/api/admin/statuses', requireAccess, (req, res) => saveStatus(req, res, 'create'));
 app.put('/api/admin/statuses/:id', requireAccess, (req, res) => saveStatus(req, res, 'update'));
 app.post('/api/admin/campaign-statuses', requireAccess, (req, res) => saveCampaignStatus(req, res, 'create'));
 app.put('/api/admin/campaign-statuses/:id', requireAccess, (req, res) => saveCampaignStatus(req, res, 'update'));
+app.delete('/api/admin/campaign-statuses/:id', requireAccess, (req, res) => deleteCampaignTool(req, res, 'campaignStatuses'));
 
 app.use(express.static(distDir, {
   etag: true,

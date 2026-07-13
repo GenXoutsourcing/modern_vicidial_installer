@@ -553,7 +553,11 @@ function userCan(user, entity) {
   return false;
 }
 
-const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts']);
+const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts', 'campaignStatuses', 'campaignHotkeys', 'leadRecycle', 'pauseCodes', 'listMixes']);
+
+// Campaign-scoped tool rows key on (campaign_id, id) — DELETE has no body,
+// so handleDelete sends the campaign as a ?campaign_id= query param.
+const CAMPAIGN_SCOPED_TOOL_ENTITIES = new Set(['campaignStatuses', 'campaignHotkeys', 'leadRecycle', 'pauseCodes', 'listMixes']);
 
 function userCanDelete(user, entity) {
   if (!DELETABLE_ENTITIES.has(entity)) return false;
@@ -590,6 +594,9 @@ function userCanDelete(user, entity) {
   if (entity === 'extensionGroups') return Boolean(user?.deleteRemoteAgents);
   if (entity === 'confTemplates') return Boolean(user?.modifyServers);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
+  // Campaign-scoped tools follow their save gates, not a delete_* flag.
+  if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
+  if (CAMPAIGN_SCOPED_TOOL_ENTITIES.has(entity)) return Boolean(user?.modifyCampaigns);
   return false;
 }
 
@@ -5774,8 +5781,13 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     setError('');
     const id = entityId(action.entity, form);
     const pathEntity = entityPath(action.entity);
+    // Campaign-scoped tool rows need the campaign on the DELETE URL — the
+    // id alone (status/hotkey/pause code...) repeats across campaigns.
+    const campaignQuery = CAMPAIGN_SCOPED_TOOL_ENTITIES.has(action.entity)
+      ? `?campaign_id=${encodeURIComponent(form.campaign_id || '')}`
+      : '';
     try {
-      const payload = await apiFetch(`/admin/${pathEntity}/${encodeURIComponent(id)}`, token, { method: 'DELETE' });
+      const payload = await apiFetch(`/admin/${pathEntity}/${encodeURIComponent(id)}${campaignQuery}`, token, { method: 'DELETE' });
       onSaved(payload.data);
       onClose();
     } catch (requestError) {
