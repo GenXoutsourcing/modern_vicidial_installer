@@ -1068,8 +1068,21 @@ function groupListValues(value) {
 }
 
 function groupListText(value) {
+  // Legacy matches these columns with LIKE "% X %" / =~ / X / (AST_VDadapt,
+  // AST_VDauto_dial, vdc_db_query) — every id needs a space on BOTH sides,
+  // so the LEADING space is load-bearing: without it the FIRST id in the
+  // list silently never matches.
   const cleanValues = groupListValues(value);
-  return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
+  return cleanValues.length ? ` ${cleanValues.join(' ')} -` : '';
+}
+
+// Same padding rule for user-group scope columns; ALL sentinels stay bare
+// (legacy substring-matches them with LIKE "%-ALL-CAMPAIGNS-%" etc).
+function paddedScopeList(value, allSentinel, max = 1000) {
+  const raw = cleanText(value, max);
+  if (!raw || (allSentinel && raw.toUpperCase().includes(allSentinel.toUpperCase()))) return allSentinel;
+  const values = groupListValues(raw);
+  return values.length ? ` ${values.join(' ')} -` : allSentinel;
 }
 
 function scopedGroupListText(value, scope) {
@@ -3067,7 +3080,11 @@ function campaignPayload(body, currentUser) {
     dl_diff_target_method: cleanChoice(body.dl_diff_target_method, ['ADAPT_CALC_ONLY', 'CALLS_PLACED'], 'ADAPT_CALC_ONLY'),
     concurrent_transfers: exactChoice(body.concurrent_transfers, CONCURRENT_TRANSFER_OPTIONS, 'AUTO', 10),
     auto_alt_dial: cleanChoice(body.auto_alt_dial, ['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD'], 'NONE'),
-    auto_alt_dial_statuses: cleanText(body.auto_alt_dial_statuses, 255),
+    // Space-padded like dial_statuses: AST_VDauto_dial/FastAGI_log match
+    // this with =~ / STATUS /, so cleanText's trim broke the first status.
+    auto_alt_dial_statuses: groupListValues(body.auto_alt_dial_statuses).length
+      ? dialStatusesText(groupListValues(body.auto_alt_dial_statuses))
+      : '',
     agent_pause_codes_active: cleanChoice(body.agent_pause_codes_active, ['Y', 'N', 'FORCE'], 'N'),
     no_hopper_leads_logins: ynFlag(body.no_hopper_leads_logins, 'N'),
     use_auto_hopper: ynFlag(body.use_auto_hopper, 'Y'),
@@ -3465,7 +3482,14 @@ async function saveCampaignUrls(req, res) {
   if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
   const payload = {};
   for (const field of CAMPAIGN_URL_FIELDS) {
-    if (req.body?.[field] !== undefined) payload[field] = cleanText(req.body[field], field === 'web_form_target' ? 100 : 2000);
+    if (req.body?.[field] === undefined) continue;
+    // web_form_target must match campaignPayload's sanitizer exactly: it is
+    // interpolated into the agent screen's webform link target, so it gets
+    // the charset-restricted codeText (with the legacy 'vdcwebform'
+    // fallback), not the permissive URL cleanText.
+    payload[field] = field === 'web_form_target'
+      ? codeText(req.body[field], 100, 'vdcwebform')
+      : cleanText(req.body[field], 2000);
   }
   if (!Object.keys(payload).length) return badRequest(res, 'no_url_fields');
   const { assignments, values } = dynamicAssignments(payload);
@@ -14353,13 +14377,13 @@ function dynamicAssignments(payload) {
 function userGroupPayload(body) {
   return {
     group_name: cleanText(body.group_name, 40) || 'New User Group',
-    allowed_campaigns: cleanText(body.allowed_campaigns, 1000) || '-ALL-CAMPAIGNS-',
-    qc_allowed_campaigns: cleanText(body.qc_allowed_campaigns, 1000) || '-ALL-CAMPAIGNS-',
-    qc_allowed_inbound_groups: cleanText(body.qc_allowed_inbound_groups, 1000) || '---ALL---',
-    group_shifts: cleanText(body.group_shifts, 1000) || '---ALL---',
+    allowed_campaigns: paddedScopeList(body.allowed_campaigns, '-ALL-CAMPAIGNS-'),
+    qc_allowed_campaigns: paddedScopeList(body.qc_allowed_campaigns, '-ALL-CAMPAIGNS-'),
+    qc_allowed_inbound_groups: paddedScopeList(body.qc_allowed_inbound_groups, '---ALL---'),
+    group_shifts: paddedScopeList(body.group_shifts, '---ALL---'),
     forced_timeclock_login: cleanChoice(body.forced_timeclock_login, ['Y', 'N', 'ADMIN_EXEMPT'], 'N'),
     shift_enforcement: cleanChoice(body.shift_enforcement, ['OFF', 'START', 'ALL', 'ADMIN_EXEMPT'], 'OFF'),
-    agent_status_viewable_groups: cleanText(body.agent_status_viewable_groups, 1000) || '---ALL---',
+    agent_status_viewable_groups: paddedScopeList(body.agent_status_viewable_groups, '---ALL---'),
     agent_status_view_time: cleanChoice(body.agent_status_view_time, ['Y', 'N'], 'N'),
     agent_call_log_view: cleanChoice(body.agent_call_log_view, ['Y', 'N'], 'N'),
     agent_fullscreen: ynFlag(body.agent_fullscreen, 'N'),
@@ -14371,10 +14395,12 @@ function userGroupPayload(body) {
     agent_xfer_park_customer_dial: ynFlag(body.agent_xfer_park_customer_dial, 'Y'),
     agent_xfer_park_3way: ynFlag(body.agent_xfer_park_3way, 'Y'),
     allowed_reports: cleanText(body.allowed_reports, 2000) || 'ALL REPORTS',
-    admin_viewable_groups: cleanText(body.admin_viewable_groups, 1000) || '---ALL---',
-    admin_viewable_call_times: cleanText(body.admin_viewable_call_times, 1000) || '---ALL---',
+    admin_viewable_groups: paddedScopeList(body.admin_viewable_groups, '---ALL---'),
+    admin_viewable_call_times: paddedScopeList(body.admin_viewable_call_times, '---ALL---'),
+    // allowed_custom_reports / allowed_reports are COMMA-separated labels,
+    // not space lists — leave them on cleanText.
     allowed_custom_reports: cleanText(body.allowed_custom_reports, 1000) || 'ALL REPORTS',
-    allowed_queue_groups: cleanText(body.allowed_queue_groups, 1000) || '---ALL---',
+    allowed_queue_groups: paddedScopeList(body.allowed_queue_groups, '---ALL---'),
     webphone_url_override: cleanText(body.webphone_url_override, 255),
     webphone_systemkey_override: cleanText(body.webphone_systemkey_override, 100),
     webphone_dialpad_override: cleanChoice(body.webphone_dialpad_override, ['DISABLED', 'Y', 'N', 'TOGGLE', 'TOGGLE_OFF'], 'DISABLED'),
@@ -15688,6 +15714,15 @@ async function deleteCampaignTool(req, res, entity) {
   if (!campaignId) return badRequest(res, 'campaign_required');
   if (!campaignToolAllowed(req.genxUser, campaignId)) return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
 
+  // Deleting the mix a campaign is actively dialing with would leave
+  // list_order_mix dangling and the hopper silently loading nothing.
+  if (entity === 'listMixes') {
+    const [campaign] = await rows('SELECT list_order_mix FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [campaignId], []);
+    if (campaign && String(campaign.list_order_mix || '') === String(id)) {
+      return res.status(409).json({ ok: false, error: 'list_mix_in_use' });
+    }
+  }
+
   try {
     const result = await execute(
       `DELETE FROM ${tool.table}
@@ -15696,8 +15731,12 @@ async function deleteCampaignTool(req, res, entity) {
       [campaignId, id],
     );
     if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: `${tool.err}_not_found` });
-    await adminLog(req, tool.section, 'DELETE', campaignId, `GENX DELETE ${tool.label}`, `DELETE FROM ${tool.table}`, String(id));
-    return res.json({ ok: true, data: await adminData(req.genxUser) });
+    // The log INSERT and the catalog rebuild are independent — overlap them.
+    const [, data] = await Promise.all([
+      adminLog(req, tool.section, 'DELETE', campaignId, `GENX DELETE ${tool.label}`, `DELETE FROM ${tool.table}`, String(id)),
+      adminData(req.genxUser),
+    ]);
+    return res.json({ ok: true, data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: `${tool.err}_delete_failed` });
   }

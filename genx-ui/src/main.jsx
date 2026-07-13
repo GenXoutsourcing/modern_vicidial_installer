@@ -20,7 +20,7 @@
  *   - apiFetch() throws Error with .status and .message = server error code;
  *     401 handling is per-view (onLogout).
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity,
@@ -697,15 +697,28 @@ function scopeValues(rawValue, allValue) {
 // 'Allowed Campaigns' grants access to ALL campaigns, not none. That is how
 // stock vicidial stores these fields; changing it here without changing the
 // server (and legacy admin.php) would only mask the widening on save.
+// Legacy space-list columns are matched with LIKE "% X %" — the LEADING
+// space is load-bearing (server-side serializers re-pad on save too).
 function scopeText(values, allValue, suffix = ' -') {
   if (allValue && values.includes(allValue)) return allValue;
   const cleanValues = values.filter(Boolean);
-  return cleanValues.length ? `${cleanValues.join(' ')}${suffix}` : allValue || '';
+  return cleanValues.length ? ` ${cleanValues.join(' ')}${suffix}` : allValue || '';
 }
 
 function viciGroupText(values) {
   const cleanValues = values.filter(Boolean);
-  return cleanValues.length ? `${cleanValues.join(' ')} -` : '';
+  return cleanValues.length ? ` ${cleanValues.join(' ')} -` : '';
+}
+
+// Table-cell display for legacy scope text: 'None', the ALL label, or the
+// parsed id list ("-ALL-CAMPAIGNS- - -" reads as garbage raw). The server
+// accepts several ALL spellings per column, so allValues is a list.
+function scopeCell(rawValue, allValues, allLabel) {
+  const sentinels = (Array.isArray(allValues) ? allValues : [allValues]).map((value) => String(value).toUpperCase());
+  const values = scopeValues(rawValue);
+  if (!values.length) return 'None';
+  if (values.some((value) => sentinels.includes(String(value).toUpperCase()))) return allLabel;
+  return values.join(', ');
 }
 
 // Legacy pipe-delimited multi-value format used by vicidial_call_times
@@ -749,15 +762,12 @@ function weekdayText(values) {
 }
 
 function campaignDialStatuses(row) {
+  // scopeValues (no allValue) parses the legacy space-separated list,
+  // dropping '-' separator tokens wherever they appear.
   const statuses = Array.isArray(row?.dial_status_list)
     ? row.dial_status_list
-    : parseStatusListText(row?.dial_statuses);
+    : scopeValues(row?.dial_statuses);
   return [...new Set(statuses.filter(Boolean))];
-}
-
-// Legacy space-separated status list text ("B N NA DC -") -> unique array.
-function parseStatusListText(text) {
-  return [...new Set(String(text || '').replace(/\s+-$/, '').trim().split(/\s+/).filter(Boolean))];
 }
 
 function autoDialLevelOptions(admin, currentValue) {
@@ -2126,6 +2136,9 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
   }
 
   if (entity === 'campaigns') {
+    // One definition, two homes: Basic page/create render it inline (via
+    // basicFields); the Detail page edits it through the List Controls pill.
+    const leadOrderField = { key: 'lead_order', label: 'List Order', type: 'select', options: enumOptions(LEAD_ORDER_OPTIONS.includes(String(form?.lead_order || '')) ? LEAD_ORDER_OPTIONS : [String(form?.lead_order || 'DOWN'), ...LEAD_ORDER_OPTIONS]) };
     const basicFields = [
       { key: 'campaign_id', label: 'Campaign ID', disabled: mode === 'edit' },
       { key: 'campaign_name', label: 'Campaign Name' },
@@ -2134,7 +2147,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'dial_method', label: 'Dial Method', type: 'select', options: enumOptions(['MANUAL', 'RATIO', 'ADAPT_HARD_LIMIT', 'ADAPT_TAPERED', 'ADAPT_AVERAGE', 'ADAPT_PERCENTMAX', 'INBOUND_MAN', 'SHARED_RATIO', 'SHARED_ADAPT_HARD_LIMIT', 'SHARED_ADAPT_TAPERED', 'SHARED_ADAPT_AVERAGE', 'SHARED_ADAPT_PERCENTMAX']) },
       { key: 'auto_dial_level', label: 'Auto Dial Level', type: 'select', options: autoDialLevelOptions(admin, form?.auto_dial_level) },
       { key: 'hopper_level', label: 'Minimum Hopper Level', type: 'select', options: enumOptions(HOPPER_LEVELS.includes(String(form?.hopper_level || '')) ? HOPPER_LEVELS : [String(form?.hopper_level || '1'), ...HOPPER_LEVELS]) },
-      { key: 'lead_order', label: 'List Order', type: 'select', options: enumOptions(LEAD_ORDER_OPTIONS.includes(String(form?.lead_order || '')) ? LEAD_ORDER_OPTIONS : [String(form?.lead_order || 'DOWN'), ...LEAD_ORDER_OPTIONS]) },
+      leadOrderField,
       { key: 'local_call_time', label: 'Call Time', type: callTimeOptions.length ? 'select' : 'text', options: callTimeOptions },
       { key: 'campaign_recording', label: 'Recording', type: 'select', options: enumOptions(['NEVER', 'ONDEMAND', 'ALLCALLS', 'ALLFORCE']) },
       { key: 'campaign_allow_inbound', label: 'Allow Inbound', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -2249,7 +2262,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'amd_inbound_group', label: 'AMD Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'amd_callmenu', label: 'AMD Call Menu', type: callMenuNoneOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuNoneOptions, form?.amd_callmenu) },
       { section: 'List Controls' },
-      { key: 'lead_order', label: 'List Order', type: 'select', options: enumOptions(LEAD_ORDER_OPTIONS.includes(String(form?.lead_order || '')) ? LEAD_ORDER_OPTIONS : [String(form?.lead_order || 'DOWN'), ...LEAD_ORDER_OPTIONS]) },
+      leadOrderField,
       { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
       { key: 'list_order_mix', label: 'List Mix', type: 'select', options: withCurrentOption([{ value: 'DISABLED', label: 'DISABLED' }, ...(admin?.lookups?.listMixes || []).filter((item) => String(item.campaign_id || '') === String(form?.campaign_id || '')).map((item) => ({ value: String(item.vcl_id || ''), label: `${item.vcl_id} - ${item.vcl_name || item.status || ''}` }))], form?.list_order_mix) },
       { key: 'lead_order_randomize', label: 'Lead Order Randomize', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -3965,7 +3978,9 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
   const rowsForCampaign = (rows) => (rows || []).filter((row) => String(row.campaign_id || '') === campaign);
   const statusNameMap = new Map([
     ...(admin?.lookups?.statuses || []),
-    ...(admin?.lookups?.campaignStatuses || []),
+    // Only THIS campaign's custom statuses — another campaign's row for the
+    // same code would otherwise win the Map and mislabel the tool tiles.
+    ...(admin?.lookups?.campaignStatuses || []).filter((item) => String(item.campaign_id || '') === campaign),
   ].map((item) => [String(item.status || ''), item.status_name || item.status]));
   const statusLabel = (status) => `${status}${statusNameMap.get(String(status || '')) ? ` - ${statusNameMap.get(String(status || ''))}` : ''}`;
   const openTool = (entity, mode, row = {}) => onAction?.(entity, mode, { campaign_id: campaign, _campaignLocked: true, ...row });
@@ -4022,7 +4037,7 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
         {/* Dial Statuses tile opens the Manage Dial Statuses toggle modal
             (owned by ActionModal) instead of an entity manager list. */}
         {onManageDialStatuses && (
-          <button type="button" className="campaign-tool-card tool-count-card" onClick={onManageDialStatuses}>
+          <button type="button" className="campaign-tool-card" onClick={onManageDialStatuses}>
             <span>Dial Statuses</span>
             <strong>{formatNumber(dialStatusCount)}</strong>
           </button>
@@ -4030,7 +4045,7 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
         {tools.map((tool) => (
           <button
             type="button"
-            className="campaign-tool-card tool-count-card"
+            className="campaign-tool-card"
             key={tool.entity}
             onClick={() => setToolModal(tool.entity)}
           >
@@ -4039,10 +4054,12 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
           </button>
         ))}
       </div>
-      {tools.filter((tool) => tool.entity === toolModal).map((tool) => {
+      {(() => {
+        const tool = tools.find((item) => item.entity === toolModal);
+        if (!tool) return null;
         const canManage = userCan(user, tool.entity);
         return (
-          <div className="modal-backdrop" role="presentation" key={tool.entity} {...backdropCloseProps(() => setToolModal(''))}>
+          <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setToolModal(''))}>
             <section className="modal-panel" role="dialog" aria-modal="true" aria-label={tool.title}>
               <div className="modal-head">
                 <div>
@@ -4081,7 +4098,7 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
             </section>
           </div>
         );
-      })}
+      })()}
     </div>
   );
 }
@@ -4383,10 +4400,10 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
 // green Active / red Inactive toggle. Each click applies IMMEDIATELY via the
 // dial-status endpoint — same pattern as the Basic page's list toggles,
 // replacing the legacy pick-one-then-save add/remove selects.
-function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, onApply, onClose }) {
-  const [busyStatus, setBusyStatus] = useState('');
-  const [error, setError] = useState('');
-  const selected = new Set(current);
+// Toggle-grid status list shared by CampaignDialStatusModal and
+// CampaignStatusPickerModal: system statuses + this campaign's own, minus
+// the non-selectable internals, deduped and sorted by code.
+function campaignStatusEntries(admin, campaignId) {
   const excluded = new Set(['INCALL', 'QUEUE', 'CBHOLD']);
   const entries = [];
   const seen = new Set();
@@ -4401,6 +4418,14 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
     .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
     .forEach((item) => push(item, 'Campaign'));
   entries.sort((a, b) => a.status.localeCompare(b.status));
+  return entries;
+}
+
+function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, onApply, onClose }) {
+  const [busyStatus, setBusyStatus] = useState('');
+  const [error, setError] = useState('');
+  const selected = new Set(current);
+  const entries = useMemo(() => campaignStatusEntries(admin, campaignId), [admin, campaignId]);
 
   async function toggle(entry) {
     const next = selected.has(entry.status) ? 'N' : 'Y';
@@ -4470,20 +4495,7 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
 // longer exist as records are preserved (they stay in the set unseen).
 function CampaignStatusPickerModal({ admin, campaignId, title, description, current, saving, error, onSave, onClose }) {
   const [selected, setSelected] = useState(() => new Set(current));
-  const excluded = new Set(['INCALL', 'QUEUE', 'CBHOLD']);
-  const entries = [];
-  const seen = new Set();
-  const push = (item, source) => {
-    const value = String(item?.status || '');
-    if (!value || seen.has(value) || excluded.has(value)) return;
-    seen.add(value);
-    entries.push({ status: value, name: item.status_name || source });
-  };
-  (admin?.lookups?.statuses || []).forEach((item) => push(item, 'System'));
-  (admin?.lookups?.campaignStatuses || [])
-    .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
-    .forEach((item) => push(item, 'Campaign'));
-  entries.sort((a, b) => a.status.localeCompare(b.status));
+  const entries = useMemo(() => campaignStatusEntries(admin, campaignId), [admin, campaignId]);
 
   const toggle = (status) => setSelected((currentSet) => {
     const next = new Set(currentSet);
@@ -4538,15 +4550,20 @@ function CampaignStatusPickerModal({ admin, campaignId, title, description, curr
 
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
-const REPORT_MODAL_TITLES = {
-  hopper: 'Hopper List',
-  realtime: 'Real-Time Report',
-  outbound: 'Outbound Calling Report',
-  statuslist: 'Status List Report',
-  leadstatuses: 'Lead Statuses in Campaign',
-  callbacks: 'CallBack Holds',
-  adminlog: 'Admin Changes',
+// One entry per stacked report pill: title (pill label + modal head +
+// aria-label), icon, hash route (right/ctrl/middle-click opens the full
+// page; hopper has none — it is modal-only) and the modal body renderer.
+const REPORT_MODALS = {
+  hopper: { title: 'Hopper List', icon: Database, render: (ctx) => <HopperListReportView token={ctx.token} embedded campaignId={ctx.hopperCampaign} /> },
+  realtime: { title: 'Real-Time Report', icon: Radio, hash: 'reportRealtimeMain', render: (ctx) => <RealtimeMainReportView token={ctx.token} user={ctx.user} /> },
+  outbound: { title: 'Outbound Calling Report', icon: PhoneCall, hash: 'reportOutboundCalling', render: (ctx) => <OutboundCallingReportView token={ctx.token} onLogout={ctx.onLogout} /> },
+  statuslist: { title: 'Status List Report', icon: Activity, hash: 'reportCampaignStatusList', render: (ctx) => <CampaignStatusListReportView token={ctx.token} onLogout={ctx.onLogout} /> },
+  leadstatuses: { title: 'Lead Statuses in Campaign', icon: Gauge, hash: 'reportListCampaignStatuses', render: (ctx) => <ListCampaignStatusesReportView token={ctx.token} onLogout={ctx.onLogout} initialCampaignId={ctx.campaign} /> },
+  callbacks: { title: 'CallBack Holds', icon: Clock3, hash: 'reportCallbackHolds', render: (ctx) => <CallbackHoldsReportView token={ctx.token} onLogout={ctx.onLogout} initialScope="campaign" initialId={ctx.campaign} onNavigate={ctx.onNavigate} /> },
+  adminlog: { title: 'Admin Changes', icon: ShieldCheck, hash: 'reportAdminLog', render: (ctx) => <AdminChangeLogReportView token={ctx.token} onLogout={ctx.onLogout} initialSection="CAMPAIGNS" initialRecord={ctx.campaign} /> },
 };
+const BASIC_REPORT_KINDS = ['hopper', 'realtime'];
+const DETAIL_REPORT_KINDS = Object.keys(REPORT_MODALS);
 function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -4554,7 +4571,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
   // Hopper List / Real-Time Report open stacked on TOP of the campaign
   // modal instead of navigating away from it. The hopper modal's campaign
   // picker lives in the modal head, so its selection is owned here.
-  const [reportModal, setReportModal] = useState(''); // '' | key of REPORT_MODAL_TITLES
+  const [reportModal, setReportModal] = useState(''); // '' | key of REPORT_MODALS
   const [hopperCampaign, setHopperCampaign] = useState('');
   const [urlModal, setUrlModal] = useState(''); // '' | 'webform' | 'callurls'
 
@@ -4604,38 +4621,26 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       </div>
       {!basic && <p className="connection-group-label">Reports and Activity</p>}
       <div className="connection-actions">
-        <button type="button" className="row-action" onClick={() => { setHopperCampaign(campaign); setReportModal('hopper'); }}>
-          <Database size={15} aria-hidden="true" />
-          Hopper List
-        </button>
-        <a {...reportPill('realtime', 'reportRealtimeMain')}>
-          <Radio size={15} aria-hidden="true" />
-          Real-Time Report
-        </a>
-        {!basic && (
-          <>
-            <a {...reportPill('outbound', 'reportOutboundCalling')}>
-              <PhoneCall size={15} aria-hidden="true" />
-              Outbound Calling Report
+        {(basic ? BASIC_REPORT_KINDS : DETAIL_REPORT_KINDS).map((kind) => {
+          const config = REPORT_MODALS[kind];
+          const Icon = config.icon;
+          // Hopper is modal-only (no full-page route) and owns the modal
+          // head's campaign picker, seeded from this campaign on open.
+          if (!config.hash) {
+            return (
+              <button key={kind} type="button" className="row-action" onClick={() => { setHopperCampaign(campaign); setReportModal(kind); }}>
+                <Icon size={15} aria-hidden="true" />
+                {config.title}
+              </button>
+            );
+          }
+          return (
+            <a key={kind} {...reportPill(kind, config.hash)}>
+              <Icon size={15} aria-hidden="true" />
+              {config.title}
             </a>
-            <a {...reportPill('statuslist', 'reportCampaignStatusList')}>
-              <Activity size={15} aria-hidden="true" />
-              Status List Report
-            </a>
-            <a {...reportPill('leadstatuses', 'reportListCampaignStatuses')}>
-              <Gauge size={15} aria-hidden="true" />
-              Lead Statuses in Campaign
-            </a>
-            <a {...reportPill('callbacks', 'reportCallbackHolds')}>
-              <Clock3 size={15} aria-hidden="true" />
-              CallBack Holds
-            </a>
-            <a {...reportPill('adminlog', 'reportAdminLog')}>
-              <ShieldCheck size={15} aria-hidden="true" />
-              Admin Changes
-            </a>
-          </>
-        )}
+          );
+        })}
         {userCan(user, 'campaigns') && (
           <button
             type="button"
@@ -4672,11 +4677,11 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       )}
       {reportModal && (
         <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setReportModal(''))}>
-          <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={REPORT_MODAL_TITLES[reportModal]}>
+          <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={REPORT_MODALS[reportModal].title}>
             <div className="modal-head">
               <div>
                 <p className="eyebrow">Report</p>
-                <h2>{REPORT_MODAL_TITLES[reportModal]}</h2>
+                <h2>{REPORT_MODALS[reportModal].title}</h2>
                 {reportModal === 'hopper' && (
                   <p className="action-copy">Live snapshot of leads currently loaded in the campaign's dialing hopper. Refreshes every 5 seconds.</p>
                 )}
@@ -4696,13 +4701,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
-            {reportModal === 'hopper' && <HopperListReportView token={token} embedded campaignId={hopperCampaign} />}
-            {reportModal === 'realtime' && <RealtimeMainReportView token={token} user={user} />}
-            {reportModal === 'outbound' && <OutboundCallingReportView token={token} onLogout={onLogout} />}
-            {reportModal === 'statuslist' && <CampaignStatusListReportView token={token} onLogout={onLogout} />}
-            {reportModal === 'leadstatuses' && <ListCampaignStatusesReportView token={token} onLogout={onLogout} initialCampaignId={campaign} />}
-            {reportModal === 'callbacks' && <CallbackHoldsReportView token={token} onLogout={onLogout} initialScope="campaign" initialId={campaign} onNavigate={onNavigate} />}
-            {reportModal === 'adminlog' && <AdminChangeLogReportView token={token} onLogout={onLogout} initialSection="CAMPAIGNS" initialRecord={campaign} />}
+            {REPORT_MODALS[reportModal].render({ token, user, onLogout, onNavigate, campaign, hopperCampaign })}
           </section>
         </div>
       )}
@@ -5282,10 +5281,11 @@ function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwit
       <div className="rank-grids">
         {referenceLists.map(([title, items, label]) => (
           <div className="connection-lists" key={title}>
-            <p className="connection-summary">{title}{items.length ? '' : ': none'}</p>
+            <p className="connection-summary">{title}{!items.length && ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
             ))}
+            {items.length > 8 && <span className="connection-status">+{formatNumber(items.length - 8)} more</span>}
           </div>
         ))}
       </div>
@@ -5348,10 +5348,11 @@ function ScriptConnections({ scriptId, scriptText, token, onLogout, onNavigate }
       <div className="rank-grids">
         {referenceLists.map(([title, items, label]) => (
           <div className="connection-lists" key={title}>
-            <p className="connection-summary">{title}{items.length ? '' : ': none'}</p>
+            <p className="connection-summary">{title}{!items.length && ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
             ))}
+            {items.length > 8 && <span className="connection-status">+{formatNumber(items.length - 8)} more</span>}
           </div>
         ))}
       </div>
@@ -5392,10 +5393,11 @@ function ReferencePanel({ title, lists, legacyLinks, actions }) {
       <div className="rank-grids">
         {lists.map(([listTitle, items, label]) => (
           <div className="connection-lists" key={listTitle}>
-            <p className="connection-summary">{listTitle}{items.length ? '' : ': none'}</p>
+            <p className="connection-summary">{listTitle}{!items.length && ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${listTitle}-${index}`}>{label(row)}</span>
             ))}
+            {items.length > 8 && <span className="connection-status">+{formatNumber(items.length - 8)} more</span>}
           </div>
         ))}
       </div>
@@ -5812,7 +5814,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [dialStatusModal, setDialStatusModal] = useState(false);
   const [autoAltModal, setAutoAltModal] = useState(false);
   const [savedNote, setSavedNote] = useState(false);
+  const savedNoteTimer = useRef(null);
   const [sectionModal, setSectionModal] = useState('');
+  // Section pill fields edit the SHARED Detail form state live, so Cancel/
+  // X/backdrop must restore the values captured when the pill opened —
+  // otherwise abandoned edits silently ride along on the next Save.
+  const sectionSnapshot = useRef(null);
   // Campaign-scoped tools (Statuses, Hotkeys, Lead Recycle, Pause Codes,
   // List Mixes) and the lists panel open their edit/create modal STACKED on
   // top of this one, so closing it lands back on the campaign instead of
@@ -5846,12 +5853,30 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     else mainFields.push(field);
   }
 
+  function openSectionModal(title) {
+    sectionSnapshot.current = Object.fromEntries(
+      (pillFields[title] || []).filter((field) => field.key).map((field) => [field.key, form[field.key]]),
+    );
+    setSectionModal(title);
+  }
+
+  function cancelSectionModal() {
+    if (sectionSnapshot.current) {
+      const snapshot = sectionSnapshot.current;
+      setForm((current) => ({ ...current, ...snapshot }));
+    }
+    sectionSnapshot.current = null;
+    setSectionModal('');
+  }
+
   // Reset only when a different record/action is opened. Depending on `admin`
   // here wiped in-progress edits every time the 30s background refresh landed.
   useEffect(() => {
     setForm({ ...actionDefaults(action.entity, admin), ...(action.row || {}), pass: '' });
     setError('');
     setSubAction(null);
+    setSectionModal('');
+    sectionSnapshot.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action]);
 
@@ -5899,9 +5924,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     const stayOpen = action.entity === 'campaigns' && isEdit;
     if (await persist(!stayOpen) && stayOpen) {
       setSavedNote(true);
-      window.setTimeout(() => setSavedNote(false), 2500);
+      window.clearTimeout(savedNoteTimer.current);
+      savedNoteTimer.current = window.setTimeout(() => setSavedNote(false), 2500);
     }
   }
+
+  useEffect(() => () => window.clearTimeout(savedNoteTimer.current), []);
 
   async function handleDelete() {
     if (!confirmingDelete) {
@@ -5926,7 +5954,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         onLogout();
         return;
       }
-      setError(requestError.status === 403 ? 'Your user does not have permission to delete this' : 'The delete failed');
+      setError(requestError.status === 403 ? 'Your user does not have permission to delete this'
+        : requestError.message === 'list_mix_in_use' ? "This mix is the campaign's active List Mix — set List Mix to DISABLED or another mix first"
+          : 'The delete failed');
       setConfirmingDelete(false);
     } finally {
       setDeleting(false);
@@ -5959,20 +5989,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     ) : (
       <label key={field.key} className={field.wide ? 'wide-field' : ''}>
         <span>{field.label}</span>
-        {field.type === 'statusList' ? (
-          <div className="status-chip-list">
-            {(field.statuses || []).map((status) => (
-              <span key={status}>{status}</span>
-            ))}
-            {!(field.statuses || []).length && <em>{field.emptyLabel || 'No dial statuses selected'}</em>}
-            {field.key === '_dial_status_list' && action.entity === 'campaigns' && (
-              <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
-                <SlidersHorizontal size={14} aria-hidden="true" />
-                Manage Dial Statuses
-              </button>
-            )}
-          </div>
-        ) : field.type === 'multiSelectText' ? (
+        {field.type === 'multiSelectText' ? (
           <select
             multiple
             value={field.values ? field.values(form[field.key]) : scopeValues(form[field.key], field.allValue)}
@@ -6167,11 +6184,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             extraActions={[
               ...PILL_SECTIONS.map((title) => ({
                 label: title.replace(' and ', ' & '),
-                onClick: () => setSectionModal(title),
+                onClick: () => openSectionModal(title),
               })),
               // Not a field section — this pill opens the status toggle
-              // picker (CampaignStatusPickerModal) directly.
-              ...(isDetail ? [{ label: 'Auto Alt Statuses', onClick: () => setAutoAltModal(true) }] : []),
+              // picker (CampaignStatusPickerModal) directly. Only reachable
+              // on Detail (PILL_SECTIONS gates the same way).
+              { label: 'Auto Alt Statuses', onClick: () => setAutoAltModal(true) },
             ]}
           />
         )}
@@ -6214,14 +6232,14 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           />
         )}
         {sectionModal && (
-          <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setSectionModal(''))}>
+          <div className="modal-backdrop" role="presentation" {...backdropCloseProps(cancelSectionModal)}>
             <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={sectionModal}>
               <div className="modal-head">
                 <div>
                   <p className="eyebrow">Campaign {form.campaign_id}</p>
                   <h2>{sectionModal}</h2>
                 </div>
-                <button type="button" className="icon-button" onClick={() => setSectionModal('')} aria-label="Close" title="Close">
+                <button type="button" className="icon-button" onClick={cancelSectionModal} aria-label="Close" title="Close">
                   <X size={18} aria-hidden="true" />
                 </button>
               </div>
@@ -6232,13 +6250,16 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
                 {error && <p className="form-error">{error}</p>}
                 <div className="modal-actions">
                   <span className="modal-actions-spacer" />
-                  <button type="button" className="secondary-action" onClick={() => setSectionModal('')}>Cancel</button>
+                  <button type="button" className="secondary-action" onClick={cancelSectionModal}>Cancel</button>
                   <button
                     type="button"
                     className="primary-action"
                     disabled={saving}
                     onClick={async () => {
-                      if (await persist(false)) setSectionModal('');
+                      if (await persist(false)) {
+                        sectionSnapshot.current = null;
+                        setSectionModal('');
+                      }
                     }}
                   >
                     <Save size={18} aria-hidden="true" />
@@ -6259,7 +6280,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onApply={(next) => setForm((current) => ({
               ...current,
               dial_status_list: next,
-              dial_statuses: next.length ? `${next.join(' ')} -` : '',
+              dial_statuses: viciGroupText(next),
             }))}
             onClose={() => setDialStatusModal(false)}
           />
@@ -6270,11 +6291,11 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             title="Auto Alt Statuses"
             description="Statuses that trigger auto alt-number dialing when Auto Alt Dial is enabled. Save writes the campaign and keeps this page open."
-            current={parseStatusListText(form.auto_alt_dial_statuses)}
+            current={scopeValues(form.auto_alt_dial_statuses)}
             saving={saving}
             error={error}
             onSave={async (next) => {
-              const text = next.length ? `${next.join(' ')} -` : '';
+              const text = viciGroupText(next);
               if (await persist(false, { auto_alt_dial_statuses: text })) {
                 setForm((current) => ({ ...current, auto_alt_dial_statuses: text }));
                 setAutoAltModal(false);
@@ -7613,7 +7634,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {results && !detail && (
-        <Panel eyebrow="Results" title={`Leads Found`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Results" title="Leads Found" icon={Database} className="admin-wide-panel">
           <DataTable
             emptyLabel="No leads matched the search in your allowed lists"
             rows={results.map((row) => ({ ...row, id: row.lead_id }))}
@@ -7744,7 +7765,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               </form>
             </Panel>
           )}
-          <Panel eyebrow="History" title={`Calls`} icon={PhoneCall} className="admin-wide-panel">
+          <Panel eyebrow="History" title="Calls" icon={PhoneCall} className="admin-wide-panel">
             <DataTable
               emptyLabel="No calls logged for this lead"
               rows={(detail.calls || []).map((row, index) => ({ ...row, id: `${row.log_table}-${row.log_id}-${index}` }))}
@@ -7788,7 +7809,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="History" title={`Callbacks`} icon={Clock3} className="admin-wide-panel">
+          <Panel eyebrow="History" title="Callbacks" icon={Clock3} className="admin-wide-panel">
             <DataTable
               emptyLabel="No callback records for this lead"
               rows={(detail.callbacks || []).map((row) => ({ ...row, id: row.callback_id }))}
@@ -7803,7 +7824,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="History" title={`Recordings`} icon={Activity} className="admin-wide-panel">
+          <Panel eyebrow="History" title="Recordings" icon={Activity} className="admin-wide-panel">
             <DataTable
               emptyLabel="No recordings for this lead"
               rows={(detail.recordings || []).map((row) => ({ ...row, id: row.recording_id }))}
@@ -8052,12 +8073,13 @@ function UserGroupsView({ admin, user, onAction }) {
                   </>
                 ),
               },
-              // Raw legacy scope text (" -ALL-CAMPAIGNS- - -") reads as
-              // garbage — parse it and show a clean label or the id list.
-              { key: 'allowed_campaigns', label: 'Campaigns', render: (row) => { const v = scopeValues(row.allowed_campaigns, '-ALL-CAMPAIGNS-'); return !v.length ? 'None' : v[0] === '-ALL-CAMPAIGNS-' ? 'All Campaigns' : v.join(', '); } },
-              { key: 'allowed_reports', label: 'Reports', render: (row) => { const v = scopeValues(row.allowed_reports, 'ALL REPORTS'); return !v.length ? 'None' : v[0] === 'ALL REPORTS' ? 'All Reports' : v.join(', '); } },
-              { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => { const v = scopeValues(row.admin_viewable_groups, '---ALL---'); return !v.length ? 'None' : v[0] === '---ALL---' ? 'All Groups' : v.join(', '); } },
-              { key: 'allowed_queue_groups', label: 'Queues', render: (row) => { const v = scopeValues(row.allowed_queue_groups, '---ALL---'); return !v.length ? 'None' : v[0] === '---ALL---' ? 'All Queues' : v.join(', '); } },
+              { key: 'allowed_campaigns', label: 'Campaigns', render: (row) => scopeCell(row.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---'], 'All Campaigns') },
+              // allowed_reports is COMMA-separated multi-word labels (unlike
+              // the space-separated campaign/group scopes) — use its own
+              // parser or 'Real-Time Main, Outbound Calling' splits on spaces.
+              { key: 'allowed_reports', label: 'Reports', render: (row) => { const values = reportScopeValues(row.allowed_reports); return !values.length || values[0] === 'NONE' ? 'None' : values[0] === 'ALL REPORTS' ? 'All Reports' : values.join(', '); } },
+              { key: 'admin_viewable_groups', label: 'Admin Groups', render: (row) => scopeCell(row.admin_viewable_groups, '---ALL---', 'All Groups') },
+              { key: 'allowed_queue_groups', label: 'Queues', render: (row) => scopeCell(row.allowed_queue_groups, '---ALL---', 'All Queues') },
               { key: 'shift_enforcement', label: 'Shift', render: (row) => row.shift_enforcement || 'OFF' },
               {
                 key: 'genx_nav_sections',
@@ -8153,7 +8175,7 @@ function PhonesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Aliases"
-          title={`Phone Aliases`}
+          title="Phone Aliases"
           icon={PhoneCall}
           headerActions={canManage ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('phoneAliases', 'create')}>
@@ -8174,7 +8196,7 @@ function PhonesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Aliases"
-          title={`Group Aliases`}
+          title="Group Aliases"
           icon={PhoneCall}
           headerActions={canManage ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('groupAliases', 'create')}>
@@ -8347,7 +8369,7 @@ function CallTimesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Schedule"
-          title={`State Call Times`}
+          title="State Call Times"
           icon={Timer}
           headerActions={userCan(user, 'stateCallTimes') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('stateCallTimes', 'create')}>
@@ -8369,7 +8391,7 @@ function CallTimesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Schedule"
-          title={`Holidays`}
+          title="Holidays"
           icon={CalendarDays}
           headerActions={userCan(user, 'holidays') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('holidays', 'create')}>
@@ -8540,7 +8562,7 @@ function StatusesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Grouping"
-          title={`Status Groups`}
+          title="Status Groups"
           icon={Gauge}
           headerActions={userCan(user, 'statusGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusGroups', 'create')}>
@@ -8561,7 +8583,7 @@ function StatusesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Grouping"
-          title={`Status Categories`}
+          title="Status Categories"
           icon={Gauge}
           headerActions={userCan(user, 'statusCategories') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusCategories', 'create')}>
@@ -9317,7 +9339,7 @@ function RealtimeMainReportView({ token, user }) {
       </section>
       {error && <p className="form-error">{error}</p>}
       <section className="admin-grid">
-        <Panel eyebrow="Live" title={`Live Agents`} icon={Headphones} className="admin-wide-panel">
+        <Panel eyebrow="Live" title="Live Agents" icon={Headphones} className="admin-wide-panel">
           {canMonitor && (
             <div className="connection-actions">
               <label className="connection-summary" style={{ display: 'flex', alignItems: 'center', gap: '0.5em' }}>
@@ -9563,7 +9585,7 @@ function AgentMonitorLogReportView({ token }) {
       {entries && (
         <Panel
           eyebrow="Results"
-          title={`Monitor Sessions`}
+          title="Monitor Sessions"
           icon={FileText}
           className="admin-wide-panel"
           headerActions={(
@@ -9661,7 +9683,7 @@ function HopperListReportView({ token, initialCampaignId, embedded = false, camp
         </section>
       )}
       {campaignId && entries && (
-        <Panel eyebrow="Results" title={`Hopper Entries`} icon={Database} className="admin-wide-panel hopper-table">
+        <Panel eyebrow="Results" title="Hopper Entries" icon={Database} className="admin-wide-panel hopper-table">
           <DataTable
             emptyLabel="No leads currently in the hopper for that campaign/status"
             rows={entries.map((row) => ({ ...row, id: row.hopper_id }))}
@@ -9683,7 +9705,7 @@ function DropListsView({ admin, user, onAction }) {
         <p className="action-copy">Scheduled jobs that move dropped/status-matched calls into a callback list for redial.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Lists" title={`Drop Lists`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Lists" title="Drop Lists" icon={Database} className="admin-wide-panel">
           <DataTable
             emptyLabel="No drop lists configured"
             rows={dropLists.map((row) => ({ ...row, id: row.dl_id }))}
@@ -9881,7 +9903,7 @@ function AudioStorePanel({ user }) {
 
   return (
     <>
-      <Panel eyebrow="Audio" title={`Audio Store`} icon={Activity} className="admin-wide-panel">
+      <Panel eyebrow="Audio" title="Audio Store" icon={Activity} className="admin-wide-panel">
         <p className="connection-summary">
           {notReady
             ? (canEdit ? 'Not initialized yet — open Manage Audio Store to set it up.' : 'Not initialized yet — a level 9 admin can set it up.')
@@ -9923,7 +9945,7 @@ function MediaToolsView({ admin, user, onAction }) {
       <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Security"
-          title={`IP Lists`}
+          title="IP Lists"
           icon={ShieldCheck}
           headerActions={userCan(user, 'ipLists') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('ipLists', 'create')}>
@@ -9945,7 +9967,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`CID Groups`}
+          title="CID Groups"
           icon={PhoneCall}
           headerActions={userCan(user, 'cidGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('cidGroups', 'create')}>
@@ -9967,7 +9989,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`Extension Groups`}
+          title="Extension Groups"
           icon={PhoneCall}
           className="admin-wide-panel"
           headerActions={userCan(user, 'extensionGroups') ? (
@@ -9992,7 +10014,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Routing"
-          title={`Queue Groups`}
+          title="Queue Groups"
           icon={Headphones}
           headerActions={userCan(user, 'queueGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('queueGroups', 'create')}>
@@ -10013,7 +10035,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Directory"
-          title={`Contacts`}
+          title="Contacts"
           icon={Users}
           headerActions={userCan(user, 'contacts') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('contacts', 'create')}>
@@ -10035,7 +10057,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Localization"
-          title={`Languages`}
+          title="Languages"
           icon={FileText}
           headerActions={userCan(user, 'languages') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('languages', 'create')}>
@@ -10056,7 +10078,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Voicemail"
-          title={`Voicemail Boxes`}
+          title="Voicemail Boxes"
           icon={Headphones}
           headerActions={userCan(user, 'voicemailBoxes') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('voicemailBoxes', 'create')}>
@@ -10079,7 +10101,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Voicemail"
-          title={`VM Message Groups`}
+          title="VM Message Groups"
           icon={Headphones}
           headerActions={userCan(user, 'vmMessageGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('vmMessageGroups', 'create')}>
@@ -10100,7 +10122,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Audio"
-          title={`Music On Hold`}
+          title="Music On Hold"
           icon={Radio}
           headerActions={userCan(user, 'moh') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('moh', 'create')}>
@@ -10122,7 +10144,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Audio"
-          title={`TTS Prompts`}
+          title="TTS Prompts"
           icon={FileText}
           headerActions={userCan(user, 'tts') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('tts', 'create')}>
@@ -10144,7 +10166,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Reporting"
-          title={`Automated Reports`}
+          title="Automated Reports"
           icon={FileText}
           className="admin-wide-panel"
           headerActions={userCan(user, 'automatedReports') ? (
@@ -10169,7 +10191,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Inbound"
-          title={`Email Accounts`}
+          title="Email Accounts"
           icon={Mail}
           className="admin-wide-panel"
           headerActions={userCan(user, 'emailAccounts') ? (
@@ -10325,7 +10347,7 @@ function DisplayView({ admin, user, onAction }) {
       <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Configuration"
-          title={`Settings Containers`}
+          title="Settings Containers"
           icon={Database}
           className="admin-wide-panel"
           headerActions={userCan(user, 'settingsContainers') ? (
@@ -10361,7 +10383,7 @@ function RemoteAgentsView({ admin, user, onAction }) {
         <p className="action-copy">Off-system agents dialed at an external number: ACD calls route out to their phone with no agent screen.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Users" title={`Remote Agents`} icon={Headphones} className="admin-wide-panel">
+        <Panel eyebrow="Users" title="Remote Agents" icon={Headphones} className="admin-wide-panel">
           <DataTable
             emptyLabel="No remote agents configured"
             rows={remoteAgents.map((row) => ({ ...row, id: row.remote_agent_id }))}
@@ -10627,7 +10649,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
       </Panel>
       {lists && selected.length > 0 && (
         <section className="admin-grid media-tools-grid">
-          <Panel eyebrow="Summary" title={`List ID Summary`} icon={Database}>
+          <Panel eyebrow="Summary" title="List ID Summary" icon={Database}>
             <DataTable
               emptyLabel="No lists in the selected campaigns"
               rows={lists.map((row) => ({ ...row, id: String(row.list_id) }))}
@@ -12115,7 +12137,8 @@ function DidDetailReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="Detail" title={`DID Log`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Detail" title="DID Log" icon={Database} className="admin-wide-panel">
+          {entries.length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
           <div className="modal-actions">
             <button
               type="button"
@@ -13381,7 +13404,8 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
             </div>
           </Panel>
-          <Panel eyebrow="Calls" title={`Outbound`} icon={PhoneCall}>
+          <Panel eyebrow="Calls" title="Outbound" icon={PhoneCall}>
+            <p className="connection-summary">{formatNumber(outTotals.calls)} calls, {formatSeconds(outTotals.seconds)} total talk time</p>
             <DataTable
               emptyLabel="No outbound calls in the range"
               rows={(data.outbound || []).map((row) => ({ ...row, id: row.status }))}
@@ -13392,7 +13416,8 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title={`Inbound`} icon={Headphones}>
+          <Panel eyebrow="Calls" title="Inbound" icon={Headphones}>
+            <p className="connection-summary">{formatNumber(inTotals.calls)} calls, {formatSeconds(inTotals.seconds)} total talk time</p>
             <DataTable
               emptyLabel="No inbound calls in the range"
               rows={(data.inbound || []).map((row) => ({ ...row, id: row.status }))}
@@ -13403,7 +13428,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Pauses" title={`Pause Codes`} icon={Timer}>
+          <Panel eyebrow="Pauses" title="Pause Codes" icon={Timer}>
             <DataTable
               emptyLabel="No pause-code segments in the range"
               rows={(data.pauses || []).map((row) => ({ ...row, id: row.sub_status }))}
@@ -13430,7 +13455,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               Range total: {formatSeconds((data.timesheet || []).reduce((acc, row) => acc + Number(row.login_seconds || 0), 0))}
             </p>
           </Panel>
-          <Panel eyebrow="Sessions" title={`Agent Login / Logout Events`} icon={ShieldCheck} className="admin-wide-panel">
+          <Panel eyebrow="Sessions" title="Agent Login / Logout Events" icon={ShieldCheck} className="admin-wide-panel">
             <DataTable
               emptyLabel="No agent screen sessions in the range"
               rows={(data.loginEvents || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13445,7 +13470,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Timeclock" title={`Timeclock Events`} icon={Clock3}>
+          <Panel eyebrow="Timeclock" title="Timeclock Events" icon={Clock3}>
             <DataTable
               emptyLabel="No timeclock events in the range"
               rows={(data.timeclockRows || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13458,7 +13483,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title={`Park Log`} icon={PhoneCall}>
+          <Panel eyebrow="Calls" title="Park Log" icon={PhoneCall}>
             <DataTable
               emptyLabel="No parked calls in the range"
               rows={(data.parks || []).map((row, index) => ({ ...row, id: `${row.parked_time}-${index}` }))}
@@ -13470,7 +13495,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Sessions" title={`In-Group Changes`} icon={Headphones}>
+          <Panel eyebrow="Sessions" title="In-Group Changes" icon={Headphones}>
             <DataTable
               emptyLabel="No in-group selection changes in the range"
               rows={(data.closerChanges || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13765,6 +13790,9 @@ function UserGroupHourlyReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <Panel eyebrow="Hourly" title={`Agents per Group — ${data.date}`} icon={Users} className="admin-wide-panel">
+          {/* Cross-hour DISTINCT count from the server — not derivable from
+              the grid, where an agent appears in every hour they worked. */}
+          <p className="connection-summary">{formatNumber(s.grand)} distinct agents active this day</p>
           <DataTable
             emptyLabel="No agent activity on this day"
             rows={hours.map((hour) => ({ id: hour, hour }))}
@@ -14132,7 +14160,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Changes" title={`Admin Log`} icon={ShieldCheck} className="admin-wide-panel">
+      <Panel eyebrow="Changes" title="Admin Log" icon={ShieldCheck} className="admin-wide-panel">
         <DataTable
           emptyLabel="No admin changes in the date range"
           rows={(data?.entries || []).map((row) => ({ ...row, id: row.admin_log_id }))}
@@ -14276,7 +14304,7 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Callbacks" title={`Callback Hold Listings`} icon={Clock3} className="admin-wide-panel">
+      <Panel eyebrow="Callbacks" title="Callback Hold Listings" icon={Clock3} className="admin-wide-panel">
         <DataTable
           emptyLabel={holdId ? 'No ACTIVE or LIVE callbacks for this selection' : 'Pick a scope and ID to list callbacks on hold'}
           rows={entries.map((row) => ({ ...row, id: row.callback_id }))}
@@ -14404,7 +14432,8 @@ function DialLogReportView({ token, onLogout }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Log" title={`Dial Attempts`} icon={Activity} className="admin-wide-panel">
+      <Panel eyebrow="Log" title="Dial Attempts" icon={Activity} className="admin-wide-panel">
+        {(data?.entries || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
         <DataTable
           emptyLabel="No dial-log entries in the date range"
           rows={(data?.entries || []).map((row, index) => ({ ...row, id: `${row.caller_code}-${index}` }))}
@@ -14483,7 +14512,8 @@ function TimeclockReportView({ token, onLogout }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="Detail" title={`Events`} icon={History} className="admin-wide-panel">
+      <Panel eyebrow="Detail" title="Events" icon={History} className="admin-wide-panel">
+        {(data?.entries || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
         <DataTable
           emptyLabel="No timeclock events in the date range"
           rows={(data?.entries || []).map((row) => ({ ...row, id: row.timeclock_id }))}
@@ -14673,6 +14703,7 @@ function LogReportView({ token, onLogout, config }) {
           icon={Database}
           className="admin-wide-panel"
         >
+          {(data[config.entriesKey] || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
           <DataTable
             emptyLabel="No entries in the date range"
             rows={(data[config.entriesKey] || []).map((row, index) => ({ ...row, id: `row-${index}` }))}
@@ -15056,7 +15087,8 @@ function ServerPerformanceReportView({ token, onLogout }) {
               <span className="connection-status">Avg clients: {num(s.summary.avg_clients, 1)} (max {formatNumber(s.summary.max_clients || 0)})</span>
             </div>
           </Panel>
-          <Panel eyebrow="Series" title={`Samples`} icon={Database} className="admin-wide-panel">
+          <Panel eyebrow="Series" title="Samples" icon={Database} className="admin-wide-panel">
+            {s.series.length === 1000 && <p className="action-copy">Showing the first 1,000 samples — narrow the date range for the rest.</p>}
             <DataTable
               emptyLabel="No performance samples in the date range"
               rows={s.series.map((row, index) => ({ ...row, id: `${row.start_time}-${index}` }))}
@@ -15355,7 +15387,7 @@ function SphReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="SPH" title={`Agent Sales per Hour`} icon={Users} className="admin-wide-panel">
+        <Panel eyebrow="SPH" title="Agent Sales per Hour" icon={Users} className="admin-wide-panel">
           <DataTable
             emptyLabel="No SPH rollup rows for the selection (the nightly SPH process may not have run)"
             rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.campaign_group_id}-${index}` }))}
@@ -17459,7 +17491,7 @@ function RecordingsView({ admin, token }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="QA" title={`Transcripts`} icon={FileText} className="admin-wide-panel">
+      <Panel eyebrow="QA" title="Transcripts" icon={FileText} className="admin-wide-panel">
         <form
           className="entity-form report-filter-bar"
           onSubmit={(event) => { event.preventDefault(); loadTranscripts(transcriptQuery.trim()); }}
@@ -17608,7 +17640,7 @@ function SystemView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`Conf Templates`}
+          title="Conf Templates"
           icon={FileText}
           headerActions={userCan(user, 'confTemplates') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('confTemplates', 'create')}>

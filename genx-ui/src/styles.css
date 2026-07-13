@@ -933,69 +933,40 @@ body {
   gap: 10px;
 }
 
+/* Count tiles: the whole card is a button that opens the tool's manager
+   modal (or the Manage Dial Statuses toggle grid). */
 .campaign-tool-card {
-  display: grid;
-  grid-template-rows: auto minmax(78px, 1fr) auto;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid rgba(138, 167, 187, 0.16);
-  border-radius: 8px;
-  background: rgba(5, 15, 27, 0.58);
-}
-
-/* Count-only campaign tool tiles: the whole card is a button that opens the
-   stacked manager modal for that tool (list + add/delete). */
-.tool-count-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  min-width: 0;
   min-height: 92px;
+  padding: 10px;
+  border: 1px solid rgba(138, 167, 187, 0.16);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.58);
   cursor: pointer;
   color: inherit;
   font: inherit;
   text-align: center;
 }
 
-.tool-count-card span {
+.campaign-tool-card span {
   color: var(--muted);
   font-size: 0.76rem;
   font-weight: 820;
   text-transform: uppercase;
 }
 
-.tool-count-card strong {
+.campaign-tool-card strong {
   color: var(--blue);
   font-size: 1.7rem;
 }
 
-.tool-count-card:hover {
+.campaign-tool-card:hover {
   border-color: var(--blue);
-}
-
-.campaign-tool-card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.campaign-tool-card-head span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 820;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.campaign-tool-card-head strong {
-  color: var(--blue);
-  font-size: 1rem;
 }
 
 .campaign-tool-list {
@@ -1596,10 +1567,15 @@ body {
   font-weight: 700;
 }
 
-/* Rule: no horizontal scrollbars anywhere - tables shrink and wrap instead. */
+/* Tables shrink and wrap at spaces first; overflow-x:auto is the safety
+   valve for a genuinely unbreakable token (a 200-char URL, a long uniqueid)
+   — since td stopped using overflow-wrap:anywhere, such a token can force
+   a column wider than the panel, and without this it would clip off-screen
+   (body is overflow-x:hidden) taking the action buttons with it. Normal
+   tables never show the scrollbar. */
 .table-wrap {
   width: 100%;
-  overflow-x: visible;
+  overflow-x: auto;
 }
 
 table {
