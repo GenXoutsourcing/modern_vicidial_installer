@@ -615,6 +615,18 @@ join_update_cluster_settings() {
             "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET sounds_web_directory='${store_dir}' WHERE sounds_web_directory IS NULL OR sounds_web_directory='';"
         fi
         "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET webphone_url='https://phone.viciphone.com/viciphone.php' WHERE webphone_url IS NULL OR webphone_url IN ('', 'X');"
+        if [ "$INSTALL_GENX_UI" = "yes" ]; then
+            # A role-split cluster's DB-only primary leaves the 6666 forced
+            # first-login change unarmed (no GenX there — see the bootstrap
+            # comment in apply_vicidial_database_defaults). The GenX web box
+            # owns the bootstrap from here: arm the flag while the password
+            # is still 1234, and clear the stock first-login wizard trigger
+            # (the installer already rotated the passwords the wizard
+            # exists to rotate; trigger + force both set deadlocks legacy
+            # admin.php). Both statements no-op on an already-bootstrapped
+            # cluster.
+            "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE vicidial_users SET force_change_password='Y' WHERE user='6666' AND pass='1234'; UPDATE system_settings SET first_login_trigger='N' WHERE first_login_trigger='Y';"
+        fi
     fi
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
         "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET active_voicemail_server='${ip_address}' WHERE active_voicemail_server IS NULL OR active_voicemail_server IN ('', '127.0.0.1');"
@@ -1148,6 +1160,13 @@ UPDATE vicidial_users SET pass='1234', pass_hash=''
 WHERE user='6666' AND force_change_password='Y';
 UPDATE vicidial_users SET force_change_password='${FORCE_6666_CHANGE}'
 WHERE user='6666' AND pass='1234';
+
+-- GenX installs skip the stock first-login wizard: this installer already
+-- does the wizard's work (default phone/server password rotation), and a
+-- set trigger deadlocks legacy admin.php while the GenX force-change flag
+-- is armed (first-login check ADD=999995 overrides force-change 999997).
+-- Stock-only installs keep the wizard as their bootstrap.
+UPDATE system_settings SET first_login_trigger='N' WHERE '${FORCE_6666_CHANGE}'='Y';
 MYSQLDEFAULTS
 
     apply_genx_role_hierarchy
