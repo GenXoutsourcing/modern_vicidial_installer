@@ -561,8 +561,16 @@ body {
 .metric-card strong {
   display: block;
   color: var(--text);
-  font-size: 1.72rem;
+  /* Shrinks with the viewport so 7-digit totals never spill out of the
+     card at mid widths (they did at ~1200-1500px before the wrap kicks in). */
+  font-size: clamp(1.15rem, 0.55rem + 0.85vw, 1.72rem);
   line-height: 1.05;
+}
+
+/* The flex text column must be allowed to shrink below its content width,
+   or a long number forces the card wider than its grid track. */
+.metric-card > div {
+  min-width: 0;
 }
 
 .metric-card span {
@@ -1751,6 +1759,12 @@ td span {
 @media (max-width: 1500px) {
   .app-shell {
     width: min(1480px, calc(100% - 36px));
+  }
+
+  /* 7 metric cards can't fit mid widths; the ≤1180px rule below takes it
+     down to 3 (later rule, same specificity — order matters here). */
+  .command-metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .content-grid {

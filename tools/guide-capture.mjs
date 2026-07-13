@@ -20,7 +20,9 @@ if (!PASS) { console.error('GENX_PASS is required'); process.exit(1); }
 fs.mkdirSync('out', { recursive: true });
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, ignoreHTTPSErrors: true });
+// 1720 wide: the Mission Control metric row is 7 cards on desktop and only
+// wraps below ~1500px — capture at a width where the guide shows the full row.
+const page = await browser.newPage({ viewport: { width: 1720, height: 950 }, ignoreHTTPSErrors: true });
 
 const shot = (name) => page.screenshot({ path: `out/${name}.jpg`, type: 'jpeg', quality: 82, fullPage: true });
 const settle = async (ms = 1200) => {
