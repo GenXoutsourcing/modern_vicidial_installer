@@ -3944,7 +3944,7 @@ function ApiKeysPanel({ userId, token, onLogout }) {
   );
 }
 
-function CampaignScopedTools({ admin, campaignId, user, onAction }) {
+function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCount = 0, onManageDialStatuses }) {
   const campaign = String(campaignId || '');
   // Cards show counts only; clicking one opens a stacked manager modal
   // listing the entries (click = edit/delete via nested ActionModal) with
@@ -4007,6 +4007,14 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
         <SlidersHorizontal size={20} aria-hidden="true" />
       </div>
       <div className="campaign-tool-grid">
+        {/* Dial Statuses tile opens the Manage Dial Statuses toggle modal
+            (owned by ActionModal) instead of an entity manager list. */}
+        {onManageDialStatuses && (
+          <button type="button" className="campaign-tool-card tool-count-card" onClick={onManageDialStatuses}>
+            <span>Dial Statuses</span>
+            <strong>{formatNumber(dialStatusCount)}</strong>
+          </button>
+        )}
         {tools.map((tool) => (
           <button
             type="button"
@@ -6006,33 +6014,13 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         </div>
 
         {isDetail && action.entity === 'campaigns' && (
-          <div className="campaign-tool-panel">
-            <div className="campaign-tool-head">
-              <div>
-                <p className="eyebrow">Dialing</p>
-                <h3>Current Dial Statuses</h3>
-              </div>
-              <SlidersHorizontal size={20} aria-hidden="true" />
-            </div>
-            <div className="status-chip-list">
-              {campaignDialStatuses(form).map((status) => (
-                <span key={status}>{status}</span>
-              ))}
-              {!campaignDialStatuses(form).length && <em>No dial statuses selected</em>}
-              <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
-                <SlidersHorizontal size={14} aria-hidden="true" />
-                Manage Dial Statuses
-              </button>
-            </div>
-          </div>
-        )}
-
-        {isDetail && action.entity === 'campaigns' && (
           <CampaignScopedTools
             admin={admin}
             campaignId={form.campaign_id}
             user={user}
             onAction={stackAction}
+            dialStatusCount={campaignDialStatuses(form).length}
+            onManageDialStatuses={() => setDialStatusModal(true)}
           />
         )}
 

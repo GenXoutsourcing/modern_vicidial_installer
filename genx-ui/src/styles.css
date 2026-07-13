@@ -917,7 +917,8 @@ body {
 
 .campaign-tool-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* 6 tiles: Dial Statuses + the five campaign-scoped entity managers. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
