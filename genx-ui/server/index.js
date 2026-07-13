@@ -15928,7 +15928,8 @@ app.post('/api/login', async (req, res) => {
 
 // First-login forced password change (no session yet — authenticated by the
 // old credentials, throttled like login). The new value must stay usable by
-// legacy admin.php and the agent screen, so it's stored plain: 8-20 chars,
+// legacy admin.php and the agent screen, so it's stored plain: 8-25 chars
+// (column is varchar(100); 25 matches the generate_password_25 convention),
 // printable ASCII, no spaces/quotes/backslash/semicolon, not '1234'.
 app.post('/api/login/change-password', async (req, res) => {
   try {
@@ -15940,7 +15941,7 @@ app.post('/api/login/change-password', async (req, res) => {
       return res.status(429).json({ ok: false, error: 'too_many_attempts' });
     }
     if (!username || !oldPass || !newPass) return badRequest(res, 'all_fields_required');
-    if (newPass.length < 8 || newPass.length > 20
+    if (newPass.length < 8 || newPass.length > 25
       || !/^[\x21-\x7e]+$/.test(newPass) || /['"\\;]/.test(newPass)
       || newPass === oldPass || newPass === '1234') {
       return badRequest(res, 'weak_password');
