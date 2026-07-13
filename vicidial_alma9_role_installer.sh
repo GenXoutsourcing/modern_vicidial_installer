@@ -893,6 +893,12 @@ apply_vicidial_database_defaults() {
 
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
+    # See the 6666 bootstrap comment in the SQL below.
+    local FORCE_6666_CHANGE="N"
+    if [ "$INSTALL_GENX_UI" = "yes" ]; then
+        FORCE_6666_CHANGE="Y"
+    fi
+
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<MYSQLDEFAULTS
 UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0', custom_fields_enabled='1', enable_auto_reports='1', webroot_writable='0';
 
@@ -1110,16 +1116,23 @@ SET vu.phone_login='9176',
     vu.admin_hide_phone_data='0'
 WHERE vu.user='6666';
 
--- Bootstrap credential policy: 6666 starts as 1234 and BOTH UIs (GenX login
--- and legacy admin.php) force a change at first login via the stock
--- force_change_password flag; whichever is hit first clears it. Two guarded
--- steps because stock varies: if stock randomized the password AND set the
--- flag, reset to 1234; and whenever the password is still 1234, arm the
--- flag (fresh-install verification found stock leaves it 'N' on this path).
--- Both no-op once the password has been changed, so re-runs are safe.
+-- Bootstrap credential policy: 6666 starts as 1234. With the GenX UI the
+-- unified login owns the forced first-login change via the stock
+-- force_change_password flag. WITHOUT the GenX UI the flag must stay 'N':
+-- stock fresh installs also have first_login_trigger='Y', and in admin.php
+-- the force-change check (ADD=999997) is overridden by the first-login
+-- check (ADD=999995), so both flags 'Y' = the license page loops forever
+-- and "Continue on to the Initial Setup" is unreachable. The initial-setup
+-- page is the stock bootstrap anyway: it rejects reusing the old password
+-- and rotates the default phone/server passwords. (Cluster nuance: a
+-- DB-only primary has no web role so this leaves 'N'; the first web box's
+-- legacy initial setup handles the bootstrap there.)
+-- Two guarded steps because stock varies: if stock randomized the password
+-- AND set the flag, reset to 1234; then set the flag per the policy above
+-- while the password is still 1234. Both no-op once it has been changed.
 UPDATE vicidial_users SET pass='1234', pass_hash=''
 WHERE user='6666' AND force_change_password='Y';
-UPDATE vicidial_users SET force_change_password='Y'
+UPDATE vicidial_users SET force_change_password='${FORCE_6666_CHANGE}'
 WHERE user='6666' AND pass='1234';
 MYSQLDEFAULTS
 
