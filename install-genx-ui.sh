@@ -179,7 +179,12 @@ tar --exclude node_modules --exclude dist -C "$APP_SRC" -cf - . | tar -C "$relea
 # Prune superseded releases, keeping the 3 newest (the 'current' symlink is
 # re-pointed below). Each release carries a full node_modules, so without this
 # the disk fills and the recursive chown below gets slower every deploy.
-ls -1dt "$APP_ROOT"/releases/*/ 2>/dev/null | tail -n +4 | while read -r old_release; do
+# Sort by NAME, not mtime: tar preserves the source dir's mtime on the fresh
+# release, which can sort it OLDEST and make this prune delete the release
+# that was just created (hit on the fresh cluster rebuild — the repo clone's
+# mtime predated the existing releases). Names are timestamps, so a reverse
+# name sort is newest-first.
+ls -1d "$APP_ROOT"/releases/*/ 2>/dev/null | sort -r | tail -n +4 | while read -r old_release; do
   rm -rf "$old_release"
 done
 
