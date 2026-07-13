@@ -289,7 +289,8 @@ fi
 # linked from the Mission Control strip next to API Docs.
 if [ -f "$SCRIPT_DIR/genx-ui/guide/index.html" ]; then
     install -d -m 0755 /var/www/html/genxguide /var/www/html/genxguide/img
-    install -m 0644 "$SCRIPT_DIR/genx-ui/guide/index.html" /var/www/html/genxguide/index.html
+    # All guide pages, not just index (superadmin.html joined later).
+    install -m 0644 "$SCRIPT_DIR"/genx-ui/guide/*.html /var/www/html/genxguide/
     install -m 0644 "$SCRIPT_DIR"/genx-ui/guide/img/*.jpg /var/www/html/genxguide/img/
 fi
 
