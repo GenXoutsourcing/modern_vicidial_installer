@@ -2163,6 +2163,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'user_group_script', label: 'User Group Script Override', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
       { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
       { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
+      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
       { section: 'Dialing and Hopper' },
       // Dial statuses moved to their own card at the top of the Detail
       // modal (Manage Dial Statuses toggle grid, applies immediately).
@@ -2384,8 +2385,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'post_phone_time_diff_alert', label: 'Phone Post Time Difference Alert', type: 'select', options: enumOptions(['ENABLED', 'OUTSIDE_CALLTIME_ONLY', 'OUTSIDE_CALLTIME_PHONE', 'OUTSIDE_CALLTIME_POSTAL', 'OUTSIDE_CALLTIME_BOTH', 'DISABLED']) },
       { key: 'in_group_dial', label: 'In-Group Manual Dial', type: 'select', options: enumOptions(['DISABLED', 'MANUAL_DIAL', 'NO_DIAL', 'BOTH']) },
       { key: 'in_group_dial_select', label: 'In-Group Manual Dial Select', type: 'select', options: enumOptions(['CAMPAIGN_SELECTED', 'ALL_USER_GROUP']) },
-      { section: 'Compliance and Enhancements' },
-      { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
+      // Former 'Compliance and Enhancements' section, now the Agent
+      // Controls pill (Steve 2026-07-12); User Group moved to Basic
+      // Campaign.
+      { section: 'Agent Controls' },
       { key: 'per_call_notes', label: 'Per Call Notes', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'force_per_call_notes', label: 'Per Call Notes Required', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', '5_CHARACTERS', '15_CHARACTERS', '30_CHARACTERS', '100_CHARACTERS']) },
       { key: 'comments_all_tabs', label: 'Comments All Tabs', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
@@ -5814,7 +5817,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // modal (opened from the Connections strip). The fields keep editing the
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
-  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls'] : [];
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls', 'Agent Controls'] : [];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
