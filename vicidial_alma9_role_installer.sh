@@ -1101,11 +1101,15 @@ WHERE vu.user='6666';
 
 -- Bootstrap credential policy: 6666 starts as 1234 and BOTH UIs (GenX login
 -- and legacy admin.php) force a change at first login via the stock
--- force_change_password flag, whichever is hit first clears it. Stock
--- install.pl randomizes this password; we reset it to the documented 1234
--- default. Guarded on the flag so a re-run never clobbers a changed password.
-UPDATE vicidial_users SET pass='1234', pass_hash='', force_change_password='Y'
+-- force_change_password flag; whichever is hit first clears it. Two guarded
+-- steps because stock varies: if stock randomized the password AND set the
+-- flag, reset to 1234; and whenever the password is still 1234, arm the
+-- flag (fresh-install verification found stock leaves it 'N' on this path).
+-- Both no-op once the password has been changed, so re-runs are safe.
+UPDATE vicidial_users SET pass='1234', pass_hash=''
 WHERE user='6666' AND force_change_password='Y';
+UPDATE vicidial_users SET force_change_password='Y'
+WHERE user='6666' AND pass='1234';
 MYSQLDEFAULTS
 
     apply_genx_role_hierarchy
@@ -1128,17 +1132,21 @@ CREATE TABLE IF NOT EXISTS genx_group_permissions (
   PRIMARY KEY (user_group, permission)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- vicidial_user_groups has NO primary key (stock schema; legacy admin.php
+-- does its own dup checks), so INSERT IGNORE cannot dedupe — every insert
+-- needs an explicit NOT EXISTS guard (this function runs three times per
+-- install on purpose).
 CREATE TEMPORARY TABLE tmp_genx_ug AS SELECT * FROM vicidial_user_groups WHERE user_group='ADMIN';
 UPDATE tmp_genx_ug SET user_group='SUPERADMIN', group_name='Super Administrators';
-INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='SUPERADMIN');
 UPDATE tmp_genx_ug SET user_group='APIUSERS', group_name='API Integration Users';
-INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='APIUSERS');
 UPDATE tmp_genx_ug SET user_group='SUPERVISORS', group_name='Supervisors';
-INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='SUPERVISORS');
 UPDATE tmp_genx_ug SET user_group='QC', group_name='Quality Control';
-INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='QC');
 UPDATE tmp_genx_ug SET user_group='AGENTS', group_name='Agents';
-INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='AGENTS');
 DROP TEMPORARY TABLE tmp_genx_ug;
 
 UPDATE vicidial_users SET user_group='SUPERADMIN' WHERE user='6666' AND user_group='ADMIN';
