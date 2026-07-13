@@ -559,7 +559,7 @@ function Login({ onLogin }) {
       await doLogin(newPass);
     } catch (requestError) {
       setError(requestError.message === 'weak_password'
-        ? 'Password must be 8-25 characters with no spaces or quotes, and not 1234'
+        ? 'Password must be 8-30 characters with no spaces or quotes, and not 1234'
         : requestError.message === 'too_many_attempts'
           ? 'Too many attempts - wait a few minutes'
           : 'Password change failed - try again');
@@ -664,7 +664,7 @@ function Login({ onLogin }) {
         )}
         {step === 'changepass' && (
           <form onSubmit={submitNewPassword} className="login-form">
-            <p className="action-copy">First login — set a new password (8-25 characters, no spaces or quotes).</p>
+            <p className="action-copy">First login — set a new password (8-30 characters, no spaces or quotes).</p>
             <label htmlFor="new-password">New Password</label>
             <div className="input-row">
               <LockKeyhole size={18} aria-hidden="true" />
