@@ -2213,7 +2213,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'agent_pause_codes_active', label: 'Pause Codes Active', type: 'select', options: enumOptions(['Y', 'N', 'FORCE']) },
       // AMD fields moved to the Connections strip's "AMD" pill modal
       // (Steve 2026-07-12); only the voicemail/timer knobs remain inline.
-      { section: 'Voicemail Routing' },
+      { section: 'Voicemail and Timers' },
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
       { key: 'leave_vm_message_group_id', label: 'VM Message Group', type: 'select', options: enumOptions(ensureOption(['---NONE---'], form?.leave_vm_message_group_id)) },
       { key: 'leave_vm_no_dispo', label: 'Leave VM No Dispo', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
