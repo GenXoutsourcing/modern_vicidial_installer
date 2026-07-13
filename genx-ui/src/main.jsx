@@ -430,35 +430,152 @@ function ReportFilterBar({ beginDate, endDate, onBeginDate, onEndDate, onSubmit,
   );
 }
 
+// Unified login: one page for every account. The server reports the group's
+// ui_access after the password step — admin accounts go straight to the
+// console, agent-only accounts get the campaign/phone step in place (the
+// admin login responds 403 agent_account for them), and 'both' accounts
+// (SuperAdmins) pick a destination. /agent stays as a direct bookmark.
 function Login({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // 'creds' -> 'choice' (both-access accounts) or 'agent' (campaign pick).
+  const [step, setStep] = useState('creds');
+  const [adminAuth, setAdminAuth] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignId, setCampaignId] = useState('');
+  const [needPhone, setNeedPhone] = useState(false);
+  const [phone, setPhone] = useState({ phone_login: '', phone_pass: '' });
+  const [needPunch, setNeedPunch] = useState(false);
+  const agentAuthRef = useRef(null);
 
-  async function submit(event) {
+  const AGENT_ERRORS = {
+    invalid_phone_credentials: 'Invalid phone login or password',
+    invalid_user_credentials: 'Invalid user login or password',
+    phone_login_required: 'No phone set on this user — enter phone credentials',
+    already_logged_in: 'This user already has a live agent session',
+    no_conference_available: 'No free conference on that phone server',
+    campaign_not_allowed: 'Campaign not allowed for your user group',
+    timeclock_required: 'Your user group requires a timeclock punch-in first',
+  };
+
+  // The agent console lives at <base>/agent and resumes a stored token via
+  // /agent/setup — the same path as a mid-shift page reload.
+  function openAgentApp(token) {
+    window.localStorage.setItem(AGENT_TOKEN_KEY, token);
+    const base = window.location.pathname.replace(/\/+$/, '');
+    window.location.href = `${base}/agent`;
+  }
+
+  // Auth once per set of credentials; phone-field edits change the key.
+  async function ensureAgentAuth() {
+    const key = JSON.stringify({ username, password, ...phone });
+    if (agentAuthRef.current?.key === key) return agentAuthRef.current.payload;
+    const payload = await apiFetch('/agent/auth', '', {
+      method: 'POST',
+      body: JSON.stringify({ user: username, pass: password, ...phone }),
+    });
+    agentAuthRef.current = { key, payload };
+    setCampaigns(payload.campaigns || []);
+    return payload;
+  }
+
+  async function enterAgentStep() {
+    setStep('agent');
+    setError('');
+    setLoading(true);
+    try {
+      const payload = await ensureAgentAuth();
+      // An already-live agent session re-attaches without a campaign pick.
+      if (payload.live) openAgentApp(payload.token);
+    } catch (requestError) {
+      if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      else setError(AGENT_ERRORS[requestError.message] || 'Agent login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitCreds(event) {
     event.preventDefault();
     setLoading(true);
     setError('');
-
     try {
       const payload = await apiFetch('/login', '', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       });
+      if (payload.user?.uiAccess === 'both') {
+        setAdminAuth({ token: payload.token || '', user: payload.user });
+        setStep('choice');
+        return;
+      }
       onLogin(payload.token || '', payload.user);
     } catch (requestError) {
+      if (requestError.message === 'agent_account') {
+        await enterAgentStep();
+        return;
+      }
       // Only a real 401 means bad credentials; a 502/network error during a
       // deploy or outage must not send users off to reset their passwords.
-      setError(requestError.message === 'agent_account'
-        ? 'This is an agent account - sign in on the Agent screen instead'
-        : requestError.status === 401 || requestError.status === 403
-          ? 'Credentials or user level were not accepted'
-          : 'The server could not be reached - try again shortly');
+      setError(requestError.status === 401 || requestError.status === 403
+        ? 'Credentials or user level were not accepted'
+        : 'The server could not be reached - try again shortly');
     } finally {
       setLoading(false);
     }
   }
+
+  async function submitAgent(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await ensureAgentAuth();
+      if (payload.live) { openAgentApp(payload.token); return; }
+      if (!campaignId) { setError('Please select a campaign'); return; }
+      await apiFetch('/agent/login', payload.token, {
+        method: 'POST',
+        body: JSON.stringify({ campaign_id: campaignId }),
+      });
+      openAgentApp(payload.token);
+    } catch (requestError) {
+      if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      if (requestError.message === 'timeclock_required') setNeedPunch(true);
+      setError(AGENT_ERRORS[requestError.message] || 'Agent login failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function punchIn() {
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await ensureAgentAuth();
+      await apiFetch('/agent/timeclock', payload.token, { method: 'POST', body: JSON.stringify({ action: 'in' }) });
+      setNeedPunch(false);
+      setError('Punched in — press Enter Agent Screen');
+    } catch (requestError) {
+      setError(requestError.message === 'already_punched_in' ? 'Already punched in — press Enter Agent Screen' : 'Timeclock punch failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function backToCreds() {
+    setStep('creds');
+    setError('');
+    setNeedPhone(false);
+    setNeedPunch(false);
+    setCampaignId('');
+    agentAuthRef.current = null;
+  }
+
+  const setPhoneField = (key) => (event) => {
+    setPhone((current) => ({ ...current, [key]: event.target.value }));
+  };
 
   return (
     <main className="login-shell">
@@ -467,39 +584,116 @@ function Login({ onLogin }) {
           <div className="brand-mark">GX</div>
           <div>
             <p className="eyebrow">GenX Contact Center</p>
-            <h1>Mission Control</h1>
+            <h1>Sign In</h1>
           </div>
         </div>
-        <form onSubmit={submit} className="login-form">
-          <label htmlFor="vicidial-user">Username</label>
-          <div className="input-row">
-            <Users size={18} aria-hidden="true" />
-            <input
-              id="vicidial-user"
-              type="text"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-              autoFocus
-            />
+        {step === 'creds' && (
+          <form onSubmit={submitCreds} className="login-form">
+            <label htmlFor="vicidial-user">Username</label>
+            <div className="input-row">
+              <Users size={18} aria-hidden="true" />
+              <input
+                id="vicidial-user"
+                type="text"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                autoFocus
+              />
+            </div>
+            <label htmlFor="vicidial-password">Password</label>
+            <div className="input-row">
+              <LockKeyhole size={18} aria-hidden="true" />
+              <input
+                id="vicidial-password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            <button type="submit" className="primary-action" disabled={loading}>
+              <ShieldCheck size={18} aria-hidden="true" />
+              {loading ? 'Checking' : 'Enter'}
+            </button>
+          </form>
+        )}
+        {step === 'choice' && (
+          <div className="login-form">
+            <p className="action-copy">Your account can use both interfaces — where to?</p>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => onLogin(adminAuth?.token || '', adminAuth?.user)}
+            >
+              <ShieldCheck size={18} aria-hidden="true" />
+              Admin Console
+            </button>
+            <button type="button" className="secondary-action" disabled={loading} onClick={enterAgentStep}>
+              Agent Screen
+            </button>
+            <button type="button" className="secondary-action" onClick={backToCreds}>
+              Back
+            </button>
           </div>
-          <label htmlFor="vicidial-password">Password</label>
-          <div className="input-row">
-            <LockKeyhole size={18} aria-hidden="true" />
-            <input
-              id="vicidial-password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-            />
-          </div>
-          {error && <p className="form-error">{error}</p>}
-          <button type="submit" className="primary-action" disabled={loading}>
-            <ShieldCheck size={18} aria-hidden="true" />
-            {loading ? 'Checking' : 'Enter'}
-          </button>
-        </form>
+        )}
+        {step === 'agent' && (
+          <form onSubmit={submitAgent} className="login-form">
+            {needPhone && (
+              <>
+                <label htmlFor="agent-phone-login">Phone Login</label>
+                <div className="input-row">
+                  <input
+                    id="agent-phone-login"
+                    type="text"
+                    value={phone.phone_login}
+                    onChange={setPhoneField('phone_login')}
+                    autoComplete="off"
+                  />
+                </div>
+                <label htmlFor="agent-phone-pass">Phone Password</label>
+                <div className="input-row">
+                  <input
+                    id="agent-phone-pass"
+                    type="password"
+                    value={phone.phone_pass}
+                    onChange={setPhoneField('phone_pass')}
+                    autoComplete="off"
+                  />
+                </div>
+              </>
+            )}
+            <label htmlFor="agent-campaign">Campaign</label>
+            <div className="input-row">
+              <select
+                id="agent-campaign"
+                value={campaignId}
+                onChange={(event) => setCampaignId(event.target.value)}
+              >
+                <option value="">-- PLEASE SELECT A CAMPAIGN --</option>
+                {campaigns.map((row) => (
+                  <option key={row.campaign_id} value={row.campaign_id}>
+                    {row.campaign_id} - {row.campaign_name || ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            <button type="submit" className="primary-action" disabled={loading}>
+              <ShieldCheck size={18} aria-hidden="true" />
+              {loading ? 'Working...' : 'Enter Agent Screen'}
+            </button>
+            {needPunch && (
+              <button type="button" className="secondary-action" disabled={loading} onClick={punchIn}>
+                Punch In to Timeclock
+              </button>
+            )}
+            <button type="button" className="secondary-action" onClick={backToCreds}>
+              Back
+            </button>
+          </form>
+        )}
       </section>
     </main>
   );

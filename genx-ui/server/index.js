@@ -739,16 +739,22 @@ async function authenticateVicidialUser(username, password) {
 
   if (!user) return null;
   if (user.active !== 'Y') return null;
-  if (Number(user.user_level || 0) < config.minUserLevel) return null;
   if (!passwordMatches(password, user.pass)) return null;
 
   // Agent-screen-only groups can't open the admin console; return a marker
-  // (not null) so the login route can point the user at the agent page
-  // instead of reporting bad credentials.
-  if ((await uiAccessFor(user.user_group)) === 'agent') return { loginError: 'agent_account' };
+  // (not null) so the unified login page can hand the user to the agent
+  // flow instead of reporting bad credentials. This runs BEFORE the level
+  // floor on purpose: level-1 agents must reach this branch, not a generic
+  // rejection. Password is verified first so the marker never leaks the
+  // account type to a guesser.
+  const uiAccess = await uiAccessFor(user.user_group);
+  if (uiAccess === 'agent') return { loginError: 'agent_account' };
+  if (Number(user.user_level || 0) < config.minUserLevel) return null;
 
   const pub = publicUser(user);
   pub.navSections = await navSectionsFor(user.user_group);
+  // 'both' lets the unified login page offer an Admin/Agent choice.
+  pub.uiAccess = uiAccess;
   return pub;
 }
 
