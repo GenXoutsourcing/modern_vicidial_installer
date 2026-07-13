@@ -672,6 +672,7 @@ async function authenticateVicidialUser(username, password) {
             u.user_level,
             u.user_group,
             u.active,
+            u.force_change_password,
             u.campaign_detail,
             u.view_reports,
             u.modify_campaigns,
@@ -740,6 +741,12 @@ async function authenticateVicidialUser(username, password) {
   if (!user) return null;
   if (user.active !== 'Y') return null;
   if (!passwordMatches(password, user.pass)) return null;
+
+  // Stock VICIdial first-login flag (legacy admin.php honors the same
+  // column): correct credentials, but a new password must be set before
+  // anything else. Checked before ui_access so every account type gets the
+  // change flow from the unified login page.
+  if (user.force_change_password === 'Y') return { loginError: 'password_change_required' };
 
   // Agent-screen-only groups can't open the admin console; return a marker
   // (not null) so the unified login page can hand the user to the agent
@@ -4020,7 +4027,7 @@ function userPayload(body, currentUser) {
 // layer) may change. Everything else keeps its stored value — this is the
 // security boundary behind the trimmed "essential" user form.
 const ESSENTIAL_USER_FIELDS = new Set([
-  'pass', 'pass_hash', 'full_name', 'email', 'active', 'view_reports',
+  'pass', 'pass_hash', 'force_change_password', 'full_name', 'email', 'active', 'view_reports',
   'hotkeys_active', 'agent_choose_ingroups', 'agent_choose_blended',
   'closer_default_blended', 'closer_campaigns', 'scheduled_callbacks',
   'agentcall_manual', 'vicidial_transfers', 'custom_fields_modify',
@@ -4051,7 +4058,17 @@ async function saveUser(req, res, mode) {
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user');
   const payload = userPayload(req.body || {}, req.genxUser);
-  if (mode === 'create' && !payload.pass) return badRequest(res, 'password_required');
+  // Blank password on create = the standing bootstrap: 1234 with a forced
+  // change at first login (mirrors stock VICIdial's 6666 behavior). An
+  // explicit password still defaults the force flag on unless the form
+  // says otherwise.
+  if (mode === 'create' && !payload.pass) {
+    payload.pass = '1234';
+    payload.force_change_password = 'Y';
+  }
+  if (mode === 'create' && req.body?.force_change_password === undefined) {
+    payload.force_change_password = 'Y';
+  }
   if (mode !== 'create' && !payload.pass) delete payload.pass;
   if (payload.pass) payload.pass_hash = '';
 
@@ -8755,7 +8772,7 @@ async function agentAuth(req, res) {
 
   const [userRow] = await rows(
     `SELECT u.user, u.pass, u.full_name, u.user_level, u.user_group, u.active,
-            u.phone_login, u.phone_pass,
+            u.phone_login, u.phone_pass, u.force_change_password,
             u.admin_hide_lead_data, u.admin_hide_phone_data, ug.allowed_campaigns
      FROM vicidial_users u
      LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
@@ -8769,6 +8786,11 @@ async function agentAuth(req, res) {
     return res.status(401).json({ ok: false, error: 'invalid_user_credentials' });
   }
   loginFailures.delete(throttleKey);
+
+  // First-login forced password change, same flag legacy admin.php honors.
+  if (userRow.force_change_password === 'Y') {
+    return res.status(403).json({ ok: false, error: 'password_change_required' });
+  }
 
   // Mirror of the admin-side ui_access gate: admin-console-only groups
   // (managers, QC) can't take calls on the agent screen.
@@ -15901,6 +15923,49 @@ app.post('/api/login', async (req, res) => {
     return res.json({ ok: true, token, user, minUserLevel: config.minUserLevel });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'login_unavailable' });
+  }
+});
+
+// First-login forced password change (no session yet — authenticated by the
+// old credentials, throttled like login). The new value must stay usable by
+// legacy admin.php and the agent screen, so it's stored plain: 8-20 chars,
+// printable ASCII, no spaces/quotes/backslash/semicolon, not '1234'.
+app.post('/api/login/change-password', async (req, res) => {
+  try {
+    const username = cleanId(req.body?.username, 20);
+    const oldPass = String(req.body?.password || '');
+    const newPass = String(req.body?.new_password || '');
+    const throttleKey = `${username}|${req.ip}`;
+    if (loginThrottled(throttleKey)) {
+      return res.status(429).json({ ok: false, error: 'too_many_attempts' });
+    }
+    if (!username || !oldPass || !newPass) return badRequest(res, 'all_fields_required');
+    if (newPass.length < 8 || newPass.length > 20
+      || !/^[\x21-\x7e]+$/.test(newPass) || /['"\\;]/.test(newPass)
+      || newPass === oldPass || newPass === '1234') {
+      return badRequest(res, 'weak_password');
+    }
+    const [userRow] = await rows(
+      "SELECT user, pass, active FROM vicidial_users WHERE user = ? LIMIT 1",
+      [username], [],
+    );
+    if (!userRow || userRow.active !== 'Y' || !passwordMatches(oldPass, userRow.pass)) {
+      recordLoginFailure(throttleKey);
+      return res.status(401).json({ ok: false, error: 'invalid_credentials_or_level' });
+    }
+    loginFailures.delete(throttleKey);
+    await execute(
+      "UPDATE vicidial_users SET pass = ?, pass_hash = '', force_change_password = 'N' WHERE user = ?",
+      [newPass, username],
+    );
+    await adminLog(
+      { ...req, genxUser: { user: username } },
+      'USERS', 'MODIFY', username,
+      'GENX FORCED PASSWORD CHANGE', 'UPDATE vicidial_users SET pass', 'first-login password change',
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: 'password_change_failed' });
   }
 });
 

@@ -448,6 +448,8 @@ function Login({ onLogin }) {
   const [needPhone, setNeedPhone] = useState(false);
   const [phone, setPhone] = useState({ phone_login: '', phone_pass: '' });
   const [needPunch, setNeedPunch] = useState(false);
+  const [newPass, setNewPass] = useState('');
+  const [newPassConfirm, setNewPassConfirm] = useState('');
   const agentAuthRef = useRef(null);
 
   const AGENT_ERRORS = {
@@ -491,20 +493,18 @@ function Login({ onLogin }) {
       if (payload.live) openAgentApp(payload.token);
     } catch (requestError) {
       if (requestError.message === 'phone_login_required') setNeedPhone(true);
+      else if (requestError.message === 'password_change_required') setStep('changepass');
       else setError(AGENT_ERRORS[requestError.message] || 'Agent login failed');
     } finally {
       setLoading(false);
     }
   }
 
-  async function submitCreds(event) {
-    event.preventDefault();
-    setLoading(true);
-    setError('');
+  async function doLogin(pass) {
     try {
       const payload = await apiFetch('/login', '', {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password: pass }),
       });
       if (payload.user?.uiAccess === 'both') {
         setAdminAuth({ token: payload.token || '', user: payload.user });
@@ -517,11 +517,52 @@ function Login({ onLogin }) {
         await enterAgentStep();
         return;
       }
+      if (requestError.message === 'password_change_required') {
+        setStep('changepass');
+        setError('');
+        return;
+      }
       // Only a real 401 means bad credentials; a 502/network error during a
       // deploy or outage must not send users off to reset their passwords.
       setError(requestError.status === 401 || requestError.status === 403
         ? 'Credentials or user level were not accepted'
         : 'The server could not be reached - try again shortly');
+    }
+  }
+
+  async function submitCreds(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      await doLogin(password);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitNewPassword(event) {
+    event.preventDefault();
+    if (newPass !== newPassConfirm) {
+      setError('Passwords do not match');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await apiFetch('/login/change-password', '', {
+        method: 'POST',
+        body: JSON.stringify({ username, password, new_password: newPass }),
+      });
+      // Continue straight into the normal flow with the new password.
+      setPassword(newPass);
+      await doLogin(newPass);
+    } catch (requestError) {
+      setError(requestError.message === 'weak_password'
+        ? 'Password must be 8-20 characters with no spaces or quotes, and not 1234'
+        : requestError.message === 'too_many_attempts'
+          ? 'Too many attempts - wait a few minutes'
+          : 'Password change failed - try again');
     } finally {
       setLoading(false);
     }
@@ -570,6 +611,8 @@ function Login({ onLogin }) {
     setNeedPhone(false);
     setNeedPunch(false);
     setCampaignId('');
+    setNewPass('');
+    setNewPassConfirm('');
     agentAuthRef.current = null;
   }
 
@@ -616,6 +659,42 @@ function Login({ onLogin }) {
             <button type="submit" className="primary-action" disabled={loading}>
               <ShieldCheck size={18} aria-hidden="true" />
               {loading ? 'Checking' : 'Enter'}
+            </button>
+          </form>
+        )}
+        {step === 'changepass' && (
+          <form onSubmit={submitNewPassword} className="login-form">
+            <p className="action-copy">First login — set a new password (8-20 characters, no spaces or quotes).</p>
+            <label htmlFor="new-password">New Password</label>
+            <div className="input-row">
+              <LockKeyhole size={18} aria-hidden="true" />
+              <input
+                id="new-password"
+                type="password"
+                value={newPass}
+                onChange={(event) => setNewPass(event.target.value)}
+                autoComplete="new-password"
+                autoFocus
+              />
+            </div>
+            <label htmlFor="new-password-confirm">Confirm New Password</label>
+            <div className="input-row">
+              <LockKeyhole size={18} aria-hidden="true" />
+              <input
+                id="new-password-confirm"
+                type="password"
+                value={newPassConfirm}
+                onChange={(event) => setNewPassConfirm(event.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            <button type="submit" className="primary-action" disabled={loading || !newPass}>
+              <ShieldCheck size={18} aria-hidden="true" />
+              {loading ? 'Working...' : 'Set Password and Continue'}
+            </button>
+            <button type="button" className="secondary-action" onClick={backToCreds}>
+              Back
             </button>
           </form>
         )}
@@ -1388,6 +1467,7 @@ function actionDefaults(entity, admin) {
     return {
       user: '',
       pass: '',
+      force_change_password: 'Y',
       full_name: '',
       user_level: '1',
       user_group: group,
@@ -2709,6 +2789,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
         { section: 'Identity and Login' },
         { key: 'user', label: 'User ID', disabled: true },
         { key: 'pass', label: 'New Password', type: 'password' },
+        { key: 'force_change_password', label: 'Force Password Change at Next Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
         { key: 'full_name', label: 'Full Name' },
         { key: 'email', label: 'Email' },
         { key: 'user_level', label: 'Level', disabled: true },
@@ -2731,7 +2812,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     return [
       { section: 'Identity and Login' },
       { key: 'user', label: 'User ID', disabled: mode === 'edit' },
-      { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password', type: 'password' },
+      { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password (blank = 1234 + forced change)', type: 'password' },
+      { key: 'force_change_password', label: 'Force Password Change at Next Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'full_name', label: 'Full Name' },
       { key: 'user_level', label: 'Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS, form?.user_level)) },
       { key: 'user_group', label: 'User Group', type: userGroupOptions.length ? 'select' : 'text', options: userGroupOptions },
@@ -15726,6 +15808,7 @@ function AgentLoginPage({ onAuthed }) {
     all_fields_required: 'User login and password are required',
     phone_login_required: 'No phone set on this user — enter phone credentials',
     admin_account: 'This account uses the admin console — sign in on the admin page',
+    password_change_required: 'First login — set a new password on the main sign-in page first',
   };
 
   // Auth once per set of credentials; reused between Refresh and Submit.

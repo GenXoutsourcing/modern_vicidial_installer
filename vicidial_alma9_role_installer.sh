@@ -1098,6 +1098,14 @@ SET vu.phone_login='9176',
     vu.admin_hide_lead_data='0',
     vu.admin_hide_phone_data='0'
 WHERE vu.user='6666';
+
+-- Bootstrap credential policy: 6666 starts as 1234 and BOTH UIs (GenX login
+-- and legacy admin.php) force a change at first login via the stock
+-- force_change_password flag, whichever is hit first clears it. Stock
+-- install.pl randomizes this password; we reset it to the documented 1234
+-- default. Guarded on the flag so a re-run never clobbers a changed password.
+UPDATE vicidial_users SET pass='1234', pass_hash='', force_change_password='Y'
+WHERE user='6666' AND force_change_password='Y';
 MYSQLDEFAULTS
 
     apply_genx_role_hierarchy
