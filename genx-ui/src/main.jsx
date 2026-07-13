@@ -8336,7 +8336,7 @@ function CallTimesView({ admin, user, onAction }) {
                   </>
                 ),
               },
-              { key: 'default_window', label: 'Default', render: (row) => `${row.ct_default_start}-${row.ct_default_stop}` },
+              { key: 'default_window', label: 'Default', render: (row) => `${row.ct_default_start}‑${row.ct_default_stop}` },
               { key: 'monday', label: 'Monday', render: (row) => `${row.ct_monday_start}-${row.ct_monday_stop}` },
               { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
               { key: 'ct_state_call_times', label: 'States', render: (row) => String(row.ct_state_call_times || '').trim() ? 'Configured' : 'None' },
@@ -8362,7 +8362,7 @@ function CallTimesView({ admin, user, onAction }) {
               { key: 'state_call_time_id', label: 'ID' },
               { key: 'state_call_time_state', label: 'State' },
               { key: 'state_call_time_name', label: 'Name' },
-              { key: 'default_window', label: 'Default', render: (row) => `${row.sct_default_start}-${row.sct_default_stop}` },
+              { key: 'default_window', label: 'Default', render: (row) => `${row.sct_default_start}‑${row.sct_default_stop}` },
               ...(userCan(user, 'stateCallTimes') ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('stateCallTimes', 'edit', row)} /> }] : []),
             ]}
           />
