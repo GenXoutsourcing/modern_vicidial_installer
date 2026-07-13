@@ -755,6 +755,17 @@ fix_vicidial_web_permissions() {
         chown apache:apache /var/www/html/agc/vicidial_auth_entries.txt
         chmod 0664 /var/www/html/agc/vicidial_auth_entries.txt
     fi
+    if [ -d /var/www/html/vicidial ]; then
+        # admin.php's one-time housecleaning block fopen()s this marker in the
+        # webroot; with the 0755 root:root docroot that write fails and PHP 8
+        # fatals (500 on every admin.php hit). Seed the marker so the block —
+        # and its webroot writes — never run. Pairs with webroot_writable='0'
+        # in the system_settings defaults, which gates the same pattern in
+        # functions.php user_authorization().
+        printf '1' > /var/www/html/vicidial/old_clear
+        chmod 644 /var/www/html/vicidial/old_clear
+        rm -f /var/www/html/vicidial/project_auth_entries.txt
+    fi
 }
 
 configure_agc_options() {
@@ -883,7 +894,7 @@ apply_vicidial_database_defaults() {
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
 
     "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<MYSQLDEFAULTS
-UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0', custom_fields_enabled='1', enable_auto_reports='1';
+UPDATE system_settings SET allow_ip_lists='1', allow_chats='1', agent_hidden_sound_seconds=5, agent_logout_link='0', custom_fields_enabled='1', enable_auto_reports='1', webroot_writable='0';
 
 UPDATE servers
 SET server_id='${server_id}',
