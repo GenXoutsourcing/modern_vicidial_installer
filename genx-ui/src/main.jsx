@@ -2152,7 +2152,9 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
 
     return [
       { section: 'Basic Campaign' },
-      ...basicFields.map((field) => ({ ...field, disabled: field.key === 'campaign_id' || field.disabled })),
+      // lead_order stays on the Basic page/create form but edits through
+      // the List Controls pill on Detail.
+      ...basicFields.filter((field) => field.key !== 'lead_order').map((field) => ({ ...field, disabled: field.key === 'campaign_id' || field.disabled })),
       // Moved up from the dissolved 'Recording, Scripts, and Forms' section
       // (Steve 2026-07-12).
       recordingField('campaign_rec_filename', 'Recording Filename', form?.campaign_rec_filename),
@@ -2182,7 +2184,6 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       // auto_alt_dial_statuses is edited via the Connections strip's
       // "Auto Alt Statuses" pill (CampaignStatusPickerModal) — value stays
       // in form state.
-      { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
       { key: 'default_xfer_group', label: 'Default Xfer Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'drop_inbound_group', label: 'Drop Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'drop_action', label: 'Drop Action', type: 'select', options: enumOptions(['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'AUDIO', 'CALLMENU', 'VMAIL_NO_INST']) },
@@ -2244,6 +2245,12 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'amd_status_map', label: 'AMD Status Map', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'Default_AMD_status_map'], form?.amd_status_map)) },
       { key: 'amd_inbound_group', label: 'AMD Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'amd_callmenu', label: 'AMD Call Menu', type: callMenuNoneOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuNoneOptions, form?.amd_callmenu) },
+      { section: 'List Controls' },
+      { key: 'lead_order', label: 'List Order', type: 'select', options: enumOptions(LEAD_ORDER_OPTIONS.includes(String(form?.lead_order || '')) ? LEAD_ORDER_OPTIONS : [String(form?.lead_order || 'DOWN'), ...LEAD_ORDER_OPTIONS]) },
+      { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
+      { key: 'list_order_mix', label: 'List Mix', type: 'select', options: withCurrentOption([{ value: 'DISABLED', label: 'DISABLED' }, ...(admin?.lookups?.listMixes || []).filter((item) => String(item.campaign_id || '') === String(form?.campaign_id || '')).map((item) => ({ value: String(item.vcl_id || ''), label: `${item.vcl_id} - ${item.vcl_name || item.status || ''}` }))], form?.list_order_mix) },
+      { key: 'lead_order_randomize', label: 'Lead Order Randomize', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'lead_order_secondary', label: 'Secondary Lead Order', type: 'select', options: enumOptions(['LEAD_ASCEND', 'LEAD_DESCEND', 'CALLTIME_ASCEND', 'CALLTIME_DESCEND', 'VENDOR_ASCEND', 'VENDOR_DESCEND']) },
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -2275,11 +2282,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
       { section: 'Lead Control and Callbacks' },
       { key: 'lead_filter_id', label: 'Lead Filter', type: leadFilterOptions.length ? 'select' : 'text', options: leadFilterOptions },
-      { key: 'list_order_mix', label: 'List Mix', type: 'select', options: withCurrentOption([{ value: 'DISABLED', label: 'DISABLED' }, ...(admin?.lookups?.listMixes || []).filter((item) => String(item.campaign_id || '') === String(form?.campaign_id || '')).map((item) => ({ value: String(item.vcl_id || ''), label: `${item.vcl_id} - ${item.vcl_name || item.status || ''}` }))], form?.list_order_mix) },
       { key: 'display_dialable_count', label: 'Display Dialable Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'display_leads_count', label: 'Display Leads Count', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'lead_order_randomize', label: 'Lead Order Randomize', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'lead_order_secondary', label: 'Secondary Lead Order', type: 'select', options: enumOptions(['LEAD_ASCEND', 'LEAD_DESCEND', 'CALLTIME_ASCEND', 'CALLTIME_DESCEND', 'VENDOR_ASCEND', 'VENDOR_DESCEND']) },
       { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'scheduled_callbacks_alert', label: 'Callback Alert', type: 'select', options: enumOptions(ensureOption(SCHEDULED_CALLBACK_ALERT_OPTIONS, form?.scheduled_callbacks_alert)) },
       { key: 'scheduled_callbacks_email_alert', label: 'Callback Email Alert', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -5810,7 +5814,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // modal (opened from the Connections strip). The fields keep editing the
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
-  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD'] : [];
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls'] : [];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
