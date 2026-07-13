@@ -4393,6 +4393,15 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
 
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
+const REPORT_MODAL_TITLES = {
+  hopper: 'Hopper List',
+  realtime: 'Real-Time Report',
+  outbound: 'Outbound Calling Report',
+  statuslist: 'Status List Report',
+  leadstatuses: 'Lead Statuses in Campaign',
+  callbacks: 'CallBack Holds',
+  adminlog: 'Admin Changes',
+};
 function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -4400,9 +4409,22 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
   // Hopper List / Real-Time Report open stacked on TOP of the campaign
   // modal instead of navigating away from it. The hopper modal's campaign
   // picker lives in the modal head, so its selection is owned here.
-  const [reportModal, setReportModal] = useState(''); // '' | 'hopper' | 'realtime'
+  const [reportModal, setReportModal] = useState(''); // '' | key of REPORT_MODAL_TITLES
   const [hopperCampaign, setHopperCampaign] = useState('');
   const [urlModal, setUrlModal] = useState(''); // '' | 'webform' | 'callurls'
+
+  // Every report pill opens stacked on TOP of the campaign modal; closing it
+  // lands back on the campaign. Each pill is a real anchor to the report's
+  // hash route so right/ctrl/middle-click still opens the full page.
+  const reportPill = (kind, hash) => ({
+    href: `#/${hash}`,
+    className: 'row-action',
+    onClick: (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      setReportModal(kind);
+    },
+  });
 
   async function logoutAgents() {
     if (!confirmingLogout) {
@@ -4440,42 +4462,32 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
           <Database size={15} aria-hidden="true" />
           Hopper List
         </button>
-        {/* Real anchor so right/ctrl/middle-click opens the report in a new
-            tab (hash route); a plain left-click opens the stacked modal. */}
-        <a
-          href="#/reportRealtimeMain"
-          className="row-action"
-          onClick={(event) => {
-            if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-            event.preventDefault();
-            setReportModal('realtime');
-          }}
-        >
+        <a {...reportPill('realtime', 'reportRealtimeMain')}>
           <Radio size={15} aria-hidden="true" />
           Real-Time Report
         </a>
         {!basic && (
           <>
-            <button type="button" className="row-action" onClick={() => onNavigate('reportOutboundCalling')}>
+            <a {...reportPill('outbound', 'reportOutboundCalling')}>
               <PhoneCall size={15} aria-hidden="true" />
               Outbound Calling Report
-            </button>
-            <button type="button" className="row-action" onClick={() => onNavigate('reportCampaignStatusList')}>
+            </a>
+            <a {...reportPill('statuslist', 'reportCampaignStatusList')}>
               <Activity size={15} aria-hidden="true" />
               Status List Report
-            </button>
-            <button type="button" className="row-action" onClick={() => onNavigate('reportListCampaignStatuses', { campaignId: campaign })}>
+            </a>
+            <a {...reportPill('leadstatuses', 'reportListCampaignStatuses')}>
               <Gauge size={15} aria-hidden="true" />
               Lead Statuses in Campaign
-            </button>
-            <button type="button" className="row-action" onClick={() => onNavigate('reportCallbackHolds', { scope: 'campaign', id: campaign })}>
+            </a>
+            <a {...reportPill('callbacks', 'reportCallbackHolds')}>
               <Clock3 size={15} aria-hidden="true" />
               CallBack Holds
-            </button>
-            <button type="button" className="row-action" onClick={() => onNavigate('reportAdminLog', { section: 'CAMPAIGNS', record: campaign })}>
+            </a>
+            <a {...reportPill('adminlog', 'reportAdminLog')}>
               <ShieldCheck size={15} aria-hidden="true" />
               Admin Changes
-            </button>
+            </a>
             <button type="button" className="row-action" onClick={() => setUrlModal('webform')}>
               <ExternalLink size={15} aria-hidden="true" />
               Webform URLs
@@ -4507,11 +4519,11 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       </div>
       {reportModal && (
         <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setReportModal(''))}>
-          <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={reportModal === 'hopper' ? 'Hopper List' : 'Real-Time Report'}>
+          <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={REPORT_MODAL_TITLES[reportModal]}>
             <div className="modal-head">
               <div>
                 <p className="eyebrow">Report</p>
-                <h2>{reportModal === 'hopper' ? 'Hopper List' : 'Real-Time Report'}</h2>
+                <h2>{REPORT_MODAL_TITLES[reportModal]}</h2>
                 {reportModal === 'hopper' && (
                   <p className="action-copy">Live snapshot of leads currently loaded in the campaign's dialing hopper. Refreshes every 5 seconds.</p>
                 )}
@@ -4531,9 +4543,13 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
-            {reportModal === 'hopper'
-              ? <HopperListReportView token={token} embedded campaignId={hopperCampaign} />
-              : <RealtimeMainReportView token={token} user={user} />}
+            {reportModal === 'hopper' && <HopperListReportView token={token} embedded campaignId={hopperCampaign} />}
+            {reportModal === 'realtime' && <RealtimeMainReportView token={token} user={user} />}
+            {reportModal === 'outbound' && <OutboundCallingReportView token={token} onLogout={onLogout} />}
+            {reportModal === 'statuslist' && <CampaignStatusListReportView token={token} onLogout={onLogout} />}
+            {reportModal === 'leadstatuses' && <ListCampaignStatusesReportView token={token} onLogout={onLogout} initialCampaignId={campaign} />}
+            {reportModal === 'callbacks' && <CallbackHoldsReportView token={token} onLogout={onLogout} initialScope="campaign" initialId={campaign} onNavigate={onNavigate} />}
+            {reportModal === 'adminlog' && <AdminChangeLogReportView token={token} onLogout={onLogout} initialSection="CAMPAIGNS" initialRecord={campaign} />}
           </section>
         </div>
       )}
@@ -5642,6 +5658,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [deleting, setDeleting] = useState(false);
   const [dialStatusModal, setDialStatusModal] = useState(false);
   const [sectionModal, setSectionModal] = useState('');
+  // Campaign-scoped tools (Statuses, Hotkeys, Lead Recycle, Pause Codes,
+  // List Mixes) and the lists panel open their edit/create modal STACKED on
+  // top of this one, so closing it lands back on the campaign instead of
+  // replacing it. One level deep only — the nested modal switches normally.
+  const [subAction, setSubAction] = useState(null);
+  const stackAction = (entity, subMode, row = null) => setSubAction({ entity, mode: subMode, row });
   const mode = action.mode || 'create';
   const fields = actionFields(action.entity, mode, admin, form, user);
   const label = entityLabel(action.entity);
@@ -5672,6 +5694,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   useEffect(() => {
     setForm({ ...actionDefaults(action.entity, admin), ...(action.row || {}), pass: '' });
     setError('');
+    setSubAction(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action]);
 
@@ -5847,7 +5870,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             admin={admin}
             campaignId={form.campaign_id}
             user={user}
-            onAction={onSwitchAction}
+            onAction={stackAction}
           />
         )}
 
@@ -6008,7 +6031,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             campaignId={form.campaign_id}
             user={user}
             token={token}
-            onSwitchAction={onSwitchAction}
+            onSwitchAction={stackAction}
             onLogout={onLogout}
           />
         )}
@@ -6061,6 +6084,19 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
               dial_statuses: next.length ? `${next.join(' ')} -` : '',
             }))}
             onClose={() => setDialStatusModal(false)}
+          />
+        )}
+        {subAction && (
+          <ActionModal
+            action={subAction}
+            admin={admin}
+            token={token}
+            user={user}
+            onClose={() => setSubAction(null)}
+            onSaved={onSaved}
+            onLogout={onLogout}
+            onSwitchAction={onSwitchAction}
+            onNavigate={onNavigate}
           />
         )}
       </section>

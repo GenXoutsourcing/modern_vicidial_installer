@@ -753,6 +753,12 @@ body {
   width: min(1280px, 100%);
 }
 
+/* Report views rendered inside a stacked pill modal: the modal head already
+   names the report, so the page's own hero banner is redundant there. */
+.report-modal .report-hero {
+  display: none;
+}
+
 .campaign-tool-panel {
   display: grid;
   gap: 12px;
