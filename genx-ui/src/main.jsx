@@ -2155,6 +2155,14 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     return [
       { section: 'Basic Campaign' },
       ...basicFields.map((field) => ({ ...field, disabled: field.key === 'campaign_id' || field.disabled })),
+      // Moved up from the dissolved 'Recording, Scripts, and Forms' section
+      // (Steve 2026-07-12).
+      recordingField('campaign_rec_filename', 'Recording Filename', form?.campaign_rec_filename),
+      { key: 'campaign_script', label: 'Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+      { key: 'campaign_script_two', label: 'Second Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
+      { key: 'user_group_script', label: 'User Group Script Override', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
+      { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
+      { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
       { section: 'Dialing and Hopper' },
       // Dial statuses are managed through the Manage Dial Statuses modal
       // (toggle grid, applies immediately) — the legacy one-at-a-time
@@ -2211,17 +2219,13 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'ivr_park_call_agi', label: 'Park IVR AGI' },
       { key: 'omit_phone_code', label: 'Omit Phone Code', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'agent_pause_codes_active', label: 'Pause Codes Active', type: 'select', options: enumOptions(['Y', 'N', 'FORCE']) },
-      { section: 'Recording, Scripts, and Forms' },
+      // 'Recording, Scripts, and Forms' dissolved (Steve 2026-07-12): the
+      // recording/script/form fields moved up to Basic Campaign, the
+      // routing/VM trio below moved here.
+      { section: 'AMD and Voicemail Routing' },
       { key: 'campaign_vdad_exten', label: 'Routing Extension' },
-      recordingField('campaign_rec_filename', 'Recording Filename', form?.campaign_rec_filename),
-      { key: 'campaign_script', label: 'Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
-      { key: 'campaign_script_two', label: 'Second Script', type: scriptOptions.length ? 'select' : 'text', options: scriptOptions },
-      { key: 'user_group_script', label: 'User Group Script Override', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
-      { key: 'clear_form', label: 'Clear Form Tab', type: 'select', options: enumOptions(['DISABLED', 'ENABLED', 'ACKNOWLEDGE']) },
-      { key: 'get_call_launch', label: 'Call Launch', type: 'select', options: enumOptions(['NONE', 'SCRIPT', 'SCRIPTTWO', 'WEBFORM', 'WEBFORMTWO', 'WEBFORMTHREE', 'FORM', 'PREVIEW_WEBFORM', 'PREVIEW_WEBFORMTWO', 'PREVIEW_WEBFORMTHREE', 'PREVIEW_SCRIPT', 'PREVIEW_SCRIPTTWO', 'PREVIEW_FORM']) },
       audioField('am_message_exten', 'Answering Machine Message', form?.am_message_exten),
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
-      { section: 'AMD and Voicemail Routing' },
       { key: 'amd_type', label: 'AMD Type', type: 'select', options: enumOptions(['AMD', 'CPD', 'KHOMP', 'ViciAMD']) },
       { key: 'amd_send_to_vmx', label: 'AMD Send to Action', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'amd_agent_route_options', label: 'AMD Agent Route Options', type: 'select', options: enumOptions(['ENABLED', 'PENDING', 'DISABLED']) },
@@ -2234,11 +2238,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'timer_action_message', label: 'Timer Message' },
       { key: 'timer_action_seconds', label: 'Timer Seconds', type: 'number' },
       { key: 'timer_action_destination', label: 'Timer Destination' },
-      { key: 'web_form_target', label: 'Web Form Target' },
-      // Webform/call URLs moved to the Connections strip's "Webform URLs"
-      // and "Call URLs" pill modals — the values still live in form state
-      // (campaignPayload saves them on the main Save) but aren't rendered
-      // as form fields here.
+      // Webform/call URLs AND web_form_target moved to the Connections
+      // strip's "Webform URLs" and "Call URLs" pill modals — the values
+      // still live in form state (campaignPayload saves them on the main
+      // Save) but aren't rendered as form fields here.
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -4073,10 +4076,13 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
 const CAMPAIGN_URL_MODALS = {
   webform: {
     title: 'Webform URLs',
+    // 4th element 'text' = single-line input (web_form_target is a browser
+    // target name like _blank, varchar(100), not a URL).
     fields: [
       ['web_form_address', 'Web Form URL'],
       ['web_form_address_two', 'Web Form URL 2'],
       ['web_form_address_three', 'Web Form URL 3'],
+      ['web_form_target', 'Web Form Target', null, 'text'],
     ],
   },
   callurls: {
@@ -4282,7 +4288,7 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
         </div>
         <div className="entity-form">
           <div className="field-grid">
-            {config.fields.map(([key, label, urlType]) => {
+            {config.fields.map(([key, label, urlType, inputType]) => {
               // In ALT mode the single-URL box disappears entirely — only the
               // alternate-URL manager shows, so there's no confusion about
               // which one the dialer uses. "Turn ALT Off" clears the field
@@ -4293,10 +4299,18 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
                   {!isAlt && (
                     <label className="wide-field">
                       <span>{label}</span>
-                      <textarea
-                        value={values[key]}
-                        onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
-                      />
+                      {inputType === 'text' ? (
+                        <input
+                          type="text"
+                          value={values[key]}
+                          onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                        />
+                      ) : (
+                        <textarea
+                          value={values[key]}
+                          onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}
+                        />
+                      )}
                     </label>
                   )}
                   {!isAlt && urlType && (

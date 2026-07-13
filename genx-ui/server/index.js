@@ -3450,6 +3450,9 @@ async function deleteUrlMulti(req, res) {
 const CAMPAIGN_URL_FIELDS = [
   'web_form_address', 'web_form_address_two', 'web_form_address_three',
   'start_call_url', 'dispo_call_url', 'na_call_url',
+  // Browser target for the web-form links (varchar(100), not a URL) —
+  // edited in the same Webform URLs pill modal.
+  'web_form_target',
 ];
 async function saveCampaignUrls(req, res) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
@@ -3462,7 +3465,7 @@ async function saveCampaignUrls(req, res) {
   if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
   const payload = {};
   for (const field of CAMPAIGN_URL_FIELDS) {
-    if (req.body?.[field] !== undefined) payload[field] = cleanText(req.body[field], 2000);
+    if (req.body?.[field] !== undefined) payload[field] = cleanText(req.body[field], field === 'web_form_target' ? 100 : 2000);
   }
   if (!Object.keys(payload).length) return badRequest(res, 'no_url_fields');
   const { assignments, values } = dynamicAssignments(payload);
