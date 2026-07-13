@@ -2183,9 +2183,9 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'call_count_limit_restrict', label: 'Call Count Limit Manual Restrict', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'RESTRICT_ALL'], form?.call_count_limit_restrict)) },
       { key: 'reset_hopper', label: 'Force Reset of Hopper', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'auto_alt_dial', label: 'Auto Alt Dial', type: 'select', options: enumOptions(['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD']) },
-      // Read-only chip list + "Manage Auto Alt Statuses" pill (renderField
-      // wires the button) — the free-text box is gone.
-      { key: 'auto_alt_dial_statuses', label: 'Auto Alt Statuses', type: 'statusList', statuses: parseStatusListText(form?.auto_alt_dial_statuses), emptyLabel: 'No auto-alt statuses selected', wide: true },
+      // auto_alt_dial_statuses is edited via the Connections strip's
+      // "Auto Alt Statuses" pill (CampaignStatusPickerModal) — value stays
+      // in form state.
       { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
       { key: 'default_xfer_group', label: 'Default Xfer Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
       { key: 'drop_inbound_group', label: 'Drop Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
@@ -2211,19 +2211,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'ivr_park_call_agi', label: 'Park IVR AGI' },
       { key: 'omit_phone_code', label: 'Omit Phone Code', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'agent_pause_codes_active', label: 'Pause Codes Active', type: 'select', options: enumOptions(['Y', 'N', 'FORCE']) },
-      // 'Recording, Scripts, and Forms' dissolved (Steve 2026-07-12): the
-      // recording/script/form fields moved up to Basic Campaign, the
-      // routing/VM trio below moved here.
-      { section: 'AMD and Voicemail Routing' },
-      { key: 'campaign_vdad_exten', label: 'Routing Extension' },
-      audioField('am_message_exten', 'Answering Machine Message', form?.am_message_exten),
+      // AMD fields moved to the Connections strip's "AMD" pill modal
+      // (Steve 2026-07-12); only the voicemail/timer knobs remain inline.
+      { section: 'Voicemail Routing' },
       { key: 'vmm_daily_limit', label: 'Voicemail Message Daily Limit', type: 'number' },
-      { key: 'amd_type', label: 'AMD Type', type: 'select', options: enumOptions(['AMD', 'CPD', 'KHOMP', 'ViciAMD']) },
-      { key: 'amd_send_to_vmx', label: 'AMD Send to Action', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'amd_agent_route_options', label: 'AMD Agent Route Options', type: 'select', options: enumOptions(['ENABLED', 'PENDING', 'DISABLED']) },
-      { key: 'amd_status_map', label: 'AMD Status Map', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'Default_AMD_status_map'], form?.amd_status_map)) },
-      { key: 'amd_inbound_group', label: 'AMD Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
-      { key: 'amd_callmenu', label: 'AMD Call Menu', type: callMenuNoneOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuNoneOptions, form?.amd_callmenu) },
       { key: 'leave_vm_message_group_id', label: 'VM Message Group', type: 'select', options: enumOptions(ensureOption(['---NONE---'], form?.leave_vm_message_group_id)) },
       { key: 'leave_vm_no_dispo', label: 'Leave VM No Dispo', type: 'select', options: enumOptions(ENABLED_DISABLED_OPTIONS) },
       { key: 'timer_action', label: 'Timer Action', type: 'select', options: enumOptions(ensureOption(TIMER_ACTION_OPTIONS, form?.timer_action)) },
@@ -2245,6 +2236,18 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
+      { section: 'CRM' },
+      { key: 'crm_popup_login', label: 'CRM Popup Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'crm_login_address', label: 'CRM Popup Address', wide: true },
+      { section: 'AMD' },
+      { key: 'campaign_vdad_exten', label: 'Routing Extension' },
+      audioField('am_message_exten', 'Answering Machine Message', form?.am_message_exten),
+      { key: 'amd_type', label: 'AMD Type', type: 'select', options: enumOptions(['AMD', 'CPD', 'KHOMP', 'ViciAMD']) },
+      { key: 'amd_send_to_vmx', label: 'AMD Send to Action', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'amd_agent_route_options', label: 'AMD Agent Route Options', type: 'select', options: enumOptions(['ENABLED', 'PENDING', 'DISABLED']) },
+      { key: 'amd_status_map', label: 'AMD Status Map', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'Default_AMD_status_map'], form?.amd_status_map)) },
+      { key: 'amd_inbound_group', label: 'AMD Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
+      { key: 'amd_callmenu', label: 'AMD Call Menu', type: callMenuNoneOptions.length ? 'select' : 'text', options: withCurrentOption(callMenuNoneOptions, form?.amd_callmenu) },
       { section: 'Transfers and 3-Way Calls' },
       { key: 'xferconf_a_dtmf', label: 'Transfer-Conf DTMF 1' },
       { key: 'xferconf_a_number', label: 'Transfer-Conf Number 1' },
@@ -2272,6 +2275,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'leave_3way_start_recording_exception', label: 'Leave 3-Way Start Recording Exception', type: 'select', options: enumOptions(ensureOption(['DISABLED'], form?.leave_3way_start_recording_exception)) },
       { key: 'leave_3way_stop_recording', label: 'Leave 3-Way Stop Recording', type: 'select', options: enumOptions(['DISABLED', 'ALL_CALLS']) },
       { key: 'hangup_xfer_record_start', label: 'Hangup Xfer Recording Start', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'agent_xfer_validation', label: 'Transfer In-Group Validation', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+      { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
       { section: 'Lead Control and Callbacks' },
       { key: 'lead_filter_id', label: 'Lead Filter', type: leadFilterOptions.length ? 'select' : 'text', options: leadFilterOptions },
       { key: 'list_order_mix', label: 'List Mix', type: 'select', options: withCurrentOption([{ value: 'DISABLED', label: 'DISABLED' }, ...(admin?.lookups?.listMixes || []).filter((item) => String(item.campaign_id || '') === String(form?.campaign_id || '')).map((item) => ({ value: String(item.vcl_id || ''), label: `${item.vcl_id} - ${item.vcl_name || item.status || ''}` }))], form?.list_order_mix) },
@@ -2404,14 +2409,10 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'call_log_days', label: 'Call Log Days', type: 'number' },
       { key: 'hangup_again_link', label: 'Hangup Again Link', type: 'select', options: enumOptions(['ENABLED', 'DISABLED']) },
       { key: 'agent_allow_group_alias', label: 'Group Alias Allowed', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'crm_popup_login', label: 'CRM Popup Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'crm_login_address', label: 'CRM Popup Address', wide: true },
       { key: 'extension_appended_cidname', label: 'Extension Append CID', type: 'select', options: enumOptions(['Y', 'N', 'Y_USER', 'Y_WITH_CAMPAIGN', 'Y_USER_WITH_CAMPAIGN']) },
       { key: 'blind_monitor_warning', label: 'Blind Monitor Warning', type: 'select', options: enumOptions(['DISABLED', 'ALERT', 'NOTICE', 'AUDIO', 'ALERT_NOTICE', 'ALERT_AUDIO', 'NOTICE_AUDIO', 'ALL']) },
       { key: 'blind_monitor_message', label: 'Blind Monitor Notice' },
       audioField('blind_monitor_filename', 'Blind Monitor Filename', form?.blind_monitor_filename),
-      { key: 'agent_xfer_validation', label: 'Transfer In-Group Validation', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
-      { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
       // custom_one..custom_five removed from the Detail form (Steve
       // 2026-07-12) — values stay in form state so Save resends unchanged.
     ];
@@ -5805,7 +5806,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // modal (opened from the Connections strip). The fields keep editing the
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
-  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance'] : [];
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD'] : [];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
@@ -5942,12 +5943,6 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
               <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
                 <SlidersHorizontal size={14} aria-hidden="true" />
                 Manage Dial Statuses
-              </button>
-            )}
-            {field.key === 'auto_alt_dial_statuses' && action.entity === 'campaigns' && (
-              <button type="button" className="row-action" onClick={() => setAutoAltModal(true)}>
-                <SlidersHorizontal size={14} aria-hidden="true" />
-                Manage Auto Alt Statuses
               </button>
             )}
           </div>
@@ -6141,10 +6136,15 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             basic={!isDetail}
             urls={form}
             onUrlsSaved={(next) => setForm((current) => ({ ...current, ...next }))}
-            extraActions={PILL_SECTIONS.map((title) => ({
-              label: title.replace(' and ', ' & '),
-              onClick: () => setSectionModal(title),
-            }))}
+            extraActions={[
+              ...PILL_SECTIONS.map((title) => ({
+                label: title.replace(' and ', ' & '),
+                onClick: () => setSectionModal(title),
+              })),
+              // Not a field section — this pill opens the status toggle
+              // picker (CampaignStatusPickerModal) directly.
+              ...(isDetail ? [{ label: 'Auto Alt Statuses', onClick: () => setAutoAltModal(true) }] : []),
+            ]}
           />
         )}
 
