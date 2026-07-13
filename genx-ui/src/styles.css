@@ -932,6 +932,37 @@ body {
   background: rgba(5, 15, 27, 0.58);
 }
 
+/* Count-only campaign tool tiles: the whole card is a button that opens the
+   stacked manager modal for that tool (list + add/delete). */
+.tool-count-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 92px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+
+.tool-count-card span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.tool-count-card strong {
+  color: var(--blue);
+  font-size: 1.7rem;
+}
+
+.tool-count-card:hover {
+  border-color: var(--blue);
+}
+
 .campaign-tool-card-head {
   display: flex;
   align-items: baseline;

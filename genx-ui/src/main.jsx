@@ -3932,6 +3932,10 @@ function ApiKeysPanel({ userId, token, onLogout }) {
 
 function CampaignScopedTools({ admin, campaignId, user, onAction }) {
   const campaign = String(campaignId || '');
+  // Cards show counts only; clicking one opens a stacked manager modal
+  // listing the entries (click = edit/delete via nested ActionModal) with
+  // the Add button. Closing anything lands back on the campaign Detail.
+  const [toolModal, setToolModal] = useState('');
   const rowsForCampaign = (rows) => (rows || []).filter((row) => String(row.campaign_id || '') === campaign);
   const statusNameMap = new Map([
     ...(admin?.lookups?.statuses || []),
@@ -3989,38 +3993,61 @@ function CampaignScopedTools({ admin, campaignId, user, onAction }) {
         <SlidersHorizontal size={20} aria-hidden="true" />
       </div>
       <div className="campaign-tool-grid">
-        {tools.map((tool) => {
-          const canManage = userCan(user, tool.entity);
-          return (
-            <section className="campaign-tool-card" key={tool.entity}>
-              <div className="campaign-tool-card-head">
-                <span>{tool.title}</span>
-                <strong>{formatNumber(tool.rows.length)}</strong>
-              </div>
-              <div className="campaign-tool-list">
-                {tool.rows.slice(0, 8).map((row) => (
-                  <button
-                    type="button"
-                    className="tool-picker-item"
-                    key={`${tool.entity}-${tool.key(row)}`}
-                    onClick={() => canManage && openTool(tool.entity, 'edit', row)}
-                    disabled={!canManage}
-                  >
-                    {tool.label(row)}
-                  </button>
-                ))}
-                {!tool.rows.length && <em>None configured</em>}
-              </div>
-              {canManage && (
-                <button type="button" className="row-action tool-add-action" onClick={() => openTool(tool.entity, 'create')}>
-                  <Plus size={15} aria-hidden="true" />
-                  Add
-                </button>
-              )}
-            </section>
-          );
-        })}
+        {tools.map((tool) => (
+          <button
+            type="button"
+            className="campaign-tool-card tool-count-card"
+            key={tool.entity}
+            onClick={() => setToolModal(tool.entity)}
+          >
+            <span>{tool.title}</span>
+            <strong>{formatNumber(tool.rows.length)}</strong>
+          </button>
+        ))}
       </div>
+      {tools.filter((tool) => tool.entity === toolModal).map((tool) => {
+        const canManage = userCan(user, tool.entity);
+        return (
+          <div className="modal-backdrop" role="presentation" key={tool.entity} {...backdropCloseProps(() => setToolModal(''))}>
+            <section className="modal-panel" role="dialog" aria-modal="true" aria-label={tool.title}>
+              <div className="modal-head">
+                <div>
+                  <p className="eyebrow">Campaign {campaign}</p>
+                  <h2>{tool.title}</h2>
+                </div>
+                <button type="button" className="icon-button" onClick={() => setToolModal('')} aria-label="Close" title="Close">
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="entity-form">
+                <div className="campaign-tool-list">
+                  {tool.rows.map((row) => (
+                    <button
+                      type="button"
+                      className="tool-picker-item"
+                      key={`${tool.entity}-${tool.key(row)}`}
+                      onClick={() => canManage && openTool(tool.entity, 'edit', row)}
+                      disabled={!canManage}
+                    >
+                      {tool.label(row)}
+                    </button>
+                  ))}
+                  {!tool.rows.length && <em>None configured</em>}
+                </div>
+                {canManage && (
+                  <div className="modal-actions">
+                    <span className="modal-actions-spacer" />
+                    <button type="button" className="primary-action" onClick={() => openTool(tool.entity, 'create')}>
+                      <Plus size={17} aria-hidden="true" />
+                      Add {entityLabel(tool.entity)}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        );
+      })}
     </div>
   );
 }
