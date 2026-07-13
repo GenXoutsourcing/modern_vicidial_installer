@@ -984,16 +984,22 @@ ON DUPLICATE KEY UPDATE
     campaign_description=VALUES(campaign_description),
     campaign_changedate=NOW();
 
-INSERT IGNORE INTO vicidial_pause_codes
+-- vicidial_pause_codes has no unique key (only a campaign_id index), so
+-- INSERT IGNORE cannot dedupe across the three defaults passes — guard the
+-- whole seed on the campaign having no pause codes yet (found tripled on
+-- the fresh cluster rebuild, same family as the user-groups dupes).
+INSERT INTO vicidial_pause_codes
     (pause_code, pause_code_name, billable, campaign_id, time_limit, require_mgr_approval)
-VALUES
-    ('BREAK','Break','NO','TESTCAMP',0,'NO'),
-    ('LUNCH','Lunch','NO','TESTCAMP',0,'NO'),
-    ('MTG','Meeting','NO','TESTCAMP',0,'NO'),
-    ('TRAIN','Training','NO','TESTCAMP',0,'NO'),
-    ('COACH','Coaching','NO','TESTCAMP',0,'NO'),
-    ('TECH','Technical Issue','NO','TESTCAMP',0,'NO'),
-    ('RR','Restroom','NO','TESTCAMP',0,'NO');
+SELECT t.* FROM (
+    SELECT 'BREAK' pc,'Break' pn,'NO' b,'TESTCAMP' c,0 tl,'NO' r UNION ALL
+    SELECT 'LUNCH','Lunch','NO','TESTCAMP',0,'NO' UNION ALL
+    SELECT 'MTG','Meeting','NO','TESTCAMP',0,'NO' UNION ALL
+    SELECT 'TRAIN','Training','NO','TESTCAMP',0,'NO' UNION ALL
+    SELECT 'COACH','Coaching','NO','TESTCAMP',0,'NO' UNION ALL
+    SELECT 'TECH','Technical Issue','NO','TESTCAMP',0,'NO' UNION ALL
+    SELECT 'RR','Restroom','NO','TESTCAMP',0,'NO'
+) t
+WHERE NOT EXISTS (SELECT 1 FROM vicidial_pause_codes WHERE campaign_id='TESTCAMP');
 
 INSERT INTO vicidial_conf_templates
     (template_id, template_name, user_group, template_contents)
