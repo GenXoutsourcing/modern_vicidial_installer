@@ -1,0 +1,85 @@
+// Refreshes the /genxguide/ screenshots (genx-ui/guide/img/*.jpg).
+// Runs headless on the admin web box itself — the cluster firewall blocks
+// outside browsers, and the guide is written for the ADMIN floor-manager
+// role, so capture as the standing 7777 test account.
+//
+// One-time setup on the box:
+//   mkdir -p /root/uiguide && cd /root/uiguide && npm init -y >/dev/null \
+//     && npm i playwright >/dev/null \
+//     && npx playwright install --with-deps chromium
+// Run:
+//   GENX_PASS='<7777 password>' node guide-capture.mjs
+// Output lands in ./out; copy into the repo's genx-ui/guide/img/ and deploy.
+import { chromium } from 'playwright';
+import fs from 'fs';
+
+const BASE = process.env.GENX_URL || 'https://admin.viciboxclone.genxcontactcenter.com/genx/';
+const USER = process.env.GENX_USER || '7777';
+const PASS = process.env.GENX_PASS;
+if (!PASS) { console.error('GENX_PASS is required'); process.exit(1); }
+fs.mkdirSync('out', { recursive: true });
+
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1500, height: 900 }, ignoreHTTPSErrors: true });
+
+const shot = (name) => page.screenshot({ path: `out/${name}.jpg`, type: 'jpeg', quality: 82, fullPage: true });
+const settle = async (ms = 1200) => {
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(ms);
+};
+const view = async (hash, name, ms) => {
+  await page.evaluate((h) => { window.location.hash = h; }, hash);
+  await settle(ms);
+  await shot(name);
+};
+const tryClick = async (selector) => {
+  try {
+    await page.locator(selector).first().click({ timeout: 4000 });
+    await settle();
+    return true;
+  } catch { return false; }
+};
+// Modal close: Escape works app-wide (backdropCloseProps handles the rest).
+const closeModal = async () => { await page.keyboard.press('Escape'); await settle(600); };
+
+await page.goto(BASE, { waitUntil: 'networkidle' });
+await settle(800);
+await shot('01-login');
+await page.fill('#vicidial-user', USER);
+await page.fill('#vicidial-password', PASS);
+await page.click('button.primary-action');
+await settle(3000);
+await shot('02-command');
+
+await view('/users', '03-users');
+if (await tryClick('table button:has-text("Manage")') || await tryClick('table button:has-text("Edit")')) {
+  await shot('04-user-edit');
+  await closeModal();
+}
+await view('/remoteAgents', '05-remote-agents');
+await view('/campaigns', '06-campaigns');
+if (await tryClick('button:has-text("Basic")')) {
+  await shot('07-campaign-basic');
+  await closeModal();
+}
+await view('/callTimes', '09-call-times');
+await view('/scripts', '10-scripts');
+await view('/leadFilters', '11-filters');
+await view('/lists', '12-lists', 2000);
+await view('/leadSearch', '14-lead-search');
+await view('/leadLoader', '15-lead-loader');
+await view('/dnc', '16-dnc');
+await view('/dropLists', '17-drop-lists');
+await view('/inbound', '18-inbound');
+if (await tryClick('button:has-text("Manage")')) {
+  await shot('19-ingroup-edit');
+  await closeModal();
+}
+await view('/dids', '20-dids');
+await view('/callMenus', '21-call-menus');
+await view('/filterPhoneGroups', '22-filter-groups');
+await view('/reports', '23-reports');
+await view('/recordings', '24-recordings', 2000);
+
+await browser.close();
+console.log(`done: ${fs.readdirSync('out').length} screenshots in ./out`);
