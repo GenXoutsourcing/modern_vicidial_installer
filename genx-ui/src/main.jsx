@@ -5282,7 +5282,7 @@ function InboundGroupConnections({ admin, groupId, user, token, onLogout, onSwit
       <div className="rank-grids">
         {referenceLists.map(([title, items, label]) => (
           <div className="connection-lists" key={title}>
-            <p className="connection-summary">{title}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            <p className="connection-summary">{title}{items.length ? '' : ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
             ))}
@@ -5348,7 +5348,7 @@ function ScriptConnections({ scriptId, scriptText, token, onLogout, onNavigate }
       <div className="rank-grids">
         {referenceLists.map(([title, items, label]) => (
           <div className="connection-lists" key={title}>
-            <p className="connection-summary">{title}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            <p className="connection-summary">{title}{items.length ? '' : ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${title}-${index}`}>{label(row)}</span>
             ))}
@@ -5392,7 +5392,7 @@ function ReferencePanel({ title, lists, legacyLinks, actions }) {
       <div className="rank-grids">
         {lists.map(([listTitle, items, label]) => (
           <div className="connection-lists" key={listTitle}>
-            <p className="connection-summary">{listTitle}{items.length ? ` (${formatNumber(items.length)})` : ': none'}</p>
+            <p className="connection-summary">{listTitle}{items.length ? '' : ': none'}</p>
             {items.slice(0, 8).map((row, index) => (
               <span className="connection-status" key={`${listTitle}-${index}`}>{label(row)}</span>
             ))}
@@ -7613,7 +7613,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {results && !detail && (
-        <Panel eyebrow="Results" title={`Leads Found (${formatNumber(results.length)})`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Results" title={`Leads Found`} icon={Database} className="admin-wide-panel">
           <DataTable
             emptyLabel="No leads matched the search in your allowed lists"
             rows={results.map((row) => ({ ...row, id: row.lead_id }))}
@@ -7700,7 +7700,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
             </form>
           </Panel>
           {custom && (custom.fields || []).length > 0 && (
-            <Panel eyebrow={`custom_${custom.listId}`} title={`Custom Fields (${formatNumber(custom.fields.length)})`} icon={SlidersHorizontal} className="admin-wide-panel">
+            <Panel eyebrow={`custom_${custom.listId}`} title={`Custom Fields`} icon={SlidersHorizontal} className="admin-wide-panel">
               <form
                 className="entity-form"
                 onSubmit={async (event) => {
@@ -7744,7 +7744,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               </form>
             </Panel>
           )}
-          <Panel eyebrow="History" title={`Calls (${formatNumber((detail.calls || []).length)})`} icon={PhoneCall} className="admin-wide-panel">
+          <Panel eyebrow="History" title={`Calls`} icon={PhoneCall} className="admin-wide-panel">
             <DataTable
               emptyLabel="No calls logged for this lead"
               rows={(detail.calls || []).map((row, index) => ({ ...row, id: `${row.log_table}-${row.log_id}-${index}` }))}
@@ -7788,7 +7788,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="History" title={`Callbacks (${formatNumber((detail.callbacks || []).length)})`} icon={Clock3} className="admin-wide-panel">
+          <Panel eyebrow="History" title={`Callbacks`} icon={Clock3} className="admin-wide-panel">
             <DataTable
               emptyLabel="No callback records for this lead"
               rows={(detail.callbacks || []).map((row) => ({ ...row, id: row.callback_id }))}
@@ -7803,7 +7803,7 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="History" title={`Recordings (${formatNumber((detail.recordings || []).length)})`} icon={Activity} className="admin-wide-panel">
+          <Panel eyebrow="History" title={`Recordings`} icon={Activity} className="admin-wide-panel">
             <DataTable
               emptyLabel="No recordings for this lead"
               rows={(detail.recordings || []).map((row) => ({ ...row, id: row.recording_id }))}
@@ -8151,7 +8151,7 @@ function PhonesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Aliases"
-          title={`Phone Aliases (${formatNumber((admin?.phoneAliases || []).length)})`}
+          title={`Phone Aliases`}
           icon={PhoneCall}
           headerActions={canManage ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('phoneAliases', 'create')}>
@@ -8172,7 +8172,7 @@ function PhonesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Aliases"
-          title={`Group Aliases (${formatNumber((admin?.groupAliases || []).length)})`}
+          title={`Group Aliases`}
           icon={PhoneCall}
           headerActions={canManage ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('groupAliases', 'create')}>
@@ -8345,7 +8345,7 @@ function CallTimesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Schedule"
-          title={`State Call Times (${formatNumber((admin?.stateCallTimes || []).length)})`}
+          title={`State Call Times`}
           icon={Timer}
           headerActions={userCan(user, 'stateCallTimes') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('stateCallTimes', 'create')}>
@@ -8367,7 +8367,7 @@ function CallTimesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Schedule"
-          title={`Holidays (${formatNumber((admin?.holidays || []).length)})`}
+          title={`Holidays`}
           icon={CalendarDays}
           headerActions={userCan(user, 'holidays') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('holidays', 'create')}>
@@ -8538,7 +8538,7 @@ function StatusesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Grouping"
-          title={`Status Groups (${formatNumber((admin?.statusGroups || []).length)})`}
+          title={`Status Groups`}
           icon={Gauge}
           headerActions={userCan(user, 'statusGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusGroups', 'create')}>
@@ -8559,7 +8559,7 @@ function StatusesView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Grouping"
-          title={`Status Categories (${formatNumber((admin?.statusCategories || []).length)})`}
+          title={`Status Categories`}
           icon={Gauge}
           headerActions={userCan(user, 'statusCategories') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('statusCategories', 'create')}>
@@ -9315,7 +9315,7 @@ function RealtimeMainReportView({ token, user }) {
       </section>
       {error && <p className="form-error">{error}</p>}
       <section className="admin-grid">
-        <Panel eyebrow="Live" title={`Live Agents (${formatNumber(agents.length)})`} icon={Headphones} className="admin-wide-panel">
+        <Panel eyebrow="Live" title={`Live Agents`} icon={Headphones} className="admin-wide-panel">
           {canMonitor && (
             <div className="connection-actions">
               <label className="connection-summary" style={{ display: 'flex', alignItems: 'center', gap: '0.5em' }}>
@@ -9561,7 +9561,7 @@ function AgentMonitorLogReportView({ token }) {
       {entries && (
         <Panel
           eyebrow="Results"
-          title={`Monitor Sessions (${formatNumber(entries.length)})`}
+          title={`Monitor Sessions`}
           icon={FileText}
           className="admin-wide-panel"
           headerActions={(
@@ -9659,7 +9659,7 @@ function HopperListReportView({ token, initialCampaignId, embedded = false, camp
         </section>
       )}
       {campaignId && entries && (
-        <Panel eyebrow="Results" title={`Hopper Entries (${formatNumber(entries.length)})`} icon={Database} className="admin-wide-panel hopper-table">
+        <Panel eyebrow="Results" title={`Hopper Entries`} icon={Database} className="admin-wide-panel hopper-table">
           <DataTable
             emptyLabel="No leads currently in the hopper for that campaign/status"
             rows={entries.map((row) => ({ ...row, id: row.hopper_id }))}
@@ -9681,7 +9681,7 @@ function DropListsView({ admin, user, onAction }) {
         <p className="action-copy">Scheduled jobs that move dropped/status-matched calls into a callback list for redial.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Lists" title={`Drop Lists (${formatNumber(dropLists.length)})`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Lists" title={`Drop Lists`} icon={Database} className="admin-wide-panel">
           <DataTable
             emptyLabel="No drop lists configured"
             rows={dropLists.map((row) => ({ ...row, id: row.dl_id }))}
@@ -9879,7 +9879,7 @@ function AudioStorePanel({ user }) {
 
   return (
     <>
-      <Panel eyebrow="Audio" title={`Audio Store (${formatNumber(store?.files?.length || 0)})`} icon={Activity} className="admin-wide-panel">
+      <Panel eyebrow="Audio" title={`Audio Store`} icon={Activity} className="admin-wide-panel">
         <p className="connection-summary">
           {notReady
             ? (canEdit ? 'Not initialized yet — open Manage Audio Store to set it up.' : 'Not initialized yet — a level 9 admin can set it up.')
@@ -9897,7 +9897,7 @@ function AudioStorePanel({ user }) {
             <div className="modal-head">
               <div>
                 <p className="eyebrow">Audio</p>
-                <h2>{`Audio Store (${formatNumber(store?.files?.length || 0)})`}</h2>
+                <h2>{`Audio Store`}</h2>
               </div>
               <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close" title="Close">
                 <X size={18} aria-hidden="true" />
@@ -9921,7 +9921,7 @@ function MediaToolsView({ admin, user, onAction }) {
       <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Security"
-          title={`IP Lists (${formatNumber(ipLists.length)})`}
+          title={`IP Lists`}
           icon={ShieldCheck}
           headerActions={userCan(user, 'ipLists') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('ipLists', 'create')}>
@@ -9943,7 +9943,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`CID Groups (${formatNumber(cidGroups.length)})`}
+          title={`CID Groups`}
           icon={PhoneCall}
           headerActions={userCan(user, 'cidGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('cidGroups', 'create')}>
@@ -9965,7 +9965,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`Extension Groups (${formatNumber((admin?.extensionGroups || []).length)})`}
+          title={`Extension Groups`}
           icon={PhoneCall}
           className="admin-wide-panel"
           headerActions={userCan(user, 'extensionGroups') ? (
@@ -9990,7 +9990,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Routing"
-          title={`Queue Groups (${formatNumber((admin?.queueGroups || []).length)})`}
+          title={`Queue Groups`}
           icon={Headphones}
           headerActions={userCan(user, 'queueGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('queueGroups', 'create')}>
@@ -10011,7 +10011,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Directory"
-          title={`Contacts (${formatNumber((admin?.contacts || []).length)})`}
+          title={`Contacts`}
           icon={Users}
           headerActions={userCan(user, 'contacts') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('contacts', 'create')}>
@@ -10033,7 +10033,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Localization"
-          title={`Languages (${formatNumber((admin?.languages || []).length)})`}
+          title={`Languages`}
           icon={FileText}
           headerActions={userCan(user, 'languages') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('languages', 'create')}>
@@ -10054,7 +10054,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Voicemail"
-          title={`Voicemail Boxes (${formatNumber((admin?.voicemailFull || []).length)})`}
+          title={`Voicemail Boxes`}
           icon={Headphones}
           headerActions={userCan(user, 'voicemailBoxes') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('voicemailBoxes', 'create')}>
@@ -10077,7 +10077,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Voicemail"
-          title={`VM Message Groups (${formatNumber((admin?.vmMessageGroups || []).length)})`}
+          title={`VM Message Groups`}
           icon={Headphones}
           headerActions={userCan(user, 'vmMessageGroups') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('vmMessageGroups', 'create')}>
@@ -10098,7 +10098,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Audio"
-          title={`Music On Hold (${formatNumber((admin?.mohFull || []).length)})`}
+          title={`Music On Hold`}
           icon={Radio}
           headerActions={userCan(user, 'moh') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('moh', 'create')}>
@@ -10120,7 +10120,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Audio"
-          title={`TTS Prompts (${formatNumber((admin?.ttsPrompts || []).length)})`}
+          title={`TTS Prompts`}
           icon={FileText}
           headerActions={userCan(user, 'tts') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('tts', 'create')}>
@@ -10142,7 +10142,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Reporting"
-          title={`Automated Reports (${formatNumber((admin?.automatedReports || []).length)})`}
+          title={`Automated Reports`}
           icon={FileText}
           className="admin-wide-panel"
           headerActions={userCan(user, 'automatedReports') ? (
@@ -10167,7 +10167,7 @@ function MediaToolsView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Inbound"
-          title={`Email Accounts (${formatNumber((admin?.emailAccounts || []).length)})`}
+          title={`Email Accounts`}
           icon={Mail}
           className="admin-wide-panel"
           headerActions={userCan(user, 'emailAccounts') ? (
@@ -10287,7 +10287,7 @@ function SystemSettingsView({ user, token, onLogout }) {
       </section>
       <section className="admin-grid media-tools-grid">
         {Array.from(groups.entries()).map(([prefix, columns]) => (
-          <Panel key={prefix} eyebrow="Settings" title={`${prefix} (${columns.length})`} icon={SlidersHorizontal}>
+          <Panel key={prefix} eyebrow="Settings" title={`${prefix}`} icon={SlidersHorizontal}>
             <div className="field-grid">
               {columns.map((column) => {
                 const options = enumMatch(column.type);
@@ -10323,7 +10323,7 @@ function DisplayView({ admin, user, onAction }) {
       <section className="admin-grid media-tools-grid">
         <Panel
           eyebrow="Configuration"
-          title={`Settings Containers (${formatNumber((admin?.settingsContainers || []).length)})`}
+          title={`Settings Containers`}
           icon={Database}
           className="admin-wide-panel"
           headerActions={userCan(user, 'settingsContainers') ? (
@@ -10359,7 +10359,7 @@ function RemoteAgentsView({ admin, user, onAction }) {
         <p className="action-copy">Off-system agents dialed at an external number: ACD calls route out to their phone with no agent screen.</p>
       </ActionBar>
       <section className="admin-grid">
-        <Panel eyebrow="Users" title={`Remote Agents (${formatNumber(remoteAgents.length)})`} icon={Headphones} className="admin-wide-panel">
+        <Panel eyebrow="Users" title={`Remote Agents`} icon={Headphones} className="admin-wide-panel">
           <DataTable
             emptyLabel="No remote agents configured"
             rows={remoteAgents.map((row) => ({ ...row, id: row.remote_agent_id }))}
@@ -10485,7 +10485,7 @@ function ListStatusesReportView({ token, onLogout }) {
             const bucket = perList.get(listId) || { statuses: [], total: 0, rollups: {} };
             const listMeta = lists.find((row) => String(row.list_id) === listId);
             return (
-              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId} (${formatNumber(bucket.total)} leads)`} icon={Database}>
+              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId}`} icon={Database}>
                 <div className="connection-actions">
                   {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
                     <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
@@ -10625,7 +10625,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
       </Panel>
       {lists && selected.length > 0 && (
         <section className="admin-grid media-tools-grid">
-          <Panel eyebrow="Summary" title={`List ID Summary (${formatNumber(totalLeads)} leads)`} icon={Database}>
+          <Panel eyebrow="Summary" title={`List ID Summary`} icon={Database}>
             <DataTable
               emptyLabel="No lists in the selected campaigns"
               rows={lists.map((row) => ({ ...row, id: String(row.list_id) }))}
@@ -10661,7 +10661,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
             const bucket = perList.get(listId);
             const listMeta = (lists || []).find((row) => String(row.list_id) === listId);
             return (
-              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId} (${formatNumber(bucket.total)} leads)`} icon={Database}>
+              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId}`} icon={Database}>
                 <div className="connection-actions">
                   {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
                     <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
@@ -10768,7 +10768,7 @@ function CampaignStatusListReportView({ token, onLogout }) {
                 <Panel
                   key={`${campaign.campaign_id}-${list.list_id}`}
                   eyebrow={`Campaign ${campaign.campaign_id} / List ${list.list_id} (${list.active === 'Y' ? 'ACTIVE' : 'INACTIVE'})`}
-                  title={`${list.list_name || list.list_id} (${formatNumber(totals.calls)} calls)`}
+                  title={`${list.list_name || list.list_id}`}
                   icon={PhoneCall}
                 >
                   <div className="connection-actions">
@@ -11373,7 +11373,7 @@ function LeadSourceReportView({ token, onLogout }) {
               <Panel
                 key={`${campaign.campaign_id}-${source}`}
                 eyebrow={`Campaign ${campaign.campaign_id}`}
-                title={`${groupLabel}: ${source} (${formatNumber(bucket.total)} leads)`}
+                title={`${groupLabel}: ${source}`}
                 icon={Database}
               >
                 <DataTable
@@ -12113,7 +12113,7 @@ function DidDetailReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="Detail" title={`DID Log (${formatNumber(entries.length)} rows${entries.length === 2000 ? ', capped' : ''})`} icon={Database} className="admin-wide-panel">
+        <Panel eyebrow="Detail" title={`DID Log`} icon={Database} className="admin-wide-panel">
           <div className="modal-actions">
             <button
               type="button"
@@ -13379,7 +13379,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
             </div>
           </Panel>
-          <Panel eyebrow="Calls" title={`Outbound (${formatNumber(outTotals.calls)} calls, ${formatSeconds(outTotals.seconds)})`} icon={PhoneCall}>
+          <Panel eyebrow="Calls" title={`Outbound`} icon={PhoneCall}>
             <DataTable
               emptyLabel="No outbound calls in the range"
               rows={(data.outbound || []).map((row) => ({ ...row, id: row.status }))}
@@ -13390,7 +13390,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title={`Inbound (${formatNumber(inTotals.calls)} calls, ${formatSeconds(inTotals.seconds)})`} icon={Headphones}>
+          <Panel eyebrow="Calls" title={`Inbound`} icon={Headphones}>
             <DataTable
               emptyLabel="No inbound calls in the range"
               rows={(data.inbound || []).map((row) => ({ ...row, id: row.status }))}
@@ -13401,7 +13401,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Pauses" title={`Pause Codes (${formatNumber((data.pauses || []).length)})`} icon={Timer}>
+          <Panel eyebrow="Pauses" title={`Pause Codes`} icon={Timer}>
             <DataTable
               emptyLabel="No pause-code segments in the range"
               rows={(data.pauses || []).map((row) => ({ ...row, id: row.sub_status }))}
@@ -13428,7 +13428,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               Range total: {formatSeconds((data.timesheet || []).reduce((acc, row) => acc + Number(row.login_seconds || 0), 0))}
             </p>
           </Panel>
-          <Panel eyebrow="Sessions" title={`Agent Login / Logout Events (${formatNumber((data.loginEvents || []).length)})`} icon={ShieldCheck} className="admin-wide-panel">
+          <Panel eyebrow="Sessions" title={`Agent Login / Logout Events`} icon={ShieldCheck} className="admin-wide-panel">
             <DataTable
               emptyLabel="No agent screen sessions in the range"
               rows={(data.loginEvents || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13443,7 +13443,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Timeclock" title={`Timeclock Events (${formatNumber((data.timeclockRows || []).length)})`} icon={Clock3}>
+          <Panel eyebrow="Timeclock" title={`Timeclock Events`} icon={Clock3}>
             <DataTable
               emptyLabel="No timeclock events in the range"
               rows={(data.timeclockRows || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13456,7 +13456,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title={`Park Log (${formatNumber((data.parks || []).length)})`} icon={PhoneCall}>
+          <Panel eyebrow="Calls" title={`Park Log`} icon={PhoneCall}>
             <DataTable
               emptyLabel="No parked calls in the range"
               rows={(data.parks || []).map((row, index) => ({ ...row, id: `${row.parked_time}-${index}` }))}
@@ -13468,7 +13468,7 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Sessions" title={`In-Group Changes (${formatNumber((data.closerChanges || []).length)})`} icon={Headphones}>
+          <Panel eyebrow="Sessions" title={`In-Group Changes`} icon={Headphones}>
             <DataTable
               emptyLabel="No in-group selection changes in the range"
               rows={(data.closerChanges || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -13762,7 +13762,7 @@ function UserGroupHourlyReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow="Hourly" title={`Agents per Group — ${data.date} (${formatNumber(s.grand)} distinct agents)`} icon={Users} className="admin-wide-panel">
+        <Panel eyebrow="Hourly" title={`Agents per Group — ${data.date}`} icon={Users} className="admin-wide-panel">
           <DataTable
             emptyLabel="No agent activity on this day"
             rows={hours.map((hour) => ({ id: hour, hour }))}
@@ -14130,7 +14130,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Changes" title={`Admin Log (${formatNumber((data?.entries || []).length)} rows)`} icon={ShieldCheck} className="admin-wide-panel">
+      <Panel eyebrow="Changes" title={`Admin Log`} icon={ShieldCheck} className="admin-wide-panel">
         <DataTable
           emptyLabel="No admin changes in the date range"
           rows={(data?.entries || []).map((row) => ({ ...row, id: row.admin_log_id }))}
@@ -14274,7 +14274,7 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Callbacks" title={`Callback Hold Listings (${formatNumber(entries.length)})`} icon={Clock3} className="admin-wide-panel">
+      <Panel eyebrow="Callbacks" title={`Callback Hold Listings`} icon={Clock3} className="admin-wide-panel">
         <DataTable
           emptyLabel={holdId ? 'No ACTIVE or LIVE callbacks for this selection' : 'Pick a scope and ID to list callbacks on hold'}
           rows={entries.map((row) => ({ ...row, id: row.callback_id }))}
@@ -14402,7 +14402,7 @@ function DialLogReportView({ token, onLogout }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Log" title={`Dial Attempts (${formatNumber((data?.entries || []).length)} rows${(data?.entries || []).length === 2000 ? ', capped' : ''})`} icon={Activity} className="admin-wide-panel">
+      <Panel eyebrow="Log" title={`Dial Attempts`} icon={Activity} className="admin-wide-panel">
         <DataTable
           emptyLabel="No dial-log entries in the date range"
           rows={(data?.entries || []).map((row, index) => ({ ...row, id: `${row.caller_code}-${index}` }))}
@@ -14481,7 +14481,7 @@ function TimeclockReportView({ token, onLogout }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="Detail" title={`Events (${formatNumber((data?.entries || []).length)} rows${(data?.entries || []).length === 2000 ? ', capped' : ''})`} icon={History} className="admin-wide-panel">
+      <Panel eyebrow="Detail" title={`Events`} icon={History} className="admin-wide-panel">
         <DataTable
           emptyLabel="No timeclock events in the date range"
           rows={(data?.entries || []).map((row) => ({ ...row, id: row.timeclock_id }))}
@@ -14667,7 +14667,7 @@ function LogReportView({ token, onLogout, config }) {
       {data && config.entriesKey && (
         <Panel
           eyebrow="Log"
-          title={`${config.title} (${formatNumber((data[config.entriesKey] || []).length)} rows${(data[config.entriesKey] || []).length === 2000 ? ', capped' : ''})`}
+          title={`${config.title}`}
           icon={Database}
           className="admin-wide-panel"
         >
@@ -15054,7 +15054,7 @@ function ServerPerformanceReportView({ token, onLogout }) {
               <span className="connection-status">Avg clients: {num(s.summary.avg_clients, 1)} (max {formatNumber(s.summary.max_clients || 0)})</span>
             </div>
           </Panel>
-          <Panel eyebrow="Series" title={`Samples (${formatNumber(s.series.length)} rows${s.series.length === 1000 ? ', capped' : ''})`} icon={Database} className="admin-wide-panel">
+          <Panel eyebrow="Series" title={`Samples`} icon={Database} className="admin-wide-panel">
             <DataTable
               emptyLabel="No performance samples in the date range"
               rows={s.series.map((row, index) => ({ ...row, id: `${row.start_time}-${index}` }))}
@@ -15165,7 +15165,7 @@ function PhoneStatsReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow={`Phone ${s.extension}`} title={`Call Stats (${formatNumber(s.totals.calls)} calls, ${formatSeconds(s.totals.seconds)})`} icon={PhoneCall} className="admin-wide-panel">
+        <Panel eyebrow={`Phone ${s.extension}`} title={`Call Stats`} icon={PhoneCall} className="admin-wide-panel">
           <DataTable
             emptyLabel="No calls for this phone in the date range"
             rows={(s.byGroup || []).map((row) => ({ ...row, id: row.channel_group || 'NONE' }))}
@@ -15252,7 +15252,7 @@ function ProcessReportView({ token, onLogout }) {
         {!((data?.serials || []).length) && <p className="connection-summary">No process log entries recorded yet.</p>}
       </Panel>
       {s && (
-        <Panel eyebrow={`Serial ${s.serialId}`} title={`Runs (${formatNumber(s.stats.runs || 0)}, total ${formatSeconds(s.stats.total_sec || 0)})`} icon={Activity} className="admin-wide-panel">
+        <Panel eyebrow={`Serial ${s.serialId}`} title={`Runs`} icon={Activity} className="admin-wide-panel">
           <DataTable
             emptyLabel="No runs for this serial"
             rows={(s.entries || []).map((row, index) => ({ ...row, id: `${row.run_time}-${index}` }))}
@@ -15353,7 +15353,7 @@ function SphReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="SPH" title={`Agent Sales per Hour (${formatNumber(entries.length)} rows)`} icon={Users} className="admin-wide-panel">
+        <Panel eyebrow="SPH" title={`Agent Sales per Hour`} icon={Users} className="admin-wide-panel">
           <DataTable
             emptyLabel="No SPH rollup rows for the selection (the nightly SPH process may not have run)"
             rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.campaign_group_id}-${index}` }))}
@@ -17457,7 +17457,7 @@ function RecordingsView({ admin, token }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="QA" title={`Transcripts (${formatNumber(transcripts.length)})`} icon={FileText} className="admin-wide-panel">
+      <Panel eyebrow="QA" title={`Transcripts`} icon={FileText} className="admin-wide-panel">
         <form
           className="entity-form report-filter-bar"
           onSubmit={(event) => { event.preventDefault(); loadTranscripts(transcriptQuery.trim()); }}
@@ -17606,7 +17606,7 @@ function SystemView({ admin, user, onAction }) {
         </Panel>
         <Panel
           eyebrow="Telephony"
-          title={`Conf Templates (${formatNumber((admin?.confTemplates || []).length)})`}
+          title={`Conf Templates`}
           icon={FileText}
           headerActions={userCan(user, 'confTemplates') ? (
             <button type="button" className="secondary-action compact-action" onClick={() => onAction('confTemplates', 'create')}>

@@ -1611,7 +1611,11 @@ th,
 td {
   padding: 12px 10px;
   border-bottom: 1px solid rgba(138, 167, 187, 0.16);
-  overflow-wrap: anywhere;
+  /* break-word (not anywhere): long unbroken values (URLs, ids) still
+     split in overflow, but words no longer break mid-word just because
+     a column is narrow — 'anywhere' let columns shrink below word width
+     ("QUEUE S", "massach use"). */
+  overflow-wrap: break-word;
   text-align: left;
   vertical-align: middle;
 }
@@ -1621,6 +1625,7 @@ th {
   font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 td {
