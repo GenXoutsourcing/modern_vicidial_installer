@@ -1099,6 +1099,60 @@ SET vu.phone_login='9176',
     vu.admin_hide_phone_data='0'
 WHERE vu.user='6666';
 MYSQLDEFAULTS
+
+    apply_genx_role_hierarchy
+}
+
+# GenX role hierarchy: SUPERADMIN (GenX technicians, full access), ADMIN
+# (highest client role, group-enforced floor-manager template), SUPERVISORS
+# and QC (reports-only admin views), AGENTS (agent screen only), APIUSERS
+# (external API service accounts). The genx_group_permissions rows drive the
+# GenX UI's nav gating, flag templates, ui_access login routing, and the API
+# group gate; the DDL must stay identical to the CREATE in
+# genx-ui/server/index.js. Everything is INSERT IGNORE / guarded so reruns
+# and upgrades never clobber a site's customized values.
+apply_genx_role_hierarchy() {
+    "${MYSQL[@]}" "$VICIDIAL_DB_NAME" <<'GENXROLES'
+CREATE TABLE IF NOT EXISTS genx_group_permissions (
+  user_group VARCHAR(20) NOT NULL,
+  permission VARCHAR(40) NOT NULL,
+  perm_value TEXT DEFAULT NULL,
+  PRIMARY KEY (user_group, permission)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+CREATE TEMPORARY TABLE tmp_genx_ug AS SELECT * FROM vicidial_user_groups WHERE user_group='ADMIN';
+UPDATE tmp_genx_ug SET user_group='SUPERADMIN', group_name='Super Administrators';
+INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+UPDATE tmp_genx_ug SET user_group='APIUSERS', group_name='API Integration Users';
+INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+UPDATE tmp_genx_ug SET user_group='SUPERVISORS', group_name='Supervisors';
+INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+UPDATE tmp_genx_ug SET user_group='QC', group_name='Quality Control';
+INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+UPDATE tmp_genx_ug SET user_group='AGENTS', group_name='Agents';
+INSERT IGNORE INTO vicidial_user_groups SELECT * FROM tmp_genx_ug;
+DROP TEMPORARY TABLE tmp_genx_ug;
+
+UPDATE vicidial_users SET user_group='SUPERADMIN' WHERE user='6666' AND user_group='ADMIN';
+
+INSERT IGNORE INTO genx_group_permissions (user_group, permission, perm_value) VALUES
+('__GENX__','api_user_group','APIUSERS'),
+('ADMIN','nav_sections','users,campaigns,lists,inbound,reports'),
+('ADMIN','ui_access','admin'),
+('SUPERVISORS','nav_sections','reports'),
+('SUPERVISORS','ui_access','admin'),
+('QC','nav_sections','reports'),
+('QC','ui_access','admin'),
+('AGENTS','nav_sections','reports'),
+('AGENTS','ui_access','agent');
+
+INSERT IGNORE INTO genx_group_permissions (user_group, permission, perm_value) VALUES
+('ADMIN','flag_template','{"vdc_agent_api_access": "1", "delete_campaigns": "0", "delete_lists": "0", "delete_users": "0", "delete_user_groups": "0", "delete_ingroups": "0", "delete_remote_agents": "0", "delete_scripts": "0", "delete_filters": "0", "delete_call_times": "0", "delete_inbound_dids": "0", "delete_from_dnc": "0", "modify_servers": "0", "modify_usergroups": "0", "modify_phones": "0", "ast_delete_phones": "0", "modify_shifts": "0", "modify_carriers": "0", "modify_voicemail": "0", "modify_moh": "0", "modify_tts": "0", "modify_contacts": "0", "modify_languages": "0", "modify_email_accounts": "0", "modify_auto_reports": "0", "modify_audiostore": "0", "modify_ip_lists": "0", "modify_settings_containers": "0", "modify_custom_dialplans": "0", "alter_admin_interface_options": "0", "ast_admin_access": "0", "access_recordings": "1", "load_leads": "1", "campaign_detail": "1"}'),
+('SUPERVISORS','flag_template','{"view_reports":"1","export_reports":"1","access_recordings":"1","vdc_agent_api_access":"1","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}'),
+('QC','flag_template','{"view_reports":"1","export_reports":"1","access_recordings":"1","vdc_agent_api_access":"0","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}'),
+('AGENTS','flag_template','{"view_reports":"0","export_reports":"0","access_recordings":"0","vdc_agent_api_access":"0","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}');
+GENXROLES
+    echo "GenX role hierarchy seeded (SUPERADMIN/ADMIN/SUPERVISORS/QC/AGENTS/APIUSERS)."
 }
 
 ensure_vicibox_tracking_table() {
@@ -2168,8 +2222,14 @@ cat <<CRONTAB >> /root/crontab-file
 #32 0 * * * /usr/share/astguiclient/AST_VDsales_export.pl
 #42 0 * * * /usr/share/astguiclient/AST_sourceID_summary_export.pl
 
-### roll logs monthly on high-volume dialing systems
-30 1 1 * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --DAYS=45
+### log archiving (GenX scheme): nightly 24h archive of dial-side tables,
+### nightly 60-day archive of the rest, weekly 24-month trim+optimize of the
+### _archive tables. GenX reports are archive-aware (rangeSource unions), so
+### the short live windows do not blank any report. Do NOT add --vlog-daily:
+### it breaks legacy default views and GenX reporting on primary+slave.
+30 0 * * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --daily --carrier-daily --quiet
+0 1 * * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --days=60 --quiet
+30 3 * * 0 /usr/share/astguiclient/ADMIN_archive_log_tables.pl --only-trim-archive-level-three --months=24 --quiet
 
 ### cleanup of the scheduled callback records
 25 0 * * * /usr/share/astguiclient/AST_DB_dead_cb_purge.pl --purge-non-cb -q
