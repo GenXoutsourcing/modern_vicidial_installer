@@ -751,8 +751,13 @@ function weekdayText(values) {
 function campaignDialStatuses(row) {
   const statuses = Array.isArray(row?.dial_status_list)
     ? row.dial_status_list
-    : String(row?.dial_statuses || '').replace(/\s+-$/, '').trim().split(/\s+/).filter(Boolean);
+    : parseStatusListText(row?.dial_statuses);
   return [...new Set(statuses.filter(Boolean))];
+}
+
+// Legacy space-separated status list text ("B N NA DC -") -> unique array.
+function parseStatusListText(text) {
+  return [...new Set(String(text || '').replace(/\s+-$/, '').trim().split(/\s+/).filter(Boolean))];
 }
 
 function autoDialLevelOptions(admin, currentValue) {
@@ -2170,14 +2175,16 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'call_count_limit_restrict', label: 'Call Count Limit Manual Restrict', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'RESTRICT_ALL'], form?.call_count_limit_restrict)) },
       { key: 'reset_hopper', label: 'Force Reset of Hopper', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'auto_alt_dial', label: 'Auto Alt Dial', type: 'select', options: enumOptions(['NONE', 'ALT_ONLY', 'ADDR3_ONLY', 'ALT_AND_ADDR3', 'ALT_AND_EXTENDED', 'ALT_AND_ADDR3_AND_EXTENDED', 'EXTENDED_ONLY', 'MULTI_LEAD']) },
-      { key: 'auto_alt_dial_statuses', label: 'Auto Alt Statuses', wide: true },
-      { section: 'Routing and Inbound' },
+      // Read-only chip list + "Manage Auto Alt Statuses" pill (renderField
+      // wires the button) — the free-text box is gone.
+      { key: 'auto_alt_dial_statuses', label: 'Auto Alt Statuses', type: 'statusList', statuses: parseStatusListText(form?.auto_alt_dial_statuses), emptyLabel: 'No auto-alt statuses selected', wide: true },
       { key: 'manual_dial_list_id', label: 'Manual Dial List', type: listOptions.length ? 'select' : 'text', options: listOptions },
       { key: 'default_xfer_group', label: 'Default Xfer Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
-      { key: 'queue_priority', label: 'Queue Priority', type: 'select', options: labeledNumberOptions(99, -99, (value) => `${value} - ${value < 0 ? 'Lower' : value > 0 ? 'Higher' : 'Even'}`, form?.queue_priority) },
-      { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
-      { key: 'drop_action', label: 'Drop Action', type: 'select', options: enumOptions(['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'AUDIO', 'CALLMENU', 'VMAIL_NO_INST']) },
       { key: 'drop_inbound_group', label: 'Drop Inbound Group', type: inboundOptions.length ? 'select' : 'text', options: inboundOptions },
+      { key: 'drop_action', label: 'Drop Action', type: 'select', options: enumOptions(['HANGUP', 'MESSAGE', 'VOICEMAIL', 'IN_GROUP', 'AUDIO', 'CALLMENU', 'VMAIL_NO_INST']) },
+      { key: 'drop_call_seconds', label: 'Drop Seconds', type: 'number' },
+      { section: 'Routing and Inbound' },
+      { key: 'queue_priority', label: 'Queue Priority', type: 'select', options: labeledNumberOptions(99, -99, (value) => `${value} - ${value < 0 ? 'Lower' : value > 0 ? 'Higher' : 'Even'}`, form?.queue_priority) },
       { key: 'inbound_queue_no_dial', label: 'Inbound Queue No Dial', type: 'select', options: enumOptions(ensureOption(INBOUND_QUEUE_NO_DIAL_OPTIONS, form?.inbound_queue_no_dial)) },
       { key: 'inbound_no_agents_no_dial_container', label: 'Inbound No-Agents No-Dial', type: 'select', options: enumOptions(ensureOption(['---DISABLED---'], form?.inbound_no_agents_no_dial_container)) },
       { key: 'inbound_no_agents_no_dial_threshold', label: 'Inbound No-Agents No-Dial Threshold', type: 'number' },
@@ -2399,11 +2406,8 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       audioField('blind_monitor_filename', 'Blind Monitor Filename', form?.blind_monitor_filename),
       { key: 'agent_xfer_validation', label: 'Transfer In-Group Validation', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'ig_xfer_list_sort', label: 'Transfer In-Group Sort Order', type: 'select', options: enumOptions(['GROUP_ID_UP', 'GROUP_ID_DOWN', 'GROUP_NAME_UP', 'GROUP_NAME_DOWN', 'PRIORITY_UP', 'PRIORITY_DOWN']) },
-      { key: 'custom_one', label: 'Custom 1', type: 'textarea', wide: true },
-      { key: 'custom_two', label: 'Custom 2', type: 'textarea', wide: true },
-      { key: 'custom_three', label: 'Custom 3', type: 'textarea', wide: true },
-      { key: 'custom_four', label: 'Custom 4', type: 'textarea', wide: true },
-      { key: 'custom_five', label: 'Custom 5', type: 'textarea', wide: true },
+      // custom_one..custom_five removed from the Detail form (Steve
+      // 2026-07-12) — values stay in form state so Save resends unchanged.
     ];
   }
 
@@ -4425,6 +4429,79 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
   );
 }
 
+// Local-state cousin of CampaignDialStatusModal for status-list campaign
+// FIELDS (Auto Alt Statuses): toggles accumulate in the modal and Save hands
+// the final list back to ActionModal, which persists the whole campaign form
+// without closing the Detail modal underneath. Selected statuses that no
+// longer exist as records are preserved (they stay in the set unseen).
+function CampaignStatusPickerModal({ admin, campaignId, title, description, current, saving, error, onSave, onClose }) {
+  const [selected, setSelected] = useState(() => new Set(current));
+  const excluded = new Set(['INCALL', 'QUEUE', 'CBHOLD']);
+  const entries = [];
+  const seen = new Set();
+  const push = (item, source) => {
+    const value = String(item?.status || '');
+    if (!value || seen.has(value) || excluded.has(value)) return;
+    seen.add(value);
+    entries.push({ status: value, name: item.status_name || source });
+  };
+  (admin?.lookups?.statuses || []).forEach((item) => push(item, 'System'));
+  (admin?.lookups?.campaignStatuses || [])
+    .filter((item) => String(item.campaign_id || '') === String(campaignId || ''))
+    .forEach((item) => push(item, 'Campaign'));
+  entries.sort((a, b) => a.status.localeCompare(b.status));
+
+  const toggle = (status) => setSelected((currentSet) => {
+    const next = new Set(currentSet);
+    if (next.has(status)) next.delete(status);
+    else next.add(status);
+    return next;
+  });
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Campaign {campaignId}</p>
+            <h2>{title}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <p className="connection-summary">{description}</p>
+        {error && <p className="form-error">{error}</p>}
+        <div className="dial-status-grid">
+          {entries.map((entry) => {
+            const active = selected.has(entry.status);
+            return (
+              <div className="list-toggle-row" key={entry.status}>
+                <span className="tool-picker-item dial-status-label">{entry.status} - {entry.name}</span>
+                <button
+                  type="button"
+                  className={active ? 'row-action list-toggle-active' : 'row-action list-toggle-inactive'}
+                  onClick={() => toggle(entry.status)}
+                >
+                  {active ? 'Active' : 'Inactive'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="modal-actions">
+          <span className="modal-actions-spacer" />
+          <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+          <button type="button" className="primary-action" disabled={saving} onClick={() => onSave([...selected])}>
+            <Save size={18} aria-hidden="true" />
+            {saving ? 'Saving' : 'Save'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
 const REPORT_MODAL_TITLES = {
@@ -5691,6 +5768,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [dialStatusModal, setDialStatusModal] = useState(false);
+  const [autoAltModal, setAutoAltModal] = useState(false);
+  const [savedNote, setSavedNote] = useState(false);
   const [sectionModal, setSectionModal] = useState('');
   // Campaign-scoped tools (Statuses, Hotkeys, Lead Recycle, Pause Codes,
   // List Mixes) and the lists panel open their edit/create modal STACKED on
@@ -5733,8 +5812,10 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   }, [action]);
 
   // closeAfter=false: used by the section pill modal's Save, which persists
-  // the whole form but keeps the Detail modal open underneath.
-  async function persist(closeAfter = true) {
+  // the whole form but keeps the Detail modal open underneath. `overrides`
+  // lets a pill modal save values it just produced without waiting for the
+  // async setForm to land (persist would otherwise read stale form state).
+  async function persist(closeAfter = true, overrides = null) {
     setSaving(true);
     setError('');
 
@@ -5745,7 +5826,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
       : isEdit
         ? `/admin/${pathEntity}/${encodeURIComponent(id)}`
         : `/admin/${pathEntity}`;
-    const body = { ...form, _detailMode: isDetail };
+    const body = { ...form, ...(overrides || {}), _detailMode: isDetail };
 
     try {
       const payload = await apiFetch(path, token, {
@@ -5769,7 +5850,13 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
 
   async function submit(event) {
     event.preventDefault();
-    await persist(true);
+    // Campaign Basic/Detail Save keeps the modal open (Steve 2026-07-12);
+    // create/copy and every other entity still close on save.
+    const stayOpen = action.entity === 'campaigns' && isEdit;
+    if (await persist(!stayOpen) && stayOpen) {
+      setSavedNote(true);
+      window.setTimeout(() => setSavedNote(false), 2500);
+    }
   }
 
   async function handleDelete() {
@@ -5833,11 +5920,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             {(field.statuses || []).map((status) => (
               <span key={status}>{status}</span>
             ))}
-            {!(field.statuses || []).length && <em>No dial statuses selected</em>}
+            {!(field.statuses || []).length && <em>{field.emptyLabel || 'No dial statuses selected'}</em>}
             {field.key === '_dial_status_list' && action.entity === 'campaigns' && (
               <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
                 <SlidersHorizontal size={14} aria-hidden="true" />
                 Manage Dial Statuses
+              </button>
+            )}
+            {field.key === 'auto_alt_dial_statuses' && action.entity === 'campaigns' && (
+              <button type="button" className="row-action" onClick={() => setAutoAltModal(true)}>
+                <SlidersHorizontal size={14} aria-hidden="true" />
+                Manage Auto Alt Statuses
               </button>
             )}
           </div>
@@ -6056,6 +6149,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
               </button>
             )}
             <span className="modal-actions-spacer" />
+            {savedNote && <span className="connection-status">Saved</span>}
             <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
             <button type="submit" className="primary-action" disabled={saving}>
               <Save size={18} aria-hidden="true" />
@@ -6123,6 +6217,25 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
               dial_statuses: next.length ? `${next.join(' ')} -` : '',
             }))}
             onClose={() => setDialStatusModal(false)}
+          />
+        )}
+        {autoAltModal && (
+          <CampaignStatusPickerModal
+            admin={admin}
+            campaignId={form.campaign_id}
+            title="Auto Alt Statuses"
+            description="Statuses that trigger auto alt-number dialing when Auto Alt Dial is enabled. Save writes the campaign and keeps this page open."
+            current={parseStatusListText(form.auto_alt_dial_statuses)}
+            saving={saving}
+            error={error}
+            onSave={async (next) => {
+              const text = next.length ? `${next.join(' ')} -` : '';
+              if (await persist(false, { auto_alt_dial_statuses: text })) {
+                setForm((current) => ({ ...current, auto_alt_dial_statuses: text }));
+                setAutoAltModal(false);
+              }
+            }}
+            onClose={() => setAutoAltModal(false)}
           />
         )}
         {subAction && (
