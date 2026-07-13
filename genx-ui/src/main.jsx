@@ -4393,7 +4393,7 @@ function CampaignDialStatusModal({ admin, campaignId, current, token, onLogout, 
 
 // `basic` trims the strip to the operational trio (Hopper List, Real-Time
 // Report, Log All Agents Out) — the report deep-links only show on Detail.
-function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved }) {
+function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutState, setLogoutState] = useState('');
@@ -4484,6 +4484,12 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
               <PhoneCall size={15} aria-hidden="true" />
               Call URLs
             </button>
+            {(extraActions || []).map((item) => (
+              <button key={item.label} type="button" className="row-action" onClick={item.onClick}>
+                <ArrowRightLeft size={15} aria-hidden="true" />
+                {item.label}
+              </button>
+            ))}
           </>
         )}
         {userCan(user, 'campaigns') && (
@@ -5635,12 +5641,31 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [dialStatusModal, setDialStatusModal] = useState(false);
+  const [sectionModal, setSectionModal] = useState('');
   const mode = action.mode || 'create';
   const fields = actionFields(action.entity, mode, admin, form, user);
   const label = entityLabel(action.entity);
   const isEdit = mode === 'edit' || mode === 'editDetail';
   const isDetail = mode === 'editDetail';
   const isCopy = action.entity === 'campaignCopy';
+
+  // Sections pulled OUT of the main Detail form into their own pill-button
+  // modal (opened from the Connections strip). The fields keep editing the
+  // same form state; the section modal's Save runs the normal campaign save
+  // without closing the Detail modal.
+  const PILL_SECTIONS = isDetail && action.entity === 'campaigns' ? ['Transfers and 3-Way Calls'] : [];
+  const mainFields = [];
+  const pillFields = {};
+  let pillSection = null;
+  for (const field of fields) {
+    if (field.section) {
+      pillSection = PILL_SECTIONS.includes(field.section) ? field.section : null;
+      if (!pillSection) mainFields.push(field);
+      continue;
+    }
+    if (pillSection) (pillFields[pillSection] = pillFields[pillSection] || []).push(field);
+    else mainFields.push(field);
+  }
 
   // Reset only when a different record/action is opened. Depending on `admin`
   // here wiped in-progress edits every time the 30s background refresh landed.
@@ -5650,8 +5675,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action]);
 
-  async function submit(event) {
-    event.preventDefault();
+  // closeAfter=false: used by the section pill modal's Save, which persists
+  // the whole form but keeps the Detail modal open underneath.
+  async function persist(closeAfter = true) {
     setSaving(true);
     setError('');
 
@@ -5670,16 +5696,23 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         body: JSON.stringify(body),
       });
       onSaved(payload.data);
-      onClose();
+      if (closeAfter) onClose();
+      return true;
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout();
-        return;
+        return false;
       }
       setError(requestError.status === 403 ? 'Your user does not have permission for this change' : 'The change was not saved');
+      return false;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    await persist(true);
   }
 
   async function handleDelete() {
@@ -5716,6 +5749,85 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // Detail carries Delete, because Basic was the only delete path.
   const deleteMode = action.entity === 'campaigns' ? isDetail : !isDetail;
   const canDelete = isEdit && deleteMode && userCanDelete(user, action.entity) && !isOwnUser && !isOwnGroup && !userDeleteBlocked;
+
+  // One renderer for every form field, shared by the main form and the
+  // section pill modals so both edit the same form state identically.
+  const renderField = (field) => (
+    field.section ? (
+      <div key={field.section} className="form-section">{field.section}</div>
+    ) : field.type === 'audio' ? (
+      <AudioChooserField
+        key={field.key}
+        field={field}
+        value={form[field.key]}
+        token={token}
+        onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
+      />
+    ) : (
+      <label key={field.key} className={field.wide ? 'wide-field' : ''}>
+        <span>{field.label}</span>
+        {field.type === 'statusList' ? (
+          <div className="status-chip-list">
+            {(field.statuses || []).map((status) => (
+              <span key={status}>{status}</span>
+            ))}
+            {!(field.statuses || []).length && <em>No dial statuses selected</em>}
+            {field.key === '_dial_status_list' && action.entity === 'campaigns' && (
+              <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
+                <SlidersHorizontal size={14} aria-hidden="true" />
+                Manage Dial Statuses
+              </button>
+            )}
+          </div>
+        ) : field.type === 'multiSelectText' ? (
+          <select
+            multiple
+            value={field.values ? field.values(form[field.key]) : scopeValues(form[field.key], field.allValue)}
+            disabled={field.disabled}
+            onChange={(event) => {
+              const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+              const nextValue = field.serialize ? field.serialize(values) : scopeText(values, field.allValue);
+              setForm((current) => ({ ...current, [field.key]: nextValue }));
+            }}
+          >
+            {(field.options || []).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        ) : field.type === 'checkboxGroupText' ? (
+          <CheckboxTextGroup
+            field={field}
+            value={form[field.key]}
+            onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
+          />
+        ) : field.type === 'select' ? (
+          <select
+            value={form[field.key] ?? ''}
+            disabled={field.disabled}
+            onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+          >
+            {(field.options || []).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        ) : field.type === 'textarea' ? (
+          <textarea
+            value={form[field.key] ?? ''}
+            disabled={field.disabled}
+            onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+          />
+        ) : (
+          <input
+            type={field.type || 'text'}
+            step={field.step}
+            value={form[field.key] ?? ''}
+            disabled={field.disabled}
+            onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+          />
+        )}
+      </label>
+    )
+  );
 
   return (
     <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
@@ -5857,87 +5969,16 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             basic={!isDetail}
             urls={form}
             onUrlsSaved={(next) => setForm((current) => ({ ...current, ...next }))}
+            extraActions={PILL_SECTIONS.map((title) => ({
+              label: title.replace(' and ', ' & '),
+              onClick: () => setSectionModal(title),
+            }))}
           />
         )}
 
         <form className="entity-form" onSubmit={submit}>
           <div className="field-grid">
-            {fields.map((field) => (
-              field.section ? (
-                <div key={field.section} className="form-section">{field.section}</div>
-              ) : field.type === 'audio' ? (
-                <AudioChooserField
-                  key={field.key}
-                  field={field}
-                  value={form[field.key]}
-                  token={token}
-                  onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
-                />
-              ) : (
-                <label key={field.key} className={field.wide ? 'wide-field' : ''}>
-                  <span>{field.label}</span>
-                  {field.type === 'statusList' ? (
-                    <div className="status-chip-list">
-                      {(field.statuses || []).map((status) => (
-                        <span key={status}>{status}</span>
-                      ))}
-                      {!(field.statuses || []).length && <em>No dial statuses selected</em>}
-                      {field.key === '_dial_status_list' && action.entity === 'campaigns' && (
-                        <button type="button" className="row-action" onClick={() => setDialStatusModal(true)}>
-                          <SlidersHorizontal size={14} aria-hidden="true" />
-                          Manage Dial Statuses
-                        </button>
-                      )}
-                    </div>
-                  ) : field.type === 'multiSelectText' ? (
-                    <select
-                      multiple
-                      value={field.values ? field.values(form[field.key]) : scopeValues(form[field.key], field.allValue)}
-                      disabled={field.disabled}
-                      onChange={(event) => {
-                        const values = Array.from(event.target.selectedOptions).map((option) => option.value);
-                        const nextValue = field.serialize ? field.serialize(values) : scopeText(values, field.allValue);
-                        setForm((current) => ({ ...current, [field.key]: nextValue }));
-                      }}
-                    >
-                      {(field.options || []).map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  ) : field.type === 'checkboxGroupText' ? (
-                    <CheckboxTextGroup
-                      field={field}
-                      value={form[field.key]}
-                      onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
-                    />
-                  ) : field.type === 'select' ? (
-                    <select
-                      value={form[field.key] ?? ''}
-                      disabled={field.disabled}
-                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    >
-                      {(field.options || []).map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  ) : field.type === 'textarea' ? (
-                    <textarea
-                      value={form[field.key] ?? ''}
-                      disabled={field.disabled}
-                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    />
-                  ) : (
-                    <input
-                      type={field.type || 'text'}
-                      step={field.step}
-                      value={form[field.key] ?? ''}
-                      disabled={field.disabled}
-                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    />
-                  )}
-                </label>
-              )
-            ))}
+            {mainFields.map(renderField)}
           </div>
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
@@ -5970,6 +6011,42 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onSwitchAction={onSwitchAction}
             onLogout={onLogout}
           />
+        )}
+        {sectionModal && (
+          <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setSectionModal(''))}>
+            <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={sectionModal}>
+              <div className="modal-head">
+                <div>
+                  <p className="eyebrow">Campaign {form.campaign_id}</p>
+                  <h2>{sectionModal}</h2>
+                </div>
+                <button type="button" className="icon-button" onClick={() => setSectionModal('')} aria-label="Close" title="Close">
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="entity-form">
+                <div className="field-grid">
+                  {(pillFields[sectionModal] || []).map(renderField)}
+                </div>
+                {error && <p className="form-error">{error}</p>}
+                <div className="modal-actions">
+                  <span className="modal-actions-spacer" />
+                  <button type="button" className="secondary-action" onClick={() => setSectionModal('')}>Cancel</button>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (await persist(false)) setSectionModal('');
+                    }}
+                  >
+                    <Save size={18} aria-hidden="true" />
+                    {saving ? 'Saving' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
         )}
         {dialStatusModal && (
           <CampaignDialStatusModal
