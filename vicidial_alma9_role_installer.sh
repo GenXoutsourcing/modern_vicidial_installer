@@ -770,6 +770,19 @@ fix_vicidial_web_permissions() {
     find /var/www/html -type d -exec chmod g-s {} \;
     find /var/www/html -type d -exec chmod 0755 {} \;
     find /var/www/html -type f -exec chmod 644 {} \;
+    # Stock helpers that PHP exec()s/passthru()s need their exec bit back
+    # after the 644 sweep (sheet2tab.pl for lead-loader spreadsheet
+    # conversion, agc/bp.pl for pass hashing, etc.).
+    find /var/www/html -type f -name '*.pl' -exec chmod 755 {} \;
+    # The lead loader's sheet2tab.pl writes its temp chunk file to its cwd,
+    # which PHP sets to the admin web dir — stock requires this dir to be
+    # apache-writable. Group-write on the one dir (files stay root 644) is
+    # the narrowest relaxation; web ports are dynportal/whitelist-gated so
+    # exposure is limited to whitelisted sources.
+    if [ -d /var/www/html/vicidial ]; then
+        chown root:apache /var/www/html/vicidial
+        chmod 775 /var/www/html/vicidial
+    fi
     if [ -d /var/www/html/agc ]; then
         touch /var/www/html/agc/vicidial_auth_entries.txt
         chown apache:apache /var/www/html/agc/vicidial_auth_entries.txt
