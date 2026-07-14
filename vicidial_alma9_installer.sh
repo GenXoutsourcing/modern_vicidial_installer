@@ -153,8 +153,9 @@ configure_pjsip_external_ip() {
 configure_dynportal_defaults() {
     local redirect_url="https://${DOMAINNAME}/vicidial/welcome.php"
 
+    # GenX branding + the reskinned sign-in page ship baked into dynportal.zip
+    # (assets/dynportal.zip); this is now just a post-unzip syntax sanity check.
     if [ -f /var/www/vhosts/dynportal/valid8.php ]; then
-        sed -i 's/CyburDial - All rights reserved\./Genx ContactCenter - All rights reserved./g' /var/www/vhosts/dynportal/valid8.php
         php -l /var/www/vhosts/dynportal/valid8.php >/dev/null
     fi
 
