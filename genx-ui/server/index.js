@@ -15114,7 +15114,7 @@ function phonePayload(body, mode) {
     conf_override: cleanText(body.conf_override, 12000),
     phone_context: cleanText(body.phone_context, 20) || 'default',
     phone_ring_timeout: cleanInt(body.phone_ring_timeout, 60, 0, 999),
-    conf_secret: cleanText(body.conf_secret, 20),
+    conf_secret: cleanText(body.conf_secret, 100),
     delete_vm_after_email: ynFlag(body.delete_vm_after_email, 'N'),
     is_webphone: cleanChoice(body.is_webphone, PHONE_WEBPHONE_OPTIONS, 'N'),
     use_external_server_ip: ynFlag(body.use_external_server_ip, 'N'),
@@ -15199,6 +15199,20 @@ async function savePhone(req, res, mode) {
       );
       if (result.affectedRows < 1) return res.status(404).json({ ok: false, error: 'phone_not_found' });
       await adminLog(req, 'PHONES', 'MODIFY', key.extension, 'GENX MODIFY PHONE', 'UPDATE phones', payload.fullname);
+    }
+
+    // Registration fields (secret, codecs, context...) live in the generated
+    // asterisk confs — flag the phone's server(s) so ADMIN_keepalive rebuilds
+    // and reloads, like legacy admin.php does on every phone save. Without
+    // this, a conf_secret edit strands the DB and sip-vicidial.conf on
+    // different secrets and the phone fails auth until something else
+    // triggers a rebuild.
+    const rebuildIps = [...new Set([payload.server_ip, key.server_ip].filter(Boolean))];
+    for (const ip of rebuildIps) {
+      await execute(
+        "UPDATE servers SET rebuild_conf_files = 'Y' WHERE generate_vicidial_conf = 'Y' AND active_asterisk_server = 'Y' AND server_ip = ?",
+        [ip],
+      ).catch(() => {});
     }
 
     return res.json({ ok: true, data: await adminData(req.genxUser) });
