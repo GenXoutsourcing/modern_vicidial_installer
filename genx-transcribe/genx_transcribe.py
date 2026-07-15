@@ -130,10 +130,25 @@ def enqueue_inbox(conn):
             )
 
 
-def find_audio_file(row):
+def find_audio_file(conn, row):
     if row["source"] == "INBOX":
         path = os.path.join(INBOX_DIR, row["filename"])
         return path if os.path.isfile(path) else None
+    # Resolve directly from recording_log.location (the URL path maps 1:1 to the
+    # on-disk path, e.g. /archive/RECORDINGS/2026-07-15/file.mp3). This avoids
+    # walking the entire multi-million-file archive tree on every single job.
+    if row.get("recording_id"):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT location FROM recording_log WHERE recording_id=%s LIMIT 1",
+                (row["recording_id"],),
+            )
+            hit = cur.fetchone()
+        if hit and hit[0]:
+            local = location_to_local(hit[0])
+            if local:
+                return local
+    # Fallback: bounded walk only when the location lookup misses.
     base = row["filename"]
     for root, _dirs, files in os.walk(os.path.join(ARCHIVE_PREFIX, "RECORDINGS")):
         if base in files:
@@ -177,7 +192,7 @@ def transcribe_file(model, path, speaker):
 
 def process_row(model, conn, row):
     started = time.time()
-    path = find_audio_file(row)
+    path = find_audio_file(conn, row)
     if not path:
         return "ERROR", "audio file not found", [], "", 1
     channels = audio_channels(path)
@@ -208,11 +223,21 @@ def main():
     log("model ready")
     os.makedirs(INBOX_DIR, exist_ok=True)
 
-    conn = connect()
-    with conn.cursor() as cur:
-        cur.execute(TABLE_SQL)
-        # Requeue anything stranded mid-file by a restart.
-        cur.execute("UPDATE genx_transcripts SET status='QUEUED' WHERE status='PROCESSING'")
+    # Connect + one-time DDL with retry so a DB that is briefly down at boot
+    # doesn't crash the process — systemd Restart=always would otherwise reload
+    # the whole whisper model every few seconds in a tight loop.
+    conn = None
+    while conn is None:
+        try:
+            conn = connect()
+            with conn.cursor() as cur:
+                cur.execute(TABLE_SQL)
+                # Requeue anything stranded mid-file by a restart.
+                cur.execute("UPDATE genx_transcripts SET status='QUEUED' WHERE status='PROCESSING'")
+        except Exception as exc:
+            log(f"startup DB not ready ({exc}); retrying in 15s")
+            conn = None
+            time.sleep(15)
 
     while True:
         try:

@@ -1402,7 +1402,10 @@ async function dashboardData(selectedRange = 'today') {
     )),
     // recording_log has no start_time index — this is a full scan, so it is
     // shared across tabs and refreshed at most every 30s.
-    onReplica(() => cachedQuery(`recordingsRange:${range}`, 30_000, () => scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0))),
+    // range is a {key,days} object — key it by range.key, not the object
+    // (template-stringifying the object yielded "[object Object]" for every
+    // range, so Today/7d/30d all shared one cached count).
+    onReplica(() => cachedQuery(`recordingsRange:${range.key}`, 30_000, () => scalar(`SELECT COUNT(*) AS value FROM recording_log WHERE ${dateWhere('start_time', range)}`, [], 0))),
     systemStatus(),
     onReplica(() => activitySeries(range)),
     onReplica(() => requiredRows(
@@ -10118,7 +10121,10 @@ async function agentDispo(req, res) {
   const user = req.genxUser.user;
   const live = await agentLiveRow(user);
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
-  const leadId = Number(live.lead_id || 0) || Number(req.body?.lead_id || 0);
+  // Disposition applies ONLY to the agent's own live lead. Never trust a
+  // body-supplied lead_id: without this an idle agent (no live lead) could
+  // POST an arbitrary lead_id and rewrite any lead's status/owner in the DB.
+  const leadId = Number(live.lead_id || 0);
   const dispo = cleanId(req.body?.status, 8);
   if (!dispo || !leadId) return badRequest(res, 'status_and_lead_required');
   const comments = cleanText(req.body?.comments, 255);
@@ -10343,6 +10349,12 @@ async function agentLogout(req, res) {
         await execute('UPDATE vicidial_agent_log SET wait_sec = ? WHERE agent_log_id = ?', [Math.max(nowEpoch - Number(log.wait_epoch), 0), log.agent_log_id]);
       }
     }
+
+    // Drop this user's per-call dedupe state so the maps don't accumulate an
+    // entry per agent for the process lifetime (agentDispo clears
+    // recordingStarted, but nothing cleared startUrlFired on logout).
+    startUrlFired.delete(user);
+    recordingStarted.delete(user);
 
     await execute('DELETE FROM vicidial_live_agents WHERE user = ?', [user]);
     await execute('DELETE FROM vicidial_session_data WHERE user = ? AND conf_exten = ?', [user, live.conf_exten]).catch(() => {});
@@ -11991,7 +12003,12 @@ async function agentHangup(req, res) {
         [live.server_ip, `HL${live.callerid || ''}${nowEpoch}`.slice(0, 20), `Channel: ${row.channel}`],
       ).catch(() => {});
     }
-    await execute('DELETE FROM vicidial_auto_calls WHERE callerid = ?', [live.callerid || '']).catch(() => {});
+    // Only clear this call's auto_calls row. Guard on a real caller_code: a
+    // previewed-not-dialed lead has callerid '' and an unguarded delete would
+    // wipe every auto_calls row whose callerid is empty (mass dial disruption).
+    if (live.callerid) {
+      await execute('DELETE FROM vicidial_auto_calls WHERE callerid = ?', [live.callerid]).catch(() => {});
+    }
 
     await execute(
       'UPDATE vicidial_log SET end_epoch = ?, length_in_sec = ? - start_epoch, term_reason = ? WHERE lead_id = ? AND user = ? AND end_epoch IS NULL ORDER BY start_epoch DESC LIMIT 1',

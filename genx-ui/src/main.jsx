@@ -1563,7 +1563,6 @@ function actionDefaults(entity, admin) {
       agent_choose_blended: '1',
       realtime_block_user_info: '0',
       custom_fields_modify: '0',
-      force_change_password: 'N',
       agent_lead_search_override: 'NOT_ACTIVE',
       preset_contact_search: 'NOT_ACTIVE',
       admin_hide_lead_data: '0',
@@ -3669,7 +3668,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'protocol', label: 'Protocol', type: 'select', options: ['POP3', 'IMAP', 'SMTP'].map((v) => ({ value: v, label: v })) },
       { key: 'email_account_server', label: 'Mail Server' },
       { key: 'email_account_user', label: 'Login User' },
-      { key: 'email_account_pass', label: mode === 'edit' ? 'Password (blank = keep current)' : 'Password' },
+      { key: 'email_account_pass', label: mode === 'edit' ? 'Password (blank = keep current)' : 'Password', type: 'password' },
       { key: 'pop3_auth_mode', label: 'POP3 Auth Mode', type: 'select', options: ['BEST', 'PASS', 'APOP', 'CRAM-MD5'].map((v) => ({ value: v, label: v })) },
       { key: 'email_replyto_address', label: 'Reply-To Address' },
       { key: 'email_frequency_check_mins', label: 'Check Frequency (mins)', type: 'number' },
@@ -7298,7 +7297,9 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
         nextScores[field] = info ? info.score : 0;
       }
       setMapping(nextMap); setMapScores(nextScores);
-      if (payload?.mapping?.list_id) setListIdColumn(payload.mapping.list_id.columnIndex);
+      // Always reset the list-id column from this detect (not set-only): a new
+      // file with no list_id column must not inherit the previous file's index.
+      setListIdColumn(payload?.mapping?.list_id ? payload.mapping.list_id.columnIndex : -1);
       setCustomFields(payload?.customFields || []);
       const nextCustom = {}; const nextCustomScores = {};
       for (const label of (payload?.customFields || [])) {
@@ -7318,10 +7319,24 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
     if (!listId && lists.length) setListId(String(lists[0].list_id || ''));
   }, [listId, lists]);
 
+  // Custom fields are per-list. When the target list changes with a file
+  // already loaded, re-detect so customFields/customMapping reflect the new
+  // list — otherwise submit would post the previous list's field labels.
+  const detectRef = useRef(detectColumns);
+  detectRef.current = detectColumns;
+  useEffect(() => {
+    if (csv && listId) detectRef.current(csv, autoDetect);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listId]);
+
   const selectedList = lists.find((item) => String(item.list_id) === String(listId));
+  // Preview must split on the same delimiter the detect/import endpoints use,
+  // otherwise a tab/pipe file previews as one mangled column. 'auto' falls back
+  // to comma (the detected delimiter isn't known client-side until detect runs).
+  const previewDelim = { tab: '\t', pipe: '|', comma: ',' }[delimiter] || ',';
   const previewRows = csv
     .split(/\r?\n/)
-    .map((line) => line.split(',').map((item) => item.trim()))
+    .map((line) => line.split(previewDelim).map((item) => item.trim()))
     .filter((row) => row.some(Boolean))
     .slice(0, 6);
 
