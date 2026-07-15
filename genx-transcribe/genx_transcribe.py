@@ -12,9 +12,7 @@ customer on the Right channel, agent (and third parties) on the Left.
 import json
 import os
 import re
-import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime
 from urllib.parse import urlparse
@@ -144,21 +142,18 @@ def find_audio_file(row):
 
 
 def audio_channels(path):
+    """Probe channel count with PyAV (bundled with faster-whisper) — no sox."""
     try:
-        out = subprocess.run(
-            ["soxi", "-c", path], capture_output=True, text=True, timeout=30
-        )
-        return int(out.stdout.strip() or "1")
+        import av
+
+        with av.open(path) as container:
+            for stream in container.streams:
+                if stream.type == "audio":
+                    ctx = stream.codec_context
+                    return int(getattr(ctx, "channels", 0) or 1)
     except Exception:
-        return 1
-
-
-def split_stereo(path, tmpdir):
-    left = os.path.join(tmpdir, "left.wav")
-    right = os.path.join(tmpdir, "right.wav")
-    subprocess.run(["sox", path, left, "remix", "1"], check=True, timeout=120)
-    subprocess.run(["sox", path, right, "remix", "2"], check=True, timeout=120)
-    return left, right
+        pass
+    return 1
 
 
 def transcribe_file(model, path, speaker):
@@ -189,12 +184,14 @@ def process_row(model, conn, row):
     segments = []
     language = ""
     if channels >= 2:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            left, right = split_stereo(path, tmpdir)
-            agent_segs, language = transcribe_file(model, left, "AGENT")
-            cust_segs, lang2 = transcribe_file(model, right, "CUSTOMER")
-            language = language or lang2
-            segments = sorted(agent_segs + cust_segs, key=lambda s: s["start"])
+        # VICIdial stereo convention: agent (+3rd parties) Left, customer Right.
+        from faster_whisper.audio import decode_audio
+
+        left, right = decode_audio(path, split_stereo=True)
+        agent_segs, language = transcribe_file(model, left, "AGENT")
+        cust_segs, lang2 = transcribe_file(model, right, "CUSTOMER")
+        language = language or lang2
+        segments = sorted(agent_segs + cust_segs, key=lambda s: s["start"])
     else:
         segments, language = transcribe_file(model, path, "")
     elapsed = time.time() - started
