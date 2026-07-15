@@ -582,13 +582,10 @@ async function flagTemplateFor(userGroup) {
 async function persistSession(token, session) {
   if (!(await sessionTableReady)) return;
   try {
-    // Persist the session minus transient bookkeeping AND the plaintext agent
-    // password. userPass lives only in the in-memory `sessions` map for
-    // script/web-form --A--pass--B-- merges during the live session; it is
-    // deliberately NOT written to genx_ui_sessions so it can't be harvested at
-    // rest from the reports replica or a DB backup. After a server restart the
-    // restored session simply merges an empty password until the agent
-    // re-logs in — an acceptable degradation of a niche legacy feature.
+    // Persist the session minus transient bookkeeping. The userPass strip is
+    // defense-in-depth: agent sessions no longer carry the plaintext password
+    // at all (the --A--pass--B-- merge that used it is unsupported), so it can
+    // never reach genx_ui_sessions / the reports replica / a DB backup.
     const { expiresAt, persistedAt, userPass, ...data } = session;
     await execute(
       'REPLACE INTO genx_ui_sessions (token_hash, session_data, expires_at) VALUES (?, ?, ?)',
@@ -9358,17 +9355,13 @@ async function agentAuth(req, res) {
     permissions: { allowedCampaigns: allowed },
   };
   const token = crypto.randomBytes(32).toString('hex');
+  // Note: the agent's plaintext password is deliberately NOT kept on the
+  // session. The legacy --A--pass--B-- script/web-form merge (the only thing
+  // that consumed it) is unsupported — see mergeFields in the client — so the
+  // password never lands in a session row, a merge URL, or the setup response.
   const agentSession = {
     user: agentUser,
     agentPhone: { ...phone, pass: undefined },
-    // Kept for script/web-form --A--pass--B-- merges after a page reload
-    // (legacy vicidial.php embeds it in the page for the whole session).
-    // TRADE-OFF: persistSession() writes this session to genx_ui_sessions,
-    // so the plaintext password is readable by anything with SELECT on that
-    // table (replica, backups) for the session's 8h TTL — wider exposure
-    // than legacy's page-embedded copy. Revisit if the merge fields can be
-    // served without it.
-    userPass,
     expiresAt: Date.now() + config.sessionTtlMs,
     persistedAt: Date.now(),
   };
@@ -9424,7 +9417,6 @@ async function agentSetup(req, res) {
     phone: req.agentPhone
       ? { login: req.agentPhone.login, extension: req.agentPhone.extension, server_ip: req.agentPhone.server_ip }
       : null,
-    userPass: req.agentSession?.userPass || '',
   });
 }
 

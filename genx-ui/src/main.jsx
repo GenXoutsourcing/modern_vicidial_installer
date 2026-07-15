@@ -16126,7 +16126,7 @@ function AgentLoginPage({ onAuthed }) {
       window.localStorage.setItem(AGENT_TOKEN_KEY, payload.token);
       // Re-attach directly when a live session already exists.
       if (payload.live) {
-        onAuthed({ ...payload, userPass: form.pass });
+        onAuthed({ ...payload });
         return;
       }
       if (!campaignId) {
@@ -16137,9 +16137,7 @@ function AgentLoginPage({ onAuthed }) {
         method: 'POST',
         body: JSON.stringify({ campaign_id: campaignId }),
       });
-      // userPass rides along in memory only — legacy merges it into script
-      // iframe URLs (--A--pass--B--) for the life of the session.
-      onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes, userPass: form.pass });
+      onAuthed({ ...payload, live: login.live, webphoneUrl: login.webphoneUrl, pauseCodes: login.pauseCodes });
     } catch (requestError) {
       if (requestError.message === 'phone_login_required') setNeedPhone(true);
       if (requestError.message === 'timeclock_required') setNeedPunch(true);
@@ -16408,7 +16406,9 @@ function AgentConsole({ token, authInfo, onExit }) {
     const merge = {
       ...(lead || {}),
       user: authInfo?.user?.user || '',
-      pass: authInfo?.userPass || '',
+      // --A--pass--B-- intentionally unsupported: merging the agent password
+      // into script/web-form URLs put it in the query string (browser history,
+      // proxy logs). The token now resolves to '' rather than the password.
       phone_login: authInfo?.phone?.login || '',
       campaign: live?.campaign_id || '',
       group: inboundInfo?.group_id || live?.campaign_id || '',
@@ -17989,7 +17989,6 @@ function AgentApp() {
           live: payload.live,
           user: payload.user || null,
           phone: payload.phone || null,
-          userPass: payload.userPass || '',
         },
       }))
       .catch(() => {
@@ -18017,7 +18016,6 @@ function AgentApp() {
             phone: payload.phone,
             webphoneUrl: payload.webphoneUrl || null,
             pauseCodes: payload.pauseCodes || [],
-            userPass: payload.userPass || '',
           },
         })}
       />
