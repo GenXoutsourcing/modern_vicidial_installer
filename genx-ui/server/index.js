@@ -9588,6 +9588,23 @@ async function agentDispo(req, res) {
   const nowEpoch = Math.floor(Date.now() / 1000);
 
   try {
+    // Stop any active recording for this call so the file finalizes (the
+    // audio crons then mix -in/-out, compress to MP3, and move it to the
+    // Recordings archive with a location). Auto-record (ALLCALLS/ALLFORCE) and
+    // the manual Record button both leave the recording leg parked in the
+    // conference at Wait(3600); without this stop it never finalizes and would
+    // bleed into the agent's next call. Uses the pre-reset conf_exten on `live`.
+    const recChannel = await agentRecordingChannel(live);
+    if (recChannel) {
+      await execute(
+        `INSERT INTO vicidial_manager
+           (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+         VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
+        [live.server_ip, `RXvdcW${nowEpoch}`.slice(0, 20), `Channel: ${recChannel}`],
+      ).catch(() => {});
+    }
+    recordingStarted.delete(user);
+
     // Reset the live agent first, exactly like legacy does.
     await execute(
       "UPDATE vicidial_live_agents SET lead_id = 0, status = 'PAUSED', uniqueid = 0, callerid = '', channel = '', comments = '', last_state_change = NOW() WHERE user = ?",
