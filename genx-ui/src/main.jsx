@@ -16440,17 +16440,10 @@ function AgentConsole({ token, authInfo, onExit }) {
       // Same busy gate as the buttons (disabled={busy}): without it a quick
       // double-press fires two dispo POSTs for the same lead.
       if (busy) return;
-      act('/agent/dispo', { status: hit.status, lead_id: lead.lead_id, comments: dispoComments }).then((payload) => {
-        if (payload) {
-          setLead(null);
-          setDispoPick('');
-          // Clear per-call note state exactly like the manual Save button —
-          // a leftover comment must not attach to the NEXT call's dispo.
-          setCallbackTime('');
-          setDispoComments('');
-          setMessage(`Dispositioned ${hit.status} (hotkey ${hit.hotkey}) — paused`);
-        }
-      });
+      setDispoPick(hit.status);
+      // CALLBK needs a callback time — reveal the picker instead of submitting
+      // (submitDispo clears the per-call note/callback state on success).
+      if (hit.status !== 'CALLBK') submitDispo(hit.status);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -16498,6 +16491,26 @@ function AgentConsole({ token, authInfo, onExit }) {
       return null;
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Save a disposition and advance. Fired directly from the radio for normal
+  // statuses (auto-save on select — no Save button), and from the callback
+  // confirm button for CALLBK, which needs a callback time chosen first.
+  const submitDispo = async (status, cbTime = '') => {
+    if (busy || !lead || !status) return;
+    const payload = await act('/agent/dispo', {
+      status,
+      lead_id: lead.lead_id,
+      callback_datetime: cbTime,
+      comments: dispoComments,
+    });
+    if (payload) {
+      setLead(null);
+      setDispoPick('');
+      setCallbackTime('');
+      setDispoComments('');
+      setMessage(`Dispositioned ${status} — paused`);
     }
   };
 
@@ -17760,6 +17773,12 @@ function AgentConsole({ token, authInfo, onExit }) {
       {live && lead && (
         <div className="agr-card">
           <p className="agr-title"><Pencil size={14} aria-hidden="true" /> Update Disposition</p>
+          {/* Optional note first — selecting a status saves immediately and
+              carries whatever is typed here. */}
+          <label className="agr-note">
+            <span>Add a note (optional):</span>
+            <textarea rows={2} value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} placeholder="Enter a note before choosing a status…" />
+          </label>
           <div className="agr-radios">
             {dispoStatuses.map((row) => {
               const hk = dispoHotkeys.find((h) => h.status === row.status);
@@ -17769,7 +17788,12 @@ function AgentConsole({ token, authInfo, onExit }) {
                     type="radio"
                     name="agent-dispo"
                     checked={dispoPick === row.status}
-                    onChange={() => setDispoPick(row.status)}
+                    // Auto-save on select. CALLBK needs a time, so it only
+                    // sets the pick and reveals the callback picker below.
+                    onChange={() => {
+                      setDispoPick(row.status);
+                      if (row.status !== 'CALLBK') submitDispo(row.status);
+                    }}
                   />
                   <span>{row.status_name || row.status}{hk ? ` [${hk.hotkey}]` : ''}</span>
                 </label>
@@ -17800,34 +17824,18 @@ function AgentConsole({ token, authInfo, onExit }) {
                 <span>Callback Date/Time</span>
                 <input type="datetime-local" value={callbackTime} onChange={(event) => setCallbackTime(event.target.value)} />
               </label>
+              {/* CALLBK is the one status that can't auto-save — confirm once a
+                  time is set. */}
+              <button
+                type="button"
+                className="primary-action"
+                disabled={busy || !callbackTime}
+                onClick={() => submitDispo('CALLBK', callbackTime)}
+              >
+                Save Callback
+              </button>
             </>
           )}
-          <label className="agr-note">
-            <span>Add a note:</span>
-            <textarea rows={2} value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} placeholder="Enter a note..." />
-          </label>
-          <button
-            type="button"
-            className="primary-action"
-            disabled={busy || !dispoPick || (dispoPick === 'CALLBK' && !callbackTime)}
-            onClick={async () => {
-              const payload = await act('/agent/dispo', {
-                status: dispoPick,
-                lead_id: lead.lead_id,
-                callback_datetime: callbackTime,
-                comments: dispoComments,
-              });
-              if (payload) {
-                setLead(null);
-                setDispoPick('');
-                setCallbackTime('');
-                setDispoComments('');
-                setMessage(`Dispositioned ${dispoPick} — paused`);
-              }
-            }}
-          >
-            Save Disposition
-          </button>
         </div>
       )}
       </div>

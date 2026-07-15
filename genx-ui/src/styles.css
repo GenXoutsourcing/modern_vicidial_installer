@@ -2287,7 +2287,7 @@ select option:hover {
 }
 
 .agr-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #e2eeff; margin: 0; }
-.agr-radios { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }
+.agr-radios { display: flex; flex-direction: column; gap: 2px; }
 .agr-radio {
   display: flex;
   align-items: center;
