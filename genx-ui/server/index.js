@@ -12430,6 +12430,25 @@ async function deleteUser(req, res) {
     await execute('DELETE FROM vicidial_campaign_agents WHERE user = ?', [id]).catch(() => {});
     await execute('DELETE FROM vicidial_inbound_group_agents WHERE user = ?', [id]).catch(() => {});
     await execute("UPDATE vicidial_remote_agents SET status = 'INACTIVE' WHERE user_start = ?", [id]).catch(() => {});
+    // Remove the user's auto-provisioned phones (extension AND login = user
+    // id — the pattern autoProvisionAgentPhones creates, one row per dialer).
+    // A manually-assigned shared phone has a different extension/login and is
+    // deliberately left alone.
+    const ownPhones = await rows(
+      'SELECT server_ip FROM phones WHERE extension = ? AND login = ?',
+      [id, id],
+      [],
+    );
+    if (ownPhones.length) {
+      await execute('DELETE FROM phones WHERE extension = ? AND login = ?', [id, id]).catch(() => {});
+      const phoneServers = ownPhones.map((p) => p.server_ip);
+      const placeholders = phoneServers.map(() => '?').join(',');
+      await execute(
+        `UPDATE servers SET rebuild_conf_files = 'Y' WHERE active_asterisk_server = 'Y' AND server_ip IN (${placeholders})`,
+        phoneServers,
+      ).catch(() => {});
+      await adminLog(req, 'PHONES', 'DELETE', id, 'GENX AUTO PHONE DELETE', 'DELETE FROM phones (user delete)', phoneServers.join(', '));
+    }
     await adminLog(req, 'USERS', 'DELETE', id, 'GENX DELETE USER', 'DELETE FROM vicidial_users + agent rank rows', id);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
   } catch (error) {
