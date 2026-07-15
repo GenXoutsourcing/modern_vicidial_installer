@@ -10729,12 +10729,21 @@ async function agentMayAccessLead(user, live, leadId) {
   const id = Number(leadId || 0);
   if (!id) return false;
   if (id === Number(live?.lead_id || 0)) return true;
-  const [hist] = await rows(
-    'SELECT 1 AS ok FROM vicidial_agent_log WHERE lead_id = ? AND user = ? LIMIT 1',
+  // Own call history — the SAME tables the call-log view reads (outbound
+  // vicidial_log + inbound vicidial_closer_log, both user-scoped), so any lead
+  // the agent can see in their call log is accessible and nothing else.
+  const [out] = await rows(
+    'SELECT 1 AS ok FROM vicidial_log WHERE lead_id = ? AND user = ? LIMIT 1',
     [id, user],
     [],
   );
-  if (hist) return true;
+  if (out) return true;
+  const [inb] = await rows(
+    'SELECT 1 AS ok FROM vicidial_closer_log WHERE lead_id = ? AND user = ? LIMIT 1',
+    [id, user],
+    [],
+  );
+  if (inb) return true;
   const [cb] = await rows(
     `SELECT 1 AS ok FROM vicidial_callbacks
      WHERE lead_id = ? AND status NOT IN ('INACTIVE','DEAD')
