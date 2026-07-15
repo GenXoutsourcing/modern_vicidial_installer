@@ -1187,9 +1187,12 @@ MYSQLDEFAULTS
 }
 
 # GenX role hierarchy: SUPERADMIN (GenX technicians, full access), ADMIN
-# (highest client role, group-enforced floor-manager template), SUPERVISORS
-# and QC (reports-only admin views), AGENTS (agent screen only), APIUSERS
-# (external API service accounts). The genx_group_permissions rows drive the
+# (stock group reserved for VICIdial's system accounts VDAD/VDCL; hidden from
+# the group picker for non-SuperAdmins by the GenX UI), ADMINISTRATORS
+# (highest CLIENT role, a full clone of ADMIN's floor-manager template —
+# client owners are created here), SUPERVISORS and QC (reports-only admin
+# views), AGENTS (agent screen only), APIUSERS (external API service
+# accounts). The genx_group_permissions rows drive the
 # GenX UI's nav gating, flag templates, ui_access login routing, and the API
 # group gate; the DDL must stay identical to the CREATE in
 # genx-ui/server/index.js. Everything is INSERT IGNORE / guarded so reruns
@@ -1218,6 +1221,8 @@ UPDATE tmp_genx_ug SET user_group='QC', group_name='Quality Control';
 INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='QC');
 UPDATE tmp_genx_ug SET user_group='AGENTS', group_name='Agents';
 INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='AGENTS');
+UPDATE tmp_genx_ug SET user_group='ADMINISTRATORS', group_name='Administrators';
+INSERT INTO vicidial_user_groups SELECT * FROM tmp_genx_ug WHERE NOT EXISTS (SELECT 1 FROM vicidial_user_groups vg WHERE vg.user_group='ADMINISTRATORS');
 DROP TEMPORARY TABLE tmp_genx_ug;
 
 UPDATE vicidial_users SET user_group='SUPERADMIN' WHERE user='6666' AND user_group='ADMIN';
@@ -1238,8 +1243,16 @@ INSERT IGNORE INTO genx_group_permissions (user_group, permission, perm_value) V
 ('SUPERVISORS','flag_template','{"view_reports":"1","export_reports":"1","access_recordings":"1","vdc_agent_api_access":"1","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}'),
 ('QC','flag_template','{"view_reports":"1","export_reports":"1","access_recordings":"1","vdc_agent_api_access":"0","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}'),
 ('AGENTS','flag_template','{"view_reports":"0","export_reports":"0","access_recordings":"0","vdc_agent_api_access":"0","campaign_detail":"0","load_leads":"0","download_lists":"0","modify_users":"0","modify_campaigns":"0","modify_lists":"0","modify_leads":"0","modify_scripts":"0","modify_filters":"0","modify_call_times":"0","modify_inbound_dids":"0","modify_remoteagents":"0","modify_ingroups":"0","modify_statuses":"0","modify_timeclock_log":"0","custom_fields_modify":"0","delete_campaigns":"0","delete_lists":"0","delete_users":"0","delete_user_groups":"0","delete_ingroups":"0","delete_remote_agents":"0","delete_scripts":"0","delete_filters":"0","delete_call_times":"0","delete_inbound_dids":"0","delete_from_dnc":"0","modify_servers":"0","modify_usergroups":"0","modify_phones":"0","ast_delete_phones":"0","modify_shifts":"0","modify_carriers":"0","modify_voicemail":"0","modify_moh":"0","modify_tts":"0","modify_contacts":"0","modify_languages":"0","modify_email_accounts":"0","modify_auto_reports":"0","modify_audiostore":"0","modify_ip_lists":"0","modify_settings_containers":"0","modify_custom_dialplans":"0","alter_admin_interface_options":"0","ast_admin_access":"0"}');
+
+-- ADMINISTRATORS is a full clone of ADMIN's GenX permissions (nav_sections,
+-- ui_access, flag_template). Copied via SELECT so it always tracks ADMIN's
+-- template; INSERT IGNORE keeps reruns/upgrades idempotent (PK on
+-- user_group,permission). ADMIN stays reserved for VDAD/VDCL.
+INSERT IGNORE INTO genx_group_permissions (user_group, permission, perm_value)
+  SELECT 'ADMINISTRATORS', permission, perm_value
+  FROM genx_group_permissions WHERE user_group='ADMIN';
 GENXROLES
-    echo "GenX role hierarchy seeded (SUPERADMIN/ADMIN/SUPERVISORS/QC/AGENTS/APIUSERS)."
+    echo "GenX role hierarchy seeded (SUPERADMIN/ADMIN/ADMINISTRATORS/SUPERVISORS/QC/AGENTS/APIUSERS)."
 }
 
 ensure_vicibox_tracking_table() {
