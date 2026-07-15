@@ -17995,6 +17995,29 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
   const [transcriptsError, setTranscriptsError] = useState('');
   const [openTranscript, setOpenTranscript] = useState(null);
   const [recTranscripts, setRecTranscripts] = useState({});
+  const [transcriptSearched, setTranscriptSearched] = useState(false);
+  // Recording-log search (lead / user / phone) — null results = show latest.
+  const [searchType, setSearchType] = useState('lead');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+
+  const runRecordingSearch = useCallback(async (type, query) => {
+    const q = (query || '').trim();
+    if (!q) { setSearchResults(null); setSearchError(''); return; }
+    setSearchLoading(true);
+    setSearchError('');
+    try {
+      const payload = await apiFetch(`/reports/recordings-search?type=${encodeURIComponent(type)}&q=${encodeURIComponent(q)}`, token);
+      setSearchResults(payload?.recordings || []);
+    } catch (requestError) {
+      setSearchError('Recording search failed');
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [token]);
 
   // Latest transcripts keyed by recording_id, kept independent of the search
   // box so the inline column on the recording log stays populated.
@@ -18030,8 +18053,6 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
     }
   }, [token]);
 
-  useEffect(() => { loadTranscripts(''); }, [loadTranscripts]);
-
   const viewTranscript = useCallback(async (row) => {
     try {
       const payload = await apiFetch(`/reports/transcripts?id=${row.transcript_id}`, token);
@@ -18041,12 +18062,51 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
     }
   }, [token]);
 
+  const displayRecordings = searchResults ?? recordings;
+  const searchPlaceholder = searchType === 'phone' ? 'Phone number' : (searchType === 'user' ? 'Agent user' : 'Lead ID');
+
   return (
     <section className="admin-grid">
-      <Panel eyebrow="Recordings" title="Recent Recording Log" icon={Activity} className="admin-wide-panel">
+      <Panel
+        eyebrow="Recordings"
+        title="Recent Recording Log"
+        icon={Activity}
+        className="admin-wide-panel"
+        headerActions={(
+          <form
+            className="rec-search"
+            onSubmit={(event) => { event.preventDefault(); runRecordingSearch(searchType, searchQuery); }}
+          >
+            <select value={searchType} onChange={(event) => setSearchType(event.target.value)} aria-label="Search by">
+              <option value="lead">Lead</option>
+              <option value="user">User</option>
+              <option value="phone">Phone</option>
+            </select>
+            <input
+              type="text"
+              value={searchQuery}
+              placeholder={searchPlaceholder}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <button type="submit" className="secondary-action compact-action" disabled={searchLoading}>
+              <Search size={15} aria-hidden="true" />
+              {searchLoading ? '…' : 'Search'}
+            </button>
+            {searchResults != null && (
+              <button type="button" className="secondary-action compact-action" onClick={() => { setSearchResults(null); setSearchQuery(''); setSearchError(''); }}>
+                Clear
+              </button>
+            )}
+          </form>
+        )}
+      >
+        {searchError && <p className="form-error">{searchError}</p>}
+        {searchResults != null && (
+          <p className="muted-note">{searchResults.length} recording{searchResults.length === 1 ? '' : 's'} for {searchType} “{searchQuery}”.</p>
+        )}
         <DataTable
-          emptyLabel="No recordings returned"
-          rows={recordings.map((row) => ({ ...row, id: row.recording_id }))}
+          emptyLabel={searchResults != null ? 'No recordings match that search' : 'No recordings returned'}
+          rows={displayRecordings.map((row) => ({ ...row, id: row.recording_id }))}
           columns={[
             { key: 'recording_id', label: 'ID', render: (row) => <strong>{row.recording_id}</strong> },
             { key: 'start_time', label: 'Started', render: (row) => <span className="nowrap">{formatDateTime(row.start_time)}</span> },
@@ -18086,14 +18146,14 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="QA" title="Transcripts" icon={FileText} className="admin-wide-panel">
+      <Panel eyebrow="QA" title="Search Transcripts" icon={FileText}>
         <form
-          className="entity-form report-filter-bar"
-          onSubmit={(event) => { event.preventDefault(); loadTranscripts(transcriptQuery.trim()); }}
+          className="entity-form"
+          onSubmit={(event) => { event.preventDefault(); setTranscriptSearched(true); loadTranscripts(transcriptQuery.trim()); }}
         >
           <div className="field-grid">
             <label>
-              <span>Search transcripts (blank = latest)</span>
+              <span>Search by spoken words</span>
               <input
                 type="text"
                 value={transcriptQuery}
@@ -18110,47 +18170,27 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
           </div>
         </form>
         {transcriptsError && <p className="form-error">{transcriptsError}</p>}
-        <DataTable
-          emptyLabel="No transcripts yet - the worker processes new recordings automatically"
-          rows={transcripts.map((row) => ({ ...row, id: row.transcript_id }))}
-          columns={[
-            { key: 'transcript_id', label: 'ID', render: (row) => <strong>{row.transcript_id}</strong> },
-            {
-              key: 'filename',
-              label: 'File',
-              render: (row) => (
-                <>
-                  <strong>{row.filename}</strong>
-                  <span>{row.source === 'INBOX' ? 'Inbox drop' : `Recording ${row.recording_id}`}</span>
-                </>
-              ),
-            },
-            { key: 'user', label: 'User', render: (row) => row.user || '' },
-            { key: 'length_in_sec', label: 'Length', render: (row) => formatSeconds(row.length_in_sec) },
-            { key: 'language', label: 'Lang', render: (row) => (row.language || '').toUpperCase() },
-            { key: 'channels', label: 'Audio', render: (row) => (Number(row.channels) >= 2 ? 'Stereo' : 'Mono') },
-            {
-              key: 'status',
-              label: 'Status',
-              render: (row) => (
-                <span className={`status-pill ${row.status === 'DONE' ? 'pill-active' : (row.status === 'ERROR' ? 'pill-alert' : 'pill-muted')}`}>
-                  {row.status}
-                </span>
-              ),
-            },
-            { key: 'process_seconds', label: 'Proc', render: (row) => (row.process_seconds > 0 ? `${Math.round(row.process_seconds)}s` : '') },
-            {
-              key: 'actions',
-              label: 'Action',
-              render: (row) => (row.status === 'DONE' ? (
-                <button type="button" className="secondary-action compact-action" onClick={() => viewTranscript(row)}>
-                  <FileText size={15} aria-hidden="true" />
-                  View
-                </button>
-              ) : (row.status === 'ERROR' ? <span title={row.error}>{(row.error || '').slice(0, 30)}</span> : null)),
-            },
-          ]}
-        />
+        {transcriptSearched && !transcriptsLoading && (
+          transcripts.length ? (
+            <ul className="tr-results">
+              {transcripts.map((row) => (
+                <li key={row.transcript_id} className="tr-result">
+                  <div className="tr-result-meta">
+                    <strong>Rec {row.recording_id || '—'}</strong>
+                    <span>{[row.user, formatSeconds(row.length_in_sec), row.status].filter(Boolean).join(' · ')}</span>
+                  </div>
+                  {row.status === 'DONE' ? (
+                    <button type="button" className="secondary-action compact-action" onClick={() => viewTranscript(row)}>
+                      <FileText size={14} aria-hidden="true" /> View
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted-note">No transcripts match that search.</p>
+          )
+        )}
       </Panel>
       {openTranscript && (
         <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setOpenTranscript(null))}>

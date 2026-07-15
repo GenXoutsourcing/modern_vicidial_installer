@@ -8676,6 +8676,48 @@ async function transcriptsReport(req, res) {
   return res.json({ ok: true, transcripts: list, query: q });
 }
 
+// Search the recording log by lead id, agent user, or customer phone number.
+// Phone lookups join vicidial_list (phone_number is indexed) so this stays fast
+// at multi-million-lead scale rather than scanning recording_log by filename.
+async function recordingsSearchReport(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const type = String(req.query?.type || 'lead').toLowerCase();
+  const q = String(req.query?.q || '').trim().slice(0, 60);
+  if (!q) return res.json({ ok: true, recordings: [], type, query: '' });
+  const cols =
+    'recording_id, start_time, length_in_sec, filename, location, lead_id, user, vicidial_id, server_ip';
+  let list = [];
+  if (type === 'user') {
+    list = await rows(
+      `SELECT ${cols} FROM recording_log WHERE user = ? ORDER BY recording_id DESC LIMIT 200`,
+      [q.slice(0, 20)],
+      [],
+    ).catch(() => []);
+  } else if (type === 'phone') {
+    const digits = q.replace(/[^0-9]/g, '');
+    if (digits) {
+      list = await rows(
+        `SELECT rl.recording_id, rl.start_time, rl.length_in_sec, rl.filename,
+                rl.location, rl.lead_id, rl.user, rl.vicidial_id, rl.server_ip
+         FROM recording_log rl
+         JOIN vicidial_list vl ON vl.lead_id = rl.lead_id
+         WHERE vl.phone_number = ?
+         ORDER BY rl.recording_id DESC LIMIT 200`,
+        [digits],
+        [],
+      ).catch(() => []);
+    }
+  } else {
+    const leadId = Number(q) || 0;
+    list = await rows(
+      `SELECT ${cols} FROM recording_log WHERE lead_id = ? ORDER BY recording_id DESC LIMIT 200`,
+      [leadId],
+      [],
+    ).catch(() => []);
+  }
+  return res.json({ ok: true, recordings: list, type, query: q });
+}
+
 async function hangupCauseReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate, start, end } = parseReportDateTimeRange(req);
@@ -16982,6 +17024,7 @@ app.get('/api/reports/carrier-log', requireAccess, carrierLogReport);
 app.get('/api/reports/timeclock', requireAccess, timeclockReport);
 app.get('/api/reports/timeclock-status', requireAccess, timeclockStatusReport);
 app.get('/api/reports/transcripts', requireAccess, transcriptsReport);
+app.get('/api/reports/recordings-search', requireAccess, recordingsSearchReport);
 app.get('/api/reports/hangup-cause', requireAccess, hangupCauseReport);
 app.get('/api/reports/sip-event', requireAccess, sipEventReport);
 app.get('/api/reports/amd-log', requireAccess, amdLogReport);
