@@ -9138,6 +9138,8 @@ async function agentWebphoneCall(req, res) {
 
 // user -> uniqueid the start URL already fired for (one live call per agent).
 const startUrlFired = new Map();
+// user -> uniqueid auto-record already started for (ALLCALLS/ALLFORCE).
+const recordingStarted = new Map();
 
 async function callUrlTemplates(type, campaignId, ingroupId, listId, dispo, talkSec) {
   const column = type === 'dispo' ? 'dispo_call_url' : 'start_call_url';
@@ -9471,6 +9473,30 @@ async function agentStatus(req, res) {
     startUrlFired.set(live.user, live.uniqueid);
     fireCallUrls('start', live, { ingroupId: inbound?.group_id || null });
   }
+  // Campaign recording mode drives both the auto-record trigger below and the
+  // client's Record button (locked under ALLFORCE). Read live per poll so a
+  // mid-shift campaign change takes effect on the next call without re-login.
+  let recordMode = 'NEVER';
+  if (live.campaign_id) {
+    const [rc] = await rows(
+      'SELECT campaign_recording FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+      [live.campaign_id],
+      [],
+    );
+    recordMode = String(rc?.campaign_recording || 'NEVER');
+  }
+  // Auto-record: ALLCALLS/ALLFORCE start recording once per call on the first
+  // INCALL poll (same trigger as start_call_url). ONDEMAND stays button-only;
+  // NEVER never records. Deduped per uniqueid so a slow originate isn't retried
+  // every poll; startAgentRecording also no-ops when a recording already runs.
+  if (
+    (recordMode === 'ALLCALLS' || recordMode === 'ALLFORCE') &&
+    live.status === 'INCALL' && Number(live.lead_id) > 0 &&
+    String(live.uniqueid || '').length > 5 && recordingStarted.get(live.user) !== live.uniqueid
+  ) {
+    recordingStarted.set(live.user, live.uniqueid);
+    startAgentRecording(live, live.user, req.agentPhone?.ext_context || 'default').catch(() => {});
+  }
   // Customer-leg presence for dead-call detection (legacy custchannellive),
   // plus carrier-failure lookup when the leg never materialized
   // (manDiaLlookCaLL's carrier-log check).
@@ -9520,6 +9546,7 @@ async function agentStatus(req, res) {
     dialableLeads: stats ? Number(stats.dialable_leads || 0) : null,
     inbound,
     recording: Boolean(await agentRecordingChannel(live)),
+    recordMode,
     queueCalls: Number(queueCnt?.n || 0),
   });
 }
@@ -10683,47 +10710,34 @@ async function agentRecordingChannel(live) {
   return chan?.channel || null;
 }
 
-async function agentRecording(req, res) {
-  if (!req.genxUser) return res.status(401).json({ ok: false });
-  const user = req.genxUser.user;
-  const live = await agentLiveRow(user);
-  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
-  const stop = req.body?.action === 'stop';
-  const nowEpoch = Math.floor(Date.now() / 1000);
-  const context = req.agentPhone?.ext_context || 'default';
-
-  if (stop) {
-    const channel = await agentRecordingChannel(live);
-    if (!channel) return res.status(404).json({ ok: false, error: 'not_recording' });
-    await execute(
-      `INSERT INTO vicidial_manager
-         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
-       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
-      [live.server_ip, `RXvdcW${nowEpoch}`.slice(0, 20), `Channel: ${channel}`],
-    );
-    return res.json({ ok: true, recording: false });
-  }
-
+// Shared recording start: originate the confbridge recording-join leg
+// (Monitor writes the WAV named by the merged campaign_rec_filename) and log
+// it to recording_log. Returns the filename, or null when the campaign
+// disables recording (NEVER) or a recording is already running. Called by the
+// manual Record button and by the ALLCALLS/ALLFORCE auto-record hook in
+// agentStatus.
+async function startAgentRecording(live, user, context) {
   const [camp] = await rows(
     'SELECT campaign_recording, campaign_rec_exten, campaign_rec_filename FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
     [live.campaign_id],
     [],
   );
-  if (String(camp?.campaign_recording || 'NEVER') === 'NEVER') {
-    return res.status(403).json({ ok: false, error: 'recording_disabled' });
-  }
+  if (String(camp?.campaign_recording || 'NEVER') === 'NEVER') return null;
+  if (await agentRecordingChannel(live)) return null; // already recording
+  const nowEpoch = Math.floor(Date.now() / 1000);
   let vendorLeadCode = '';
+  let recPhone = '';
   if (Number(live.lead_id) > 0) {
     const [vlc] = await rows('SELECT vendor_lead_code, phone_number FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
     vendorLeadCode = vlc?.vendor_lead_code || '';
-    req._recPhone = vlc?.phone_number || '';
+    recPhone = vlc?.phone_number || '';
   }
   const filename = recordingFilename(camp?.campaign_rec_filename, {
     user,
     campaign: live.campaign_id,
     leadId: live.lead_id,
     callerid: live.callerid,
-    phone: req._recPhone || '',
+    phone: recPhone,
     vendorLeadCode,
   });
   const recExten = String(camp?.campaign_rec_exten || '8309').replace(/[^0-9]/g, '') || '8309';
@@ -10744,6 +10758,46 @@ async function agentRecording(req, res) {
     [`Local/${recPrefix}${live.conf_exten}@${context}`, live.server_ip, recExten, nowEpoch,
       filename, Number(live.lead_id) || 0, user, live.uniqueid || ''],
   ).catch(() => {});
+  return filename;
+}
+
+async function agentRecording(req, res) {
+  if (!req.genxUser) return res.status(401).json({ ok: false });
+  const user = req.genxUser.user;
+  const live = await agentLiveRow(user);
+  if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  const stop = req.body?.action === 'stop';
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const context = req.agentPhone?.ext_context || 'default';
+
+  if (stop) {
+    // ALLFORCE recording is mandatory — the agent may not stop it.
+    const [camp] = await rows(
+      'SELECT campaign_recording FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+      [live.campaign_id],
+      [],
+    );
+    if (String(camp?.campaign_recording || '') === 'ALLFORCE') {
+      return res.status(403).json({ ok: false, error: 'recording_forced' });
+    }
+    const channel = await agentRecordingChannel(live);
+    if (!channel) return res.status(404).json({ ok: false, error: 'not_recording' });
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
+      [live.server_ip, `RXvdcW${nowEpoch}`.slice(0, 20), `Channel: ${channel}`],
+    );
+    return res.json({ ok: true, recording: false });
+  }
+
+  const filename = await startAgentRecording(live, user, context);
+  if (!filename) {
+    // Already-running is success (idempotent Record press); otherwise the
+    // campaign disables recording (NEVER).
+    if (await agentRecordingChannel(live)) return res.json({ ok: true, recording: true });
+    return res.status(403).json({ ok: false, error: 'recording_disabled' });
+  }
   return res.json({ ok: true, recording: true, filename });
 }
 

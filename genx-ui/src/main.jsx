@@ -16038,6 +16038,7 @@ function AgentConsole({ token, authInfo, onExit }) {
   const [dialFail, setDialFail] = useState(null);
   const [customFields, setCustomFields] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordMode, setRecordMode] = useState('NEVER');
   const [altPhones, setAltPhones] = useState(null);
   const [showAltPhones, setShowAltPhones] = useState(false);
   const [agentMuted, setAgentMuted] = useState(false);
@@ -16102,6 +16103,7 @@ function AgentConsole({ token, authInfo, onExit }) {
       setDialFail(payload.dialFail || null);
       if (!payload.live || !Number(payload.live.preview_lead_id)) setPreviewInfo(null);
       setIsRecording(Boolean(payload.recording));
+      if (payload.recordMode) setRecordMode(payload.recordMode);
       if (payload.queueCalls !== undefined) setQueueCalls(Number(payload.queueCalls || 0));
       if (!payload.live || payload.live.status !== 'INCALL') {
         setAgentMuted(false);
@@ -16605,9 +16607,15 @@ function AgentConsole({ token, authInfo, onExit }) {
               <button type="button" className={agentMuted ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
                 {agentMuted ? <MicOff size={15} aria-hidden="true" /> : <Mic size={15} aria-hidden="true" />} {agentMuted ? 'Unmute' : 'Mute'}
               </button>
-              <button type="button" className={isRecording ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' }); if (p) setMessage(isRecording ? 'Recording stopped' : 'Recording started'); }}>
-                <CircleDot size={15} aria-hidden="true" /> {isRecording ? 'Stop Rec' : 'Record'}
-              </button>
+              {recordMode === 'ALLFORCE' ? (
+                <button type="button" className="agb-act warn" disabled title="Recording is forced on this campaign and cannot be stopped">
+                  <CircleDot size={15} aria-hidden="true" /> Rec Forced
+                </button>
+              ) : (
+                <button type="button" className={isRecording ? 'agb-act warn' : 'agb-act'} disabled={busy || recordMode === 'NEVER'} title={recordMode === 'NEVER' ? 'Recording is disabled on this campaign' : undefined} onClick={async () => { const p = await act('/agent/recording', { action: isRecording ? 'stop' : 'start' }); if (p) setMessage(isRecording ? 'Recording stopped' : 'Recording started'); }}>
+                  <CircleDot size={15} aria-hidden="true" /> {isRecording ? 'Stop Rec' : 'Record'}
+                </button>
+              )}
               <span className="agb-dtmf">
                 <input
                   type="text"
