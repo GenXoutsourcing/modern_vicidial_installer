@@ -9922,6 +9922,17 @@ async function agentStatus(req, res) {
         [req.genxUser.user, req.genxUser.userGroup || '', live.lead_id, live.uniqueid],
       ).catch(() => {});
     }
+    // Open the talk segment on the agent's current agent_log row and attach the
+    // lead — exactly like manual dial does. Without this an auto-dial call's
+    // segment carries no lead_id, so "Calls Today" (which counts lead_id>0 agent
+    // _log rows) and talk-time tracking miss every auto-dial call. talk_sec is
+    // booked later by agentHangup from talk_epoch.
+    if (live.agent_log_id) {
+      await execute(
+        'UPDATE vicidial_agent_log SET lead_id = ?, talk_epoch = ?, talk_sec = 0, uniqueid = ? WHERE agent_log_id = ?',
+        [live.lead_id, Math.floor(Date.now() / 1000), String(live.uniqueid || ''), live.agent_log_id],
+      ).catch(() => {});
+    }
     live = (await agentLiveRow(req.genxUser.user)) || live;
   }
 
