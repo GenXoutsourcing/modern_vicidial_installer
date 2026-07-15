@@ -8706,6 +8706,19 @@ async function recordingsSearchReport(req, res) {
         [digits],
         [],
       ).catch(() => []);
+      if (!list.length && digits.length >= 7) {
+        // Fallback: recordings with no lead attached still carry the dialed
+        // number in the filename (e.g. 20260714-220434_3528161728-all). This
+        // LIKE is an unindexed scan, so it only runs when the indexed lead
+        // join finds nothing, and only for full-length numbers.
+        list = await rows(
+          `SELECT ${cols} FROM recording_log
+           WHERE filename LIKE ?
+           ORDER BY recording_id DESC LIMIT 200`,
+          [`%${digits}%`],
+          [],
+        ).catch(() => []);
+      }
     }
   } else {
     const leadId = Number(q) || 0;
