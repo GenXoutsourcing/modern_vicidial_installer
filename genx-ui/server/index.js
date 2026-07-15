@@ -1502,7 +1502,15 @@ async function dashboardData(selectedRange = 'today') {
   };
 }
 
+// Stock system-only user groups: they hold VICIdial's internal accounts
+// (ADMIN owns VDAD/VDCL). They stay out of the group-assignment dropdown for
+// non-SuperAdmins so a client-owner manager can't move users into them; the
+// Groups-management list (SuperAdmin-only) is left intact so L9 admins still
+// see and manage them.
+const SYSTEM_ONLY_USER_GROUPS = new Set(['ADMIN']);
+
 async function adminData(user) {
+  const isSuperAdmin = Number(user?.userLevel || 0) >= 9;
   const allowedCampaignParams = [];
   const campaignWhere = scopeWhere(user?.permissions?.allowedCampaigns, 'c.campaign_id', allowedCampaignParams);
   const listCampaignParams = [];
@@ -3114,10 +3122,12 @@ async function adminData(user) {
         group_id: item.group_id,
         group_name: item.group_name || item.group_id,
       })),
-      userGroups: userGroups.map((item) => ({
-        user_group: item.user_group,
-        group_name: item.group_name || item.user_group,
-      })),
+      userGroups: userGroups
+        .filter((item) => isSuperAdmin || !SYSTEM_ONLY_USER_GROUPS.has(item.user_group))
+        .map((item) => ({
+          user_group: item.user_group,
+          group_name: item.group_name || item.user_group,
+        })),
       phones: phones.map((item) => ({
         extension: item.extension,
         server_ip: item.server_ip,
@@ -4120,6 +4130,11 @@ async function saveUser(req, res, mode) {
     }
     if (payload.user_group && !scopeAllows(scope, payload.user_group)) {
       return res.status(403).json({ ok: false, error: 'user_group_not_allowed' });
+    }
+    // System-only groups (e.g. ADMIN, which owns VDAD/VDCL) are reserved for
+    // SuperAdmins even when the manager's viewable-group scope is ---ALL---.
+    if (payload.user_group && SYSTEM_ONLY_USER_GROUPS.has(String(payload.user_group).toUpperCase())) {
+      return res.status(403).json({ ok: false, error: 'user_group_reserved' });
     }
   }
   if (mode !== 'create' && !req.genxUser?.permissions?.allowedQueueGroups?.all) {
