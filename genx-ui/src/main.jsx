@@ -17978,8 +17978,17 @@ function AgentApp() {
   return <AgentConsole token={state.token} authInfo={state.authInfo} onExit={exit} />;
 }
 
-function RecordingsView({ admin, token }) {
+function RecordingsView({ admin, token, onAction, onNavigate }) {
   const recordings = admin?.recordings || [];
+  const users = admin?.users || [];
+  // Recording rows only carry the user id; look up the full row to open the
+  // user editor (falls back to the Users list if the user isn't loaded).
+  const openUser = useCallback((userId) => {
+    if (!userId) return;
+    const row = users.find((candidate) => String(candidate.user) === String(userId));
+    if (row) onAction?.('users', 'edit', row);
+    else onNavigate?.('users');
+  }, [users, onAction, onNavigate]);
   const [transcripts, setTranscripts] = useState([]);
   const [transcriptQuery, setTranscriptQuery] = useState('');
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
@@ -18040,22 +18049,19 @@ function RecordingsView({ admin, token }) {
           rows={recordings.map((row) => ({ ...row, id: row.recording_id }))}
           columns={[
             { key: 'recording_id', label: 'ID', render: (row) => <strong>{row.recording_id}</strong> },
-            { key: 'start_time', label: 'Started', render: (row) => formatDateTime(row.start_time) },
+            { key: 'start_time', label: 'Started', render: (row) => <span className="nowrap">{formatDateTime(row.start_time)}</span> },
             { key: 'length_in_sec', label: 'Length', render: (row) => formatSeconds(row.length_in_sec) },
             {
               key: 'filename',
               label: 'File',
               render: (row) => (
-                <>
-                  <strong>{row.filename || 'Recording'}</strong>
-                  {safeHttpUrl(row.location)
-                    ? <a href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer">{row.location}</a>
-                    : <span>{row.vicidial_id || row.server_ip || 'Not archived yet'}</span>}
-                </>
+                safeHttpUrl(row.location)
+                  ? <a className="rec-file-link" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer" title={row.location}>{row.location}</a>
+                  : <span>{row.vicidial_id || row.server_ip || 'Not archived yet'}</span>
               ),
             },
-            { key: 'user', label: 'User', render: (row) => row.user || 'System' },
-            { key: 'lead_id', label: 'Lead', render: (row) => row.lead_id || 'None' },
+            { key: 'user', label: 'User', render: (row) => (row.user ? <button type="button" className="cell-link" onClick={() => openUser(row.user)}>{row.user}</button> : 'System') },
+            { key: 'lead_id', label: 'Lead', render: (row) => (row.lead_id ? <button type="button" className="cell-link" onClick={() => onNavigate?.('leadSearch', { leadId: row.lead_id })}>{row.lead_id}</button> : 'None') },
             {
               key: 'location',
               label: 'Listen',
@@ -18324,7 +18330,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'reportProcess') return <ProcessReportView token={token} />;
   if (activeView === 'reportSph') return <SphReportView token={token} />;
   if (activeView === 'reportMaxStats') return <MaxStatsReportView token={token} />;
-  if (activeView === 'recordings') return <RecordingsView admin={admin} token={token} />;
+  if (activeView === 'recordings') return <RecordingsView admin={admin} token={token} onAction={onAction} onNavigate={onNavigate} />;
   if (activeView === 'adminReports') return <AdminReportsView />;
   if (activeView === 'system') return <SystemView admin={admin} user={user} onAction={onAction} />;
   return <CommandView dashboard={dashboard} admin={admin} />;

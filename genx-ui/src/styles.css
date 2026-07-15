@@ -677,6 +677,33 @@ body {
   box-shadow: 0 0 18px rgba(0, 217, 255, 0.16);
 }
 
+.nowrap { white-space: nowrap; }
+
+/* Inline text link rendered from a <button> inside table cells. */
+.cell-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: var(--blue);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+.cell-link:hover { text-decoration: underline; }
+
+/* Recording URL link: keep clickable but truncate so it can't blow out the
+   table width and push later columns off-screen. */
+.rec-file-link {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 .catalog-search {
   display: flex;
   align-items: center;
