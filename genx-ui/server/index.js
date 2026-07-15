@@ -10956,8 +10956,10 @@ async function agentXferBlind(req, res) {
   try {
     if (live.uniqueid) {
       await execute(
-        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER' WHERE uniqueid = ?",
-        [nowEpoch, live.uniqueid],
+        // Agent-initiated blind transfer: attribute the call to the agent
+        // (auto-dial rows are created as user='VDAD') and mark it XFER.
+        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER', user = ? WHERE uniqueid = ?",
+        [nowEpoch, user, live.uniqueid],
       ).catch(() => {});
       await execute('DELETE FROM vicidial_auto_calls WHERE uniqueid = ?', [live.uniqueid]).catch(() => {});
     }
@@ -11249,8 +11251,10 @@ async function agentXferVmail(req, res) {
   try {
     if (live.uniqueid) {
       await execute(
-        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER' WHERE uniqueid = ?",
-        [nowEpoch, live.uniqueid],
+        // Agent-initiated voicemail transfer: attribute to the agent (auto-dial
+        // rows are created as user='VDAD') and mark it XFER.
+        "UPDATE vicidial_log SET end_epoch = ?, length_in_sec = end_epoch - start_epoch, status = 'XFER', user = ? WHERE uniqueid = ?",
+        [nowEpoch, user, live.uniqueid],
       ).catch(() => {});
     }
     await execute(
