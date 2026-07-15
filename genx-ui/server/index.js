@@ -582,9 +582,14 @@ async function flagTemplateFor(userGroup) {
 async function persistSession(token, session) {
   if (!(await sessionTableReady)) return;
   try {
-    // Persist the WHOLE session minus transient bookkeeping — cherry-picking
-    // fields here silently drops extras like userPass across restarts.
-    const { expiresAt, persistedAt, ...data } = session;
+    // Persist the session minus transient bookkeeping AND the plaintext agent
+    // password. userPass lives only in the in-memory `sessions` map for
+    // script/web-form --A--pass--B-- merges during the live session; it is
+    // deliberately NOT written to genx_ui_sessions so it can't be harvested at
+    // rest from the reports replica or a DB backup. After a server restart the
+    // restored session simply merges an empty password until the agent
+    // re-logs in — an acceptable degradation of a niche legacy feature.
+    const { expiresAt, persistedAt, userPass, ...data } = session;
     await execute(
       'REPLACE INTO genx_ui_sessions (token_hash, session_data, expires_at) VALUES (?, ?, ?)',
       [tokenHash(token), JSON.stringify(data), session.expiresAt],
@@ -626,8 +631,9 @@ async function sessionFromRequest(req) {
         [],
       );
       if (row && Number(row.expires_at) > Date.now()) {
-        // Spread the whole stored record: rebuilding with an explicit field
-        // list here silently drops session extras (userPass et al.).
+        // Spread the whole stored record so session extras survive a restart.
+        // Note userPass is intentionally absent here (persistSession never
+        // writes it) — merges fall back to an empty password until re-login.
         const data = JSON.parse(row.session_data || '{}');
         session = {
           ...data,
@@ -2965,6 +2971,16 @@ async function adminData(user) {
   const leadCounts = await leadCountsPromise;
   const apiGroupName = await apiUserGroup();
 
+  // Never ship stored credentials to the client. Any level>=7 session loads
+  // this catalog, so returning the raw Asterisk-manager/conf secrets and phone
+  // passwords would let a floor supervisor harvest full call-control creds from
+  // the admin JSON. The edit forms treat a blank secret as "keep current"
+  // (saveServer/savePhone/saveUser delete the field from the UPDATE when the
+  // submitted value is blank), so masking here is transparent to editing.
+  for (const s of servers) { s.ASTmgrSECRET = ''; s.conf_secret = ''; }
+  for (const p of phones) { p.ASTmgrSECRET = ''; p.conf_secret = ''; }
+  for (const u of users) { u.phone_pass = ''; }
+
   return {
     generatedAt: new Date().toISOString(),
     permissions: user?.permissions || {},
@@ -4075,6 +4091,8 @@ async function saveUser(req, res, mode) {
   }
   if (mode !== 'create' && !payload.pass) delete payload.pass;
   if (payload.pass) payload.pass_hash = '';
+  // phone_pass is masked out of adminData too: blank on edit = keep current.
+  if (mode !== 'create' && !String(req.body?.phone_pass || '').trim()) delete payload.phone_pass;
 
   if (restrictedUserEditor(req.genxUser)) {
     if (mode === 'create') return res.status(403).json({ ok: false, error: 'user_create_not_allowed' });
@@ -15825,6 +15843,13 @@ async function savePhone(req, res, mode) {
   }
   const payload = phonePayload({ ...req.body, server_ip: req.body?.server_ip || key.server_ip }, mode);
   if (!payload.server_ip) payload.server_ip = key.server_ip;
+  // Secrets are masked out of adminData, so a blank submitted secret on edit
+  // means "keep current" — drop it from the UPDATE rather than overwrite with
+  // the payload default. (Create keeps the default so a new phone is usable.)
+  if (mode !== 'create') {
+    if (!String(req.body?.conf_secret || '').trim()) delete payload.conf_secret;
+    if (!String(req.body?.ASTmgrSECRET || '').trim()) delete payload.ASTmgrSECRET;
+  }
   if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, payload.user_group)) {
     return res.status(403).json({ ok: false, error: 'phone_scope_required' });
   }
@@ -15934,6 +15959,12 @@ async function saveServer(req, res, mode) {
   }
   const payload = serverPayload(req.body || {});
   if (!canModifyCustomDialplan(req.genxUser)) delete payload.custom_dialplan_entry;
+  // Secrets are masked out of adminData: blank submitted secret on edit = keep
+  // current (drop from the UPDATE); create keeps the default.
+  if (mode !== 'create') {
+    if (!String(req.body?.ASTmgrSECRET || '').trim()) delete payload.ASTmgrSECRET;
+    if (!String(req.body?.conf_secret || '').trim()) delete payload.conf_secret;
+  }
   if (!payload.server_ip) return badRequest(res, 'server_ip_required');
   if (!scopedUserGroupAllowed(req.genxUser, payload.user_group)) return res.status(403).json({ ok: false, error: 'server_scope_required' });
   const { assignments, values } = dynamicAssignments(payload);
