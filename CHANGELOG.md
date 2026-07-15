@@ -3,6 +3,12 @@
 Version = `genx-ui/package.json` (shown in the Mission Control strip and on
 the sign-in page). Tag releases as `v<version>` on this repo.
 
+## Planned (not yet started)
+
+- **Agent Guidance — interactive decision trees** (Yonyx-class guided call
+  scripts, native): design spec in
+  `genx-ui/docs/future/agent-guidance-decision-trees.md`. No code yet.
+
 ## v1.0.0-rc.1 — 2026-07-13
 
 First release candidate. Validated by a full from-scratch five-server
