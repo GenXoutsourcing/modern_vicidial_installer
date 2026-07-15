@@ -219,7 +219,10 @@ def main():
 
     while True:
         try:
-            conn.ping(reconnect=True)
+            try:
+                conn.ping(reconnect=False)
+            except Exception:
+                conn = connect()  # newer PyMySQL deprecated ping(reconnect=True)
             enqueue_recording_log(conn)
             enqueue_inbox(conn)
             with conn.cursor(pymysql.cursors.DictCursor) as cur:
