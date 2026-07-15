@@ -8128,7 +8128,18 @@ function LeadSearchView({ admin, user, token, viewParams }) {
               columns={[
                 { key: 'start_time', label: 'Start', render: (row) => formatDateTime(row.start_time) },
                 { key: 'length_in_sec', label: 'Seconds' },
-                { key: 'filename', label: 'File' },
+                {
+                  key: 'filename',
+                  label: 'File',
+                  render: (row) => (
+                    <>
+                      <strong>{row.filename || 'Recording'}</strong>
+                      {safeHttpUrl(row.location)
+                        ? <a href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer">{row.location}</a>
+                        : <span>Not archived yet</span>}
+                    </>
+                  ),
+                },
                 { key: 'user', label: 'User' },
                 {
                   key: 'location',
@@ -17795,12 +17806,19 @@ function RecordingsView({ admin, token }) {
               render: (row) => (
                 <>
                   <strong>{row.filename || 'Recording'}</strong>
-                  <span>{row.vicidial_id || row.server_ip || 'No call id'}</span>
+                  {safeHttpUrl(row.location)
+                    ? <a href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer">{row.location}</a>
+                    : <span>{row.vicidial_id || row.server_ip || 'Not archived yet'}</span>}
                 </>
               ),
             },
             { key: 'user', label: 'User', render: (row) => row.user || 'System' },
             { key: 'lead_id', label: 'Lead', render: (row) => row.lead_id || 'None' },
+            {
+              key: 'location',
+              label: 'Listen',
+              render: (row) => (safeHttpUrl(row.location) ? <a className="row-action" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> Open</a> : '—'),
+            },
           ]}
         />
       </Panel>
