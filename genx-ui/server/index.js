@@ -8872,7 +8872,7 @@ async function agentAuth(req, res) {
 async function agentLiveRow(user) {
   const [row] = await rows(
     `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid, uniqueid,
-            calls_today, pause_code, agent_log_id, preview_lead_id, external_pause,
+            channel, calls_today, pause_code, agent_log_id, preview_lead_id, external_pause,
             UNIX_TIMESTAMP(last_state_change) AS state_epoch
      FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
     [user],
@@ -9125,6 +9125,253 @@ async function agentWebphoneCall(req, res) {
   return res.json({ ok: true, live });
 }
 
+// ---------------------------------------------------------------------------
+// Campaign URL firing: start_call_url / dispo_call_url. Port of the
+// vdc_db_query.php URL blocks — in-group URL overrides the campaign's (dispo
+// falls back to campaign when the group's is blank), 'ALT' fans out to
+// vicidial_url_multi rows (rank order, url_lists/url_statuses/url_call_length
+// filters), --A--field--B-- merge tokens are substituted urlencoded, and every
+// firing is logged to vicidial_url_log exactly like legacy so the URL Log
+// report stays accurate. na_call_url is NOT handled here: the dialer's
+// AST_VDauto_dial.pl/AST_send_URL.pl fire it server-side for calls that never
+// reach an agent, regardless of which agent UI is in use.
+
+// user -> uniqueid the start URL already fired for (one live call per agent).
+const startUrlFired = new Map();
+
+async function callUrlTemplates(type, campaignId, ingroupId, listId, dispo, talkSec) {
+  const column = type === 'dispo' ? 'dispo_call_url' : 'start_call_url';
+  let template = '';
+  let entryType = 'campaign';
+  let entryId = campaignId;
+  if (ingroupId) {
+    const [ig] = await rows(
+      `SELECT ${column} AS u FROM vicidial_inbound_groups WHERE group_id = ? LIMIT 1`,
+      [ingroupId],
+      [],
+    );
+    const igUrl = String(ig?.u || '');
+    if (igUrl.length > 7 || igUrl === 'ALT') {
+      template = igUrl;
+      entryType = 'ingroup';
+      entryId = ingroupId;
+    }
+  }
+  if (!template) {
+    const [c] = await rows(
+      `SELECT ${column} AS u FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1`,
+      [campaignId],
+      [],
+    );
+    template = String(c?.u || '');
+  }
+  if (template === 'ALT') {
+    const multi = await rows(
+      `SELECT url_address, url_statuses, url_lists, url_call_length FROM vicidial_url_multi
+       WHERE campaign_id = ? AND entry_type = ? AND url_type = ? AND active = 'Y'
+       ORDER BY url_rank LIMIT 1000`,
+      [entryId, entryType, type],
+      [],
+    );
+    return multi
+      .filter((r) => !String(r.url_lists || '').trim() || ` ${String(r.url_lists).trim()} `.includes(` ${listId} `))
+      .filter((r) => type !== 'dispo' || !String(r.url_statuses || '').trim() || ` ${String(r.url_statuses).trim()} `.includes(` ${dispo} `))
+      .filter((r) => type !== 'dispo' || Number(talkSec || 0) >= Number(r.url_call_length || 0))
+      .map((r) => String(r.url_address || ''));
+  }
+  return template.length > 7 ? [template] : [];
+}
+
+// The legacy merge-token set (vdc_db_query start/dispo blocks): lead + list +
+// user + call variables. Values are urlencoded at replace time.
+async function callUrlMergeMap(live, extra) {
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  const [lead] = await rows('SELECT * FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
+  const [list] = lead
+    ? await rows('SELECT list_name, list_description FROM vicidial_lists WHERE list_id = ? LIMIT 1', [lead.list_id], [])
+    : [null];
+  const [agent] = await rows(
+    `SELECT pass, full_name, email, phone_login, user_group,
+            custom_one, custom_two, custom_three, custom_four, custom_five
+     FROM vicidial_users WHERE user = ? LIMIT 1`,
+    [live.user],
+    [],
+  );
+  const [camp] = await rows(
+    'SELECT custom_one, custom_two, custom_three, custom_four, custom_five FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  // Talk time / termination for dispo tokens: the call-log row for this call.
+  let talk = null;
+  if (extra.dispo) {
+    if (String(live.uniqueid || '').length > 5) {
+      [talk] = await rows(
+        'SELECT length_in_sec, term_reason FROM vicidial_log WHERE uniqueid = ? LIMIT 1',
+        [live.uniqueid],
+        [],
+      );
+    }
+    if (!talk) {
+      [talk] = await rows(
+        'SELECT length_in_sec, term_reason FROM vicidial_closer_log WHERE lead_id = ? AND user = ? ORDER BY closecallid DESC LIMIT 1',
+        [live.lead_id, live.user],
+        [],
+      );
+    }
+  }
+  const talkSec = Math.max(Number(talk?.length_in_sec || 0), 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const sqlDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return {
+    map: {
+      lead_id: live.lead_id,
+      vendor_id: lead?.vendor_lead_code,
+      vendor_lead_code: lead?.vendor_lead_code,
+      list_id: lead?.list_id,
+      list_name: list?.list_name,
+      list_description: list?.list_description,
+      gmt_offset_now: lead?.gmt_offset_now,
+      phone_code: lead?.phone_code,
+      phone_number: lead?.phone_number,
+      phone: lead?.phone_number,
+      title: lead?.title,
+      first_name: lead?.first_name,
+      middle_initial: lead?.middle_initial,
+      last_name: lead?.last_name,
+      address1: lead?.address1,
+      address2: lead?.address2,
+      address3: lead?.address3,
+      city: lead?.city,
+      state: lead?.state,
+      province: lead?.province,
+      postal_code: lead?.postal_code,
+      country_code: lead?.country_code,
+      gender: lead?.gender,
+      date_of_birth: lead?.date_of_birth,
+      alt_phone: lead?.alt_phone,
+      email: lead?.email,
+      security_phrase: lead?.security_phrase,
+      comments: lead?.comments,
+      source_id: lead?.source_id,
+      rank: lead?.rank,
+      owner: lead?.owner,
+      entry_list_id: lead?.entry_list_id,
+      entry_date: lead?.entry_date,
+      called_count: lead?.called_count,
+      user: live.user,
+      pass: agent?.pass,
+      fullname: agent?.full_name,
+      agent_email: agent?.email,
+      phone_login: agent?.phone_login,
+      original_phone_login: agent?.phone_login,
+      user_group: agent?.user_group,
+      user_custom_one: agent?.custom_one,
+      user_custom_two: agent?.custom_two,
+      user_custom_three: agent?.custom_three,
+      user_custom_four: agent?.custom_four,
+      user_custom_five: agent?.custom_five,
+      camp_custom_one: camp?.custom_one,
+      camp_custom_two: camp?.custom_two,
+      camp_custom_three: camp?.custom_three,
+      camp_custom_four: camp?.custom_four,
+      camp_custom_five: camp?.custom_five,
+      campaign: live.campaign_id,
+      group: extra.ingroupId || live.campaign_id,
+      channel_group: extra.ingroupId || live.campaign_id,
+      uniqueid: live.uniqueid,
+      epoch: nowEpoch,
+      SQLdate: sqlDate,
+      server_ip: live.server_ip,
+      customer_server_ip: live.server_ip,
+      session_id: live.conf_exten,
+      SIPexten: live.extension,
+      customer_zap_channel: live.channel,
+      call_id: live.callerid,
+      agent_log_id: live.agent_log_id,
+      fronter: '',
+      closer: extra.ingroupId ? live.user : '',
+      dialed_number: lead?.phone_number,
+      dialed_label: 'MAIN',
+      dispo: extra.dispo || '',
+      talk_time: extra.dispo ? talkSec : 0,
+      talk_time_min: extra.dispo ? Math.ceil(talkSec / 60) : 0,
+      term_reason: talk?.term_reason || '',
+      callback_lead_status: extra.dispo || '',
+    },
+    talkSec,
+  };
+}
+
+function applyUrlMerge(template, map) {
+  let out = String(template).replace(/^VAR/, '');
+  for (const [token, value] of Object.entries(map)) {
+    out = out.replace(new RegExp(`--A--${token}--B--`, 'gi'), () => encodeURIComponent(String(value ?? '').trim()));
+  }
+  return out;
+}
+
+// Second merge pass: leftover --A--x--B-- tokens resolved against the lead's
+// custom-fields table (custom_<entry_list_id>), like legacy's custom pass.
+async function applyCustomFieldMerge(url, entryListId, leadId) {
+  if (!/--A--[\w-]+--B--/.test(url)) return url;
+  const listId = Number(entryListId || 0);
+  if (!listId || !Number(leadId || 0)) return url;
+  const [row] = await rows(`SELECT * FROM custom_${listId} WHERE lead_id = ? LIMIT 1`, [leadId], []).catch(() => []);
+  if (!row) return url;
+  let out = url;
+  for (const [field, value] of Object.entries(row)) {
+    out = out.replace(new RegExp(`--A--${field}--B--`, 'gi'), () => encodeURIComponent(String(value ?? '').trim()));
+  }
+  return out;
+}
+
+// Fire-and-forget: never blocks or breaks the agent flow. Callers do NOT await.
+async function fireCallUrls(type, live, extra = {}) {
+  try {
+    const { map, talkSec } = await callUrlMergeMap(live, extra);
+    const templates = await callUrlTemplates(
+      type, live.campaign_id, extra.ingroupId || null, map.list_id, extra.dispo || '', talkSec,
+    );
+    for (const template of templates) {
+      let url = applyUrlMerge(template, map);
+      url = await applyCustomFieldMerge(url, map.entry_list_id, live.lead_id);
+      if (url.length <= 7 || !/^https?:\/\//i.test(url)) continue;
+      const logged = await execute(
+        "INSERT INTO vicidial_url_log (uniqueid, url_date, url_type, url, url_response) VALUES (?, NOW(), ?, ?, '')",
+        [String(live.uniqueid || ''), type, url.replace(/;/g, '')],
+      );
+      const started = Date.now();
+      let body = '';
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(10000), redirect: 'follow' });
+        body = (await response.text()).slice(0, 8000);
+      } catch (fetchError) {
+        body = `FETCH ERROR: ${fetchError?.message || fetchError}`;
+      }
+      await execute(
+        'UPDATE vicidial_url_log SET response_sec = ?, url_response = ? WHERE url_log_id = ?',
+        [Math.min(Math.round((Date.now() - started) / 1000), 65535), body.replace(/;/g, ''), logged.insertId],
+      );
+    }
+  } catch {
+    // URL firing is best-effort side traffic; the call/dispo must proceed.
+  }
+}
+
+// Inbound closer calls carry a Y-prefixed callerid; the in-group that took the
+// call decides which start/dispo URL applies.
+async function callIngroupFor(live) {
+  if (!/^Y/.test(String(live.callerid || '')) || !Number(live.lead_id)) return null;
+  const [closer] = await rows(
+    'SELECT campaign_id FROM vicidial_closer_log WHERE lead_id = ? ORDER BY closecallid DESC LIMIT 1',
+    [live.lead_id],
+    [],
+  );
+  return closer?.campaign_id || null;
+}
+
 async function agentStatus(req, res) {
   if (!req.genxUser) return res.status(401).json({ ok: false });
   let live = await agentLiveRow(req.genxUser.user);
@@ -9213,6 +9460,16 @@ async function agentStatus(req, res) {
       [],
     );
     if (closer) inbound = closer;
+  }
+  // start_call_url: fire once per call, on the first poll that sees the
+  // dialer's uniqueid attached — covers auto, inbound, and manual dial
+  // uniformly (legacy fires from several client call paths instead).
+  if (
+    live.status === 'INCALL' && Number(live.lead_id) > 0 &&
+    String(live.uniqueid || '').length > 5 && startUrlFired.get(live.user) !== live.uniqueid
+  ) {
+    startUrlFired.set(live.user, live.uniqueid);
+    fireCallUrls('start', live, { ingroupId: inbound?.group_id || null });
   }
   // Customer-leg presence for dead-call detection (legacy custchannellive),
   // plus carrier-failure lookup when the leg never materialized
@@ -9339,6 +9596,13 @@ async function agentDispo(req, res) {
       );
     }
     await execute('UPDATE vicidial_campaigns SET campaign_calldate = NOW() WHERE campaign_id = ?', [live.campaign_id]).catch(() => {});
+
+    // dispo_call_url: fired as the dispo commits, like legacy updateDISPO.
+    // `live` was read before the live-agent reset, so uniqueid/callerid/
+    // channel still describe the call being dispositioned.
+    callIngroupFor(live)
+      .then((ingroupId) => fireCallUrls('dispo', live, { dispo, ingroupId }))
+      .catch(() => {});
 
     // Per-call note (vicidial_call_notes) so the next call shows "last note".
     if (comments) {
