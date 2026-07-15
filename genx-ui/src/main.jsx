@@ -16510,7 +16510,10 @@ function AgentConsole({ token, authInfo, onExit }) {
       setDispoPick('');
       setCallbackTime('');
       setDispoComments('');
-      setMessage(`Dispositioned ${status} — paused`);
+      // The server returns the agent to READY on auto-dial campaigns that don't
+      // pause after each call; reflect that instead of always saying "paused".
+      const readyNext = payload.live?.status === 'READY';
+      setMessage(`Dispositioned ${status} — ${readyNext ? 'ready for next call' : 'paused'}`);
     }
   };
 

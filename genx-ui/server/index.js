@@ -10262,7 +10262,21 @@ async function agentDispo(req, res) {
     );
     await execute('UPDATE vicidial_live_agents SET agent_log_id = ? WHERE user = ?', [inserted.insertId, user]);
 
-    return res.json({ ok: true, live: await agentLiveRow(user) });
+    // Auto-dial continuity: unless the campaign is set to pause after each call,
+    // return the agent to READY so the dialer sends the next call rather than
+    // stranding them paused. Legacy has the agent screen resume with VDADready
+    // when pause_after_each_call='N'. Reuses the READY transition, which books
+    // ~0 pause on the fresh segment above and starts the wait phase.
+    const [pac] = await rows(
+      'SELECT pause_after_each_call FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+      [live.campaign_id],
+      [],
+    );
+    let liveOut = await agentLiveRow(user);
+    if (String(pac?.pause_after_each_call || 'N') !== 'Y') {
+      liveOut = (await applyAgentStatus(user, req.genxUser.userGroup, 'READY')) || liveOut;
+    }
+    return res.json({ ok: true, live: liveOut });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'dispo_failed' });
   }
