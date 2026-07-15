@@ -10165,12 +10165,28 @@ async function agentDispo(req, res) {
     );
     await execute('UPDATE vicidial_list SET status = ?, user = ? WHERE lead_id = ?', [dispo, user, leadId]);
 
-    // Tag the most recent call-log row for this lead (outbound then inbound).
-    // Window computed in SQL so it uses the DB server's clock/timezone.
-    const logResult = await execute(
-      'UPDATE vicidial_log SET status = ?, user = ? WHERE lead_id = ? AND user = ? AND call_date > NOW() - INTERVAL 4 HOUR ORDER BY uniqueid DESC LIMIT 1',
-      [dispo, user, leadId, user],
-    );
+    // Tag this call's log row with the disposition. Auto-dial rows are created
+    // by the dialer as user='VDAD', so match FIRST by the call's uniqueid (from
+    // the pre-reset live row) to land on and re-attribute THAT row to the agent
+    // — matching by user alone missed VDAD-owned rows, leaving handled auto-dial
+    // calls logged as VDAD/DROP/XFER instead of the agent's dispo. A genuine
+    // no-answer auto-dial is never dispositioned here, so its VDAD/NA row is
+    // correctly left untouched. Falls back to the lead+user time window for
+    // manual dials or any row whose uniqueid didn't line up, then to inbound.
+    let logResult = { affectedRows: 0 };
+    const callUid = String(live.uniqueid || '');
+    if (callUid.length > 5 && callUid !== '0') {
+      logResult = await execute(
+        'UPDATE vicidial_log SET status = ?, user = ? WHERE uniqueid = ? AND lead_id = ? LIMIT 1',
+        [dispo, user, callUid, leadId],
+      );
+    }
+    if (!logResult.affectedRows) {
+      logResult = await execute(
+        'UPDATE vicidial_log SET status = ?, user = ? WHERE lead_id = ? AND user = ? AND call_date > NOW() - INTERVAL 4 HOUR ORDER BY uniqueid DESC LIMIT 1',
+        [dispo, user, leadId, user],
+      );
+    }
     if (!logResult.affectedRows) {
       await execute(
         'UPDATE vicidial_closer_log SET status = ? WHERE lead_id = ? AND user = ? ORDER BY closecallid DESC LIMIT 1',
