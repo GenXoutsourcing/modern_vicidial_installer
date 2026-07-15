@@ -9878,6 +9878,29 @@ async function agentStatus(req, res) {
   if (!live) return res.json({ ok: true, live: null });
   await execute('UPDATE vicidial_live_agents SET last_update_time = NOW() WHERE user = ?', [req.genxUser.user]).catch(() => {});
 
+  // Dialer call delivery (legacy VDADcheckINCOMING): VDAD parks the routed
+  // call on the agent as status QUEUE — the AGENT SCREEN owns the
+  // QUEUE→INCALL promotion. Without it the agent sticks in QUEUE forever and
+  // the client never shows the in-call screen. Mirror the stock UPDATE
+  // (calls_today++, clear external_* flags and pause_code).
+  if (live.status === 'QUEUE' && Number(live.lead_id) > 0) {
+    const callsToday = Number(live.calls_today || 0) + 1;
+    await execute(
+      `UPDATE vicidial_live_agents
+       SET status = 'INCALL', last_call_time = NOW(), calls_today = ?,
+           external_hangup = 0, external_status = '', external_pause = '',
+           external_dial = '', last_state_change = NOW(), pause_code = '',
+           preview_lead_id = '0'
+       WHERE user = ? AND status = 'QUEUE'`,
+      [callsToday, req.genxUser.user],
+    );
+    await execute(
+      'UPDATE vicidial_campaign_agents SET calls_today = ? WHERE user = ? AND campaign_id = ?',
+      [callsToday, req.genxUser.user, live.campaign_id],
+    ).catch(() => {});
+    live = (await agentLiveRow(req.genxUser.user)) || live;
+  }
+
   // Supervisor external_pause (agent_api port): 'PAUSE!epoch' / 'RESUME!epoch'
   // set by the admin UI; apply when not on a call, then clear the flag —
   // mirrors legacy vicidial.php polling behavior.
