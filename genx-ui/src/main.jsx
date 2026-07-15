@@ -17985,6 +17985,26 @@ function RecordingsView({ admin, token }) {
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState('');
   const [openTranscript, setOpenTranscript] = useState(null);
+  const [recTranscripts, setRecTranscripts] = useState({});
+
+  // Latest transcripts keyed by recording_id, kept independent of the search
+  // box so the inline column on the recording log stays populated.
+  const loadRecTranscriptMap = useCallback(async () => {
+    try {
+      const payload = await apiFetch('/reports/transcripts?', token);
+      const map = {};
+      (payload?.transcripts || []).forEach((row) => {
+        if (row.recording_id && !map[row.recording_id]) {
+          map[row.recording_id] = { transcript_id: row.transcript_id, status: row.status };
+        }
+      });
+      setRecTranscripts(map);
+    } catch (requestError) {
+      /* inline column just falls back to "—" */
+    }
+  }, [token]);
+
+  useEffect(() => { loadRecTranscriptMap(); }, [loadRecTranscriptMap]);
 
   const loadTranscripts = useCallback(async (query) => {
     setTranscriptsLoading(true);
@@ -18040,6 +18060,22 @@ function RecordingsView({ admin, token }) {
               key: 'location',
               label: 'Listen',
               render: (row) => (safeHttpUrl(row.location) ? <a className="row-action" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" /> Open</a> : '—'),
+            },
+            {
+              key: 'transcript',
+              label: 'Transcript',
+              render: (row) => {
+                const t = recTranscripts[row.recording_id];
+                if (t && t.status === 'DONE') {
+                  return (
+                    <button type="button" className="secondary-action compact-action" onClick={() => viewTranscript({ transcript_id: t.transcript_id })}>
+                      <FileText size={15} aria-hidden="true" /> View
+                    </button>
+                  );
+                }
+                if (t) return <span className="status-pill pill-muted">{t.status}</span>;
+                return '—';
+              },
             },
           ]}
         />
