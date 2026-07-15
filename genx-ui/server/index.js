@@ -10204,8 +10204,13 @@ async function agentStatus(req, res) {
     live.status === 'INCALL' && Number(live.lead_id) > 0 &&
     String(live.uniqueid || '').length > 5 && recordingStarted.get(live.user) !== live.uniqueid
   ) {
-    recordingStarted.set(live.user, live.uniqueid);
-    startAgentRecording(live, live.user, req.agentPhone?.ext_context || 'default').catch(() => {});
+    // Mark started only AFTER a successful start (filename returned). Stereo
+    // returns null until the customer leg is up, so a too-early first poll must
+    // retry on the next one; and because stereo has no mono Local/5 rec-leg for
+    // agentRecordingChannel to detect, dedup-on-success is what prevents a
+    // second MixMonitor (double file) on later polls.
+    const started = await startAgentRecording(live, live.user, req.agentPhone?.ext_context || 'default').catch(() => null);
+    if (started) recordingStarted.set(live.user, live.uniqueid);
   }
   // Customer-leg presence for dead-call detection (legacy custchannellive),
   // plus carrier-failure lookup when the leg never materialized
