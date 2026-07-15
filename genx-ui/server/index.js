@@ -10719,6 +10719,33 @@ async function agentCallbacks(req, res) {
   return res.json({ ok: true, callbacks, count: callbacks.length, liveCount });
 }
 
+// An agent may read or act on a lead only when it is (a) their current live
+// call, (b) a lead in their own call history — exactly what the call-log view
+// shows, both outbound and inbound recorded in vicidial_agent_log — or (c) a
+// lead on a callback visible to them (USERONLY for this user, or ANYONE in
+// their campaign). Without this, an arbitrary ?lead_id= / body lead_id lets any
+// agent read any lead's PII or (via manual-dial) dial/own any lead in the DB.
+async function agentMayAccessLead(user, live, leadId) {
+  const id = Number(leadId || 0);
+  if (!id) return false;
+  if (id === Number(live?.lead_id || 0)) return true;
+  const [hist] = await rows(
+    'SELECT 1 AS ok FROM vicidial_agent_log WHERE lead_id = ? AND user = ? LIMIT 1',
+    [id, user],
+    [],
+  );
+  if (hist) return true;
+  const [cb] = await rows(
+    `SELECT 1 AS ok FROM vicidial_callbacks
+     WHERE lead_id = ? AND status NOT IN ('INACTIVE','DEAD')
+       AND ((recipient = 'USERONLY' AND user = ?) OR (recipient = 'ANYONE' AND campaign_id = ?))
+     LIMIT 1`,
+    [id, user, live?.campaign_id || ''],
+    [],
+  );
+  return Boolean(cb);
+}
+
 // Alt phones list (vicidial_list_alt_phones): view entries for the current
 // lead and toggle active (legacy alt_phone_change).
 async function agentAltPhones(req, res) {
@@ -10727,6 +10754,9 @@ async function agentAltPhones(req, res) {
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
   const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
   if (!leadId) return badRequest(res, 'lead_id_required');
+  if (!(await agentMayAccessLead(req.genxUser.user, live, leadId))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
   const phones = await rows(
     'SELECT alt_phone_id, phone_code, phone_number, alt_phone_note, alt_phone_count, active FROM vicidial_list_alt_phones WHERE lead_id = ? ORDER BY alt_phone_count LIMIT 50',
     [leadId],
@@ -11401,6 +11431,9 @@ async function agentCustomFields(req, res) {
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
   const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
   if (!leadId) return badRequest(res, 'lead_id_required');
+  if (!(await agentMayAccessLead(req.genxUser.user, live, leadId))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
   const [lead] = await rows('SELECT list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []);
   if (!lead) return res.status(404).json({ ok: false, error: 'lead_not_found' });
   const listId = Number(lead.list_id || 0);
@@ -11472,6 +11505,9 @@ async function agentLeadInfo(req, res) {
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
   const leadId = Number(req.query?.lead_id || 0) || Number(live.lead_id || 0);
   if (!leadId) return badRequest(res, 'lead_id_required');
+  if (!(await agentMayAccessLead(req.genxUser.user, live, leadId))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
 
   const [lead] = await rows(
     `SELECT lead_id, list_id, status, phone_code, phone_number, first_name, last_name, city, state,
@@ -11833,6 +11869,12 @@ async function agentManualDial(req, res) {
   const callbackId = Number(req.body?.callback_id || 0);
   const phoneNumber = String(req.body?.phone_number || '').replace(/[^0-9]/g, '').slice(0, 18);
   if (!requestedLead && phoneNumber.length < 5) return badRequest(res, 'phone_or_lead_required');
+  // Dialing by lead_id (preview/callback/alt redial) must stay within the
+  // agent's reachable leads — never let a crafted lead_id dial/own an arbitrary
+  // lead. The typed-phone_number path creates a fresh lead, so it's exempt.
+  if (requestedLead && !(await agentMayAccessLead(user, live, requestedLead))) {
+    return res.status(403).json({ ok: false, error: 'lead_not_allowed' });
+  }
 
   const [campaign] = await rows(
     `SELECT campaign_id, dial_prefix, omit_phone_code, manual_dial_list_id, campaign_cid
