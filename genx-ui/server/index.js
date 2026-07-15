@@ -11207,6 +11207,8 @@ function recordingFilename(template, ctx) {
   let name = String(template || 'FULLDATE_AGENT')
     .replace(/FULLDATE/g, fulldate)
     .replace(/CUSTPHONE/g, ctx.phone || '')
+    // FULLNAME = customer first+last from the lead (sanitized below).
+    .replace(/FULLNAME/g, ctx.fullName || '')
     .replace(/AGENT/g, ctx.user || '')
     .replace(/CAMPAIGN/g, ctx.campaign || '')
     .replace(/LEADID/g, String(ctx.leadId || ''))
@@ -11242,10 +11244,12 @@ async function startAgentRecording(live, user, context) {
   const nowEpoch = Math.floor(Date.now() / 1000);
   let vendorLeadCode = '';
   let recPhone = '';
+  let recFullName = '';
   if (Number(live.lead_id) > 0) {
-    const [vlc] = await rows('SELECT vendor_lead_code, phone_number FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
+    const [vlc] = await rows('SELECT vendor_lead_code, phone_number, first_name, last_name FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
     vendorLeadCode = vlc?.vendor_lead_code || '';
     recPhone = vlc?.phone_number || '';
+    recFullName = [vlc?.first_name, vlc?.last_name].filter(Boolean).join('-');
   }
   const filename = recordingFilename(camp?.campaign_rec_filename, {
     user,
@@ -11254,6 +11258,7 @@ async function startAgentRecording(live, user, context) {
     callerid: live.callerid,
     phone: recPhone,
     vendorLeadCode,
+    fullName: recFullName,
   });
   const recExten = String(camp?.campaign_rec_exten || '8309').replace(/[^0-9]/g, '') || '8309';
   const confInfo = await serverConfInfo(live.server_ip);
