@@ -11290,6 +11290,19 @@ async function agentManualDial(req, res) {
       [uniqueid, lead.lead_id, lead.list_id, live.campaign_id, nowEpoch, lead.phone_code || '1',
         lead.phone_number, user, req.genxUser.userGroup || '', req._altDialTag || altDial, calledCount],
     );
+    // vicidial_auto_calls row keyed on the caller_code (legacy manual-dial
+    // INSERT, vdc_db_query ~5521). The AMI event processor (AST_update_AMI2)
+    // matches the originated customer channel's CallerIDName (this caller_code)
+    // to this row and writes its real channel back — which is how agentHangup
+    // later finds the customer leg to hang up. Without this row the channel is
+    // never recorded and Hangup falls back to the agent's own channel (no-op).
+    // status 'XFER' keeps the auto-dialer from treating it as a dialable call.
+    await execute(
+      `INSERT INTO vicidial_auto_calls
+         (server_ip, campaign_id, status, lead_id, callerid, phone_code, phone_number, call_time, call_type)
+       VALUES (?, ?, 'XFER', ?, ?, ?, ?, NOW(), 'OUT')`,
+      [live.server_ip, live.campaign_id, lead.lead_id, callerCode, lead.phone_code || '1', dialExten],
+    ).catch(() => {});
     await execute(
       "UPDATE vicidial_live_agents SET status = 'INCALL', lead_id = ?, uniqueid = ?, callerid = ?, comments = 'MANUAL', last_call_time = NOW(), last_state_change = NOW() WHERE user = ?",
       [lead.lead_id, uniqueid, callerCode, user],
