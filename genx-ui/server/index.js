@@ -4526,11 +4526,22 @@ function xlsxToCsv(buffer) {
     .join('\r\n');
 }
 
-function parseCsvRows(text) {
+// Sniff the delimiter from the first line: whichever of tab / pipe / comma
+// appears most (comma wins ties). Mirrors the stock loader's tab-vs-pipe count.
+function detectDelimiter(text) {
+  const firstLine = String(text || '').split(/\r?\n/, 1)[0] || '';
+  const counts = { '\t': (firstLine.match(/\t/g) || []).length, '|': (firstLine.match(/\|/g) || []).length, ',': (firstLine.match(/,/g) || []).length };
+  if (counts['\t'] > counts[','] && counts['\t'] >= counts['|']) return '\t';
+  if (counts['|'] > counts[','] && counts['|'] > counts['\t']) return '|';
+  return ',';
+}
+
+function parseCsvRows(text, delimiter = ',') {
   const rows = [];
   let field = '';
   let row = [];
   let quoted = false;
+  const delim = delimiter || ',';
 
   for (let index = 0; index < String(text || '').length; index += 1) {
     const char = text[index];
@@ -4550,7 +4561,7 @@ function parseCsvRows(text) {
 
     if (char === '"') {
       quoted = true;
-    } else if (char === ',') {
+    } else if (char === delim) {
       row.push(field);
       field = '';
     } else if (char === '\n') {
@@ -4752,6 +4763,105 @@ async function duplicateLeadExists(phoneNumber, listId, campaignId, mode, days =
   return Boolean(match);
 }
 
+// Full state/province name -> 2-letter code (stock STATELOOKUP). Values <= 3
+// chars are assumed to already be codes and left as-is.
+const US_STATE_ABBREV = new Map(Object.entries({
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO',
+  connecticut: 'CT', delaware: 'DE', 'district of columbia': 'DC', florida: 'FL', georgia: 'GA',
+  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY',
+  louisiana: 'LA', maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN',
+  mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH',
+  'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND',
+  ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA',
+  washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY', 'puerto rico': 'PR',
+  alberta: 'AB', 'british columbia': 'BC', manitoba: 'MB', 'new brunswick': 'NB',
+  'newfoundland and labrador': 'NL', newfoundland: 'NL', 'nova scotia': 'NS', ontario: 'ON',
+  'prince edward island': 'PE', quebec: 'QC', saskatchewan: 'SK', 'northwest territories': 'NT',
+  nunavut: 'NU', yukon: 'YT',
+}));
+
+function stateToAbbrev(value) {
+  const raw = String(value || '').trim();
+  if (raw.length <= 3) return raw;
+  return US_STATE_ABBREV.get(raw.toLowerCase()) || raw;
+}
+
+// SSM-FSN: US/Canada DST window (2nd Sunday March .. 1st Sunday November).
+function isDstSsmFsn(now) {
+  const year = now.getUTCFullYear();
+  const nthSunday = (month, n) => {
+    const first = new Date(Date.UTC(year, month, 1)).getUTCDay();
+    return 1 + ((7 - first) % 7) + (n - 1) * 7;
+  };
+  const start = Date.UTC(year, 2, nthSunday(2, 2));
+  const end = Date.UTC(year, 10, nthSunday(10, 1));
+  const t = now.getTime();
+  return t >= start && t < end;
+}
+
+// gmt_offset_now for a lead from its area code / postal / NANPA prefix (port of
+// functions.php lookup_gmt for the common paths), with SSM-FSN DST applied and
+// per-key caching of the static reference tables.
+const gmtLookupCache = new Map();
+async function lookupLeadGmt(method, phoneCode, phoneNumber, postalCode, now) {
+  const digits = String(phoneNumber || '').replace(/\D/g, '');
+  const usDigits = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
+  const areacode = usDigits.slice(0, 3);
+  const prefix = usDigits.slice(3, 6);
+  const cached = async (key, loader) => {
+    if (gmtLookupCache.has(key)) return gmtLookupCache.get(key);
+    const row = await loader();
+    gmtLookupCache.set(key, row || null);
+    return row || null;
+  };
+  let row = null;
+  if (method === 'POSTAL' && String(postalCode || '').length >= 5) {
+    const pc = String(postalCode).replace(/[^0-9A-Za-z]/g, '').slice(0, 10);
+    row = await cached(`P:${phoneCode}:${pc}`, () => rows(
+      'SELECT GMT_offset, DST, DST_range FROM vicidial_postal_codes WHERE country_code = ? AND postal_code LIKE ? LIMIT 1',
+      [phoneCode, `${pc}%`], []).then((r) => r[0]));
+  } else if (method === 'NANPA' && areacode.length === 3 && prefix.length === 3) {
+    row = await cached(`N:${areacode}:${prefix}`, () => rows(
+      "SELECT GMT_offset, DST, '' AS DST_range FROM vicidial_nanpa_prefix_codes WHERE areacode = ? AND prefix = ? LIMIT 1",
+      [areacode, prefix], []).then((r) => r[0]));
+  }
+  if (!row && areacode.length === 3) { // AREA (default + fallback for POSTAL/NANPA misses)
+    row = await cached(`A:${phoneCode}:${areacode}`, () => rows(
+      'SELECT GMT_offset, DST, DST_range FROM vicidial_phone_codes WHERE country_code = ? AND areacode = ? LIMIT 1',
+      [phoneCode, areacode], []).then((r) => r[0]));
+  }
+  if (!row) return null;
+  let offset = Number(String(row.GMT_offset).replace('+', ''));
+  if (!Number.isFinite(offset)) return null;
+  const dstRange = String(row.DST_range || '');
+  if (String(row.DST || 'N') === 'Y' && (dstRange === 'SSM-FSN' || dstRange === '') && isDstSsmFsn(now)) offset += 1;
+  return offset;
+}
+
+// Cached list -> campaign resolver for per-row list_id (list-id-from-column).
+async function resolveListCampaign(listId, cache) {
+  if (cache.has(listId)) return cache.get(listId);
+  const [row] = await rows('SELECT list_id, campaign_id FROM vicidial_lists WHERE list_id = ? LIMIT 1', [listId], []);
+  cache.set(listId, row || null);
+  return row || null;
+}
+
+// Per-list custom-field definitions the loader may write (excludes non-data
+// field types and any label colliding with a standard vicidial_list column).
+async function listCustomFields(listId) {
+  const [exists] = await rows('SHOW TABLES LIKE ?', [`custom_${listId}`], []).catch(() => []);
+  if (!exists) return [];
+  const defs = await rows(
+    `SELECT field_label FROM vicidial_lists_fields
+     WHERE list_id = ? AND field_label IS NOT NULL AND field_label != ''
+       AND field_type NOT IN ('DISPLAY','SCRIPT','SWITCH','BUTTON','HIDDEN')
+     ORDER BY field_rank LIMIT 200`,
+    [listId], []).catch(() => []);
+  const reserved = new Set(LEAD_IMPORT_FIELDS);
+  return defs.map((d) => String(d.field_label)).filter((label) => /^[A-Za-z0-9_]{1,64}$/.test(label) && !reserved.has(label));
+}
+
 async function loadLeads(req, res) {
   if (!requireModify(req, res, 'loadLeads')) return;
   const listId = cleanDigits(req.body?.list_id, 14);
@@ -4761,7 +4871,14 @@ async function loadLeads(req, res) {
   // Explicit column mapping from the UI (field -> 0-based column index, -1 =
   // none) wins; without it we fall back to name-matching the header row.
   const explicitMapping = req.body?.mapping && typeof req.body.mapping === 'object' ? req.body.mapping : null;
+  const customMapping = req.body?.custom_mapping && typeof req.body.custom_mapping === 'object' ? req.body.custom_mapping : null;
   const hasHeader = req.body?.has_header !== false; // default true
+  const delimiterOpt = cleanChoice(req.body?.delimiter, ['auto', 'comma', 'tab', 'pipe'], 'auto');
+  const phoneLength = cleanInt(req.body?.phone_length, 0, 0, 20);
+  const stateConversion = cleanChoice(req.body?.state_conversion, ['NONE', 'STATELOOKUP'], 'NONE');
+  const gmtLookup = cleanChoice(req.body?.gmt_lookup, ['NONE', 'AREA', 'POSTAL', 'NANPA'], 'NONE');
+  const listIdSource = cleanChoice(req.body?.list_id_source, ['FIXED', 'COLUMN'], 'FIXED');
+  const listIdColumn = Number.isInteger(Number(req.body?.list_id_column)) ? Number(req.body.list_id_column) : -1;
   const defaults = {
     phone_code: cleanDigits(req.body?.phone_code, 10) || '1',
     status: cleanId(req.body?.status, 6) || 'NEW',
@@ -4769,6 +4886,7 @@ async function loadLeads(req, res) {
 
   if (!listId) return badRequest(res, 'list_required');
   if (!csvText) return badRequest(res, 'csv_required');
+  if (listIdSource === 'COLUMN' && listIdColumn < 0) return badRequest(res, 'list_id_column_required');
 
   const [list] = await rows(
     'SELECT list_id, campaign_id, list_name FROM vicidial_lists WHERE list_id = ? LIMIT 1',
@@ -4780,7 +4898,10 @@ async function loadLeads(req, res) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
 
-  const parsed = parseCsvRows(csvText);
+  const delimiter = delimiterOpt === 'tab' ? '\t'
+    : delimiterOpt === 'pipe' ? '|'
+      : delimiterOpt === 'comma' ? ',' : detectDelimiter(csvText);
+  const parsed = parseCsvRows(csvText, delimiter);
   if (!parsed.length) return badRequest(res, 'csv_required');
 
   // Resolve each destination field to a source column.
@@ -4798,14 +4919,30 @@ async function loadLeads(req, res) {
 
   // With an explicit mapping the header row is skipped only when the UI says
   // the file has one; name-matched loads always have a header row.
+  const rowStartNum = (explicitMapping && !hasHeader) ? 1 : 2;
   const dataRows = (explicitMapping && !hasHeader) ? parsed : parsed.slice(1);
   const rowsToImport = dataRows.slice(0, 10000);
   const skipped = [];
   let inserted = 0;
 
+  // Per-list custom-field mapping (label -> column). Only when loading into the
+  // fixed list — a per-row list target would need a different custom table.
+  const customColumnFor = new Map();
+  if (customMapping && listIdSource === 'FIXED') {
+    for (const label of await listCustomFields(listId)) {
+      const idx = Number(customMapping[label]);
+      if (Number.isInteger(idx) && idx >= 0) customColumnFor.set(label, idx);
+    }
+  }
+
+  const now = new Date();
+  const listCampaignCache = new Map([[listId, list]]);
+  const touchedLists = new Set([listId]);
+
   try {
     for (let index = 0; index < rowsToImport.length; index += 1) {
       const sourceRow = rowsToImport[index];
+      const rowNum = index + rowStartNum;
       const lead = Object.fromEntries(LEAD_IMPORT_FIELDS.map((field) => [field, '']));
       lead.phone_code = defaults.phone_code;
       lead.status = defaults.status;
@@ -4814,18 +4951,42 @@ async function loadLeads(req, res) {
       for (const [field, colIdx] of columnFor) {
         lead[field] = leadImportValue(field, sourceRow[colIdx], defaults);
       }
+      if (stateConversion === 'STATELOOKUP' && lead.state) lead.state = stateToAbbrev(lead.state).slice(0, 2);
+
+      // Per-row list target (list-id-from-column) or the fixed list.
+      let rowListId = listId;
+      let rowCampaign = list.campaign_id;
+      if (listIdSource === 'COLUMN') {
+        rowListId = cleanDigits(sourceRow[listIdColumn], 14);
+        const info = rowListId ? await resolveListCampaign(rowListId, listCampaignCache) : null;
+        if (!info || Number(rowListId) < 100 || !scopeAllows(req.genxUser?.permissions?.allowedCampaigns, info.campaign_id)) {
+          skipped.push({ row: rowNum, reason: 'invalid_list_id', phone_number: lead.phone_number });
+          continue;
+        }
+        rowCampaign = info.campaign_id;
+        touchedLists.add(rowListId);
+      }
 
       if (!lead.phone_number) {
-        skipped.push({ row: index + 2, reason: 'missing_phone_number' });
+        skipped.push({ row: rowNum, reason: 'missing_phone_number' });
+        continue;
+      }
+      if (phoneLength > 0 && lead.phone_number.length !== phoneLength) {
+        skipped.push({ row: rowNum, reason: 'invalid_phone_length', phone_number: lead.phone_number });
+        continue;
+      }
+      if (await duplicateLeadExists(lead.phone_number, rowListId, rowCampaign, duplicateMode, duplicateDays)) {
+        skipped.push({ row: rowNum, reason: 'duplicate_phone_number', phone_number: lead.phone_number });
         continue;
       }
 
-      if (await duplicateLeadExists(lead.phone_number, listId, list.campaign_id, duplicateMode, duplicateDays)) {
-        skipped.push({ row: index + 2, reason: 'duplicate_phone_number', phone_number: lead.phone_number });
-        continue;
+      let gmtOffset = 0;
+      if (gmtLookup !== 'NONE') {
+        const resolved = await lookupLeadGmt(gmtLookup, lead.phone_code, lead.phone_number, lead.postal_code, now);
+        if (resolved !== null) gmtOffset = resolved;
       }
 
-      await execute(
+      const insertResult = await execute(
         `INSERT INTO vicidial_list
          SET entry_date = NOW(),
              modify_date = NOW(),
@@ -4834,7 +4995,7 @@ async function loadLeads(req, res) {
              vendor_lead_code = ?,
              source_id = ?,
              list_id = ?,
-             gmt_offset_now = 0,
+             gmt_offset_now = ?,
              called_since_last_reset = 'N',
              phone_code = ?,
              phone_number = ?,
@@ -4862,7 +5023,8 @@ async function loadLeads(req, res) {
           lead.status,
           lead.vendor_lead_code,
           lead.source_id,
-          listId,
+          rowListId,
+          gmtOffset,
           lead.phone_code,
           lead.phone_number,
           lead.title,
@@ -4887,10 +5049,24 @@ async function loadLeads(req, res) {
           lead.owner,
         ],
       );
+
+      // Per-list custom fields (custom_<list_id>), keyed to the new lead_id.
+      if (customColumnFor.size && insertResult?.insertId) {
+        const labels = [...customColumnFor.keys()];
+        const assignments = labels.map((label) => `\`${label}\` = ?`).join(', ');
+        const values = labels.map((label) => cleanText(sourceRow[customColumnFor.get(label)], 255));
+        await execute(
+          `INSERT INTO custom_${listId} SET lead_id = ?, ${assignments}`,
+          [insertResult.insertId, ...values],
+        ).catch(() => {});
+      }
       inserted += 1;
     }
 
-    await execute('UPDATE vicidial_lists SET list_changedate = NOW() WHERE list_id = ?', [listId]);
+    await execute(
+      `UPDATE vicidial_lists SET list_changedate = NOW() WHERE list_id IN (${[...touchedLists].map(() => '?').join(',')})`,
+      [...touchedLists],
+    );
     await adminLog(req, 'LEADS', 'LOAD', listId, 'GENX LOAD LEADS', 'INSERT INTO vicidial_list', `${inserted} loaded, ${skipped.length} skipped`);
     bustQueryCache('leadCounts');
 
@@ -16704,13 +16880,32 @@ app.post('/api/admin/lead-loader', requireAccess, loadLeads);
 app.post('/api/admin/lead-loader/detect', requireAccess, async (req, res) => {
   if (!requireModify(req, res, 'loadLeads')) return;
   try {
-    const parsed = parseCsvRows(String(req.body?.csv || ''));
+    const text = String(req.body?.csv || '');
+    const delimiterOpt = cleanChoice(req.body?.delimiter, ['auto', 'comma', 'tab', 'pipe'], 'auto');
+    const delimiter = delimiterOpt === 'tab' ? '\t'
+      : delimiterOpt === 'pipe' ? '|'
+        : delimiterOpt === 'comma' ? ',' : detectDelimiter(text);
+    const parsed = parseCsvRows(text, delimiter);
     if (!parsed.length) return badRequest(res, 'csv_required');
     const headers = parsed[0].map((h) => String(h ?? ''));
     const sample = parsed.slice(1, 6).map((r) => r.map((c) => String(c ?? '')));
     const attempt = req.body?.auto_detect !== false;
-    const mapping = attempt ? autoDetectLeadMapping(headers, LEAD_IMPORT_FIELDS) : {};
-    return res.json({ ok: true, headers, sample, fields: LEAD_IMPORT_FIELDS, minScore: LEAD_MATCH_MIN_SCORE, mapping });
+    // list_id is offered for auto-detection too, to prefill list-id-from-column.
+    const mapping = attempt ? autoDetectLeadMapping(headers, [...LEAD_IMPORT_FIELDS, 'list_id']) : {};
+    const listId = cleanDigits(req.body?.list_id, 14);
+    const customFields = listId ? await listCustomFields(listId) : [];
+    const customMapping = (attempt && customFields.length) ? autoDetectLeadMapping(headers, customFields) : {};
+    return res.json({
+      ok: true,
+      delimiter: delimiter === '\t' ? 'tab' : delimiter === '|' ? 'pipe' : 'comma',
+      headers,
+      sample,
+      fields: LEAD_IMPORT_FIELDS,
+      customFields,
+      minScore: LEAD_MATCH_MIN_SCORE,
+      mapping,
+      customMapping,
+    });
   } catch (error) {
     return res.status(400).json({ ok: false, error: 'detect_failed' });
   }

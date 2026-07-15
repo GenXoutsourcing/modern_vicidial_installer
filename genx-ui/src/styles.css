@@ -1361,6 +1361,13 @@ body {
   margin-top: 16px;
 }
 
+.lead-advanced { margin-top: 14px; }
+.lead-advanced .advanced-check { align-self: end; padding-bottom: 10px; }
+.lead-mapping code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  color: var(--blue);
+}
+
 .inline-check {
   display: inline-flex;
   align-items: center;

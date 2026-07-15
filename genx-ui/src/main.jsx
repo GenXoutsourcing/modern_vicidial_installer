@@ -7263,19 +7263,29 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   const [hasHeader, setHasHeader] = useState(true);
   const [dupDays, setDupDays] = useState(0);
   const [detecting, setDetecting] = useState(false);
+  const [delimiter, setDelimiter] = useState('auto');
+  const [phoneLength, setPhoneLength] = useState(0);
+  const [stateConversion, setStateConversion] = useState(false);
+  const [gmtLookup, setGmtLookup] = useState('NONE');
+  const [listIdSource, setListIdSource] = useState('FIXED');
+  const [listIdColumn, setListIdColumn] = useState(-1);
+  const [customFields, setCustomFields] = useState([]);
+  const [customMapping, setCustomMapping] = useState({});
+  const [customScores, setCustomScores] = useState({});
 
   const fieldLabel = (field) => String(field).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
   const detectColumns = useCallback(async (text, auto) => {
     if (!String(text || '').trim()) {
       setHeaders([]); setSampleRows([]); setMapping({}); setMapScores({});
+      setCustomFields([]); setCustomMapping({}); setCustomScores({});
       return;
     }
     setDetecting(true);
     try {
       const payload = await apiFetch('/admin/lead-loader/detect', token, {
         method: 'POST',
-        body: JSON.stringify({ csv: text, auto_detect: auto !== false }),
+        body: JSON.stringify({ csv: text, auto_detect: auto !== false, delimiter, list_id: listId }),
       });
       setHeaders(payload?.headers || []);
       setSampleRows(payload?.sample || []);
@@ -7287,12 +7297,21 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
         nextScores[field] = info ? info.score : 0;
       }
       setMapping(nextMap); setMapScores(nextScores);
+      if (payload?.mapping?.list_id) setListIdColumn(payload.mapping.list_id.columnIndex);
+      setCustomFields(payload?.customFields || []);
+      const nextCustom = {}; const nextCustomScores = {};
+      for (const label of (payload?.customFields || [])) {
+        const info = payload?.customMapping?.[label];
+        nextCustom[label] = info ? info.columnIndex : -1;
+        nextCustomScores[label] = info ? info.score : 0;
+      }
+      setCustomMapping(nextCustom); setCustomScores(nextCustomScores);
     } catch (detectError) {
       // Leave the mapper empty; the user can still map columns by hand.
     } finally {
       setDetecting(false);
     }
-  }, [token]);
+  }, [token, listId, delimiter]);
 
   useEffect(() => {
     if (!listId && lists.length) setListId(String(lists[0].list_id || ''));
@@ -7357,6 +7376,9 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
       const activeMapping = Object.fromEntries(
         Object.entries(mapping).filter(([, col]) => Number(col) >= 0),
       );
+      const activeCustom = Object.fromEntries(
+        Object.entries(customMapping).filter(([, col]) => Number(col) >= 0),
+      );
       const payload = await apiFetch('/admin/lead-loader', token, {
         method: 'POST',
         body: JSON.stringify({
@@ -7367,7 +7389,14 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
           duplicate_days: dupDays,
           csv,
           has_header: hasHeader,
+          delimiter,
+          phone_length: phoneLength,
+          state_conversion: stateConversion ? 'STATELOOKUP' : 'NONE',
+          gmt_lookup: gmtLookup,
+          list_id_source: listIdSource,
+          ...(listIdSource === 'COLUMN' ? { list_id_column: listIdColumn } : {}),
           ...(Object.keys(activeMapping).length ? { mapping: activeMapping } : {}),
+          ...(Object.keys(activeCustom).length ? { custom_mapping: activeCustom } : {}),
         }),
       });
       setSummary(payload.summary || null);
@@ -7380,6 +7409,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
         phone_number_header_required: 'Map a column to Phone Number (or include a phone_number header)',
         campaign_not_allowed: 'Your user cannot load leads into that campaign',
         permission_denied: 'Your user is not allowed to load leads',
+        list_id_column_required: 'Pick which column holds the list ID',
       };
       setError(messages[loadError.message] || 'Lead load failed');
     } finally {
@@ -7459,6 +7489,53 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
               </button>
             </div>
 
+            <div className="field-grid lead-advanced">
+              <label>
+                <span>Delimiter</span>
+                <select value={delimiter} onChange={(event) => setDelimiter(event.target.value)}>
+                  <option value="auto">Auto-detect</option>
+                  <option value="comma">Comma</option>
+                  <option value="tab">Tab</option>
+                  <option value="pipe">Pipe</option>
+                </select>
+              </label>
+              <label>
+                <span>Required Phone Length</span>
+                <input type="number" min="0" max="20" value={phoneLength} onChange={(event) => setPhoneLength(Number(event.target.value) || 0)} placeholder="0 = any" />
+              </label>
+              <label>
+                <span>GMT / Timezone Lookup</span>
+                <select value={gmtLookup} onChange={(event) => setGmtLookup(event.target.value)}>
+                  <option value="NONE">None</option>
+                  <option value="AREA">Area code</option>
+                  <option value="POSTAL">Postal code</option>
+                  <option value="NANPA">NANPA prefix</option>
+                </select>
+              </label>
+              <label>
+                <span>List ID Source</span>
+                <select value={listIdSource} onChange={(event) => setListIdSource(event.target.value)}>
+                  <option value="FIXED">Use the selected List</option>
+                  <option value="COLUMN">From a file column</option>
+                </select>
+              </label>
+              {listIdSource === 'COLUMN' && (
+                <label>
+                  <span>List ID Column</span>
+                  <select value={listIdColumn} onChange={(event) => setListIdColumn(Number(event.target.value))}>
+                    <option value={-1}>(choose column)</option>
+                    {headers.map((head, i) => (
+                      <option key={`lid-${i}`} value={i}>{i}: {head || `Column ${i + 1}`}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label className="inline-check advanced-check">
+                <input type="checkbox" checked={stateConversion} onChange={(event) => setStateConversion(event.target.checked)} />
+                <span>Convert state names to 2-letter codes</span>
+              </label>
+            </div>
+
             {mapFields.length > 0 && headers.length > 0 && (
               <div className="lead-mapping">
                 <p className="muted-note">Map each field to a file column — auto-detected picks show a confidence score. <b>Phone Number</b> is required.</p>
@@ -7478,6 +7555,27 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                     </div>
                   ))}
                 </div>
+                {customFields.length > 0 && (
+                  <>
+                    <p className="muted-note">Custom fields for this list (written to <code>custom_{listId}</code>):</p>
+                    <div className="lead-mapping-grid">
+                      {customFields.map((label) => (
+                        <div className="lead-map-row" key={`cf-${label}`}>
+                          <span className="lead-map-label">{label}</span>
+                          <select value={customMapping[label] ?? -1} onChange={(event) => setCustomMapping({ ...customMapping, [label]: Number(event.target.value) })}>
+                            <option value={-1}>(none)</option>
+                            {headers.map((head, i) => (
+                              <option key={`cf-${label}-${i}`} value={i}>{i}: {head || `Column ${i + 1}`}</option>
+                            ))}
+                          </select>
+                          {Number(customMapping[label]) >= 0 && customScores[label] > 0 && (
+                            <span className={`map-score ${customScores[label] >= 90 ? 'good' : 'ok'}`}>{customScores[label]}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -7512,7 +7610,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
               rows={(summary.skipped_rows || []).map((row) => ({ ...row, id: `${row.row}-${row.reason}-${row.phone_number || ''}` }))}
               columns={[
                 { key: 'row', label: 'Row', render: (row) => row.row },
-                { key: 'reason', label: 'Reason', render: (row) => row.reason },
+                { key: 'reason', label: 'Reason', render: (row) => ({ missing_phone_number: 'Missing phone number', duplicate_phone_number: 'Duplicate phone number', invalid_phone_length: 'Wrong phone length', invalid_list_id: 'Invalid list ID' }[row.reason] || row.reason) },
                 { key: 'phone_number', label: 'Phone', render: (row) => row.phone_number || 'None' },
               ]}
             />
