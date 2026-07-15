@@ -7467,7 +7467,10 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
               </label>
               <label className="wide-field">
                 <span>CSV or XLSX File</span>
-                <input type="file" accept=".csv,text/csv,text/plain,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={loadFile} />
+                {/* No accept filter: Windows shows "Custom Files" for one, which
+                    hides lead files with odd extensions (.txt exports, no-ext).
+                    loadFile sniffs XLSX by content and treats the rest as text. */}
+                <input type="file" onChange={loadFile} />
               </label>
               <label className="wide-field">
                 <span>CSV Rows</span>
