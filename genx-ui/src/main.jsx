@@ -16858,7 +16858,16 @@ function AgentConsole({ token, authInfo, onExit }) {
               <button type="button" className={parked ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/park', { grab: parked }); if (p) setParked(!parked); }}>
                 {parked ? <Play size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />} {parked ? 'Unpark' : 'Hold'}
               </button>
-              <button type="button" className={xferOpen ? 'agb-act xfer on' : 'agb-act xfer'} onClick={() => setXferOpen((v) => !v)}>
+              <button
+                type="button"
+                className={xferOpen ? 'agb-act xfer on' : 'agb-act xfer'}
+                onClick={() => setXferOpen((open) => {
+                  const next = !open;
+                  // The panel renders below the lead form — bring it on-screen.
+                  if (next) setTimeout(() => document.querySelector('.xfer-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 120);
+                  return next;
+                })}
+              >
                 <ArrowRightLeft size={15} aria-hidden="true" /> Transfer
               </button>
               <button type="button" className={agentMuted ? 'agb-act warn' : 'agb-act'} disabled={busy} onClick={async () => { const p = await act('/agent/conf-control', { action: agentMuted ? 'unmute' : 'mute', target: 'agent' }); if (p) setAgentMuted(!agentMuted); }}>
@@ -17615,7 +17624,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               )}
             </div>
             {xferOpen && xferOptions && (
-              <div className="entity-form">
+              <div className="entity-form xfer-panel">
                 <div className="field-grid">
                   {xferOptions.flags?.blind && (
                     <label>

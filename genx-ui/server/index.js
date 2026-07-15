@@ -9370,7 +9370,7 @@ async function agentAuth(req, res) {
 async function agentLiveRow(user) {
   const [row] = await rows(
     `SELECT user, server_ip, conf_exten, extension, status, lead_id, campaign_id, callerid, uniqueid,
-            channel, calls_today, pause_code, agent_log_id, preview_lead_id, external_pause,
+            channel, calls_today, pause_code, agent_log_id, preview_lead_id, external_pause, comments,
             UNIX_TIMESTAMP(last_state_change) AS state_epoch
      FROM vicidial_live_agents WHERE user = ? LIMIT 1`,
     [user],
@@ -10024,12 +10024,28 @@ async function agentStatus(req, res) {
   let customerChannels = null;
   let dialFail = null;
   if (live.status === 'INCALL') {
-    const [cnt] = await rows(
-      'SELECT COUNT(*) AS n FROM live_sip_channels WHERE server_ip = ? AND channel LIKE ?',
-      [live.server_ip, `Local/${live.conf_exten}@%`],
+    // Manual dial: customer legs are Local/<conf>@... rows tagged in
+    // live_sip_channels. Auto-dial: the customer is a trunk channel (e.g.
+    // SIP/SC2-xxx) that VDAD stores on the live-agent row (comments='AUTO')
+    // and that only shows up in live_channels — checking live_sip_channels
+    // alone false-positived "caller may have hung up" on every auto-dial call.
+    const chanParams = [live.server_ip, `Local/${live.conf_exten}@%`];
+    let chanClause = 'channel LIKE ?';
+    if (live.channel && String(live.comments || '') === 'AUTO') {
+      chanClause += ' OR channel = ?';
+      chanParams.push(live.channel);
+    }
+    const [sipCnt] = await rows(
+      `SELECT COUNT(*) AS n FROM live_sip_channels WHERE server_ip = ? AND (${chanClause})`,
+      chanParams,
       [],
     );
-    customerChannels = Number(cnt?.n || 0);
+    const [chanCnt] = await rows(
+      `SELECT COUNT(*) AS n FROM live_channels WHERE server_ip = ? AND (${chanClause})`,
+      chanParams,
+      [],
+    );
+    customerChannels = Math.max(Number(sipCnt?.n || 0), Number(chanCnt?.n || 0));
     if (customerChannels === 0 && /^M/.test(String(live.callerid || ''))) {
       const [clog] = await rows(
         'SELECT uniqueid, channel FROM call_log WHERE caller_code = ? AND server_ip = ? ORDER BY start_time DESC LIMIT 1',
@@ -11049,7 +11065,9 @@ async function agentThreewayHangup(req, res) {
     [live.server_ip, `${chanPrefix.replace(/[%_]/g, '')}%`],
     [],
   );
-  if (!chan) return res.status(404).json({ ok: false, error: 'channel_not_found' });
+  // Leg already gone (never answered / third party hung up): report success so
+  // the client clears its 3-way state instead of sticking on "Hangup 3-Way Leg".
+  if (!chan) return res.json({ ok: true, alreadyGone: true });
   const queryCID = `GXvdcW${Math.floor(Date.now() / 1000)}`.slice(0, 20);
   await execute(
     `INSERT INTO vicidial_manager
@@ -11958,6 +11976,12 @@ async function agentHangup(req, res) {
         [],
       );
       if (autoCall?.channel) custChannels.push({ channel: autoCall.channel });
+    }
+    // Auto-dial: VDAD stores the CUSTOMER trunk channel on the live-agent row
+    // (comments='AUTO'); on manual dial the same column holds the agent's own
+    // leg, so it must never be used there.
+    if (!custChannels.length && live.channel && String(live.comments || '') === 'AUTO') {
+      custChannels.push({ channel: live.channel });
     }
     for (const row of custChannels) {
       await execute(
