@@ -4579,6 +4579,137 @@ function normalizeLeadHeader(header) {
   return LEAD_IMPORT_ALIASES.get(compact) || LEAD_IMPORT_ALIASES.get(compact.replace(/\s+/g, '')) || '';
 }
 
+// ---------------------------------------------------------------------------
+// Fuzzy header auto-detection — a faithful port of the stock 5th-gen loader's
+// fuzzy_match_field / auto_detect_field_index (admin_listloader_fifth_gen.php).
+// Scores how well a spreadsheet header matches a vicidial_list field:
+//   exact (normalized) 100, alias 95, substring 90/85, else Levenshtein or
+//   PHP-style similar_text percent. Only matches >= LEAD_MATCH_MIN_SCORE count,
+//   and when two fields want the same column the higher score keeps it.
+const LEAD_MATCH_MIN_SCORE = 70;
+
+// cleaned-header (lowercase, alphanumerics only) -> GenX vicidial_list field.
+// Superset of the stock alias reference block, keyed to our underscored names.
+const LEAD_HEADER_ALIAS_MAP = new Map(Object.entries({
+  phone: 'phone_number', phoneno: 'phone_number', phonenumber: 'phone_number',
+  phone1: 'phone_number', primaryphone: 'phone_number', mainphone: 'phone_number',
+  telephone: 'phone_number', tel: 'phone_number', cell: 'phone_number',
+  cellphone: 'phone_number', mobile: 'phone_number', mobilephone: 'phone_number',
+  workphone: 'phone_number', homephone: 'phone_number', number: 'phone_number',
+  fname: 'first_name', first: 'first_name', firstname: 'first_name', givenname: 'first_name',
+  lname: 'last_name', last: 'last_name', lastname: 'last_name', surname: 'last_name', familyname: 'last_name',
+  mi: 'middle_initial', middle: 'middle_initial', middlename: 'middle_initial', middleinitial: 'middle_initial',
+  addr: 'address1', addr1: 'address1', street: 'address1', streetaddress: 'address1', address: 'address1', address1: 'address1',
+  addr2: 'address2', street2: 'address2', suite: 'address2', apt: 'address2', apartment: 'address2', unit: 'address2', address2: 'address2',
+  addr3: 'address3', address3: 'address3',
+  zip: 'postal_code', zipcode: 'postal_code', postcode: 'postal_code', postalzip: 'postal_code', postal: 'postal_code', postalcode: 'postal_code',
+  st: 'state', stateprovince: 'state', region: 'state', state: 'state',
+  prov: 'province', province: 'province',
+  country: 'country_code', countrycd: 'country_code', cc: 'country_code', countrycode: 'country_code',
+  sex: 'gender', gender: 'gender',
+  dob: 'date_of_birth', birthday: 'date_of_birth', birthdate: 'date_of_birth', birth: 'date_of_birth', dateofbirth: 'date_of_birth',
+  phone2: 'alt_phone', secondaryphone: 'alt_phone', otherphone: 'alt_phone', alternatephone: 'alt_phone', altphone: 'alt_phone',
+  emailaddress: 'email', emailaddr: 'email', mail: 'email', email: 'email',
+  note: 'comments', notes: 'comments', comment: 'comments', remark: 'comments', remarks: 'comments', description: 'comments', comments: 'comments',
+  vendorcode: 'vendor_lead_code', vendorid: 'vendor_lead_code', vendorleadid: 'vendor_lead_code', leadcode: 'vendor_lead_code', externalid: 'vendor_lead_code', vendorleadcode: 'vendor_lead_code',
+  sourcecode: 'source_id', source: 'source_id', leadsource: 'source_id', sourceid: 'source_id',
+  list: 'list_id', listid: 'list_id',
+  dialcode: 'phone_code', countrydialing: 'phone_code', phonecode: 'phone_code',
+  prefix: 'title', salutation: 'title', title: 'title',
+  security: 'security_phrase', pin: 'security_phrase', securityphrase: 'security_phrase',
+  priority: 'rank', weight: 'rank', rank: 'rank',
+  agent: 'owner', assignedto: 'owner', rep: 'owner', owner: 'owner',
+  town: 'city', city: 'city',
+  status: 'status',
+}));
+
+const cleanHeaderKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// PHP similar_text: sum of longest common substrings (recursive), as a percent
+// of the combined length. Matches the stock scorer's final fallback.
+function similarTextPercent(a, b) {
+  const common = (s1, s2) => {
+    let max = 0;
+    let p1 = 0;
+    let p2 = 0;
+    for (let i = 0; i < s1.length; i += 1) {
+      for (let j = 0; j < s2.length; j += 1) {
+        let k = 0;
+        while (i + k < s1.length && j + k < s2.length && s1[i + k] === s2[j + k]) k += 1;
+        if (k > max) { max = k; p1 = i; p2 = j; }
+      }
+    }
+    if (max === 0) return 0;
+    let total = max;
+    if (p1 && p2) total += common(s1.slice(0, p1), s2.slice(0, p2));
+    if (p1 + max < s1.length && p2 + max < s2.length) total += common(s1.slice(p1 + max), s2.slice(p2 + max));
+    return total;
+  };
+  const denom = a.length + b.length;
+  return denom ? ((common(a, b) * 2) / denom) * 100 : 0;
+}
+
+function fuzzyMatchField(headerName, field) {
+  const h = cleanHeaderKey(headerName);
+  const v = cleanHeaderKey(field);
+  if (!h || !v) return 0;
+  if (h === v) return 100;
+  if (LEAD_HEADER_ALIAS_MAP.get(h) === field) return 95;
+  if (h.length > 2 && v.length > 2) {
+    if (h.includes(v)) return 90;
+    if (v.includes(h)) return 85;
+  }
+  if (h.length < 20 && v.length < 20) {
+    const lev = levenshtein(h, v);
+    const maxLen = Math.max(h.length, v.length);
+    if (maxLen) {
+      const similarity = (1 - lev / maxLen) * 100;
+      if (similarity >= 75) return Math.trunc(similarity);
+    }
+  }
+  const pct = similarTextPercent(h, v);
+  return pct > 0 ? Math.trunc(pct) : 0;
+}
+
+// Best header column per field (>= min score); on a column tie the higher
+// score wins and the loser is unmapped (stock conflict resolution).
+function autoDetectLeadMapping(headerRow, fields) {
+  const byColumn = new Map();
+  const mapping = {};
+  for (const field of fields) {
+    let bestIdx = -1;
+    let bestScore = 0;
+    for (let i = 0; i < headerRow.length; i += 1) {
+      const score = fuzzyMatchField(headerRow[i], field);
+      if (score > bestScore) { bestScore = score; bestIdx = i; }
+    }
+    if (bestIdx < 0 || bestScore < LEAD_MATCH_MIN_SCORE) continue;
+    const held = byColumn.get(bestIdx);
+    if (held && held.score >= bestScore) continue;
+    if (held) delete mapping[held.field];
+    byColumn.set(bestIdx, { field, score: bestScore });
+    mapping[field] = { columnIndex: bestIdx, score: bestScore, header: headerRow[bestIdx] };
+  }
+  return mapping;
+}
+
 function leadImportValue(field, value, defaults) {
   if (field === 'phone_number' || field === 'alt_phone') return cleanDigits(value, 18);
   if (field === 'phone_code') return cleanDigits(value, 10) || defaults.phone_code;
@@ -4591,32 +4722,31 @@ function leadImportValue(field, value, defaults) {
   return cleanText(value, field === 'comments' ? 255 : 80);
 }
 
-async function duplicateLeadExists(phoneNumber, listId, campaignId, mode) {
+// Duplicate scope (LIST / CAMPAIGN / SYSTEM) with an optional recency window
+// (0 = all-time, else "entry_date within the last N days") — mirrors the stock
+// loader's DUP{LIST,CAMP,SYS}{,30,60,90,180,360DAY} matrix.
+async function duplicateLeadExists(phoneNumber, listId, campaignId, mode, days = 0) {
   if (!phoneNumber || mode === 'NONE') return false;
-  if (mode === 'LIST') {
-    const [match] = await rows(
-      'SELECT lead_id FROM vicidial_list WHERE phone_number = ? AND list_id = ? LIMIT 1',
-      [phoneNumber, listId],
-      [],
-    );
-    return Boolean(match);
-  }
+  const dayClause = days > 0 ? ' AND leads.entry_date > NOW() - INTERVAL ? DAY' : '';
+  const dayParam = days > 0 ? [days] : [];
   if (mode === 'CAMPAIGN') {
     const [match] = await rows(
       `SELECT leads.lead_id
        FROM vicidial_list leads
        JOIN vicidial_lists lists ON lists.list_id = leads.list_id
-       WHERE leads.phone_number = ?
-         AND lists.campaign_id = ?
+       WHERE leads.phone_number = ? AND lists.campaign_id = ?${dayClause}
        LIMIT 1`,
-      [phoneNumber, campaignId],
+      [phoneNumber, campaignId, ...dayParam],
       [],
     );
     return Boolean(match);
   }
+  const scopeClause = mode === 'LIST' ? ' AND leads.list_id = ?' : '';
+  const scopeParam = mode === 'LIST' ? [listId] : [];
   const [match] = await rows(
-    'SELECT lead_id FROM vicidial_list WHERE phone_number = ? LIMIT 1',
-    [phoneNumber],
+    `SELECT leads.lead_id FROM vicidial_list leads
+     WHERE leads.phone_number = ?${scopeClause}${dayClause} LIMIT 1`,
+    [phoneNumber, ...scopeParam, ...dayParam],
     [],
   );
   return Boolean(match);
@@ -4627,6 +4757,11 @@ async function loadLeads(req, res) {
   const listId = cleanDigits(req.body?.list_id, 14);
   const csvText = String(req.body?.csv || '').trim();
   const duplicateMode = cleanChoice(req.body?.duplicate_mode, ['NONE', 'LIST', 'CAMPAIGN', 'SYSTEM'], 'LIST');
+  const duplicateDays = cleanInt(req.body?.duplicate_days, 0, 0, 3650);
+  // Explicit column mapping from the UI (field -> 0-based column index, -1 =
+  // none) wins; without it we fall back to name-matching the header row.
+  const explicitMapping = req.body?.mapping && typeof req.body.mapping === 'object' ? req.body.mapping : null;
+  const hasHeader = req.body?.has_header !== false; // default true
   const defaults = {
     phone_code: cleanDigits(req.body?.phone_code, 10) || '1',
     status: cleanId(req.body?.status, 6) || 'NEW',
@@ -4646,12 +4781,25 @@ async function loadLeads(req, res) {
   }
 
   const parsed = parseCsvRows(csvText);
-  if (parsed.length < 2) return badRequest(res, 'csv_header_and_rows_required');
+  if (!parsed.length) return badRequest(res, 'csv_required');
 
-  const headers = parsed[0].map(normalizeLeadHeader);
-  if (!headers.includes('phone_number')) return badRequest(res, 'phone_number_header_required');
+  // Resolve each destination field to a source column.
+  const columnFor = new Map();
+  if (explicitMapping) {
+    for (const field of LEAD_IMPORT_FIELDS) {
+      const idx = Number(explicitMapping[field]);
+      if (Number.isInteger(idx) && idx >= 0) columnFor.set(field, idx);
+    }
+  } else {
+    if (parsed.length < 2) return badRequest(res, 'csv_header_and_rows_required');
+    parsed[0].map(normalizeLeadHeader).forEach((field, i) => { if (field) columnFor.set(field, i); });
+  }
+  if (!columnFor.has('phone_number')) return badRequest(res, 'phone_number_header_required');
 
-  const rowsToImport = parsed.slice(1, 10001);
+  // With an explicit mapping the header row is skipped only when the UI says
+  // the file has one; name-matched loads always have a header row.
+  const dataRows = (explicitMapping && !hasHeader) ? parsed : parsed.slice(1);
+  const rowsToImport = dataRows.slice(0, 10000);
   const skipped = [];
   let inserted = 0;
 
@@ -4663,17 +4811,16 @@ async function loadLeads(req, res) {
       lead.status = defaults.status;
       lead.date_of_birth = '0000-00-00';
 
-      headers.forEach((field, fieldIndex) => {
-        if (!field) return;
-        lead[field] = leadImportValue(field, sourceRow[fieldIndex], defaults);
-      });
+      for (const [field, colIdx] of columnFor) {
+        lead[field] = leadImportValue(field, sourceRow[colIdx], defaults);
+      }
 
       if (!lead.phone_number) {
         skipped.push({ row: index + 2, reason: 'missing_phone_number' });
         continue;
       }
 
-      if (await duplicateLeadExists(lead.phone_number, listId, list.campaign_id, duplicateMode)) {
+      if (await duplicateLeadExists(lead.phone_number, listId, list.campaign_id, duplicateMode, duplicateDays)) {
         skipped.push({ row: index + 2, reason: 'duplicate_phone_number', phone_number: lead.phone_number });
         continue;
       }
@@ -16551,6 +16698,23 @@ app.post('/api/admin/lists/:id/clear', requireAccess, clearList);
 app.post('/api/admin/lists/:id/reset', requireAccess, resetList);
 app.get('/api/admin/lists/:id/download', requireAccess, downloadList);
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
+// Analyze a pasted/converted CSV: return the header row, a few sample rows,
+// the mappable destination fields, and the fuzzy auto-detected field->column
+// mapping (with scores) so the client can render an override-able column mapper.
+app.post('/api/admin/lead-loader/detect', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'loadLeads')) return;
+  try {
+    const parsed = parseCsvRows(String(req.body?.csv || ''));
+    if (!parsed.length) return badRequest(res, 'csv_required');
+    const headers = parsed[0].map((h) => String(h ?? ''));
+    const sample = parsed.slice(1, 6).map((r) => r.map((c) => String(c ?? '')));
+    const attempt = req.body?.auto_detect !== false;
+    const mapping = attempt ? autoDetectLeadMapping(headers, LEAD_IMPORT_FIELDS) : {};
+    return res.json({ ok: true, headers, sample, fields: LEAD_IMPORT_FIELDS, minScore: LEAD_MATCH_MIN_SCORE, mapping });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: 'detect_failed' });
+  }
+});
 // Convert an uploaded .xlsx (base64) to CSV text so the loader's preview and
 // import path stay CSV-only. A .xlsx starts with the ZIP local-header magic
 // PK\x03\x04 (0x04034b50 LE).

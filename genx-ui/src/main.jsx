@@ -7254,6 +7254,45 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [summary, setSummary] = useState(null);
+  const [headers, setHeaders] = useState([]);
+  const [sampleRows, setSampleRows] = useState([]);
+  const [mapping, setMapping] = useState({}); // field -> column index (-1 = none)
+  const [mapScores, setMapScores] = useState({});
+  const [mapFields, setMapFields] = useState([]);
+  const [autoDetect, setAutoDetect] = useState(true);
+  const [hasHeader, setHasHeader] = useState(true);
+  const [dupDays, setDupDays] = useState(0);
+  const [detecting, setDetecting] = useState(false);
+
+  const fieldLabel = (field) => String(field).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const detectColumns = useCallback(async (text, auto) => {
+    if (!String(text || '').trim()) {
+      setHeaders([]); setSampleRows([]); setMapping({}); setMapScores({});
+      return;
+    }
+    setDetecting(true);
+    try {
+      const payload = await apiFetch('/admin/lead-loader/detect', token, {
+        method: 'POST',
+        body: JSON.stringify({ csv: text, auto_detect: auto !== false }),
+      });
+      setHeaders(payload?.headers || []);
+      setSampleRows(payload?.sample || []);
+      setMapFields(payload?.fields || []);
+      const nextMap = {}; const nextScores = {};
+      for (const field of (payload?.fields || [])) {
+        const info = payload?.mapping?.[field];
+        nextMap[field] = info ? info.columnIndex : -1;
+        nextScores[field] = info ? info.score : 0;
+      }
+      setMapping(nextMap); setMapScores(nextScores);
+    } catch (detectError) {
+      // Leave the mapper empty; the user can still map columns by hand.
+    } finally {
+      setDetecting(false);
+    }
+  }, [token]);
 
   useEffect(() => {
     if (!listId && lists.length) setListId(String(lists[0].list_id || ''));
@@ -7284,7 +7323,9 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
           method: 'POST',
           body: JSON.stringify({ xlsx_base64: btoa(binary) }),
         });
-        setCsv(payload?.csv || '');
+        const text = payload?.csv || '';
+        setCsv(text);
+        detectColumns(text, autoDetect);
       } catch (convertError) {
         setCsv('');
         setError('That .xlsx could not be read — re-save it as CSV and try again');
@@ -7296,7 +7337,9 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
       setError('Old .xls files are not supported — save as .xlsx or CSV');
       return;
     }
-    setCsv(await file.text());
+    const text = await file.text();
+    setCsv(text);
+    detectColumns(text, autoDetect);
   }
 
   async function submit(event) {
@@ -7309,6 +7352,11 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
     setError('');
     setSummary(null);
     try {
+      // Only send an explicit mapping when at least one column is mapped;
+      // otherwise the server falls back to matching the header row by name.
+      const activeMapping = Object.fromEntries(
+        Object.entries(mapping).filter(([, col]) => Number(col) >= 0),
+      );
       const payload = await apiFetch('/admin/lead-loader', token, {
         method: 'POST',
         body: JSON.stringify({
@@ -7316,7 +7364,10 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
           phone_code: phoneCode,
           status,
           duplicate_mode: duplicateMode,
+          duplicate_days: dupDays,
           csv,
+          has_header: hasHeader,
+          ...(Object.keys(activeMapping).length ? { mapping: activeMapping } : {}),
         }),
       });
       setSummary(payload.summary || null);
@@ -7326,7 +7377,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
         list_required: 'Choose a list before loading leads',
         csv_required: 'Add a CSV file or paste CSV rows first',
         csv_header_and_rows_required: 'CSV needs a header row and at least one lead row',
-        phone_number_header_required: 'CSV needs a phone_number column',
+        phone_number_header_required: 'Map a column to Phone Number (or include a phone_number header)',
         campaign_not_allowed: 'Your user cannot load leads into that campaign',
         permission_denied: 'Your user is not allowed to load leads',
       };
@@ -7366,6 +7417,17 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                 </select>
               </label>
               <label>
+                <span>Duplicate Window</span>
+                <select value={dupDays} onChange={(event) => setDupDays(Number(event.target.value))} disabled={duplicateMode === 'NONE'}>
+                  <option value={0}>All time</option>
+                  <option value={30}>Last 30 days</option>
+                  <option value={60}>Last 60 days</option>
+                  <option value={90}>Last 90 days</option>
+                  <option value={180}>Last 180 days</option>
+                  <option value={360}>Last 360 days</option>
+                </select>
+              </label>
+              <label>
                 <span>Phone Code</span>
                 <input value={phoneCode} onChange={(event) => setPhoneCode(event.target.value)} />
               </label>
@@ -7382,6 +7444,43 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                 <textarea value={csv} onChange={(event) => { setCsv(event.target.value); setSummary(null); }} />
               </label>
             </div>
+
+            <div className="lead-map-controls">
+              <label className="inline-check">
+                <input type="checkbox" checked={hasHeader} onChange={(event) => setHasHeader(event.target.checked)} />
+                <span>First row is a header</span>
+              </label>
+              <label className="inline-check">
+                <input type="checkbox" checked={autoDetect} onChange={(event) => setAutoDetect(event.target.checked)} />
+                <span>Auto-detect columns</span>
+              </label>
+              <button type="button" className="secondary-action compact-action" disabled={detecting || !csv.trim()} onClick={() => detectColumns(csv, autoDetect)}>
+                {detecting ? 'Detecting…' : 'Detect columns'}
+              </button>
+            </div>
+
+            {mapFields.length > 0 && headers.length > 0 && (
+              <div className="lead-mapping">
+                <p className="muted-note">Map each field to a file column — auto-detected picks show a confidence score. <b>Phone Number</b> is required.</p>
+                <div className="lead-mapping-grid">
+                  {mapFields.map((field) => (
+                    <div className="lead-map-row" key={field}>
+                      <span className="lead-map-label">{fieldLabel(field)}{field === 'phone_number' ? ' *' : ''}</span>
+                      <select value={mapping[field] ?? -1} onChange={(event) => setMapping({ ...mapping, [field]: Number(event.target.value) })}>
+                        <option value={-1}>(none)</option>
+                        {headers.map((head, i) => (
+                          <option key={`${field}-${i}`} value={i}>{i}: {head || `Column ${i + 1}`}</option>
+                        ))}
+                      </select>
+                      {Number(mapping[field]) >= 0 && mapScores[field] > 0 && (
+                        <span className={`map-score ${mapScores[field] >= 90 ? 'good' : 'ok'}`}>{mapScores[field]}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {error && <p className="form-error">{error}</p>}
             <div className="modal-actions">
               <button type="submit" className="primary-action" disabled={loading || !canLoad}>
