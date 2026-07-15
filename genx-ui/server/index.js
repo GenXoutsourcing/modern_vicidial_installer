@@ -11610,7 +11610,7 @@ async function startAgentRecording(live, user, context) {
 // real trunk leg (SIP/DAHDI/PJSIP) over a Local/ pseudo-leg so MixMonitor's
 // r()/t() split lines up with actual near/far audio. Same lookup agentHangup
 // uses, so it never grabs the agent channel.
-async function agentCustomerChannel(live) {
+async function customerRecordingChannel(live) {
   if (!live.callerid) return null;
   // Auto-dial stores the customer trunk directly on the live-agent row.
   if (live.channel && String(live.comments || '') === 'AUTO') return live.channel;
@@ -11643,7 +11643,7 @@ async function startAgentStereoRecording(live, user) {
   const mode = String(camp?.stereo_recording || 'DISABLED');
   if (!STEREO_EXTEN[mode]) return null; // DISABLED or unknown → not a stereo campaign
   if (await agentRecordingChannel(live)) return null; // a recording already runs
-  const channel = await agentCustomerChannel(live);
+  const channel = await customerRecordingChannel(live);
   if (!channel) return null; // customer leg not up yet — a later poll retries
   const stereoExten = STEREO_EXTEN[mode];
   const nowEpoch = Math.floor(Date.now() / 1000);
