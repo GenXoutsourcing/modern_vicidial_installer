@@ -1362,7 +1362,18 @@ body {
 }
 
 .lead-advanced { margin-top: 14px; }
-.lead-advanced .advanced-check { align-self: end; padding-bottom: 10px; }
+.lead-advanced .advanced-check {
+  display: inline-flex;
+  align-self: end;
+  padding-bottom: 10px;
+}
+.lead-advanced .advanced-check input[type='checkbox'] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 0;
+  flex: none;
+}
 .lead-mapping code {
   font-family: "SFMono-Regular", Consolas, monospace;
   color: var(--blue);
