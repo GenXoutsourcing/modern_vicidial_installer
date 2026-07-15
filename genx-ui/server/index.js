@@ -9911,6 +9911,17 @@ async function agentStatus(req, res) {
       'UPDATE vicidial_campaign_agents SET calls_today = ? WHERE user = ? AND campaign_id = ?',
       [callsToday, req.genxUser.user, live.campaign_id],
     ).catch(() => {});
+    // Legacy VDADcheckINCOMING OUT/OUTBALANCE branch: reattribute the log row
+    // the dialer created as user='VDAD' to this agent at connect time, so the
+    // call is the agent's from INCALL onward — mid-call state, transfers, the
+    // dispo, and the call-log view all see the agent rather than VDAD. Inbound
+    // closer calls (Y-prefixed callerid) are attributed on their own path.
+    if (live.uniqueid && !/^Y/.test(String(live.callerid || ''))) {
+      await execute(
+        "UPDATE vicidial_log SET user = ?, comments = 'AUTO', status = 'INCALL', user_group = ? WHERE lead_id = ? AND uniqueid = ?",
+        [req.genxUser.user, req.genxUser.userGroup || '', live.lead_id, live.uniqueid],
+      ).catch(() => {});
+    }
     live = (await agentLiveRow(req.genxUser.user)) || live;
   }
 
