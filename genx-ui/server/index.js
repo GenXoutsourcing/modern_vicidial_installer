@@ -11341,6 +11341,7 @@ async function agentHangup(req, res) {
   if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
   const nowEpoch = Math.floor(Date.now() / 1000);
 
+  try {
     // Find the customer channel(s) to hang up. Both auto and manual dial tag
     // the customer legs with the call's caller_code as channel_group in
     // live_sip_channels; the agent's own leg carries the ACagc session group,
