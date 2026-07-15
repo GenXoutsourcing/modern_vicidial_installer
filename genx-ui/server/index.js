@@ -449,6 +449,10 @@ const savedReportTableReady = (async () => {
     // feed_key authorizes unauthenticated scheduled fetches of this report
     // (the legacy Automated Reports runner wgets the feed URL). Generated on
     // first schedule; empty = no feed exposure for that report.
+    // NOTE: `ADD COLUMN IF NOT EXISTS` is MariaDB syntax. The whole VICIdial
+    // stack targets MariaDB (10.5 here), so this is safe on supported deploys;
+    // on stock Oracle MySQL it errors and the catch below disables saved
+    // custom reports. If MySQL support is ever needed, gate on a column probe.
     await execute("ALTER TABLE genx_saved_reports ADD COLUMN IF NOT EXISTS feed_key CHAR(40) NOT NULL DEFAULT ''");
     return true;
   } catch (error) {
@@ -4236,12 +4240,14 @@ async function saveUser(req, res, mode) {
   // vdc_agent_api_access is NOT forced off here — it doubles as the internal
   // agent-control permission (listen/barge, legacy report agent logout), so
   // it stays a per-user/template flag; APIUSERS members always get it.
+  // Fail CLOSED: only a positively-confirmed member of the configured API
+  // group gets external API access. A null apiGroup (genx_group_permissions
+  // unreadable, or API not configured) must clamp api_allowed_functions to ''
+  // rather than skip the block and leave stale/form-supplied access.
   const apiGroup = await apiUserGroup();
-  if (apiGroup) {
-    const isApiUser = effectiveGroup === apiGroup;
-    if (isApiUser) payload.vdc_agent_api_access = '1';
-    payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
-  }
+  const isApiUser = Boolean(apiGroup) && effectiveGroup === apiGroup;
+  if (isApiUser) payload.vdc_agent_api_access = '1';
+  payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
 
   // Creating a user creates their phone: numeric user id, no phone login
   // supplied, and a group whose ui access includes the agent screen → clone a
@@ -5045,6 +5051,10 @@ async function loadLeads(req, res) {
   const rowsToImport = dataRows.slice(0, 10000);
   const skipped = [];
   let inserted = 0;
+  // Count custom-field write failures so a silent per-row custom INSERT error
+  // (e.g. a bad column) surfaces to the operator instead of vanishing while
+  // the lead still counts as loaded.
+  let customFieldErrors = 0;
 
   // Per-list custom-field mapping (label -> column). Only when loading into the
   // fixed list — a per-row list target would need a different custom table.
@@ -5179,7 +5189,7 @@ async function loadLeads(req, res) {
         await execute(
           `INSERT INTO custom_${listId} SET lead_id = ?, ${assignments}`,
           [insertResult.insertId, ...values],
-        ).catch(() => {});
+        ).catch(() => { customFieldErrors += 1; });
       }
       inserted += 1;
     }
@@ -5188,7 +5198,7 @@ async function loadLeads(req, res) {
       `UPDATE vicidial_lists SET list_changedate = NOW() WHERE list_id IN (${[...touchedLists].map(() => '?').join(',')})`,
       [...touchedLists],
     );
-    await adminLog(req, 'LEADS', 'LOAD', listId, 'GENX LOAD LEADS', 'INSERT INTO vicidial_list', `${inserted} loaded, ${skipped.length} skipped`);
+    await adminLog(req, 'LEADS', 'LOAD', listId, 'GENX LOAD LEADS', 'INSERT INTO vicidial_list', `${inserted} loaded, ${skipped.length} skipped${customFieldErrors ? `, ${customFieldErrors} custom-field errors` : ''}`);
     bustQueryCache('leadCounts');
 
     return res.json({
@@ -5198,6 +5208,7 @@ async function loadLeads(req, res) {
         campaign_id: list.campaign_id,
         inserted,
         skipped: skipped.length,
+        custom_field_errors: customFieldErrors,
         skipped_rows: skipped.slice(0, 100),
       },
       data: await adminData(req.genxUser),
@@ -10501,6 +10512,13 @@ async function agentSetStatus(req, res, target) {
   const user = req.genxUser.user;
   const live = await agentLiveRow(user);
   if (!live) return res.status(409).json({ ok: false, error: 'not_logged_in' });
+  // Guard the call state machine: a user/raw-API READY while INCALL would wipe
+  // uniqueid/callerid/channel and orphan the live call. The dispo flow resumes
+  // READY via applyAgentStatus() directly (after the call ends), so it's
+  // unaffected; only the front-door status toggle is blocked mid-call.
+  if (target === 'READY' && String(live.status || '').toUpperCase() === 'INCALL') {
+    return res.status(409).json({ ok: false, error: 'in_call', live });
+  }
   try {
     const updated = await applyAgentStatus(user, req.genxUser.userGroup, target);
     return res.json({ ok: true, live: updated });
@@ -11534,11 +11552,19 @@ async function agentRecordingChannel(live) {
 // agentStatus.
 async function startAgentRecording(live, user, context) {
   const [camp] = await rows(
-    'SELECT campaign_recording, campaign_rec_exten, campaign_rec_filename FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    'SELECT campaign_recording, campaign_rec_exten, campaign_rec_filename, stereo_recording FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
     [live.campaign_id],
     [],
   );
   if (String(camp?.campaign_recording || 'NEVER') === 'NEVER') return null;
+  // Stereo campaigns record ONLY in stereo (agent-left / customer-right split)
+  // — delegate to the stereo path and skip the mono conference Monitor leg, so
+  // a stereo call produces exactly one stereo file, never a mono+stereo pair.
+  // Covers both auto-dial/inbound (auto-record hook) and manual dial (button
+  // + hook), since every record trigger funnels through here.
+  if (STEREO_EXTEN[String(camp?.stereo_recording || 'DISABLED')]) {
+    return startAgentStereoRecording(live, user);
+  }
   if (await agentRecordingChannel(live)) return null; // already recording
   const nowEpoch = Math.floor(Date.now() / 1000);
   let vendorLeadCode = '';
@@ -11573,6 +11599,92 @@ async function startAgentRecording(live, user, context) {
     'INSERT INTO recording_log SET channel = ?, server_ip = ?, extension = ?, start_time = NOW(), start_epoch = ?, filename = ?, lead_id = ?, user = ?, vicidial_id = ?',
     [`Local/${recPrefix}${live.conf_exten}@${context}`, live.server_ip, recExten, nowEpoch,
       filename, Number(live.lead_id) || 0, user, live.uniqueid || ''],
+  ).catch(() => {});
+  return filename;
+}
+
+// Find the CUSTOMER leg of the agent's live call to record in stereo. The
+// agent's own leg carries an ACagc session channel_group; every customer leg
+// (the SC trunk for outbound/manual, the inbound trunk, the Local conf legs)
+// carries the call's caller_code == vicidial_live_agents.callerid. Prefer a
+// real trunk leg (SIP/DAHDI/PJSIP) over a Local/ pseudo-leg so MixMonitor's
+// r()/t() split lines up with actual near/far audio. Same lookup agentHangup
+// uses, so it never grabs the agent channel.
+async function agentCustomerChannel(live) {
+  if (!live.callerid) return null;
+  // Auto-dial stores the customer trunk directly on the live-agent row.
+  if (live.channel && String(live.comments || '') === 'AUTO') return live.channel;
+  const found = await rows(
+    `SELECT channel FROM live_channels WHERE server_ip = ? AND channel_group = ?
+     UNION SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel_group = ?`,
+    [live.server_ip, live.callerid, live.server_ip, live.callerid],
+    [],
+  );
+  if (!found.length) return null;
+  const trunk = found.find((r) => !/^Local\//i.test(String(r.channel || '')));
+  return (trunk || found[0]).channel || null;
+}
+
+// Stereo recording start — port of manager_send.php's agent-controlled stereo
+// block. MixMonitor the CUSTOMER channel with r(<fn>-out.wav)t(<fn>-in.wav)
+// into monitorS; AST_CRON_audio_1_stereo.pl (chained off the audio move/
+// compress crons when system_settings.stereo_recording>0) merges the two into
+// a 2-channel -all file (AGENT left, CUSTOMER right), which then compresses +
+// ftps to the archive exactly like a mono recording. CUSTOMER_ONLY/
+// CUSTOMER_MUTE add the matching MixMonitorMute. Returns the filename, or null
+// when stereo is disabled for the campaign or no customer channel is up yet.
+const STEREO_EXTEN = { BOTH_CHANNELS: 'SACBC', CUSTOMER_ONLY: 'SACCO', CUSTOMER_MUTE: 'SACCM' };
+async function startAgentStereoRecording(live, user) {
+  const [camp] = await rows(
+    'SELECT stereo_recording, stereo_rec_filename, stereo_recording_agent FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1',
+    [live.campaign_id],
+    [],
+  );
+  const mode = String(camp?.stereo_recording || 'DISABLED');
+  if (!STEREO_EXTEN[mode]) return null; // DISABLED or unknown → not a stereo campaign
+  if (await agentRecordingChannel(live)) return null; // a recording already runs
+  const channel = await agentCustomerChannel(live);
+  if (!channel) return null; // customer leg not up yet — a later poll retries
+  const stereoExten = STEREO_EXTEN[mode];
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  let vendorLeadCode = '';
+  let recPhone = '';
+  if (Number(live.lead_id) > 0) {
+    const [vlc] = await rows('SELECT vendor_lead_code, phone_number FROM vicidial_list WHERE lead_id = ? LIMIT 1', [live.lead_id], []);
+    vendorLeadCode = vlc?.vendor_lead_code || '';
+    recPhone = vlc?.phone_number || '';
+  }
+  const filename = recordingFilename(camp?.stereo_rec_filename || 'S_FULLDATE_CUSTPHONE', {
+    user, campaign: live.campaign_id, leadId: live.lead_id, callerid: live.callerid, phone: recPhone, vendorLeadCode,
+  });
+  const monitorS = '/var/spool/asterisk/monitorS';
+  const options = `r(${monitorS}/${filename}-out.wav)t(${monitorS}/${filename}-in.wav)`;
+  const actionId = `${filename.slice(0, 17)}...`;
+  await execute(
+    `INSERT INTO vicidial_manager
+       (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+        cmd_line_b, cmd_line_c, cmd_line_d)
+     VALUES ('', NOW(), 'NEW', 'N', ?, '', 'MixMonitor', ?, ?, ?, ?)`,
+    [live.server_ip, actionId, `ActionID: ${actionId}`, `Channel: ${channel}`, `Options: ${options}`],
+  );
+  if (mode === 'CUSTOMER_ONLY' || mode === 'CUSTOMER_MUTE') {
+    // CUSTOMER_ONLY mutes the write (agent) direction; CUSTOMER_MUTE mutes read.
+    const direction = mode === 'CUSTOMER_ONLY' ? 'write' : 'read';
+    await execute(
+      `INSERT INTO vicidial_manager
+         (uniqueid, entry_date, status, response, server_ip, channel, action, callerid,
+          cmd_line_b, cmd_line_c, cmd_line_d)
+       VALUES ('', NOW(), 'NEW', 'N', ?, '', 'MixMonitorMute', ?, ?, ?, ?)`,
+      [live.server_ip, `${filename.slice(0, 16)}M...`, `Channel: ${channel}`, `Direction: ${direction}`, 'State: 1'],
+    ).catch(() => {});
+  }
+  await execute(
+    'INSERT INTO recording_log SET channel = ?, server_ip = ?, extension = ?, start_time = NOW(), start_epoch = ?, filename = ?, lead_id = ?, user = ?, vicidial_id = ?',
+    [channel, live.server_ip, stereoExten, nowEpoch, filename, Number(live.lead_id) || 0, user, live.uniqueid || ''],
+  ).catch(() => {});
+  await execute(
+    "INSERT INTO recording_log_stereo SET server_ip = ?, start_time = NOW(), length_in_sec = 0, filename = ?, lead_id = ?, options = ?, recording_status = 'STEREO START'",
+    [live.server_ip, filename, Number(live.lead_id) || 0, `${live.campaign_id} STEREO GENX ${mode}`],
   ).catch(() => {});
   return filename;
 }
@@ -14910,12 +15022,16 @@ async function purgeCustomFieldRows(listId) {
     if (!entryListId) continue;
     const tables = await rows('SHOW TABLES LIKE ?', [`custom_${entryListId}`], []);
     if (!tables.length) continue;
+    // NO .catch() swallow here: if the custom-field purge fails we must let it
+    // throw so the caller (deleteList) aborts BEFORE deleting vicidial_list.
+    // Swallowing would delete the leads while their custom_<id> PII rows
+    // survive with no lead_id key left to ever find them again.
     await execute(
       `DELETE cf FROM ${quoteId(`custom_${entryListId}`)} cf
        JOIN vicidial_list l ON l.lead_id = cf.lead_id
        WHERE l.list_id = ?`,
       [listId],
-    ).catch(() => {});
+    );
   }
 }
 
@@ -14993,6 +15109,11 @@ async function downloadList(req, res) {
   const scoped = await listWithScope(req, id);
   if (scoped.error) return res.status(scoped.error).json({ ok: false, error: 'list_not_available' });
 
+  // SCALE CAVEAT: this buffers up to 500k lead rows in memory then builds the
+  // whole CSV string before sending. Fine for typical lists; a multi-million
+  // lead list would need a streamed cursor + res.write() chunks. The LIMIT is a
+  // hard cap — a list larger than 500k silently truncates, so bump-and-stream
+  // is the follow-up if clients export lists that big.
   const leads = await rows(
     `SELECT ${LIST_DOWNLOAD_COLUMNS.join(', ')} FROM vicidial_list WHERE list_id = ? ORDER BY lead_id ASC LIMIT 500000`,
     [id],
@@ -15078,7 +15199,9 @@ async function campaignLeadStatuses(req, res) {
   }
   const id = cleanId(req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_campaign_id');
-  if (!scopeAllows(me.permissions?.allowedCampaigns, id)) {
+  // L9 SuperAdmins bypass the campaign-scope check (matches every other
+  // campaign-scoped endpoint); a restricted manager still must own the scope.
+  if (Number(me.userLevel || 0) < 9 && !scopeAllows(me.permissions?.allowedCampaigns, id)) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
   // ACTIVE lists only (Steve 2026-07-12): the Basic-page status breakdown

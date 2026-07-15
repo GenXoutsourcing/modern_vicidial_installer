@@ -26,6 +26,11 @@ CPU_THREADS = int(os.environ.get("GENX_WHISPER_THREADS", "10"))
 INBOX_DIR = os.environ.get("GENX_TRANSCRIBE_INBOX", "/archive/transcribe-inbox")
 ARCHIVE_PREFIX = os.environ.get("GENX_ARCHIVE_PREFIX", "/archive")
 POLL_SECONDS = int(os.environ.get("GENX_TRANSCRIBE_POLL", "15"))
+# Delete transcript rows older than N days (0 = keep forever, like the archive
+# recording retention). genx_transcripts is unbounded otherwise: at millions of
+# recordings the MEDIUMTEXT transcript+segments columns dominate the DB.
+RETENTION_DAYS = int(os.environ.get("GENX_TRANSCRIBE_RETENTION_DAYS", "0"))
+RETENTION_SWEEP_SECONDS = 3600
 LANGUAGE = os.environ.get("GENX_WHISPER_LANGUAGE", "") or None
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".gsm", ".flac", ".m4a")
 
@@ -213,6 +218,22 @@ def process_row(model, conn, row):
     return "DONE", "", segments, language, channels if channels else 1, elapsed
 
 
+def purge_expired(conn):
+    """Delete DONE/ERROR transcripts past the retention window. Keeps QUEUED/
+    PROCESSING rows regardless so in-flight work is never dropped."""
+    if RETENTION_DAYS < 1:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM genx_transcripts "
+            "WHERE status IN ('DONE','ERROR') "
+            "AND created_at < (NOW() - INTERVAL %s DAY) LIMIT 5000",
+            (RETENTION_DAYS,),
+        )
+        if cur.rowcount:
+            log(f"retention: purged {cur.rowcount} transcript(s) older than {RETENTION_DAYS}d")
+
+
 def main():
     log(f"loading whisper model '{MODEL_NAME}' ({COMPUTE_TYPE}, {CPU_THREADS} threads)")
     from faster_whisper import WhisperModel
@@ -239,12 +260,17 @@ def main():
             conn = None
             time.sleep(15)
 
+    last_purge = 0.0
     while True:
         try:
             try:
                 conn.ping(reconnect=False)
             except Exception:
                 conn = connect()  # newer PyMySQL deprecated ping(reconnect=True)
+            now = time.time()
+            if now - last_purge >= RETENTION_SWEEP_SECONDS:
+                purge_expired(conn)
+                last_purge = now
             enqueue_recording_log(conn)
             enqueue_inbox(conn)
             with conn.cursor(pymysql.cursors.DictCursor) as cur:

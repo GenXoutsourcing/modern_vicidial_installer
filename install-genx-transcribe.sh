@@ -56,6 +56,9 @@ GENX_TRANSCRIBE_POLL=15
 GENX_TRANSCRIBE_INBOX=/archive/transcribe-inbox
 # Root that recording_log.location paths resolve under.
 GENX_ARCHIVE_PREFIX=/archive
+# Delete transcripts older than N days (0 = keep forever). Set to match your
+# recording retention so genx_transcripts doesn't grow unbounded at scale.
+GENX_TRANSCRIBE_RETENTION_DAYS=0
 EOF
 else
   echo "-- keeping existing $ENV_FILE"
