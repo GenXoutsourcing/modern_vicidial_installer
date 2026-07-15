@@ -11341,34 +11341,37 @@ async function agentHangup(req, res) {
   if (!Number(live.lead_id)) return res.status(409).json({ ok: false, error: 'not_on_call' });
   const nowEpoch = Math.floor(Date.now() / 1000);
 
-  try {
-    const [liveChan] = await rows(
-      'SELECT channel FROM vicidial_live_agents WHERE user = ? LIMIT 1',
-      [user],
-      [],
-    );
-    // Only match auto_calls on keys we actually have. On a previewed (not
-    // yet dialed) lead both callerid and uniqueid are '' — an unguarded
-    // OR-match would then hit some other campaign's still-ringing call
-    // (uniqueid stays '' until answer) and hang up a random customer.
-    const callKeys = [];
-    const callConds = [];
-    if (live.callerid) { callConds.push('callerid = ?'); callKeys.push(live.callerid); }
-    if (live.uniqueid && String(live.uniqueid) !== '0') { callConds.push('uniqueid = ?'); callKeys.push(live.uniqueid); }
-    const [autoCall] = callConds.length
+    // Find the customer channel(s) to hang up. Both auto and manual dial tag
+    // the customer legs with the call's caller_code as channel_group in
+    // live_sip_channels; the agent's own leg carries the ACagc session group,
+    // so a channel_group = callerid match returns only the customer side and
+    // can never hang up the agent. This is the reliable source —
+    // vicidial_auto_calls.channel is not populated on this build, and the old
+    // fallback to vicidial_live_agents.channel targeted the agent's own SIP
+    // channel (so manual-dial hangups no-op'd). Guarded on a real caller_code:
+    // a previewed-not-dialed lead has callerid '' and must match nothing.
+    const custChannels = live.callerid
       ? await rows(
-        `SELECT channel, server_ip FROM vicidial_auto_calls WHERE ${callConds.join(' OR ')} LIMIT 1`,
-        callKeys,
+        'SELECT channel FROM live_sip_channels WHERE server_ip = ? AND channel_group = ?',
+        [live.server_ip, live.callerid],
         [],
       )
       : [];
-    const channel = autoCall?.channel || liveChan?.channel || '';
-    if (channel) {
+    // Fallback for any path that did record the channel on the auto_calls row.
+    if (!custChannels.length && live.callerid) {
+      const [autoCall] = await rows(
+        "SELECT channel FROM vicidial_auto_calls WHERE callerid = ? AND channel IS NOT NULL AND channel != '' LIMIT 1",
+        [live.callerid],
+        [],
+      );
+      if (autoCall?.channel) custChannels.push({ channel: autoCall.channel });
+    }
+    for (const row of custChannels) {
       await execute(
         `INSERT INTO vicidial_manager
            (uniqueid, entry_date, status, response, server_ip, channel, action, callerid, cmd_line_b)
          VALUES ('', NOW(), 'NEW', 'N', ?, '', 'Hangup', ?, ?)`,
-        [autoCall?.server_ip || live.server_ip, `HL${live.callerid || ''}${nowEpoch}`.slice(0, 20), `Channel: ${channel}`],
+        [live.server_ip, `HL${live.callerid || ''}${nowEpoch}`.slice(0, 20), `Channel: ${row.channel}`],
       ).catch(() => {});
     }
     await execute('DELETE FROM vicidial_auto_calls WHERE callerid = ?', [live.callerid || '']).catch(() => {});
