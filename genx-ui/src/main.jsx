@@ -7269,9 +7269,34 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   async function loadFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setCsv(await file.text());
     setSummary(null);
     setError('');
+    const name = (file.name || '').toLowerCase();
+    // .xlsx is a binary ZIP — reading it as text yields garbage. Send the raw
+    // bytes to the server, which converts it to CSV so the preview and import
+    // stay CSV-only. .xls (old binary) isn't supported; ask for CSV/XLSX.
+    if (name.endsWith('.xlsx')) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+        const payload = await apiFetch('/admin/lead-loader/xlsx', token, {
+          method: 'POST',
+          body: JSON.stringify({ xlsx_base64: btoa(binary) }),
+        });
+        setCsv(payload?.csv || '');
+      } catch (convertError) {
+        setCsv('');
+        setError('That .xlsx could not be read — re-save it as CSV and try again');
+      }
+      return;
+    }
+    if (name.endsWith('.xls')) {
+      setCsv('');
+      setError('Old .xls files are not supported — save as .xlsx or CSV');
+      return;
+    }
+    setCsv(await file.text());
   }
 
   async function submit(event) {
@@ -7349,8 +7374,8 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                 <input value={status} onChange={(event) => setStatus(event.target.value.toUpperCase())} />
               </label>
               <label className="wide-field">
-                <span>CSV File</span>
-                <input type="file" accept=".csv,text/csv,text/plain" onChange={loadFile} />
+                <span>CSV or XLSX File</span>
+                <input type="file" accept=".csv,text/csv,text/plain,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={loadFile} />
               </label>
               <label className="wide-field">
                 <span>CSV Rows</span>

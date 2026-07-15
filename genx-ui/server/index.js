@@ -36,6 +36,7 @@
 import express from 'express';
 import mysql from 'mysql2/promise';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -4405,6 +4406,125 @@ const LEAD_IMPORT_ALIASES = new Map([
   ['altphone', 'alt_phone'],
   ['security phrase', 'security_phrase'],
 ]);
+
+// ---------------------------------------------------------------------------
+// Minimal XLSX reader for the Lead Loader — no external dependency. A .xlsx is
+// a ZIP of XML parts; read the ZIP central directory, inflate the shared-string
+// table and the first worksheet with zlib, resolve cell references into a dense
+// grid, and emit CSV so the rest of the loader (preview + parseCsvRows) is
+// unchanged. Covers shared strings, inline strings, and plain numeric cells —
+// enough for lead lists. Throws on anything that isn't a readable .xlsx.
+function unzipCentralDir(buffer) {
+  // End Of Central Directory: signature PK\x05\x06, scanned from the tail.
+  let eocd = -1;
+  const floor = Math.max(0, buffer.length - 22 - 65536);
+  for (let i = buffer.length - 22; i >= floor; i -= 1) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('not_a_zip');
+  const count = buffer.readUInt16LE(eocd + 10);
+  let ptr = buffer.readUInt32LE(eocd + 16);
+  const entries = new Map();
+  for (let n = 0; n < count; n += 1) {
+    if (buffer.readUInt32LE(ptr) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(ptr + 10);
+    const compSize = buffer.readUInt32LE(ptr + 20);
+    const nameLen = buffer.readUInt16LE(ptr + 28);
+    const extraLen = buffer.readUInt16LE(ptr + 30);
+    const commentLen = buffer.readUInt16LE(ptr + 32);
+    const localOff = buffer.readUInt32LE(ptr + 42);
+    const name = buffer.toString('utf8', ptr + 46, ptr + 46 + nameLen);
+    entries.set(name, { method, compSize, localOff });
+    ptr += 46 + nameLen + extraLen + commentLen;
+  }
+  return { buffer, entries };
+}
+
+function readZipEntry(zip, name) {
+  const e = zip.entries.get(name);
+  if (!e) return null;
+  const { buffer } = zip;
+  const nameLen = buffer.readUInt16LE(e.localOff + 26);
+  const extraLen = buffer.readUInt16LE(e.localOff + 28);
+  const start = e.localOff + 30 + nameLen + extraLen;
+  const data = buffer.subarray(start, start + e.compSize);
+  if (e.method === 0) return data; // stored
+  if (e.method === 8) return zlib.inflateRawSync(data); // deflate
+  throw new Error('unsupported_zip_method');
+}
+
+function decodeXmlText(value) {
+  return String(value)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&amp;/g, '&');
+}
+
+function colRefToIndex(ref) {
+  const letters = /^([A-Z]+)/.exec(String(ref || ''));
+  if (!letters) return 0;
+  let n = 0;
+  for (const ch of letters[1]) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+function xlsxToCsv(buffer) {
+  const zip = unzipCentralDir(buffer);
+  // Shared strings: each <si> is one string (concatenate its <t> runs).
+  const shared = [];
+  const ssBuf = readZipEntry(zip, 'xl/sharedStrings.xml');
+  if (ssBuf) {
+    for (const si of ssBuf.toString('utf8').match(/<si\b[^>]*>[\s\S]*?<\/si>/g) || []) {
+      let text = '';
+      for (const t of si.match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) || []) {
+        text += decodeXmlText(t.replace(/^<t\b[^>]*>/, '').replace(/<\/t>$/, ''));
+      }
+      shared.push(text);
+    }
+  }
+  // First worksheet (Excel writes sheet1.xml; fall back to the first match).
+  let sheetBuf = readZipEntry(zip, 'xl/worksheets/sheet1.xml');
+  if (!sheetBuf) {
+    const first = [...zip.entries.keys()].find((k) => /^xl\/worksheets\/[^/]+\.xml$/.test(k));
+    if (first) sheetBuf = readZipEntry(zip, first);
+  }
+  if (!sheetBuf) throw new Error('no_worksheet');
+  const sheet = sheetBuf.toString('utf8');
+  const grid = [];
+  for (const rowXml of sheet.match(/<row\b[^>]*>[\s\S]*?<\/row>/g) || []) {
+    const cells = [];
+    for (const cXml of rowXml.match(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) || []) {
+      const refM = /\br="([A-Z]+\d+)"/.exec(cXml);
+      const idx = colRefToIndex(refM ? refM[1] : '');
+      const typeM = /\bt="([^"]+)"/.exec(cXml);
+      const type = typeM ? typeM[1] : '';
+      let value = '';
+      if (type === 'inlineStr') {
+        const t = /<t\b[^>]*>([\s\S]*?)<\/t>/.exec(cXml);
+        value = t ? decodeXmlText(t[1]) : '';
+      } else {
+        const v = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(cXml);
+        const raw = v ? v[1] : '';
+        value = type === 's' ? (shared[Number(raw)] ?? '') : decodeXmlText(raw);
+      }
+      cells[idx] = value;
+    }
+    for (let i = 0; i < cells.length; i += 1) if (cells[i] === undefined) cells[i] = '';
+    grid.push(cells);
+  }
+  // Emit plain RFC-4180 CSV (NO formula-injection prefix — this is import data
+  // round-tripping into parseCsvRows, not an export).
+  return grid
+    .map((r) => r.map((c) => {
+      const s = String(c ?? '');
+      return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(','))
+    .join('\r\n');
+}
 
 function parseCsvRows(text) {
   const rows = [];
@@ -16431,6 +16551,21 @@ app.post('/api/admin/lists/:id/clear', requireAccess, clearList);
 app.post('/api/admin/lists/:id/reset', requireAccess, resetList);
 app.get('/api/admin/lists/:id/download', requireAccess, downloadList);
 app.post('/api/admin/lead-loader', requireAccess, loadLeads);
+// Convert an uploaded .xlsx (base64) to CSV text so the loader's preview and
+// import path stay CSV-only. A .xlsx starts with the ZIP local-header magic
+// PK\x03\x04 (0x04034b50 LE).
+app.post('/api/admin/lead-loader/xlsx', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'loadLeads')) return;
+  try {
+    const buffer = Buffer.from(String(req.body?.xlsx_base64 || ''), 'base64');
+    if (buffer.length < 4 || buffer.readUInt32LE(0) !== 0x04034b50) {
+      return badRequest(res, 'not_xlsx');
+    }
+    return res.json({ ok: true, csv: xlsxToCsv(buffer) });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: 'xlsx_parse_failed' });
+  }
+});
 app.post('/api/admin/dnc', requireAccess, bulkDnc);
 app.get('/api/admin/dnc/search', requireAccess, dncSearch);
 
