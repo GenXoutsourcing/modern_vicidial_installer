@@ -2831,7 +2831,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
       { key: 'email', label: 'Email' },
       { key: 'mobile_number', label: 'Mobile Number' },
-      { key: 'phone_login', label: 'Phone Login', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE' }, ...phoneOptions], form?.phone_login) },
+      { key: 'phone_login', label: 'Phone Login', type: phoneOptions.length ? 'select' : 'text', options: withCurrentOption([{ value: '', label: 'NONE (auto-creates a phone on new agent users)' }, ...phoneOptions], form?.phone_login) },
       { key: 'phone_pass', label: 'Phone Password (blank = keep current)', type: 'password' },
       { key: 'voicemail_id', label: 'Voicemail ID' },
       { key: 'user_code', label: 'User Code' },

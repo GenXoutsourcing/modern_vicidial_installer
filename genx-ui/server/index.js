@@ -4080,6 +4080,71 @@ async function apiUserGroup() {
   }
 }
 
+// Auto-provision a WEBRTC agent phone for a new user on EVERY active
+// asterisk server (legacy parity with the webphone clone in ViciBox's
+// second_server_install.sql: one phones row per dialer, same creds) so
+// resolveAgentPhone can spread logins across all boxes. Each row is cloned
+// from that server's existing webphone (falls back to any webphone row when
+// a dialer has none yet) so codecs/template settings track the cluster's
+// working config. Returns the server IPs provisioned; never throws — a
+// phone failure must not roll back the user create.
+async function autoProvisionAgentPhones(extension, fullName, phonePass) {
+  const provisioned = [];
+  try {
+    const dialers = await rows(
+      "SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y'",
+      [],
+      [],
+    );
+    for (const dialer of dialers) {
+      const serverIp = dialer.server_ip;
+      const [existing] = await rows(
+        'SELECT extension FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1',
+        [extension, serverIp],
+        [],
+      );
+      if (existing) continue;
+      let [template] = await rows(
+        "SELECT * FROM phones WHERE server_ip = ? AND active = 'Y' AND is_webphone = 'Y' ORDER BY extension ASC LIMIT 1",
+        [serverIp],
+        [],
+      );
+      if (!template) {
+        [template] = await rows(
+          "SELECT * FROM phones WHERE active = 'Y' AND is_webphone = 'Y' ORDER BY extension ASC LIMIT 1",
+          [],
+          [],
+        );
+      }
+      if (!template) continue; // no webphone anywhere to clone from
+      const row = {
+        ...template,
+        extension,
+        dialplan_number: extension,
+        voicemail_id: extension,
+        login: extension,
+        pass: phonePass,
+        conf_secret: phonePass,
+        fullname: String(fullName || extension).slice(0, 50),
+        server_ip: serverIp,
+        messages: 0,
+        old_messages: 0,
+        active: 'Y',
+      };
+      const { assignments, values } = dynamicAssignments(row);
+      await execute(`INSERT INTO phones SET ${assignments}`, values);
+      provisioned.push(serverIp);
+    }
+    if (provisioned.length) {
+      const placeholders = provisioned.map(() => '?').join(',');
+      await execute(`UPDATE servers SET rebuild_conf_files = 'Y' WHERE server_ip IN (${placeholders})`, provisioned);
+    }
+  } catch (error) {
+    // Partial provisioning is fine: re-saving the user (or savePhone) fills gaps.
+  }
+  return provisioned;
+}
+
 async function saveUser(req, res, mode) {
   if (!requireModify(req, res, 'modifyUsers')) return;
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
@@ -4178,6 +4243,23 @@ async function saveUser(req, res, mode) {
     payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
   }
 
+  // Creating a user creates their phone: numeric user id, no phone login
+  // supplied, and a group whose ui access includes the agent screen → clone a
+  // webphone onto every active dialer (extension = user id) and stamp the
+  // matching phone_login/phone_pass on the user row. Supplying a phone_login
+  // on the form opts out (assign an existing phone instead).
+  let provisionPhonePass = '';
+  const wantsAutoPhone = mode === 'create'
+    && /^[0-9]+$/.test(id)
+    && !String(payload.phone_login || '').trim()
+    && (await uiAccessFor(effectiveGroup)) !== 'admin';
+  if (wantsAutoPhone) {
+    provisionPhonePass = String(payload.phone_pass || '').trim()
+      || crypto.randomBytes(6).toString('hex');
+    payload.phone_login = id;
+    payload.phone_pass = provisionPhonePass;
+  }
+
   const { assignments, values } = dynamicAssignments(payload);
 
   try {
@@ -4189,6 +4271,12 @@ async function saveUser(req, res, mode) {
         [id, ...values],
       );
       await adminLog(req, 'USERS', 'ADD', id, 'GENX ADD USER', 'INSERT INTO vicidial_users', payload.full_name);
+      if (wantsAutoPhone) {
+        const phoneServers = await autoProvisionAgentPhones(id, payload.full_name, provisionPhonePass);
+        if (phoneServers.length) {
+          await adminLog(req, 'PHONES', 'ADD', id, 'GENX AUTO PHONE', 'INSERT INTO phones (auto-provision on user create)', phoneServers.join(', '));
+        }
+      }
     } else {
       const result = await execute(
         `UPDATE vicidial_users
@@ -9188,6 +9276,56 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
   webphone_volume, webphone_debug, webphone_layout, webphone_settings,
   VICIDIAL_park_on_extension, VICIDIAL_park_on_filename, voicemail_dump_exten, voicemail_id, dtmf_send_extension`;
 
+// Legacy-parity phone resolution (vicidial.php alias handling): the login an
+// agent types may be a phones_alias (alias_id -> comma list of per-server
+// phone logins) and/or a login that exists on several telephony servers (the
+// join clones the webphone to every dialer; auto-provisioned agent phones get
+// a copy per dialer too). Pick the matching phone on the ACTIVE asterisk
+// server with the fewest live agents so logins spread across all dialers;
+// fall back to non-dialer copies only when no dialer hosts one. Pass
+// phonePass=null to skip the password check (session-carried phones).
+async function resolveAgentPhone(phoneLogin, phonePass) {
+  let logins = [phoneLogin];
+  const [alias] = await rows(
+    'SELECT logins_list FROM phones_alias WHERE alias_id = ? LIMIT 1',
+    [phoneLogin],
+    [],
+  );
+  if (alias?.logins_list) {
+    const list = String(alias.logins_list).split(',').map((item) => item.trim()).filter(Boolean);
+    if (list.length) logins = list;
+  }
+  const placeholders = logins.map(() => '?').join(',');
+  const candidates = await rows(
+    `SELECT ${AGENT_PHONE_COLUMNS},
+            (server_ip IN (SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y')) AS on_dialer
+     FROM phones WHERE login IN (${placeholders}) AND active = 'Y'`,
+    logins,
+    [],
+  );
+  let usable = candidates;
+  if (phonePass !== null && phonePass !== undefined) {
+    usable = usable.filter((p) => String(p.pass || '') === String(phonePass));
+  }
+  if (!usable.length) return null;
+  const dialerHosted = usable.filter((p) => Number(p.on_dialer));
+  const pool = dialerHosted.length ? dialerHosted : usable;
+  if (pool.length > 1) {
+    // Least-loaded pick; server_ip tiebreak keeps the choice deterministic.
+    const loads = await rows(
+      'SELECT server_ip, COUNT(*) AS cnt FROM vicidial_live_agents GROUP BY server_ip',
+      [],
+      [],
+    );
+    const byIp = new Map(loads.map((r) => [String(r.server_ip), Number(r.cnt)]));
+    pool.sort((a, b) =>
+      (byIp.get(String(a.server_ip)) || 0) - (byIp.get(String(b.server_ip)) || 0)
+      || String(a.server_ip).localeCompare(String(b.server_ip)));
+  }
+  const { on_dialer, ...phone } = pool[0];
+  return phone;
+}
+
 // CONFBRIDGE servers keep agent rooms in vicidial_confbridges and agents join
 // with a '2'-prefixed exten (legacy $conf_table / $session_prepend logic);
 // customers join the plain conf exten either way.
@@ -9338,15 +9476,10 @@ async function agentAuth(req, res) {
     if (!phoneLogin) return res.status(401).json({ ok: false, error: 'phone_login_required' });
   }
 
-  const [phone] = await rows(
-    `SELECT ${AGENT_PHONE_COLUMNS}
-     FROM phones WHERE login = ? AND active = 'Y'
-     ORDER BY (server_ip IN (SELECT server_ip FROM servers WHERE active_asterisk_server = 'Y')) DESC, server_ip ASC
-     LIMIT 1`,
-    [phoneLogin],
-    [],
-  );
-  if (!phone || String(phone.pass || '') !== phonePass) {
+  // Alias-aware + least-loaded across all active dialers (password checked
+  // inside the resolver so alias members with a different pass are skipped).
+  const phone = await resolveAgentPhone(phoneLogin, phonePass);
+  if (!phone) {
     return res.status(401).json({ ok: false, error: 'invalid_phone_credentials' });
   }
 
@@ -9462,14 +9595,9 @@ async function agentLogin(req, res) {
     }
   }
 
-  const phone = req.agentPhone || (await rows(
-    `SELECT ${AGENT_PHONE_COLUMNS}
-     FROM phones WHERE login = ? AND active = 'Y'
-     ORDER BY (server_ip IN (SELECT server_ip FROM servers WHERE active_asterisk_server = 'Y')) DESC, server_ip ASC
-     LIMIT 1`,
-    [phoneLogin],
-    [],
-  ))[0];
+  // Admin sessions pass a phone login without its pass; alias + load
+  // balancing still apply (null pass = skip the credential check).
+  const phone = req.agentPhone || (await resolveAgentPhone(phoneLogin, null));
   if (!phone) return res.status(404).json({ ok: false, error: 'phone_not_found' });
   const [campaign] = await rows(
     `SELECT campaign_id, campaign_name, dial_method, campaign_cid, closer_campaigns
