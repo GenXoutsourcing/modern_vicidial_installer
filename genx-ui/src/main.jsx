@@ -7272,6 +7272,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
   const [customFields, setCustomFields] = useState([]);
   const [customMapping, setCustomMapping] = useState({});
   const [customScores, setCustomScores] = useState({});
+  const [fileKey, setFileKey] = useState(0);
 
   const fieldLabel = (field) => String(field).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -7401,6 +7402,12 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
       });
       setSummary(payload.summary || null);
       if (payload.data) onLoaded(payload.data);
+      // Reset the page for the next load; the summary modal carries the result.
+      setCsv('');
+      setHeaders([]); setSampleRows([]); setMapping({}); setMapScores({}); setMapFields([]);
+      setCustomFields([]); setCustomMapping({}); setCustomScores({});
+      setListIdColumn(-1);
+      setFileKey((value) => value + 1); // remount the file input so it forgets the chosen file
     } catch (loadError) {
       const messages = {
         list_required: 'Choose a list before loading leads',
@@ -7470,7 +7477,7 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                 {/* No accept filter: Windows shows "Custom Files" for one, which
                     hides lead files with odd extensions (.txt exports, no-ext).
                     loadFile sniffs XLSX by content and treats the rest as text. */}
-                <input type="file" onChange={loadFile} />
+                <input key={fileKey} type="file" onChange={loadFile} />
               </label>
               <label className="wide-field">
                 <span>CSV Rows</span>
@@ -7602,8 +7609,19 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
           </div>
         </Panel>
 
-        {summary && (
-          <Panel eyebrow="Result" title="Load Summary" icon={Database} className="admin-wide-panel">
+      </section>
+      {summary && (
+        <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setSummary(null))}>
+          <div className="modal-panel detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Result</p>
+                <h3>Load Summary</h3>
+              </div>
+              <button type="button" className="icon-action" onClick={() => setSummary(null)} aria-label="Close">
+                <X size={18} aria-hidden="true" />
+              </button>
+            </div>
             <div className="quick-stack">
               <MetricCard icon={Database} label="Inserted" value={formatNumber(summary.inserted)} detail={`List ${summary.list_id}`} accent="#73fbd3" />
               <MetricCard icon={Gauge} label="Skipped" value={formatNumber(summary.skipped)} detail="Duplicate or invalid rows" accent="#ffd166" />
@@ -7617,9 +7635,12 @@ function LeadLoaderView({ admin, user, token, onLoaded }) {
                 { key: 'phone_number', label: 'Phone', render: (row) => row.phone_number || 'None' },
               ]}
             />
-          </Panel>
-        )}
-      </section>
+            <div className="modal-actions">
+              <button type="button" className="primary-action" onClick={() => setSummary(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
