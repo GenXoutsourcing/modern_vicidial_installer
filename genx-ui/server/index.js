@@ -7635,6 +7635,121 @@ async function agentStatusDetailReport(req, res) {
 
 // Native port of AST_agent_performance_detail.php (core stats): per-agent call
 // and time totals from the agent log plus a per-status matrix.
+// Manager command dashboard: one replica-routed, campaign-scoped call that
+// assembles every panel of the Reporting Center landing page (KPIs with a
+// prior-period delta, agent performance, call outcomes, conversion by list,
+// callbacks due, pause watch, QA/recording queue). Each block is defensive —
+// a failed sub-query yields an empty panel, never a 500 for the whole page.
+async function managerDashboard(req, res) {
+  if (!requireModify(req, res, 'viewReports')) return;
+  const rangeKey = ['today', 'yesterday', '7days'].includes(String(req.query?.range)) ? String(req.query.range) : 'today';
+  // Windows use the DB server clock (cluster TZ). Date SQL carries no user
+  // input — rangeKey is enum-validated — so it's safe to inline.
+  const WIN = {
+    today: { cur: 'CURDATE()', curEnd: '', prev: 'CURDATE() - INTERVAL 1 DAY', prevEnd: 'CURDATE()' },
+    yesterday: { cur: 'CURDATE() - INTERVAL 1 DAY', curEnd: 'CURDATE()', prev: 'CURDATE() - INTERVAL 2 DAY', prevEnd: 'CURDATE() - INTERVAL 1 DAY' },
+    '7days': { cur: 'CURDATE() - INTERVAL 6 DAY', curEnd: '', prev: 'CURDATE() - INTERVAL 13 DAY', prevEnd: 'CURDATE() - INTERVAL 6 DAY' },
+  }[rangeKey];
+  const win = (col, w, end) => end ? `${col} >= ${w} AND ${col} < ${end}` : `${col} >= ${w}`;
+  const curW = (col) => win(col, WIN.cur, WIN.curEnd);
+  const prevW = (col) => win(col, WIN.prev, WIN.prevEnd);
+  const scope = req.genxUser?.permissions?.allowedCampaigns;
+  const sc = (params) => scopeWhere(scope, 'campaign_id', params); // '1=1' or 'campaign_id IN (?,...)'
+  const onReplica = (fn) => dbContext.run(reportPool, fn);
+  const safe = (p, fallback) => p.catch(() => fallback);
+
+  // KPI totals for a given date window (outbound vicidial_log). Contacts =
+  // connected (talk>0); sales = SALE status; drops = DROP/AB for abandon rate.
+  const kpiFor = (dateClause) => {
+    const p = [];
+    const where = `${dateClause} AND ${sc(p)}`;
+    return onReplica(() => scalar(
+      `SELECT COUNT(*) AS value FROM vicidial_log WHERE ${where}`, p, 0)).then(async (calls) => {
+      const p2 = []; const w2 = `${dateClause} AND ${sc(p2)}`;
+      const [contacts, sales, talk, drops] = await Promise.all([
+        onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND length_in_sec > 0`, p2, 0)),
+        onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND status = 'SALE'`, p2, 0)),
+        onReplica(() => scalar(`SELECT COALESCE(SUM(length_in_sec),0) AS value FROM vicidial_log WHERE ${w2}`, p2, 0)),
+        onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND status IN ('DROP','AB')`, p2, 0)),
+      ]);
+      return { calls, contacts, sales, talk, drops };
+    });
+  };
+
+  const scLA = []; const laWhere = scopeWhere(scope, 'campaign_id', scLA);
+  const scCb = []; const cbWhere = scopeWhere(scope, 'campaign_id', scCb);
+
+  const [current, previous, liveAgents, agentRows, pauseRows, outcomes, listConv, callbacks, qaQueue] = await Promise.all([
+    safe(kpiFor(curW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
+    safe(kpiFor(prevW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
+    // live agents (scoped) — MEMORY table, primary
+    safe(rows(`SELECT status, COUNT(*) AS n FROM vicidial_live_agents WHERE ${laWhere} GROUP BY status`, scLA, []), []),
+    // agent performance: calls/sales/talk by user
+    safe(onReplica(() => { const p = []; const w = `${curW('call_date')} AND ${sc(p)}`; return rows(
+      `SELECT user, COUNT(*) AS calls, SUM(status='SALE') AS sales,
+              COALESCE(SUM(length_in_sec),0) AS talk
+       FROM vicidial_log WHERE ${w} AND user <> '' AND user NOT IN ('VDAD','VDCL')
+       GROUP BY user ORDER BY calls DESC LIMIT 12`, p, []); }), []),
+    // pause seconds by user today
+    safe(onReplica(() => { const p = []; const w = `${curW('event_time')} AND ${scopeWhere(scope, 'campaign_id', p)}`; return rows(
+      `SELECT user, COALESCE(SUM(pause_sec),0) AS pause_sec FROM vicidial_agent_log
+       WHERE ${w} AND user <> '' AND user NOT IN ('VDAD','VDCL') GROUP BY user`, p, []); }), []),
+    // outcomes: status breakdown with names
+    safe(onReplica(() => { const p = []; const w = `${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}`; return rows(
+      `SELECT l.status, COUNT(*) AS n, COALESCE(s.status_name, l.status) AS name
+       FROM vicidial_log l LEFT JOIN vicidial_statuses s ON s.status = l.status
+       WHERE ${w} GROUP BY l.status ORDER BY n DESC LIMIT 8`, p, []); }), []),
+    // conversion by list
+    safe(onReplica(() => { const p = []; const w = `${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}`; return rows(
+      `SELECT l.list_id, COUNT(*) AS calls, SUM(l.status='SALE') AS sales,
+              COALESCE(vl.list_name, CONCAT('List ', l.list_id)) AS name
+       FROM vicidial_log l LEFT JOIN vicidial_lists vl ON vl.list_id = l.list_id
+       WHERE ${w} GROUP BY l.list_id ORDER BY calls DESC LIMIT 6`, p, []); }), []),
+    // callbacks due (soonest active)
+    safe(rows(
+      `SELECT c.lead_id, c.callback_time, c.user, c.recipient, c.campaign_id,
+              COALESCE(vl.list_name, CONCAT('List ', c.list_id)) AS list_name
+       FROM vicidial_callbacks c LEFT JOIN vicidial_lists vl ON vl.list_id = c.list_id
+       WHERE c.status = 'ACTIVE' AND ${cbWhere}
+       ORDER BY c.callback_time ASC LIMIT 8`, scCb, []), []),
+    // QA queue: recent recordings + transcript status
+    safe(onReplica(() => rows(
+      `SELECT r.recording_id, r.start_time, r.length_in_sec, r.user, r.lead_id, r.filename, r.location,
+              t.status AS transcript_status
+       FROM recording_log r LEFT JOIN genx_transcripts t ON t.recording_id = r.recording_id
+       ORDER BY r.recording_id DESC LIMIT 8`, [], [])), []),
+  ]);
+
+  // Merge pause into the agent rows; flag heavy pausers.
+  const pauseByUser = new Map(pauseRows.map((r) => [r.user, Number(r.pause_sec || 0)]));
+  const agents = agentRows.map((a) => ({
+    user: a.user, calls: Number(a.calls || 0), sales: Number(a.sales || 0),
+    talk: Number(a.talk || 0), pause_sec: pauseByUser.get(a.user) || 0,
+    conv_rate: Number(a.calls) > 0 ? Number(a.sales) / Number(a.calls) : 0,
+  })).slice(0, 8);
+  const pauseValues = [...pauseByUser.values()];
+  const pauseAvg = pauseValues.length ? Math.round(pauseValues.reduce((s, v) => s + v, 0) / pauseValues.length) : 0;
+  const pauseWatch = [...pauseByUser.entries()]
+    .map(([user, pause_sec]) => ({ user, pause_sec }))
+    .sort((a, b) => b.pause_sec - a.pause_sec).slice(0, 5);
+  const live = { active: 0, paused: 0 };
+  for (const r of liveAgents) { if (String(r.status) === 'PAUSED') live.paused += Number(r.n); else live.active += Number(r.n); }
+
+  return res.json({
+    ok: true,
+    range: rangeKey,
+    kpis: { current, previous },
+    live,
+    agents,
+    outcomes: outcomes.map((o) => ({ status: o.status, name: o.name, n: Number(o.n || 0) })),
+    listConversion: listConv.map((l) => ({ list_id: l.list_id, name: l.name, calls: Number(l.calls || 0), sales: Number(l.sales || 0) })),
+    callbacksDue: callbacks.map((c) => ({ lead_id: c.lead_id, callback_time: c.callback_time, user: c.user, recipient: c.recipient, list_name: c.list_name })),
+    pauseWatch,
+    pauseAvg,
+    qaQueue: qaQueue.map((q) => ({ recording_id: q.recording_id, start_time: q.start_time, length_in_sec: Number(q.length_in_sec || 0), user: q.user, lead_id: q.lead_id, transcript_status: q.transcript_status || null })),
+  });
+}
+
 async function agentPerformanceReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
   const { beginDate, endDate } = parseReportDateRange(req);
@@ -17499,6 +17614,7 @@ app.get('/api/reports/ivr', requireAccess, ivrReport);
 app.get('/api/reports/inbound-forecasting', requireAccess, inboundForecastingReport);
 app.get('/api/reports/agent-time-detail', requireAccess, agentTimeDetailReport);
 app.get('/api/reports/agent-status-detail', requireAccess, agentStatusDetailReport);
+app.get('/api/reports/manager-dashboard', requireAccess, managerDashboard);
 app.get('/api/reports/agent-performance', requireAccess, agentPerformanceReport);
 app.get('/api/reports/agent-disposition', requireAccess, agentDispositionReport);
 app.get('/api/reports/team-performance', requireAccess, teamPerformanceReport);
