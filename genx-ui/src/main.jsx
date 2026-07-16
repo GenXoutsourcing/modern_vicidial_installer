@@ -4888,6 +4888,7 @@ const DETAIL_REPORT_KINDS = Object.keys(REPORT_MODALS);
 function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [logoutReason, setLogoutReason] = useState('');
   const [logoutState, setLogoutState] = useState('');
   // Hopper List / Real-Time Report open stacked on TOP of the campaign
   // modal instead of navigating away from it. The hopper modal's campaign
@@ -4914,17 +4915,22 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       setConfirmingLogout(true);
       return;
     }
+    if (!logoutReason.trim()) return; // reason is required before it fires
     setLogoutState('working');
     try {
-      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaign)}/logout-agents`, token, { method: 'POST' });
+      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaign)}/logout-agents`, token, {
+        method: 'POST',
+        body: JSON.stringify({ reason: logoutReason.trim() }),
+      });
       setLogoutState(`Logged out ${payload.loggedOut} agent${payload.loggedOut === 1 ? '' : 's'}`);
+      setLogoutReason('');
+      setConfirmingLogout(false);
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout();
         return;
       }
       setLogoutState(requestError.status === 403 ? 'Not permitted' : 'Logout failed');
-    } finally {
       setConfirmingLogout(false);
     }
   }
@@ -4962,16 +4968,30 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
             </a>
           );
         })}
-        {userCan(user, 'campaigns') && (
-          <button
-            type="button"
-            className={confirmingLogout ? 'danger-action confirming compact-action' : 'row-action'}
-            disabled={logoutState === 'working'}
-            onClick={logoutAgents}
-          >
+        {userCan(user, 'campaigns') && !confirmingLogout && (
+          <button type="button" className="row-action" disabled={logoutState === 'working'} onClick={logoutAgents}>
             <LogOut size={15} aria-hidden="true" />
-            {logoutState === 'working' ? 'Logging out' : confirmingLogout ? 'Confirm Logout All?' : 'Log All Agents Out'}
+            Log All Agents Out
           </button>
+        )}
+        {userCan(user, 'campaigns') && confirmingLogout && (
+          <span className="logout-confirm">
+            <input
+              type="text"
+              className="logout-reason"
+              placeholder="Reason (required) — logged to admin history"
+              value={logoutReason}
+              maxLength={200}
+              autoFocus
+              onChange={(event) => setLogoutReason(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') logoutAgents(); if (event.key === 'Escape') { setConfirmingLogout(false); setLogoutReason(''); } }}
+            />
+            <button type="button" className="danger-action compact-action" disabled={logoutState === 'working' || !logoutReason.trim()} onClick={logoutAgents}>
+              <LogOut size={15} aria-hidden="true" />
+              {logoutState === 'working' ? 'Logging out' : 'Confirm — log out all'}
+            </button>
+            <button type="button" className="row-action" onClick={() => { setConfirmingLogout(false); setLogoutReason(''); }}>Cancel</button>
+          </span>
         )}
         {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
@@ -18198,11 +18218,15 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
             {
               key: 'filename',
               label: 'File',
-              render: (row) => (
-                safeHttpUrl(row.location)
-                  ? <a className="rec-file-link" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer" title={row.location}>{row.location}</a>
-                  : <span>{row.vicidial_id || row.server_ip || 'Not archived yet'}</span>
-              ),
+              render: (row) => {
+                // Show the short filename, not the raw archive URL — the full
+                // path is on hover (title) and behind the Listen link. A raw
+                // https path splashed across the table read as unfinished.
+                const name = row.filename || String(row.location || '').split('/').pop() || '';
+                return safeHttpUrl(row.location)
+                  ? <a className="rec-file-link" href={safeHttpUrl(row.location)} target="_blank" rel="noreferrer" title={row.location}>{name || 'recording'}</a>
+                  : <span className="muted-note">{name || 'Not archived yet'}</span>;
+              },
             },
             { key: 'user', label: 'User', render: (row) => (row.user ? <button type="button" className="cell-link" onClick={() => openUser(row.user)}>{row.user}</button> : 'System') },
             { key: 'lead_id', label: 'Lead', render: (row) => (row.lead_id ? <button type="button" className="cell-link" onClick={() => onNavigate?.('leadSearch', { leadId: row.lead_id })}>{row.lead_id}</button> : 'None') },

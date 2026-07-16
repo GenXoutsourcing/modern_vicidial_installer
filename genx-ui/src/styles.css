@@ -670,6 +670,28 @@ body {
   white-space: nowrap;
 }
 
+.logout-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.logout-reason {
+  min-height: 32px;
+  min-width: 240px;
+  padding: 0 10px;
+  border: 1px solid rgba(240, 85, 109, 0.5);
+  border-radius: 8px;
+  background: var(--panel-2, rgba(240, 85, 109, 0.06));
+  color: var(--text);
+  font-size: 0.8rem;
+}
+.logout-reason:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+  border-color: var(--blue);
+}
+
 .row-action:hover,
 .secondary-action:hover {
   border-color: var(--blue);
@@ -1741,6 +1763,18 @@ body {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Phones and small tablets: a many-column table (Users, Campaigns, Lists,
+   Inbound, DIDs, Call Menus, Recordings) would otherwise crush every column
+   to fit width:100% and clip the action buttons. Give it a readable floor so
+   it scrolls horizontally inside its own .table-wrap instead. Desktop panels
+   are wider than this floor, so width:100% still wins there — no scrollbar. */
+@media (max-width: 900px) {
+  .table-wrap table {
+    min-width: 720px;
+  }
 }
 
 table {

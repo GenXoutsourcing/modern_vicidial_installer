@@ -15255,6 +15255,10 @@ async function logoutCampaignAgents(req, res) {
   if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, id)) {
     return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
   }
+  // Force-logging a whole campaign is a floor-disrupting action — require a
+  // typed reason and write it to the admin log so it's never anonymous.
+  const reason = cleanText(req.body?.reason, 200);
+  if (!reason) return badRequest(res, 'reason_required');
   const [campaign] = await rows('SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [id], []);
   if (!campaign) return res.status(404).json({ ok: false, error: 'campaign_not_found' });
 
@@ -15271,7 +15275,7 @@ async function logoutCampaignAgents(req, res) {
     for (const agent of agents) {
       await emergencyLogoutLiveAgent(req, agent, nowEpoch, inactiveEpoch);
     }
-    await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX LOGOUT ALL CAMPAIGN AGENTS', 'DELETE FROM vicidial_live_agents WHERE campaign_id', `${agents.length} agents`);
+    await adminLog(req, 'CAMPAIGNS', 'MODIFY', id, 'GENX LOGOUT ALL CAMPAIGN AGENTS', 'DELETE FROM vicidial_live_agents WHERE campaign_id', `${agents.length} agents — reason: ${reason}`);
     return res.json({ ok: true, loggedOut: agents.length });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'logout_agents_failed' });
