@@ -15484,6 +15484,21 @@ function LogReportView({ token, onLogout, config }) {
           title={`${config.title}`}
           icon={Database}
           className="admin-wide-panel"
+          headerActions={(data[config.entriesKey] || []).length ? (
+            <button
+              type="button"
+              className="secondary-action compact-action"
+              onClick={() => downloadCsv(
+                `${config.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${beginDate}_to_${endDate}.csv`,
+                // Export raw underlying values (row[key]) with the column labels
+                // as headers — the render fns are for on-screen formatting only.
+                config.columns.map((column) => ({ label: column.label, value: (row) => row[column.key] })),
+                data[config.entriesKey] || [],
+              )}
+            >
+              <FileText size={15} aria-hidden="true" /> Download CSV
+            </button>
+          ) : null}
         >
           {(data[config.entriesKey] || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
           <DataTable
