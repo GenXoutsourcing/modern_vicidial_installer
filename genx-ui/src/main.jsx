@@ -290,6 +290,33 @@ function hasAdminNav(user) {
 // Nav items inside otherwise-allowed sections that stay admin-only.
 const ADMIN_ONLY_NAV_KEYS = new Set(['statuses']);
 
+// Map every top-level view to the nav section that gates it (built from
+// NAV_GROUPS so it never drifts from the sidebar). Hiding a nav link is NOT
+// access control — a manager can still reach a view by its #/hash — so the
+// AdminPage render must gate on this too. Server-side write guards are the
+// real enforcement; this stops the page (and its Add/Manage buttons) from
+// ever rendering for someone whose group can't see that section.
+const VIEW_SECTION = {};
+NAV_GROUPS.forEach((group) => group.keys.forEach((key) => { VIEW_SECTION[key] = group.section; }));
+
+function hasNavSection(user, section) {
+  if (!section) return true;
+  return !user?.navSections || user.navSections.includes(section);
+}
+
+// Can this user render this view? command is always allowed; report detail
+// views need reporting access; ADMIN_ONLY keys need the Admin section; every
+// other view needs its mapped section. Unknown sub-views fall through to
+// allowed so nested/detail views never break.
+function canSeeView(user, viewKey) {
+  if (!viewKey || viewKey === 'command') return true;
+  if (ADMIN_ONLY_NAV_KEYS.has(viewKey)) return hasAdminNav(user);
+  if (/^report[A-Z]/.test(viewKey)) return hasNavSection(user, 'reports') || hasAdminNav(user);
+  const section = VIEW_SECTION[viewKey];
+  if (section === undefined) return true;
+  return hasNavSection(user, section);
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat().format(Number(value || 0));
 }
@@ -18357,7 +18384,29 @@ function SystemView({ admin, user, onAction }) {
   );
 }
 
+function AccessDenied({ onBack }) {
+  return (
+    <section className="admin-section">
+      <Panel eyebrow="Access" title="Not available" icon={ShieldCheck}>
+        <div style={{ padding: '8px 4px 4px', maxWidth: '48ch' }}>
+          <p style={{ margin: '0 0 16px', color: 'var(--muted, #8a97ab)' }}>
+            This page isn&rsquo;t part of your role. If you need it, ask a system administrator to grant your user group access.
+          </p>
+          <button type="button" className="primary-action" onClick={onBack}>Go to Command</button>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
 function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
+  // Route guard: a hidden nav link is not access control. If this user's group
+  // can't see the section this view belongs to, don't render the page (or its
+  // action buttons) — send them back to Command. Mirrors the server-side
+  // permission gates so a direct #/system URL can't expose admin pages.
+  if (!canSeeView(user, activeView)) {
+    return <AccessDenied onBack={() => onNavigate('command')} />;
+  }
   if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
