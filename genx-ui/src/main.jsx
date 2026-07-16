@@ -435,6 +435,27 @@ function downloadCsv(filename, columns, dataRows) {
   URL.revokeObjectURL(url);
 }
 
+// Reusable Download CSV button for report result tables. Takes the same
+// {key,label,render} column config the on-screen DataTable uses and exports
+// the raw underlying values (row[key], or a per-column csv(row) override) —
+// render fns are for display only. Renders nothing when there are no rows.
+function CsvButton({ filename, columns, rows, label = 'Download CSV' }) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const cols = (columns && columns.length)
+    ? columns
+      .filter((column) => column && column.key !== 'actions' && column.label)
+      .map((column) => ({ label: column.label, value: (row) => (column.csv ? column.csv(row) : row[column.key]) }))
+    // No column config given: export every data field, raw key as header.
+    : [...new Set(rows.flatMap((row) => Object.keys(row)))]
+      .filter((key) => key !== 'id')
+      .map((key) => ({ label: key, value: (row) => row[key] }));
+  return (
+    <button type="button" className="secondary-action compact-action" onClick={() => downloadCsv(filename, cols, rows)}>
+      <FileText size={15} aria-hidden="true" /> {label}
+    </button>
+  );
+}
+
 function ReportFilterBar({ beginDate, endDate, onBeginDate, onEndDate, onSubmit, loading, children }) {
   return (
     <form className="entity-form report-filter-bar" onSubmit={onSubmit}>
