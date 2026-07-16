@@ -12557,7 +12557,9 @@ async function maxStatsReport(req, res) {
 
 // Whiteboard variants mirror legacy AST_rt_whiteboard_rpt.php report types;
 // the *_RATES versions are the same data divided per hour client-side.
-const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS', 'TEAM_PERFORMANCE_TOTALS', 'INGROUP_PERFORMANCE_TOTALS', 'DID_PERFORMANCE_TOTALS'];
+// REMOTE_AGENT_TOTALS is a GenX extension: agent totals filtered to users in
+// remote-agent line ranges (vicidial_remote_agents user_start + N lines).
+const WHITEBOARD_REPORT_TYPES = ['DISPOSITION_TOTALS', 'AGENT_PERFORMANCE_TOTALS', 'TEAM_PERFORMANCE_TOTALS', 'INGROUP_PERFORMANCE_TOTALS', 'DID_PERFORMANCE_TOTALS', 'REMOTE_AGENT_TOTALS'];
 
 async function whiteboardReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
@@ -12612,6 +12614,36 @@ async function whiteboardReport(req, res) {
       // fromParams -> (join binds would go here) -> whereParams; see the
       // DID detail query above for why this order must not change.
       [...vdlSrc.fromParams, ...vdlSrc.whereParams],
+      [],
+    );
+    return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });
+  }
+
+  if (reportType === 'REMOTE_AGENT_TOTALS') {
+    // Each remote agent owns number_of_lines consecutive numeric users
+    // starting at user_start — that's how the dialer logs their calls.
+    const remoteAgents = await rows('SELECT user_start, number_of_lines FROM vicidial_remote_agents', [], []);
+    const raUsers = [];
+    for (const ra of remoteAgents) {
+      const first = Number(ra.user_start);
+      if (!Number.isFinite(first)) continue;
+      const lines = Math.min(Math.max(Number(ra.number_of_lines) || 1, 1), 200);
+      for (let i = 0; i < lines && raUsers.length < 2000; i += 1) raUsers.push(String(first + i));
+    }
+    if (!raUsers.length) return res.json({ ok: true, reportType, items: [], range: { beginDate, endDate } });
+    const raWhere = [`vl.user IN (${raUsers.map(() => '?').join(',')})`, campaignWhere].filter(Boolean).join(' AND ');
+    const raSrc = await rangeSource({
+      table: 'vicidial_log', dateCol: 'call_date', start, end, alias: 'vl',
+      extraWhere: raWhere, extraParams: [...raUsers, ...scopeParams],
+    });
+    const items = await rows(
+      `SELECT user, COUNT(*) AS calls, SUM(length_in_sec) AS talk_seconds
+       FROM ${raSrc.fromSql}
+       WHERE ${raSrc.dateWhere}
+       GROUP BY user
+       ORDER BY calls DESC
+       LIMIT 30`,
+      raSrc.params,
       [],
     );
     return res.json({ ok: true, reportType, items, range: { beginDate, endDate } });

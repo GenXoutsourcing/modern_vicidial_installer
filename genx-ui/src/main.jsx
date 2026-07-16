@@ -10293,6 +10293,7 @@ const WHITEBOARD_REPORT_TYPES = [
   { value: 'TEAM_PERFORMANCE_TOTALS', label: 'Team Performance Totals', labelKey: 'user_group' },
   { value: 'INGROUP_PERFORMANCE_TOTALS', label: 'In-Group Performance Totals', labelKey: 'group_id' },
   { value: 'DID_PERFORMANCE_TOTALS', label: 'DID Performance Totals', labelKey: 'did_pattern' },
+  { value: 'REMOTE_AGENT_TOTALS', label: 'Remote Agent Totals', labelKey: 'user' },
 ];
 
 function WhiteboardReportView({ token }) {
