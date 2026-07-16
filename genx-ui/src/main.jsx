@@ -443,8 +443,10 @@ function CsvButton({ filename, columns, rows, label = 'Download CSV' }) {
   if (!Array.isArray(rows) || !rows.length) return null;
   const cols = (columns && columns.length)
     ? columns
-      .filter((column) => column && column.key !== 'actions' && column.label)
-      .map((column) => ({ label: column.label, value: (row) => (column.csv ? column.csv(row) : row[column.key]) }))
+      .filter((column) => column && column.key !== 'actions' && (column.csvLabel || column.label))
+      // csvLabel lets a shared column carry a units-suffixed CSV header
+      // ("Talk (sec)") while the on-screen table keeps the short label.
+      .map((column) => ({ label: column.csvLabel || column.label, value: (row) => (column.csv ? column.csv(row) : row[column.key]) }))
     // No column config given: export every data field, raw key as header.
     : [...new Set(rows.flatMap((row) => Object.keys(row)))]
       .filter((key) => key !== 'id')
@@ -6843,7 +6845,7 @@ function ActivityChart({ data, rangeLabel }) {
   );
 }
 
-function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey, emptyLabel }) {
+function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey, emptyLabel, headerActions = null }) {
   const total = items.reduce((sum, item) => sum + Number(item[valueKey] || 0), 0);
 
   return (
@@ -6853,6 +6855,7 @@ function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey,
           <p className="eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
         </div>
+        {headerActions}
         <Icon size={22} aria-hidden="true" />
       </div>
       <div className="breakdown-list">
@@ -10131,6 +10134,27 @@ function RealtimeMainReportView({ token, user }) {
     }
   }
 
+  const agentColumns = [
+    { key: 'user', label: 'Agent', render: (row) => row.full_name || row.user, csv: (row) => row.full_name || row.user },
+    { key: 'campaign_id', label: 'Campaign' },
+    { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'READY'}>{row.status}</StatusPill>, csv: (row) => row.status },
+    { key: 'status_seconds', label: 'Time', render: (row) => statusTime(row) },
+    { key: 'pause_code', label: 'Pause Code', render: (row) => row.pause_code || 'None' },
+    { key: 'calls_today', label: 'Calls Today', render: (row) => formatNumber(row.calls_today) },
+    { key: 'server_ip', label: 'Server' },
+  ];
+  const campaignColumns = [
+    { key: 'campaign_id', label: 'Campaign', render: (row) => (
+      <>
+        <strong>{row.campaign_id}</strong>
+        <span>{row.campaign_name}</span>
+      </>
+    ) },
+    { key: 'dial_method', label: 'Dial Method' },
+    { key: 'live_agents', label: 'Agents', render: (row) => formatNumber(row.live_agents) },
+    { key: 'auto_calls', label: 'Active Calls', render: (row) => formatNumber(row.auto_calls) },
+  ];
+
   return (
     <>
       <section className="report-hero">
@@ -10142,7 +10166,13 @@ function RealtimeMainReportView({ token, user }) {
       </section>
       {error && <p className="form-error">{error}</p>}
       <section className="admin-grid">
-        <Panel eyebrow="Live" title="Live Agents" icon={Headphones} className="admin-wide-panel">
+        <Panel
+          eyebrow="Live"
+          title="Live Agents"
+          icon={Headphones}
+          className="admin-wide-panel"
+          headerActions={<CsvButton filename={`realtime-agents-${localDateStr()}.csv`} columns={agentColumns} rows={agents} />}
+        >
           {canMonitor && (
             <div className="connection-actions">
               <label className="connection-summary" style={{ display: 'flex', alignItems: 'center', gap: '0.5em' }}>
@@ -10161,13 +10191,7 @@ function RealtimeMainReportView({ token, user }) {
             emptyLabel="No agents currently logged in"
             rows={agents.map((row, index) => ({ ...row, id: index }))}
             columns={[
-              { key: 'user', label: 'Agent', render: (row) => row.full_name || row.user },
-              { key: 'campaign_id', label: 'Campaign' },
-              { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'READY'}>{row.status}</StatusPill> },
-              { key: 'status_seconds', label: 'Time', render: (row) => statusTime(row) },
-              { key: 'pause_code', label: 'Pause Code', render: (row) => row.pause_code || 'None' },
-              { key: 'calls_today', label: 'Calls Today', render: (row) => formatNumber(row.calls_today) },
-              { key: 'server_ip', label: 'Server' },
+              ...agentColumns,
               ...(canMonitor ? [{
                 key: 'monitor',
                 label: 'Monitor',
@@ -10197,21 +10221,16 @@ function RealtimeMainReportView({ token, user }) {
             ]}
           />
         </Panel>
-        <Panel eyebrow="Live" title="Campaign Dial Activity" icon={Radio}>
+        <Panel
+          eyebrow="Live"
+          title="Campaign Dial Activity"
+          icon={Radio}
+          headerActions={<CsvButton filename={`realtime-campaigns-${localDateStr()}.csv`} columns={campaignColumns} rows={campaigns} />}
+        >
           <DataTable
             emptyLabel="No active campaigns"
             rows={campaigns.map((row) => ({ ...row, id: row.campaign_id }))}
-            columns={[
-              { key: 'campaign_id', label: 'Campaign', render: (row) => (
-                <>
-                  <strong>{row.campaign_id}</strong>
-                  <span>{row.campaign_name}</span>
-                </>
-              ) },
-              { key: 'dial_method', label: 'Dial Method' },
-              { key: 'live_agents', label: 'Agents', render: (row) => formatNumber(row.live_agents) },
-              { key: 'auto_calls', label: 'Active Calls', render: (row) => formatNumber(row.auto_calls) },
-            ]}
+            columns={campaignColumns}
           />
         </Panel>
       </section>
@@ -10231,6 +10250,7 @@ function CampaignSummaryReportView({ token }) {
           <h2>Campaign Summary</h2>
           <p className="action-copy">Dial-pacing operations view: dial level, drops, and agent time breakdown per campaign. Refreshes every 5 seconds.</p>
         </div>
+        <CsvButton filename={`campaign-summary-${localDateStr()}.csv`} rows={campaigns} />
       </section>
       {error && <p className="form-error">{error}</p>}
       <section className="admin-grid">
@@ -10332,6 +10352,13 @@ function WhiteboardReportView({ token }) {
           valueKey="calls"
           labelKey="label"
           emptyLabel="No results for that range"
+          headerActions={(
+            <CsvButton
+              filename={`whiteboard-${reportType.toLowerCase()}-${beginDate}_to_${endDate}.csv`}
+              columns={[{ key: 'label', label: typeMeta.label }, { key: 'calls', label: 'Calls' }]}
+              rows={breakdownItems}
+            />
+          )}
         />
       )}
     </>
@@ -10486,7 +10513,13 @@ function HopperListReportView({ token, initialCampaignId, embedded = false, camp
         </section>
       )}
       {campaignId && entries && (
-        <Panel eyebrow="Results" title="Hopper Entries" icon={Database} className="admin-wide-panel hopper-table">
+        <Panel
+          eyebrow="Results"
+          title="Hopper Entries"
+          icon={Database}
+          className="admin-wide-panel hopper-table"
+          headerActions={<CsvButton filename={`hopper-list-${campaignId}.csv`} columns={columns} rows={entries} />}
+        >
           <DataTable
             emptyLabel="No leads currently in the hopper for that campaign/status"
             rows={entries.map((row) => ({ ...row, id: row.hopper_id }))}
@@ -11311,8 +11344,20 @@ function ListStatusesReportView({ token, onLogout }) {
           {selected.map((listId) => {
             const bucket = perList.get(listId) || { statuses: [], total: 0, rollups: {} };
             const listMeta = lists.find((row) => String(row.list_id) === listId);
+            const columns = [
+              { key: 'status', label: 'Status' },
+              { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '', csv: (row) => flagMap.get(String(row.status))?.status_name || '' },
+              { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+              { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%`, csv: (row) => (bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0) },
+            ];
             return (
-              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId}`} icon={Database}>
+              <Panel
+                key={listId}
+                eyebrow={`List ${listId}`}
+                title={`${listMeta?.list_name || listId}`}
+                icon={Database}
+                headerActions={<CsvButton filename={`list-statuses-${listId}.csv`} columns={columns} rows={bucket.statuses} />}
+              >
                 <div className="connection-actions">
                   {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
                     <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
@@ -11321,12 +11366,7 @@ function ListStatusesReportView({ token, onLogout }) {
                 <DataTable
                   emptyLabel="No leads in this list"
                   rows={bucket.statuses.map((row) => ({ ...row, id: `${row.list_id}-${row.status}` }))}
-                  columns={[
-                    { key: 'status', label: 'Status' },
-                    { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '' },
-                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
-                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%` },
-                  ]}
+                  columns={columns}
                 />
               </Panel>
             );
@@ -11452,7 +11492,24 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
       </Panel>
       {lists && selected.length > 0 && (
         <section className="admin-grid media-tools-grid">
-          <Panel eyebrow="Summary" title="List ID Summary" icon={Database}>
+          <Panel
+            eyebrow="Summary"
+            title="List ID Summary"
+            icon={Database}
+            headerActions={(
+              <CsvButton
+                filename={`list-campaign-summary-${selected.join('_')}.csv`}
+                columns={[
+                  { key: 'list_id', label: 'List' },
+                  { key: 'list_name', label: 'Name' },
+                  { key: 'campaign_id', label: 'Campaign' },
+                  { key: 'leads', label: 'Leads', csv: (row) => perList.get(String(row.list_id))?.total || 0 },
+                  { key: 'active', label: 'Active', csv: (row) => (row.active === 'Y' ? 'ACTIVE' : 'INACTIVE') },
+                ]}
+                rows={lists}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No lists in the selected campaigns"
               rows={lists.map((row) => ({ ...row, id: String(row.list_id) }))}
@@ -11465,7 +11522,22 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
               ]}
             />
           </Panel>
-          <Panel eyebrow="Summary" title="Status Flags and Categories" icon={Activity}>
+          <Panel
+            eyebrow="Summary"
+            title="Status Flags and Categories"
+            icon={Activity}
+            headerActions={(
+              <CsvButton
+                filename={`list-campaign-status-flags-${selected.join('_')}.csv`}
+                columns={[
+                  { key: 'label', label: 'Status Flag' },
+                  { key: 'count', label: 'Leads' },
+                  { key: 'pct', label: '%', csv: (row) => (totalLeads ? ((row.count / totalLeads) * 100).toFixed(2) : '0.00') },
+                ]}
+                rows={LIST_STATUS_ROLLUPS.map(([flag, label]) => ({ label, count: flagTotals[flag] }))}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No leads"
               rows={LIST_STATUS_ROLLUPS.map(([flag, label]) => ({ id: flag, label, count: flagTotals[flag] }))}
@@ -11487,8 +11559,20 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
           {[...perList.keys()].map((listId) => {
             const bucket = perList.get(listId);
             const listMeta = (lists || []).find((row) => String(row.list_id) === listId);
+            const columns = [
+              { key: 'status', label: 'Status' },
+              { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '', csv: (row) => flagMap.get(String(row.status))?.status_name || '' },
+              { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+              { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%`, csv: (row) => (bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0) },
+            ];
             return (
-              <Panel key={listId} eyebrow={`List ${listId}`} title={`${listMeta?.list_name || listId}`} icon={Database}>
+              <Panel
+                key={listId}
+                eyebrow={`List ${listId}`}
+                title={`${listMeta?.list_name || listId}`}
+                icon={Database}
+                headerActions={<CsvButton filename={`list-campaign-statuses-${listId}.csv`} columns={columns} rows={bucket.statuses} />}
+              >
                 <div className="connection-actions">
                   {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
                     <span className="connection-status" key={flag}>{label}: {formatNumber(bucket.rollups[flag] || 0)}</span>
@@ -11497,12 +11581,7 @@ function ListCampaignStatusesReportView({ token, onLogout, initialCampaignId }) 
                 <DataTable
                   emptyLabel="No leads in this list"
                   rows={bucket.statuses.map((row) => ({ ...row, id: `${row.list_id}-${row.status}` }))}
-                  columns={[
-                    { key: 'status', label: 'Status' },
-                    { key: 'status_name', label: 'Name', render: (row) => flagMap.get(String(row.status))?.status_name || '' },
-                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
-                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? Math.round((Number(row.leads) / bucket.total) * 100) : 0}%` },
-                  ]}
+                  columns={columns}
                 />
               </Panel>
             );
@@ -11591,12 +11670,19 @@ function CampaignStatusListReportView({ token, onLogout }) {
                   }
                 }
               }
+              const columns = [
+                { key: 'status', label: 'Disposition', render: (row) => `${row.status}${flagMap.get(String(row.status))?.status_name ? ` - ${flagMap.get(String(row.status)).status_name}` : ''}`, csv: (row) => `${row.status}${flagMap.get(String(row.status))?.status_name ? ` - ${flagMap.get(String(row.status)).status_name}` : ''}` },
+                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+                { key: 'duration', label: 'Duration', csvLabel: 'Duration (sec)', render: (row) => formatSeconds(row.duration) },
+                { key: 'handle_time', label: 'Handle Time', csvLabel: 'Handle Time (sec)', render: (row) => formatSeconds(row.handle_time) },
+              ];
               return (
                 <Panel
                   key={`${campaign.campaign_id}-${list.list_id}`}
                   eyebrow={`Campaign ${campaign.campaign_id} / List ${list.list_id} (${list.active === 'Y' ? 'ACTIVE' : 'INACTIVE'})`}
                   title={`${list.list_name || list.list_id}`}
                   icon={PhoneCall}
+                  headerActions={<CsvButton filename={`campaign-status-list-${campaign.campaign_id}-${list.list_id}-${beginDate}_to_${endDate}.csv`} columns={columns} rows={list.dispositions} />}
                 >
                   <div className="connection-actions">
                     {LIST_STATUS_ROLLUPS.map(([flag, label]) => (
@@ -11608,12 +11694,7 @@ function CampaignStatusListReportView({ token, onLogout }) {
                   <DataTable
                     emptyLabel="No calls for this list in the date range"
                     rows={list.dispositions.map((row) => ({ ...row, id: `${list.list_id}-${row.status}` }))}
-                    columns={[
-                      { key: 'status', label: 'Disposition', render: (row) => `${row.status}${flagMap.get(String(row.status))?.status_name ? ` - ${flagMap.get(String(row.status)).status_name}` : ''}` },
-                      { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-                      { key: 'duration', label: 'Duration', render: (row) => formatSeconds(row.duration) },
-                      { key: 'handle_time', label: 'Handle Time', render: (row) => formatSeconds(row.handle_time) },
-                    ]}
+                    columns={columns}
                   />
                   <p className="connection-summary">
                     Totals: {formatNumber(totals.calls)} calls, {formatSeconds(totals.duration)} duration, {formatSeconds(totals.handle_time)} handle time
@@ -11770,7 +11851,13 @@ function DialerInventoryReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="Inventory" title={data?.reportType === 'SNAPSHOT' ? `Snapshot ${data?.snapshotTime || ''}` : 'Dialable Inventory'} icon={Database} className="admin-wide-panel">
+        <Panel
+          eyebrow="Inventory"
+          title={data?.reportType === 'SNAPSHOT' ? `Snapshot ${data?.snapshotTime || ''}` : 'Dialable Inventory'}
+          icon={Database}
+          className="admin-wide-panel"
+          headerActions={<CsvButton filename={`dialer-inventory-${localDateStr()}.csv`} columns={DIALER_INVENTORY_COLUMNS} rows={entries} />}
+        >
           <DataTable
             emptyLabel="No inventory rows. Enable Inventory Report on lists, or take snapshots."
             rows={entries.map((row) => ({ ...row, id: `${row.campaign_id}-${row.list_id}` }))}
@@ -11786,7 +11873,23 @@ function DialerInventoryReportView({ token, onLogout }) {
         </Panel>
       )}
       {data?.statusMatrix && (
-        <Panel eyebrow="List Detail" title="Status / Called Count Breakdown" icon={Activity} className="admin-wide-panel">
+        <Panel
+          eyebrow="List Detail"
+          title="Status / Called Count Breakdown"
+          icon={Activity}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`dialer-inventory-status-matrix-${localDateStr()}.csv`}
+              columns={[
+                { key: 'status', label: 'Status' },
+                { key: 'called_count', label: 'Called Count' },
+                { key: 'leads', label: 'Leads' },
+              ]}
+              rows={data.statusMatrix}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No leads in this list"
             rows={data.statusMatrix.map((row) => ({ ...row, id: `${row.status}-${row.called_count}` }))}
@@ -11882,7 +11985,22 @@ function OutboundCallingReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <section className="admin-grid media-tools-grid">
-          <Panel eyebrow="Totals" title="Outbound Summary" icon={PhoneCall}>
+          <Panel
+            eyebrow="Totals"
+            title="Outbound Summary"
+            icon={PhoneCall}
+            headerActions={(
+              <CsvButton
+                filename={`outbound-summary-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'label', label: 'Stat' },
+                  { key: 'value', label: 'Value' },
+                  { key: 'detail', label: 'Detail', csv: (row) => row.detail || '' },
+                ]}
+                rows={summaryRows}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No data"
               rows={summaryRows}
@@ -11893,7 +12011,25 @@ function OutboundCallingReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Breakdown" title="Outbound Statuses" icon={Activity}>
+          <Panel
+            eyebrow="Breakdown"
+            title="Outbound Statuses"
+            icon={Activity}
+            headerActions={(
+              <CsvButton
+                filename={`outbound-statuses-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'status', label: 'Status' },
+                  { key: 'status_name', label: 'Status Name' },
+                  { key: 'category', label: 'Category', csv: (row) => (row.category && row.category !== 'UNDEFINED' ? row.category : '') },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'seconds', label: 'Time (sec)' },
+                  { key: 'pct', label: '%', csv: (row) => (totalCalls ? ((Number(row.calls) / totalCalls) * 100).toFixed(2) : '0.00') },
+                ]}
+                rows={s.statusBreakdown || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No outbound calls in the date range"
               rows={(s.statusBreakdown || []).map((row) => ({ ...row, id: row.status }))}
@@ -11907,7 +12043,22 @@ function OutboundCallingReportView({ token, onLogout }) {
             />
           </Panel>
           {s.inbound && (
-            <Panel eyebrow="Breakdown" title="Rollover In-Group Statuses" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Rollover In-Group Statuses"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`outbound-rollover-statuses-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'status', label: 'Status' },
+                    { key: 'calls', label: 'Calls' },
+                    { key: 'seconds', label: 'Time (sec)' },
+                  ]}
+                  rows={s.inbound.breakdown || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No rollover inbound calls"
                 rows={(s.inbound.breakdown || []).map((row) => ({ ...row, id: row.status }))}
@@ -11919,7 +12070,22 @@ function OutboundCallingReportView({ token, onLogout }) {
               />
             </Panel>
           )}
-          <Panel eyebrow="Breakdown" title="Calls per List" icon={Database}>
+          <Panel
+            eyebrow="Breakdown"
+            title="Calls per List"
+            icon={Database}
+            headerActions={(
+              <CsvButton
+                filename={`outbound-calls-per-list-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'list_id', label: 'List' },
+                  { key: 'list_name', label: 'Name' },
+                  { key: 'calls', label: 'Calls' },
+                ]}
+                rows={s.listBreakdown || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No outbound calls in the date range"
               rows={(s.listBreakdown || []).map((row) => ({ ...row, id: String(row.list_id) }))}
@@ -11930,7 +12096,21 @@ function OutboundCallingReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Breakdown" title="Hangup / Term Reasons" icon={Activity}>
+          <Panel
+            eyebrow="Breakdown"
+            title="Hangup / Term Reasons"
+            icon={Activity}
+            headerActions={(
+              <CsvButton
+                filename={`outbound-term-reasons-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'term_reason', label: 'Term Reason', csv: (row) => row.term_reason || 'NONE' },
+                  { key: 'calls', label: 'Calls' },
+                ]}
+                rows={s.termReasons || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No outbound calls in the date range"
               rows={(s.termReasons || []).map((row) => ({ ...row, id: row.term_reason || 'NONE' }))}
@@ -11940,7 +12120,21 @@ function OutboundCallingReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Breakdown" title="Carrier Dial Statuses" icon={Activity}>
+          <Panel
+            eyebrow="Breakdown"
+            title="Carrier Dial Statuses"
+            icon={Activity}
+            headerActions={(
+              <CsvButton
+                filename={`outbound-carrier-dialstatuses-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'dialstatus', label: 'Dial Status', csv: (row) => row.dialstatus || 'NONE' },
+                  { key: 'calls', label: 'Calls' },
+                ]}
+                rows={s.carrierBreakdown || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No carrier log entries in the date range"
               rows={(s.carrierBreakdown || []).map((row) => ({ ...row, id: row.dialstatus || 'NONE' }))}
@@ -12063,6 +12257,18 @@ function OutboundIntervalReportView({ token, onLogout }) {
           login_seconds: sum.login_seconds + row.login_seconds,
           pause_seconds: sum.pause_seconds + row.pause_seconds,
         }), { calls: 0, calls_in: 0, drops: 0, system_release: 0, sale_calls: 0, dnc_calls: 0, na_calls: 0, login_seconds: 0, pause_seconds: 0 });
+        const columns = [
+          { key: 'bucket', label: 'Interval', render: (row) => bucketLabel(row), csv: (row) => bucketLabel(row) },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+          { key: 'system_release', label: 'System Release', render: (row) => formatNumber(row.system_release) },
+          { key: 'agent_release', label: 'Agent Release', render: (row) => formatNumber(row.calls - row.system_release), csv: (row) => row.calls - row.system_release },
+          { key: 'sale_calls', label: 'Sales', render: (row) => formatNumber(row.sale_calls) },
+          { key: 'dnc_calls', label: 'DNC', render: (row) => formatNumber(row.dnc_calls) },
+          { key: 'na_pct', label: 'NA %', render: (row) => `${row.calls ? ((row.na_calls / row.calls) * 100).toFixed(2) : '0.00'}%`, csv: (row) => (row.calls ? ((row.na_calls / row.calls) * 100).toFixed(2) : '0.00') },
+          { key: 'drop_pct', label: 'Drop %', render: (row) => `${row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00'}%`, csv: (row) => (row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00') },
+          { key: 'login_seconds', label: 'Agent Login', csvLabel: 'Agent Login (sec)', render: (row) => formatSeconds(row.login_seconds) },
+          { key: 'pause_seconds', label: 'Agent Pause', csvLabel: 'Agent Pause (sec)', render: (row) => formatSeconds(row.pause_seconds) },
+        ];
         return (
           <Panel
             key={campaign.campaign_id}
@@ -12070,22 +12276,12 @@ function OutboundIntervalReportView({ token, onLogout }) {
             title={`${campaign.campaign_name || campaign.campaign_id} — ${formatNumber(totals.calls)} calls`}
             icon={PhoneCall}
             className="admin-wide-panel"
+            headerActions={<CsvButton filename={`outbound-interval-${campaign.campaign_id}-${beginDate}_to_${endDate}.csv`} columns={columns} rows={campaign.buckets} />}
           >
             <DataTable
               emptyLabel="No calls for this campaign in the date range"
               rows={campaign.buckets.map((row) => ({ ...row, id: String(row.bucket) }))}
-              columns={[
-                { key: 'bucket', label: 'Interval', render: (row) => bucketLabel(row) },
-                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-                { key: 'system_release', label: 'System Release', render: (row) => formatNumber(row.system_release) },
-                { key: 'agent_release', label: 'Agent Release', render: (row) => formatNumber(row.calls - row.system_release) },
-                { key: 'sale_calls', label: 'Sales', render: (row) => formatNumber(row.sale_calls) },
-                { key: 'dnc_calls', label: 'DNC', render: (row) => formatNumber(row.dnc_calls) },
-                { key: 'na_pct', label: 'NA %', render: (row) => `${row.calls ? ((row.na_calls / row.calls) * 100).toFixed(2) : '0.00'}%` },
-                { key: 'drop_pct', label: 'Drop %', render: (row) => `${row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00'}%` },
-                { key: 'login_seconds', label: 'Agent Login', render: (row) => formatSeconds(row.login_seconds) },
-                { key: 'pause_seconds', label: 'Agent Pause', render: (row) => formatSeconds(row.pause_seconds) },
-              ]}
+              columns={columns}
             />
             <p className="connection-summary">
               Totals: {formatNumber(totals.calls)} calls ({formatNumber(totals.calls_in)} inbound rollover),
@@ -12196,24 +12392,28 @@ function LeadSourceReportView({ token, onLogout }) {
         }
         return (
           <section className="admin-grid media-tools-grid" key={campaign.campaign_id}>
-            {[...perSource.entries()].map(([source, bucket]) => (
-              <Panel
-                key={`${campaign.campaign_id}-${source}`}
-                eyebrow={`Campaign ${campaign.campaign_id}`}
-                title={`${groupLabel}: ${source}`}
-                icon={Database}
-              >
-                <DataTable
-                  emptyLabel="No leads"
-                  rows={bucket.rows.map((row) => ({ ...row, id: `${source}-${row.status}` }))}
-                  columns={[
-                    { key: 'status', label: 'Disposition', render: (row) => nameMap.get(String(row.status)) || row.status },
-                    { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
-                    { key: 'pct', label: '%', render: (row) => `${bucket.total ? ((Number(row.leads) / bucket.total) * 100).toFixed(2) : '0.00'}%` },
-                  ]}
-                />
-              </Panel>
-            ))}
+            {[...perSource.entries()].map(([source, bucket]) => {
+              const columns = [
+                { key: 'status', label: 'Disposition', render: (row) => nameMap.get(String(row.status)) || row.status, csv: (row) => nameMap.get(String(row.status)) || row.status },
+                { key: 'leads', label: 'Leads', render: (row) => formatNumber(row.leads) },
+                { key: 'pct', label: '%', render: (row) => `${bucket.total ? ((Number(row.leads) / bucket.total) * 100).toFixed(2) : '0.00'}%`, csv: (row) => (bucket.total ? ((Number(row.leads) / bucket.total) * 100).toFixed(2) : '0.00') },
+              ];
+              return (
+                <Panel
+                  key={`${campaign.campaign_id}-${source}`}
+                  eyebrow={`Campaign ${campaign.campaign_id}`}
+                  title={`${groupLabel}: ${source}`}
+                  icon={Database}
+                  headerActions={<CsvButton filename={`lead-source-${campaign.campaign_id}-${source}-${beginDate}_to_${endDate}.csv`} columns={columns} rows={bucket.rows} />}
+                >
+                  <DataTable
+                    emptyLabel="No leads"
+                    rows={bucket.rows.map((row) => ({ ...row, id: `${source}-${row.status}` }))}
+                    columns={columns}
+                  />
+                </Panel>
+              );
+            })}
             {!perSource.size && (
               <Panel eyebrow={`Campaign ${campaign.campaign_id}`} title="No leads entered in the date range" icon={Database}>
                 <p className="connection-summary">No leads with an entry date in the selected range.</p>
@@ -12298,7 +12498,28 @@ function InboundSummaryReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Summary" title="Inbound Totals" icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Summary"
+            title="Inbound Totals"
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`inbound-summary-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'group_id', label: 'In-Group' },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'answered', label: 'Answered' },
+                  { key: 'answer_pct', label: 'Answer %', csv: (row) => (row.calls ? ((row.answered / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'avg_queue', label: 'Avg Queue (sec)', csv: (row) => (row.answered ? Math.round(row.answered_queue_seconds / row.answered) : 0) },
+                  { key: 'drops', label: 'Drops' },
+                  { key: 'drop_pct', label: 'Drop %', csv: (row) => (row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'avg_len', label: 'Avg Length (sec)', csv: (row) => (row.calls ? Math.round(row.seconds / row.calls) : 0) },
+                ]}
+                rows={s.perGroup || []}
+              />
+            )}
+          >
             <div className="connection-actions">
               <span className="connection-status">Offered (IVR starts): {formatNumber(s.offered)}</span>
               <span className="connection-status">Calls in queue log: {formatNumber(totals.calls)}</span>
@@ -12325,7 +12546,22 @@ function InboundSummaryReportView({ token, onLogout }) {
             />
           </Panel>
           <section className="admin-grid media-tools-grid">
-            <Panel eyebrow="Breakdown" title="Inbound Statuses" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Inbound Statuses"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`inbound-statuses-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'status', label: 'Status' },
+                    { key: 'calls', label: 'Calls' },
+                    { key: 'seconds', label: 'Time (sec)' },
+                  ]}
+                  rows={s.statusBreakdown || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No inbound calls in the date range"
                 rows={(s.statusBreakdown || []).map((row) => ({ ...row, id: row.status }))}
@@ -12336,7 +12572,23 @@ function InboundSummaryReportView({ token, onLogout }) {
                 ]}
               />
             </Panel>
-            <Panel eyebrow="Breakdown" title="Hourly Distribution" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Hourly Distribution"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`inbound-hourly-distribution-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'hour_slot', label: 'Hour' },
+                    { key: 'calls', label: 'Calls' },
+                    { key: 'answered', label: 'Answered' },
+                    { key: 'drops', label: 'Drops' },
+                  ]}
+                  rows={s.hourly || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No inbound calls in the date range"
                 rows={(s.hourly || []).map((row) => ({ ...row, id: row.hour_slot }))}
@@ -12457,7 +12709,30 @@ function ServiceLevelReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Per Day" title={`Daily Totals — ${s.groupId}`} icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Per Day"
+            title={`Daily Totals — ${s.groupId}`}
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`service-level-daily-${s.groupId}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'day', label: 'Date', csv: (row) => String(row.day).slice(0, 10) },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'drops', label: 'Drops' },
+                  { key: 'drop_pct', label: 'Drop %', csv: (row) => (row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'avg_drop', label: 'Avg Drop (sec)', csv: (row) => (row.drops ? Math.round(row.drops_sec / row.drops) : 0) },
+                  { key: 'holds', label: 'Holds' },
+                  { key: 'hold_pct', label: 'Hold %', csv: (row) => (row.calls ? ((row.holds / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'avg_hold', label: 'Avg Hold (sec)', csv: (row) => (row.holds ? Math.round(row.hold_sec / row.holds) : 0) },
+                  { key: 'calls_sec', label: 'Calltime (sec)' },
+                  { key: 'avg_calltime', label: 'Avg Call (sec)', csv: (row) => (row.calls ? Math.round(row.calls_sec / row.calls) : 0) },
+                ]}
+                rows={s.days || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No inbound calls in the date range"
               rows={(s.days || []).map((row) => ({ ...row, id: String(row.day) }))}
@@ -12475,7 +12750,25 @@ function ServiceLevelReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Intervals" title="Answer Speed per Quarter Hour" icon={Activity} className="admin-wide-panel">
+          <Panel
+            eyebrow="Intervals"
+            title="Answer Speed per Quarter Hour"
+            icon={Activity}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`service-level-intervals-${s.groupId}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'slot', label: 'Time', csv: (row) => slotLabel(row.slot) },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'drops', label: 'Drops' },
+                  ...SERVICE_LEVEL_BUCKETS.map(([key, label]) => ({ key, label })),
+                  { key: 'queue_max', label: 'Max Queue (sec)' },
+                ]}
+                rows={s.slots || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No inbound calls in the date range"
               rows={(s.slots || []).map((row) => ({ ...row, id: String(row.slot) }))}
@@ -12563,6 +12856,17 @@ function InboundHourlyReportView({ token, onLogout }) {
           queue_sec: sum.queue_sec + Number(row.queue_sec || 0),
           queue_max: Math.max(sum.queue_max, Number(row.queue_max || 0)),
         }), { calls: 0, answered: 0, drops: 0, talk_sec: 0, queue_sec: 0, queue_max: 0 });
+        const columns = [
+          { key: 'hour', label: 'Hour', render: (row) => `${String(row.hour).padStart(2, '0')}:00`, csv: (row) => `${String(row.hour).padStart(2, '0')}:00` },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+          { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
+          { key: 'talk_sec', label: 'Total Talk', csvLabel: 'Total Talk (sec)', render: (row) => formatSeconds(row.talk_sec) },
+          { key: 'avg_talk', label: 'Avg Talk', csvLabel: 'Avg Talk (sec)', render: (row) => `${row.answered ? Math.round(row.talk_sec / row.answered) : 0}s`, csv: (row) => (row.answered ? Math.round(row.talk_sec / row.answered) : 0) },
+          { key: 'queue_sec', label: 'Queue Time', csvLabel: 'Queue Time (sec)', render: (row) => formatSeconds(row.queue_sec) },
+          { key: 'avg_queue', label: 'Avg Queue', csvLabel: 'Avg Queue (sec)', render: (row) => `${row.calls ? Math.round(row.queue_sec / row.calls) : 0}s`, csv: (row) => (row.calls ? Math.round(row.queue_sec / row.calls) : 0) },
+          { key: 'queue_max', label: 'Max Queue', csvLabel: 'Max Queue (sec)', render: (row) => `${row.queue_max}s` },
+          { key: 'drops', label: 'Abandon', render: (row) => formatNumber(row.drops) },
+        ];
         return (
           <Panel
             key={group.group_id}
@@ -12570,21 +12874,12 @@ function InboundHourlyReportView({ token, onLogout }) {
             title={`${group.group_name || group.group_id} — ${formatNumber(totals.calls)} calls`}
             icon={PhoneCall}
             className="admin-wide-panel"
+            headerActions={<CsvButton filename={`inbound-hourly-${group.group_id}-${beginDate}_to_${endDate}.csv`} columns={columns} rows={group.hours} />}
           >
             <DataTable
               emptyLabel="No inbound calls in the date range"
               rows={group.hours.map((row) => ({ ...row, id: String(row.hour) }))}
-              columns={[
-                { key: 'hour', label: 'Hour', render: (row) => `${String(row.hour).padStart(2, '0')}:00` },
-                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-                { key: 'answered', label: 'Answered', render: (row) => formatNumber(row.answered) },
-                { key: 'talk_sec', label: 'Total Talk', render: (row) => formatSeconds(row.talk_sec) },
-                { key: 'avg_talk', label: 'Avg Talk', render: (row) => `${row.answered ? Math.round(row.talk_sec / row.answered) : 0}s` },
-                { key: 'queue_sec', label: 'Queue Time', render: (row) => formatSeconds(row.queue_sec) },
-                { key: 'avg_queue', label: 'Avg Queue', render: (row) => `${row.calls ? Math.round(row.queue_sec / row.calls) : 0}s` },
-                { key: 'queue_max', label: 'Max Queue', render: (row) => `${row.queue_max}s` },
-                { key: 'drops', label: 'Abandon', render: (row) => formatNumber(row.drops) },
-              ]}
+              columns={columns}
             />
             <p className="connection-summary">
               Totals: {formatNumber(totals.calls)} calls, {formatNumber(totals.answered)} answered,
@@ -12680,7 +12975,30 @@ function InboundDailyReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Summary" title={data?.hourly ? 'Hourly Totals' : 'Daily Totals'} icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Summary"
+            title={data?.hourly ? 'Hourly Totals' : 'Daily Totals'}
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`inbound-daily-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'slot', label: data?.hourly ? 'Hour' : 'Date', csv: (row) => String(row.slot).slice(0, data?.hourly ? 16 : 10) },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'answered', label: 'Answered' },
+                  { key: 'answer_pct', label: 'Answer %', csv: (row) => (row.calls ? ((row.answered / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'asa', label: 'Avg Speed Answer (sec)', csv: (row) => (row.answered ? Math.round(row.answer_queue_sec / row.answered) : 0) },
+                  { key: 'drops', label: 'Drops' },
+                  { key: 'drop_pct', label: 'Drop %', csv: (row) => (row.calls ? ((row.drops / row.calls) * 100).toFixed(2) : '0.00') },
+                  { key: 'agents', label: 'Agents' },
+                  { key: 'calls_sec', label: 'Calltime (sec)' },
+                  { key: 'queue_max', label: 'Max Queue (sec)' },
+                ]}
+                rows={s.slots || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No inbound calls in the date range"
               rows={(s.slots || []).map((row) => ({ ...row, id: String(row.slot) }))}
@@ -12699,7 +13017,21 @@ function InboundDailyReportView({ token, onLogout }) {
             />
           </Panel>
           <section className="admin-grid media-tools-grid">
-            <Panel eyebrow="Breakdown" title="Statuses" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Statuses"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`inbound-daily-statuses-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'status', label: 'Status' },
+                    { key: 'calls', label: 'Calls' },
+                  ]}
+                  rows={s.statusBreakdown || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No inbound calls in the date range"
                 rows={(s.statusBreakdown || []).map((row) => ({ ...row, id: row.status }))}
@@ -12709,7 +13041,21 @@ function InboundDailyReportView({ token, onLogout }) {
                 ]}
               />
             </Panel>
-            <Panel eyebrow="Breakdown" title="Term Reasons" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Term Reasons"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`inbound-daily-term-reasons-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'term_reason', label: 'Term Reason', csv: (row) => row.term_reason || 'NONE' },
+                    { key: 'calls', label: 'Calls' },
+                  ]}
+                  rows={s.termReasons || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No inbound calls in the date range"
                 rows={(s.termReasons || []).map((row) => ({ ...row, id: row.term_reason || 'NONE' }))}
@@ -12813,7 +13159,27 @@ function DidStatsReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Summary" title="Per-DID Totals" icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Summary"
+            title="Per-DID Totals"
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`did-stats-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'did_pattern', label: 'DID' },
+                  { key: 'did_description', label: 'Description' },
+                  { key: 'did_route', label: 'Route' },
+                  { key: 'did_carrier_description', label: 'Carrier' },
+                  { key: 'calls', label: 'Calls', csv: (row) => callsMap.get(String(row.did_id)) || 0 },
+                  { key: 'answered', label: 'Answered', csv: (row) => answeredMap.get(String(row.did_id))?.answered || 0 },
+                  { key: 'talk', label: 'Talk Time (sec)', csv: (row) => answeredMap.get(String(row.did_id))?.talk_sec || 0 },
+                ]}
+                rows={s.meta || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No DID calls in the date range"
               rows={(s.meta || []).map((row) => ({ ...row, id: String(row.did_id) }))}
@@ -12829,7 +13195,22 @@ function DidStatsReportView({ token, onLogout }) {
             />
           </Panel>
           <section className="admin-grid media-tools-grid">
-            <Panel eyebrow="Breakdown" title="Routes" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Routes"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`did-routes-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'did_id', label: 'DID', csv: (row) => (s.meta || []).find((m) => String(m.did_id) === String(row.did_id))?.did_pattern || row.did_id },
+                    { key: 'did_route', label: 'Route' },
+                    { key: 'calls', label: 'Calls' },
+                  ]}
+                  rows={s.routes || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No DID calls in the date range"
                 rows={(s.routes || []).map((row) => ({ ...row, id: `${row.did_id}-${row.did_route}` }))}
@@ -12840,7 +13221,22 @@ function DidStatsReportView({ token, onLogout }) {
                 ]}
               />
             </Panel>
-            <Panel eyebrow="Breakdown" title="Route Extensions" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Route Extensions"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`did-extensions-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'did_id', label: 'DID', csv: (row) => (s.meta || []).find((m) => String(m.did_id) === String(row.did_id))?.did_pattern || row.did_id },
+                    { key: 'extension', label: 'Extension' },
+                    { key: 'calls', label: 'Calls' },
+                  ]}
+                  rows={s.extensions || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No DID calls in the date range"
                 rows={(s.extensions || []).map((row) => ({ ...row, id: `${row.did_id}-${row.extension}` }))}
@@ -12851,7 +13247,21 @@ function DidStatsReportView({ token, onLogout }) {
                 ]}
               />
             </Panel>
-            <Panel eyebrow="Breakdown" title="Hourly Volume" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Hourly Volume"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`did-hourly-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'hour_slot', label: 'Hour' },
+                    { key: 'calls', label: 'Calls' },
+                  ]}
+                  rows={s.hourly || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No DID calls in the date range"
                 rows={(s.hourly || []).map((row) => ({ ...row, id: row.hour_slot }))}
@@ -13030,7 +13440,23 @@ function IvrReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Summary" title="IVR Totals" icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Summary"
+            title="IVR Totals"
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`ivr-totals-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'group_id', label: 'In-Group' },
+                  { key: 'calls', label: 'Unique Calls' },
+                  { key: 'events', label: 'Events' },
+                ]}
+                rows={s.perGroup || []}
+              />
+            )}
+          >
             <div className="connection-actions">
               <span className="connection-status">Unique calls: {formatNumber(s.totals.calls)}</span>
               <span className="connection-status">IVR events: {formatNumber(s.totals.events)}</span>
@@ -13046,7 +13472,22 @@ function IvrReportView({ token, onLogout }) {
             />
           </Panel>
           <section className="admin-grid media-tools-grid">
-            <Panel eyebrow="Breakdown" title="Extensions" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Extensions"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`ivr-extensions-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'extension', label: 'Extension' },
+                    { key: 'calls', label: 'Unique Calls' },
+                    { key: 'events', label: 'Events' },
+                  ]}
+                  rows={s.perExtension || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No IVR activity in the date range"
                 rows={(s.perExtension || []).map((row) => ({ ...row, id: row.extension || 'NONE' }))}
@@ -13057,7 +13498,21 @@ function IvrReportView({ token, onLogout }) {
                 ]}
               />
             </Panel>
-            <Panel eyebrow="Breakdown" title="Events" icon={Activity}>
+            <Panel
+              eyebrow="Breakdown"
+              title="Events"
+              icon={Activity}
+              headerActions={(
+                <CsvButton
+                  filename={`ivr-events-${beginDate}_to_${endDate}.csv`}
+                  columns={[
+                    { key: 'event', label: 'Event' },
+                    { key: 'events', label: 'Count' },
+                  ]}
+                  rows={s.perEvent || []}
+                />
+              )}
+            >
               <DataTable
                 emptyLabel="No IVR activity in the date range"
                 rows={(s.perEvent || []).map((row) => ({ ...row, id: row.event || 'NONE' }))}
@@ -13204,7 +13659,37 @@ function InboundForecastingReportView({ token, onLogout }) {
               <span className="connection-status">Recommended agents: {s.totals.rec_agents}</span>
             </div>
           </Panel>
-          <Panel eyebrow="Hourly" title="Per-Hour Forecast" icon={PhoneCall} className="admin-wide-panel">
+          <Panel
+            eyebrow="Hourly"
+            title="Per-Hour Forecast"
+            icon={PhoneCall}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`inbound-forecasting-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'hour', label: 'Hour', csv: (row) => `${row.hour}:00` },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'sales', label: 'Sales' },
+                  { key: 'secs', label: 'Total Time (sec)' },
+                  { key: 'avg_secs', label: 'Avg Time (sec)' },
+                  { key: 'dropped_hours', label: 'Dropped Hrs' },
+                  { key: 'blocking', label: 'Blocking %' },
+                  { key: 'erlangs', label: 'Erlangs' },
+                  ...(isB
+                    ? [{ key: 'gos', label: 'GoS %', csv: (row) => (row.gos * 100).toFixed(2) }]
+                    : [
+                      { key: 'pqueue', label: 'Queue Prob %', csv: (row) => (row.pqueue * 100).toFixed(2) },
+                      { key: 'asa', label: 'Avg Answer (sec)', csv: (row) => Math.round(row.asa) },
+                    ]),
+                  { key: 'rec_agents', label: 'Rec Agents' },
+                  { key: 'est_agents', label: 'Est Agents' },
+                  { key: 'calls_per_agent', label: 'Calls/Agent' },
+                ]}
+                rows={s.hours || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No inbound calls in the date range"
               rows={(s.hours || []).map((row) => ({ ...row, id: row.hour }))}
@@ -13322,7 +13807,31 @@ function AgentTimeDetailReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Agents" title="Time Totals" icon={Users} className="admin-wide-panel">
+          <Panel
+            eyebrow="Agents"
+            title="Time Totals"
+            icon={Users}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`agent-time-detail-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'user', label: 'User' },
+                  { key: 'full_name', label: 'Name' },
+                  { key: 'user_group', label: 'Group' },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'login', label: 'Timeclock (sec)', csv: (row) => loginMap.get(String(row.user)) || 0 },
+                  { key: 'wait_sec', label: 'Wait (sec)' },
+                  { key: 'talk_sec', label: 'Talk (sec)' },
+                  { key: 'dead_sec', label: 'Dead (sec)' },
+                  { key: 'dispo_sec', label: 'Wrapup (sec)' },
+                  { key: 'pause_sec', label: 'Pause (sec)' },
+                  { key: 'park', label: 'Park (sec)', csv: (row) => parkMap.get(String(row.user))?.parked_sec || 0 },
+                ]}
+                rows={s.agents || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No agent activity in the date range"
               rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
@@ -13341,7 +13850,23 @@ function AgentTimeDetailReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Pause Codes" title="Pause Time by Code" icon={Activity} className="admin-wide-panel">
+          <Panel
+            eyebrow="Pause Codes"
+            title="Pause Time by Code"
+            icon={Activity}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`agent-pause-codes-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'user', label: 'User' },
+                  { key: 'sub_status', label: 'Pause Code', csv: (row) => `${row.sub_status || '(none)'}${pauseNameMap.get(String(row.sub_status)) ? ` - ${pauseNameMap.get(String(row.sub_status))}` : ''}` },
+                  { key: 'pause_sec', label: 'Pause Time (sec)' },
+                ]}
+                rows={s.pauses || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No paused agent time in the date range"
               rows={(s.pauses || []).map((row) => ({ ...row, id: `${row.user}-${row.sub_status || 'NONE'}` }))}
@@ -13469,7 +13994,25 @@ function AgentStatusDetailReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {data && (
-        <Panel eyebrow="Matrix" title="Agent Statuses" icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="Matrix"
+          title="Agent Statuses"
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`agent-status-detail-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'name', label: 'Name' },
+                { key: 'total', label: 'Total' },
+                { key: 'ha', label: 'HA', csv: (row) => Object.entries(row.counts).reduce((sum, [status, calls]) => sum + (haSet.has(status) ? calls : 0), 0) },
+                ...matrix.statuses.map((status) => ({ key: `st-${status}`, label: status, csv: (row) => row.counts[status] || 0 })),
+              ]}
+              rows={matrix.users}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No agent dispositions in the date range"
             rows={matrix.users.map((row) => ({ ...row, id: row.user }))}
@@ -13550,7 +14093,33 @@ function AgentPerformanceReportView({ token, onLogout }) {
       </Panel>
       {s && (
         <>
-          <Panel eyebrow="Agents" title="Performance Totals" icon={Users} className="admin-wide-panel">
+          <Panel
+            eyebrow="Agents"
+            title="Performance Totals"
+            icon={Users}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`agent-performance-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'user', label: 'User' },
+                  { key: 'full_name', label: 'Name' },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'ha', label: 'HA', csv: (row) => {
+                    const counts = statusByUser.get(String(row.user))?.counts || {};
+                    return Object.entries(counts).reduce((sum, [status, calls]) => sum + (haSet.has(status) ? calls : 0), 0);
+                  } },
+                  { key: 'pause_sec', label: 'Pause (sec)' },
+                  { key: 'wait_sec', label: 'Wait (sec)' },
+                  { key: 'talk_sec', label: 'Talk (sec)' },
+                  { key: 'dispo_sec', label: 'Wrapup (sec)' },
+                  { key: 'dead_sec', label: 'Dead (sec)' },
+                  { key: 'avg_talk', label: 'Avg Talk (sec)', csv: (row) => (row.calls ? Math.round(row.talk_sec / row.calls) : 0) },
+                ]}
+                rows={s.agents || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No agent activity in the date range"
               rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
@@ -13571,7 +14140,23 @@ function AgentPerformanceReportView({ token, onLogout }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Matrix" title="Dispositions" icon={Activity} className="admin-wide-panel">
+          <Panel
+            eyebrow="Matrix"
+            title="Dispositions"
+            icon={Activity}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`agent-performance-dispositions-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'user', label: 'User' },
+                  { key: 'total', label: 'Total' },
+                  ...matrix.statuses.map((status) => ({ key: `st-${status}`, label: status, csv: (row) => row.counts[status] || 0 })),
+                ]}
+                rows={matrix.users}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No agent dispositions in the date range"
               rows={matrix.users.map((row) => ({ ...row, id: row.user }))}
@@ -13649,7 +14234,26 @@ function AgentDispositionReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow="Agents" title="Calls and Dispositions" icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="Agents"
+          title="Calls and Dispositions"
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`agent-disposition-${campaignId || 'all'}-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'calls', label: 'Calls' },
+                { key: 'talk_sec', label: 'Talk Time (sec)' },
+                { key: 'avg_sec', label: 'Avg (sec)', csv: (row) => Math.round(Number(row.avg_sec || 0)) },
+                ...matrix.statuses.map((status) => ({ key: `st-${status}`, label: status, csv: (row) => statusByUser.get(String(row.user))?.counts[status] || 0 })),
+              ]}
+              rows={s.agents || []}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No outbound calls for this campaign in the date range"
             rows={(s.agents || []).map((row) => ({ ...row, id: row.user }))}
@@ -13744,6 +14348,18 @@ function TeamPerformanceReportView({ token, onLogout }) {
           talk_sec: sum.talk_sec + Number(row.talk_sec || 0),
           pause_sec: sum.pause_sec + Number(row.pause_sec || 0),
         }), { calls: 0, sales: 0, talk_sec: 0, pause_sec: 0 });
+        const columns = [
+          { key: 'user', label: 'User' },
+          { key: 'full_name', label: 'Name' },
+          { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+          { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
+          { key: 'conv', label: 'Conv %', render: (row) => `${row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00'}%`, csv: (row) => (row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00') },
+          { key: 'pause_sec', label: 'Pause', csvLabel: 'Pause (sec)', render: (row) => formatSeconds(row.pause_sec) },
+          { key: 'wait_sec', label: 'Wait', csvLabel: 'Wait (sec)', render: (row) => formatSeconds(row.wait_sec) },
+          { key: 'talk_sec', label: 'Talk', csvLabel: 'Talk (sec)', render: (row) => formatSeconds(row.talk_sec) },
+          { key: 'dispo_sec', label: 'Wrapup', csvLabel: 'Wrapup (sec)', render: (row) => formatSeconds(row.dispo_sec) },
+          { key: 'dead_sec', label: 'Dead', csvLabel: 'Dead (sec)', render: (row) => formatSeconds(row.dead_sec) },
+        ];
         return (
           <Panel
             key={team}
@@ -13751,22 +14367,12 @@ function TeamPerformanceReportView({ token, onLogout }) {
             title={`${team} — ${agents.length} agents, ${formatNumber(totals.calls)} calls, ${formatNumber(totals.sales)} sales`}
             icon={Users}
             className="admin-wide-panel"
+            headerActions={<CsvButton filename={`team-performance-${team}-${beginDate}_to_${endDate}.csv`} columns={columns} rows={agents} />}
           >
             <DataTable
               emptyLabel="No agents"
               rows={agents.map((row) => ({ ...row, id: row.user }))}
-              columns={[
-                { key: 'user', label: 'User' },
-                { key: 'full_name', label: 'Name' },
-                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-                { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
-                { key: 'conv', label: 'Conv %', render: (row) => `${row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00'}%` },
-                { key: 'pause_sec', label: 'Pause', render: (row) => formatSeconds(row.pause_sec) },
-                { key: 'wait_sec', label: 'Wait', render: (row) => formatSeconds(row.wait_sec) },
-                { key: 'talk_sec', label: 'Talk', render: (row) => formatSeconds(row.talk_sec) },
-                { key: 'dispo_sec', label: 'Wrapup', render: (row) => formatSeconds(row.dispo_sec) },
-                { key: 'dead_sec', label: 'Dead', render: (row) => formatSeconds(row.dead_sec) },
-              ]}
+              columns={columns}
             />
           </Panel>
         );
@@ -13874,7 +14480,29 @@ function AgentDaysReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow={`Agent ${s.userId}`} title="Daily Totals" icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow={`Agent ${s.userId}`}
+          title="Daily Totals"
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`agent-days-${s.userId}-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'day', label: 'Date' },
+                { key: 'calls', label: 'Calls' },
+                { key: 'ha', label: 'HA', csv: (row) => (statusByDay.get(String(row.day)) || []).reduce((sum, entry) => sum + (haSet.has(String(entry.status)) ? Number(entry.calls) : 0), 0) },
+                { key: 'pause_sec', label: 'Pause (sec)' },
+                { key: 'wait_sec', label: 'Wait (sec)' },
+                { key: 'talk_sec', label: 'Talk (sec)' },
+                { key: 'dispo_sec', label: 'Wrapup (sec)' },
+                { key: 'dead_sec', label: 'Dead (sec)' },
+                { key: 'statuses', label: 'Statuses', csv: (row) => (statusByDay.get(String(row.day)) || []).map((entry) => `${entry.status}:${entry.calls}`).join(' ') },
+              ]}
+              rows={s.days || []}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No activity for this agent in the date range"
             rows={(s.days || []).map((row) => ({ ...row, id: row.day }))}
@@ -13905,7 +14533,30 @@ function AgentDaysReportView({ token, onLogout }) {
         </Panel>
       )}
       {s?.events && (
-        <Panel eyebrow={`Agent ${s.userId}`} title={`Events on ${s.detailDay}`} icon={Activity} className="admin-wide-panel">
+        <Panel
+          eyebrow={`Agent ${s.userId}`}
+          title={`Events on ${s.detailDay}`}
+          icon={Activity}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`agent-days-events-${s.userId}-${s.detailDay}.csv`}
+              columns={[
+                { key: 'event_time', label: 'Time' },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'lead_id', label: 'Lead' },
+                { key: 'status', label: 'Status' },
+                { key: 'sub_status', label: 'Pause Code' },
+                { key: 'pause_sec', label: 'Pause (sec)' },
+                { key: 'wait_sec', label: 'Wait (sec)' },
+                { key: 'talk_sec', label: 'Talk (sec)' },
+                { key: 'dispo_sec', label: 'Wrapup (sec)' },
+                { key: 'dead_sec', label: 'Dead (sec)' },
+              ]}
+              rows={s.events}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No events on this day"
             rows={s.events.map((row, index) => ({ ...row, id: `${row.event_time}-${index}` }))}
@@ -13998,7 +14649,29 @@ function UserGroupLoginReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="Logins" title={`Users in ${groupId}`} icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="Logins"
+          title={`Users in ${groupId}`}
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`usergroup-login-${groupId}.csv`}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'first_login', label: 'First Login', csv: (row) => row.first_login || 'never' },
+                { key: 'last_login', label: 'Last Login', csv: (row) => row.last_login || 'never' },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'phone_login', label: 'Phone' },
+                { key: 'extension', label: 'Extension' },
+                { key: 'computer_ip', label: 'Computer IP' },
+                { key: 'server_ip', label: 'Server' },
+              ]}
+              rows={entries}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No users in this group"
             rows={entries.map((row) => ({ ...row, id: row.user }))}
@@ -14207,7 +14880,22 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               {actionState && actionState !== 'working' && <span className="connection-status">{actionState}</span>}
             </div>
           </Panel>
-          <Panel eyebrow="Calls" title="Outbound" icon={PhoneCall}>
+          <Panel
+            eyebrow="Calls"
+            title="Outbound"
+            icon={PhoneCall}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-outbound-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'status', label: 'Status' },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'seconds', label: 'Talk Time (sec)' },
+                ]}
+                rows={data.outbound || []}
+              />
+            )}
+          >
             <p className="connection-summary">{formatNumber(outTotals.calls)} calls, {formatSeconds(outTotals.seconds)} total talk time</p>
             <DataTable
               emptyLabel="No outbound calls in the range"
@@ -14219,7 +14907,22 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title="Inbound" icon={Headphones}>
+          <Panel
+            eyebrow="Calls"
+            title="Inbound"
+            icon={Headphones}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-inbound-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'status', label: 'Status' },
+                  { key: 'calls', label: 'Calls' },
+                  { key: 'seconds', label: 'Talk Time (sec)' },
+                ]}
+                rows={data.inbound || []}
+              />
+            )}
+          >
             <p className="connection-summary">{formatNumber(inTotals.calls)} calls, {formatSeconds(inTotals.seconds)} total talk time</p>
             <DataTable
               emptyLabel="No inbound calls in the range"
@@ -14231,7 +14934,23 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Pauses" title="Pause Codes" icon={Timer}>
+          <Panel
+            eyebrow="Pauses"
+            title="Pause Codes"
+            icon={Timer}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-pauses-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'sub_status', label: 'Code' },
+                  { key: 'pause_code_name', label: 'Name' },
+                  { key: 'segments', label: 'Segments' },
+                  { key: 'pause_seconds', label: 'Total (sec)' },
+                ]}
+                rows={data.pauses || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No pause-code segments in the range"
               rows={(data.pauses || []).map((row) => ({ ...row, id: row.sub_status }))}
@@ -14243,7 +14962,23 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Timeclock" title="Time Sheet" icon={Clock3}>
+          <Panel
+            eyebrow="Timeclock"
+            title="Time Sheet"
+            icon={Clock3}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-timesheet-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'day', label: 'Day', csv: (row) => String(row.day).slice(0, 10) },
+                  { key: 'logins', label: 'Logins' },
+                  { key: 'logouts', label: 'Logouts' },
+                  { key: 'login_seconds', label: 'Logged In (sec)' },
+                ]}
+                rows={data.timesheet || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No timeclock activity in the range"
               rows={(data.timesheet || []).map((row) => ({ ...row, id: row.day }))}
@@ -14258,7 +14993,27 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               Range total: {formatSeconds((data.timesheet || []).reduce((acc, row) => acc + Number(row.login_seconds || 0), 0))}
             </p>
           </Panel>
-          <Panel eyebrow="Sessions" title="Agent Login / Logout Events" icon={ShieldCheck} className="admin-wide-panel">
+          <Panel
+            eyebrow="Sessions"
+            title="Agent Login / Logout Events"
+            icon={ShieldCheck}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-sessions-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'event', label: 'Event' },
+                  { key: 'event_date', label: 'Date' },
+                  { key: 'campaign_id', label: 'Campaign' },
+                  { key: 'extension', label: 'Extension' },
+                  { key: 'phone_login', label: 'Phone' },
+                  { key: 'computer_ip', label: 'Computer IP' },
+                  { key: 'server_ip', label: 'Server' },
+                ]}
+                rows={data.loginEvents || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No agent screen sessions in the range"
               rows={(data.loginEvents || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -14273,7 +15028,24 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Timeclock" title="Timeclock Events" icon={Clock3}>
+          <Panel
+            eyebrow="Timeclock"
+            title="Timeclock Events"
+            icon={Clock3}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-timeclock-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'event', label: 'Event' },
+                  { key: 'event_date', label: 'Date' },
+                  { key: 'login_sec', label: 'Session (sec)' },
+                  { key: 'ip_address', label: 'IP' },
+                  { key: 'manager_user', label: 'By Manager' },
+                ]}
+                rows={data.timeclockRows || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No timeclock events in the range"
               rows={(data.timeclockRows || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -14286,7 +15058,23 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Calls" title="Park Log" icon={PhoneCall}>
+          <Panel
+            eyebrow="Calls"
+            title="Park Log"
+            icon={PhoneCall}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-park-log-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'parked_time', label: 'Time' },
+                  { key: 'status', label: 'Status' },
+                  { key: 'lead_id', label: 'Lead' },
+                  { key: 'parked_sec', label: 'Held (sec)' },
+                ]}
+                rows={data.parks || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No parked calls in the range"
               rows={(data.parks || []).map((row, index) => ({ ...row, id: `${row.parked_time}-${index}` }))}
@@ -14298,7 +15086,24 @@ function UserStatsReportView({ token, onLogout, initialUser, adminUser }) {
               ]}
             />
           </Panel>
-          <Panel eyebrow="Sessions" title="In-Group Changes" icon={Headphones}>
+          <Panel
+            eyebrow="Sessions"
+            title="In-Group Changes"
+            icon={Headphones}
+            headerActions={(
+              <CsvButton
+                filename={`user-stats-ingroup-changes-${loadedUser}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'event_date', label: 'Date' },
+                  { key: 'campaign_id', label: 'Campaign' },
+                  { key: 'blended', label: 'Blended' },
+                  { key: 'closer_campaigns', label: 'In-Groups' },
+                  { key: 'manager_change', label: 'By Manager' },
+                ]}
+                rows={data.closerChanges || []}
+              />
+            )}
+          >
             <DataTable
               emptyLabel="No in-group selection changes in the range"
               rows={(data.closerChanges || []).map((row, index) => ({ ...row, id: `${row.event_date}-${index}` }))}
@@ -14385,7 +15190,29 @@ function UserLoginsReportView({ token, onLogout }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="History" title="Login Days" icon={ShieldCheck} className="admin-wide-panel">
+      <Panel
+        eyebrow="History"
+        title="Login Days"
+        icon={ShieldCheck}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`user-logins-${userId || 'all'}.csv`}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'full_name', label: 'Name' },
+              { key: 'login_day', label: 'Day', csv: (row) => (row.login_day === 'TODAY' ? 'TODAY' : String(row.login_day || '').slice(0, 10)) },
+              { key: 'last_login_date', label: 'Last Login' },
+              { key: 'last_ip', label: 'Last IP' },
+              { key: 'failed_login_attempts_today', label: 'Failed (day)' },
+              { key: 'failed_login_count_today', label: 'Failed Total' },
+              { key: 'failed_last_ip_today', label: 'Failed IP' },
+              { key: 'failed_last_type_today', label: 'Failed Type' },
+            ]}
+            rows={entries}
+          />
+        )}
+      >
         <DataTable
           emptyLabel="No login history"
           rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.login_day}-${index}` }))}
@@ -14483,31 +15310,39 @@ function PerformanceComparisonReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       <section className="admin-grid media-tools-grid">
-        {windows.map((window) => (
-          <Panel
-            key={window.daysBack}
-            eyebrow={window.daysBack === 0 ? 'Today' : `Last ${window.daysBack + 1} days`}
-            title={`${window.beginDay} to ${data.endDate}`}
-            icon={Users}
-          >
-            <DataTable
-              emptyLabel="No agent activity in this window"
-              rows={(window.agents || []).map((row) => ({ ...row, id: row.user }))}
-              columns={[
-                { key: 'user', label: 'User' },
-                { key: 'full_name', label: 'Name' },
-                { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
-                { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
-                { key: 'conv', label: 'Conv %', render: (row) => `${row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00'}%` },
-                { key: 'sph', label: 'SPH', render: (row) => {
-                  const hours = (Number(row.talk_sec) + Number(row.pause_sec) + Number(row.wait_sec) + Number(row.dispo_sec) + Number(row.dead_sec)) / 3600;
-                  return hours ? (row.sales / hours).toFixed(2) : '0.00';
-                } },
-                { key: 'time', label: 'Time', render: (row) => formatSeconds(Number(row.talk_sec) + Number(row.pause_sec) + Number(row.wait_sec) + Number(row.dispo_sec) + Number(row.dead_sec)) },
-              ]}
-            />
-          </Panel>
-        ))}
+        {windows.map((window) => {
+          const totalSec = (row) => Number(row.talk_sec) + Number(row.pause_sec) + Number(row.wait_sec) + Number(row.dispo_sec) + Number(row.dead_sec);
+          const columns = [
+            { key: 'user', label: 'User' },
+            { key: 'full_name', label: 'Name' },
+            { key: 'calls', label: 'Calls', render: (row) => formatNumber(row.calls) },
+            { key: 'sales', label: 'Sales', render: (row) => formatNumber(row.sales) },
+            { key: 'conv', label: 'Conv %', render: (row) => `${row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00'}%`, csv: (row) => (row.calls ? ((row.sales / row.calls) * 100).toFixed(2) : '0.00') },
+            { key: 'sph', label: 'SPH', render: (row) => {
+              const hours = totalSec(row) / 3600;
+              return hours ? (row.sales / hours).toFixed(2) : '0.00';
+            }, csv: (row) => {
+              const hours = totalSec(row) / 3600;
+              return hours ? (row.sales / hours).toFixed(2) : '0.00';
+            } },
+            { key: 'time', label: 'Time', csvLabel: 'Time (sec)', render: (row) => formatSeconds(totalSec(row)), csv: (row) => totalSec(row) },
+          ];
+          return (
+            <Panel
+              key={window.daysBack}
+              eyebrow={window.daysBack === 0 ? 'Today' : `Last ${window.daysBack + 1} days`}
+              title={`${window.beginDay} to ${data.endDate}`}
+              icon={Users}
+              headerActions={<CsvButton filename={`performance-comparison-${window.beginDay}_to_${data.endDate}.csv`} columns={columns} rows={window.agents || []} />}
+            >
+              <DataTable
+                emptyLabel="No agent activity in this window"
+                rows={(window.agents || []).map((row) => ({ ...row, id: row.user }))}
+                columns={columns}
+              />
+            </Panel>
+          );
+        })}
       </section>
     </>
   );
@@ -14592,7 +15427,22 @@ function UserGroupHourlyReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow="Hourly" title={`Agents per Group — ${data.date}`} icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="Hourly"
+          title={`Agents per Group — ${data.date}`}
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`usergroup-hourly-${data.date}.csv`}
+              columns={[
+                { key: 'hour', label: 'Hour', csv: (row) => `${row.hour}:00` },
+                ...groups.map((group) => ({ key: `g-${group}`, label: group, csv: (row) => cell.get(`${row.hour}|${group}`) || 0 })),
+              ]}
+              rows={hours.map((hour) => ({ hour }))}
+            />
+          )}
+        >
           {/* Cross-hour DISTINCT count from the server — not derivable from
               the grid, where an agent appears in every hour they worked. */}
           <p className="connection-summary">{formatNumber(s.grand)} distinct agents active this day</p>
@@ -14854,7 +15704,29 @@ function CalledCountsReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="Counts" title="Called Counts" icon={Database} className="admin-wide-panel">
+        <Panel
+          eyebrow="Counts"
+          title="Called Counts"
+          icon={Database}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`called-counts-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'list_id', label: 'List' },
+                { key: 'list_name', label: 'Name' },
+                { key: 'campaign_id', label: 'Campaign' },
+                { key: 'leads', label: 'Total Leads' },
+                { key: 'outbound_called_leads', label: 'Out Called Leads' },
+                { key: 'outbound_calls', label: 'Out Calls' },
+                { key: 'inbound_called_leads', label: 'In Called Leads' },
+                { key: 'inbound_calls', label: 'In Calls' },
+                { key: 'pct', label: 'Penetration %', csv: (row) => (row.leads ? ((row.outbound_called_leads / row.leads) * 100).toFixed(2) : '0.00') },
+              ]}
+              rows={entries}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No lists selected"
             rows={entries.map((row) => ({ ...row, id: String(row.list_id) }))}
@@ -14963,7 +15835,27 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Changes" title="Admin Log" icon={ShieldCheck} className="admin-wide-panel">
+      <Panel
+        eyebrow="Changes"
+        title="Admin Log"
+        icon={ShieldCheck}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`admin-change-log-${beginDate}_to_${endDate}.csv`}
+            columns={[
+              { key: 'event_date', label: 'Date' },
+              { key: 'user', label: 'User' },
+              { key: 'ip_address', label: 'IP' },
+              { key: 'event_section', label: 'Section' },
+              { key: 'event_type', label: 'Type' },
+              { key: 'record_id', label: 'Record' },
+              { key: 'event_code', label: 'Event' },
+            ]}
+            rows={data?.entries || []}
+          />
+        )}
+      >
         <DataTable
           emptyLabel="No admin changes in the date range"
           rows={(data?.entries || []).map((row) => ({ ...row, id: row.admin_log_id }))}
@@ -15107,7 +15999,29 @@ function CallbackHoldsReportView({ token, onLogout, initialScope, initialId, onN
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Callbacks" title="Callback Hold Listings" icon={Clock3} className="admin-wide-panel">
+      <Panel
+        eyebrow="Callbacks"
+        title="Callback Hold Listings"
+        icon={Clock3}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`callback-holds-${scope}-${holdId || 'none'}.csv`}
+            columns={[
+              { key: 'lead_id', label: 'Lead' },
+              { key: 'list_id', label: 'List' },
+              { key: 'campaign_id', label: 'Campaign' },
+              { key: 'entry_time', label: 'Entry Date' },
+              { key: 'callback_time', label: 'Callback Date' },
+              { key: 'user', label: 'User' },
+              { key: 'recipient', label: 'Recipient' },
+              { key: 'status', label: 'Status' },
+              { key: 'user_group', label: 'Group' },
+            ]}
+            rows={entries}
+          />
+        )}
+      >
         <DataTable
           emptyLabel={holdId ? 'No ACTIVE or LIVE callbacks for this selection' : 'Pick a scope and ID to list callbacks on hold'}
           rows={entries.map((row) => ({ ...row, id: row.callback_id }))}
@@ -15235,7 +16149,28 @@ function DialLogReportView({ token, onLogout }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Log" title="Dial Attempts" icon={Activity} className="admin-wide-panel">
+      <Panel
+        eyebrow="Log"
+        title="Dial Attempts"
+        icon={Activity}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`dial-log-${beginDate}_to_${endDate}.csv`}
+            columns={[
+              { key: 'call_date', label: 'Date' },
+              { key: 'caller_code', label: 'Caller Code' },
+              { key: 'lead_id', label: 'Lead' },
+              { key: 'server_ip', label: 'Server' },
+              { key: 'extension', label: 'Extension' },
+              { key: 'outbound_cid', label: 'Outbound CID' },
+              { key: 'sip_hangup_cause', label: 'SIP Cause' },
+              { key: 'sip_hangup_reason', label: 'SIP Reason' },
+            ]}
+            rows={data?.entries || []}
+          />
+        )}
+      >
         {(data?.entries || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
         <DataTable
           emptyLabel="No dial-log entries in the date range"
@@ -15303,7 +16238,24 @@ function TimeclockReportView({ token, onLogout }) {
         </form>
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Summary" title="Clocked Time by User" icon={Clock3} className="admin-wide-panel">
+      <Panel
+        eyebrow="Summary"
+        title="Clocked Time by User"
+        icon={Clock3}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`timeclock-summary-${beginDate}_to_${endDate}.csv`}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'user_group', label: 'Group' },
+              { key: 'logins', label: 'Logins' },
+              { key: 'total_sec', label: 'Total Time (sec)' },
+            ]}
+            rows={data?.summary || []}
+          />
+        )}
+      >
         <DataTable
           emptyLabel="No timeclock activity in the date range"
           rows={(data?.summary || []).map((row, index) => ({ ...row, id: `${row.user}-${index}` }))}
@@ -15315,7 +16267,26 @@ function TimeclockReportView({ token, onLogout }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="Detail" title="Events" icon={History} className="admin-wide-panel">
+      <Panel
+        eyebrow="Detail"
+        title="Events"
+        icon={History}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`timeclock-events-${beginDate}_to_${endDate}.csv`}
+            columns={[
+              { key: 'event_date', label: 'Date' },
+              { key: 'user', label: 'User' },
+              { key: 'event', label: 'Event' },
+              { key: 'login_sec', label: 'Session (sec)', csv: (row) => (row.event === 'LOGOUT' && row.login_sec < 65000 ? row.login_sec : '') },
+              { key: 'ip_address', label: 'IP' },
+              { key: 'manager_user', label: 'Manager' },
+            ]}
+            rows={data?.entries || []}
+          />
+        )}
+      >
         {(data?.entries || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
         <DataTable
           emptyLabel="No timeclock events in the date range"
@@ -15369,7 +16340,23 @@ function TimeclockStatusReportView({ token, onLogout }) {
         <button type="button" className="primary-action" onClick={load} disabled={loading}><RefreshCcw size={16} aria-hidden="true" />{loading ? 'Loading' : 'Refresh'}</button>
       </section>
       {error && <p className="form-error">{error}</p>}
-      <Panel eyebrow="Summary" title="By User Group" icon={Users} className="admin-wide-panel">
+      <Panel
+        eyebrow="Summary"
+        title="By User Group"
+        icon={Users}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`timeclock-status-groups-${localDateStr()}.csv`}
+            columns={[
+              { key: 'user_group', label: 'Group' },
+              { key: 'logged_in', label: 'Clocked In' },
+              { key: 'logged_out', label: 'Clocked Out' },
+            ]}
+            rows={data?.groups || []}
+          />
+        )}
+      >
         <DataTable
           emptyLabel="No timeclock data"
           rows={(data?.groups || []).map((row, index) => ({ ...row, id: `${row.user_group}-${index}` }))}
@@ -15380,7 +16367,25 @@ function TimeclockStatusReportView({ token, onLogout }) {
           ]}
         />
       </Panel>
-      <Panel eyebrow="Detail" title="User Status" icon={Clock3} className="admin-wide-panel">
+      <Panel
+        eyebrow="Detail"
+        title="User Status"
+        icon={Clock3}
+        className="admin-wide-panel"
+        headerActions={(
+          <CsvButton
+            filename={`timeclock-status-users-${localDateStr()}.csv`}
+            columns={[
+              { key: 'user', label: 'User' },
+              { key: 'full_name', label: 'Name' },
+              { key: 'user_group', label: 'Group' },
+              { key: 'event', label: 'Status', csv: (row) => (row.event === 'LOGIN' ? 'Clocked In' : 'Clocked Out') },
+              { key: 'event_date', label: 'Since' },
+            ]}
+            rows={data?.users || []}
+          />
+        )}
+      >
         <DataTable
           emptyLabel="No timeclock data"
           rows={(data?.users || []).map((row, index) => ({ ...row, id: `${row.user}-${index}` }))}
@@ -15905,7 +16910,30 @@ function ServerPerformanceReportView({ token, onLogout }) {
               <span className="connection-status">Avg clients: {num(s.summary.avg_clients, 1)} (max {formatNumber(s.summary.max_clients || 0)})</span>
             </div>
           </Panel>
-          <Panel eyebrow="Series" title="Samples" icon={Database} className="admin-wide-panel">
+          <Panel
+            eyebrow="Series"
+            title="Samples"
+            icon={Database}
+            className="admin-wide-panel"
+            headerActions={(
+              <CsvButton
+                filename={`server-performance-${s.serverIp}-${beginDate}_to_${endDate}.csv`}
+                columns={[
+                  { key: 'start_time', label: 'Time' },
+                  { key: 'sysload', label: 'Load' },
+                  { key: 'channels_total', label: 'Channels' },
+                  { key: 'trunks_total', label: 'Trunks' },
+                  { key: 'clients_total', label: 'Clients' },
+                  { key: 'live_recordings', label: 'Recordings' },
+                  { key: 'cpu_user_percent', label: 'CPU U%' },
+                  { key: 'cpu_system_percent', label: 'CPU S%' },
+                  { key: 'cpu_idle_percent', label: 'CPU I%' },
+                  { key: 'freeram', label: 'Free RAM' },
+                ]}
+                rows={s.series}
+              />
+            )}
+          >
             {s.series.length === 1000 && <p className="action-copy">Showing the first 1,000 samples — narrow the date range for the rest.</p>}
             <DataTable
               emptyLabel="No performance samples in the date range"
@@ -16017,7 +17045,24 @@ function PhoneStatsReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {s && (
-        <Panel eyebrow={`Phone ${s.extension}`} title={`Call Stats`} icon={PhoneCall} className="admin-wide-panel">
+        <Panel
+          eyebrow={`Phone ${s.extension}`}
+          title={`Call Stats`}
+          icon={PhoneCall}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`phone-stats-${s.extension}-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'channel_group', label: 'Channel Group', csv: (row) => row.channel_group || '(none)' },
+                { key: 'calls', label: 'Calls' },
+                { key: 'seconds', label: 'Time (sec)' },
+                { key: 'avg', label: 'Avg (sec)', csv: (row) => (row.calls ? Math.round(row.seconds / row.calls) : 0) },
+              ]}
+              rows={s.byGroup || []}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No calls for this phone in the date range"
             rows={(s.byGroup || []).map((row) => ({ ...row, id: row.channel_group || 'NONE' }))}
@@ -16104,7 +17149,26 @@ function ProcessReportView({ token, onLogout }) {
         {!((data?.serials || []).length) && <p className="connection-summary">No process log entries recorded yet.</p>}
       </Panel>
       {s && (
-        <Panel eyebrow={`Serial ${s.serialId}`} title={`Runs`} icon={Activity} className="admin-wide-panel">
+        <Panel
+          eyebrow={`Serial ${s.serialId}`}
+          title={`Runs`}
+          icon={Activity}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`process-report-${s.serialId}.csv`}
+              columns={[
+                { key: 'run_time', label: 'Run Time' },
+                { key: 'run_sec', label: 'Seconds' },
+                { key: 'server_ip', label: 'Server' },
+                { key: 'script', label: 'Script' },
+                { key: 'process', label: 'Process' },
+                { key: 'output_lines', label: 'Output Lines' },
+              ]}
+              rows={s.entries || []}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No runs for this serial"
             rows={(s.entries || []).map((row, index) => ({ ...row, id: `${row.run_time}-${index}` }))}
@@ -16205,7 +17269,28 @@ function SphReportView({ token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
       </Panel>
       {entries && (
-        <Panel eyebrow="SPH" title="Agent Sales per Hour" icon={Users} className="admin-wide-panel">
+        <Panel
+          eyebrow="SPH"
+          title="Agent Sales per Hour"
+          icon={Users}
+          className="admin-wide-panel"
+          headerActions={(
+            <CsvButton
+              filename={`sph-report-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'user', label: 'User' },
+                { key: 'full_name', label: 'Name' },
+                { key: 'role', label: 'Role' },
+                { key: 'campaign_group_id', label: 'Campaign/Group' },
+                { key: 'login_sec', label: 'Login (sec)' },
+                { key: 'calls', label: 'Calls' },
+                { key: 'sales', label: 'Sales' },
+                { key: 'sph', label: 'SPH', csv: (row) => Number(row.sph || 0).toFixed(2) },
+              ]}
+              rows={entries}
+            />
+          )}
+        >
           <DataTable
             emptyLabel="No SPH rollup rows for the selection (the nightly SPH process may not have run)"
             rows={entries.map((row, index) => ({ ...row, id: `${row.user}-${row.campaign_group_id}-${index}` }))}
@@ -16293,14 +17378,26 @@ function MaxStatsReportView({ token, onLogout }) {
         />
         {error && <p className="form-error">{error}</p>}
       </Panel>
-      <Panel eyebrow="Current" title="Open Period" icon={Activity} className="admin-wide-panel">
+      <Panel
+        eyebrow="Current"
+        title="Open Period"
+        icon={Activity}
+        className="admin-wide-panel"
+        headerActions={<CsvButton filename={`max-stats-open-${localDateStr()}.csv`} columns={MAX_STATS_COLUMNS} rows={data?.open || []} />}
+      >
         <DataTable
           emptyLabel="No open max-stats rows"
           rows={(data?.open || []).map((row, index) => ({ ...row, id: `open-${index}` }))}
           columns={MAX_STATS_COLUMNS}
         />
       </Panel>
-      <Panel eyebrow="History" title="Closed Periods" icon={Database} className="admin-wide-panel">
+      <Panel
+        eyebrow="History"
+        title="Closed Periods"
+        icon={Database}
+        className="admin-wide-panel"
+        headerActions={<CsvButton filename={`max-stats-history-${beginDate}_to_${endDate}.csv`} columns={MAX_STATS_COLUMNS} rows={data?.history || []} />}
+      >
         <DataTable
           emptyLabel="No closed max-stats rows in the range"
           rows={(data?.history || []).map((row, index) => ({ ...row, id: `hist-${index}` }))}
