@@ -2845,28 +2845,33 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     // group and phone are shown read-only; the server enforces the same
     // whitelist on save, so this is display, not the security boundary.
     if (!hasAdminNav(user)) {
+      // Three clear sections: who the agent is, password resets, and the
+      // call-behavior settings a floor manager owns. Permission grants
+      // (Reports, Custom Field Modify) deliberately absent — those live on
+      // the full admin form only.
       return [
-        { section: 'Identity and Login' },
+        { section: 'Agent Profile' },
         { key: 'user', label: 'User ID', disabled: true },
-        { key: 'pass', label: 'New Password', type: 'password' },
-        { key: 'force_change_password', label: 'Force Password Change at Next Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
         { key: 'full_name', label: 'Full Name' },
+        { key: 'user_nickname', label: 'Nickname' },
         { key: 'email', label: 'Email' },
+        { key: 'mobile_number', label: 'Mobile Number' },
+        { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
         { key: 'user_level', label: 'Level', disabled: true },
         { key: 'user_group', label: 'User Group', disabled: true },
         { key: 'phone_login', label: 'Phone Login', disabled: true },
-        { key: 'active', label: 'Status', type: 'select', options: yesNoOptions() },
-        { section: 'Agent Options' },
-        { key: 'view_reports', label: 'Reports', type: 'select', options: flagOptions() },
+        { section: 'Password' },
+        { key: 'pass', label: 'New Password', type: 'password' },
+        { key: 'force_change_password', label: 'Force Password Change at Next Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
+        { section: 'Call Capabilities' },
+        { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
+        { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
         { key: 'hotkeys_active', label: 'Hotkeys Active', type: 'select', options: flagOptions() },
+        { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
         { key: 'agent_choose_ingroups', label: 'Agent Choose In-Groups', type: 'select', options: flagOptions() },
         { key: 'agent_choose_blended', label: 'Agent Choose Blended', type: 'select', options: flagOptions() },
         { key: 'closer_default_blended', label: 'Closer Default Blended', type: 'select', options: flagOptions() },
         { key: 'closer_campaigns', label: 'Allowed Inbound Groups', type: 'checkboxGroupText', options: inboundStrictOptions, values: scopeValues, serialize: viciGroupText, wide: true },
-        { key: 'scheduled_callbacks', label: 'Scheduled Callbacks', type: 'select', options: flagOptions() },
-        { key: 'agentcall_manual', label: 'Agent Manual Dial', type: 'select', options: enumOptions(['0', '1', '2', '3', '4', '5']) },
-        { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
-        { key: 'custom_fields_modify', label: 'Custom Field Modify', type: 'select', options: flagOptions() },
       ];
     }
     return [

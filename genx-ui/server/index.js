@@ -4056,12 +4056,15 @@ function userPayload(body, currentUser) {
 
 // Fields a restricted manager (no Admin nav access in the GenX permission
 // layer) may change. Everything else keeps its stored value — this is the
-// security boundary behind the trimmed "essential" user form.
+// security boundary behind the trimmed "essential" user form. Permission
+// grants (view_reports, custom_fields_modify) are deliberately NOT here:
+// a floor manager edits agent profile + call behavior, not access rights.
 const ESSENTIAL_USER_FIELDS = new Set([
-  'pass', 'pass_hash', 'force_change_password', 'full_name', 'email', 'active', 'view_reports',
+  'pass', 'pass_hash', 'force_change_password', 'full_name', 'user_nickname',
+  'email', 'mobile_number', 'active',
   'hotkeys_active', 'agent_choose_ingroups', 'agent_choose_blended',
   'closer_default_blended', 'closer_campaigns', 'scheduled_callbacks',
-  'agentcall_manual', 'vicidial_transfers', 'custom_fields_modify',
+  'agentcall_manual', 'vicidial_transfers',
 ]);
 
 function restrictedUserEditor(genxUser) {
