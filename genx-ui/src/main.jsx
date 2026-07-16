@@ -9337,27 +9337,191 @@ function AdminReportsView() {
   );
 }
 
-function ReportsView({ dashboard, admin, user, onNavigate }) {
+// Delta vs the prior comparable period. invert=true means "up is bad"
+// (abandon rate) so the color flips.
+function mDelta(cur, prev) {
+  const c = Number(cur || 0); const p = Number(prev || 0);
+  if (!p) return { pct: c ? 100 : 0, dir: c ? 'up' : 'flat' };
+  const pct = Math.round(((c - p) / p) * 100);
+  return { pct, dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat' };
+}
+function MDeltaChip({ cur, prev, invert, suffix }) {
+  const { pct, dir } = mDelta(cur, prev);
+  const cls = dir === 'flat' ? 'flat' : (invert ? (dir === 'up' ? 'down' : 'up') : dir);
+  const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '▬';
+  return <span className={`mkpi-d ${cls}`}>{arrow} {Math.abs(pct)}%{suffix ? ` ${suffix}` : ''}</span>;
+}
+function mHours(sec) { const h = Number(sec || 0) / 3600; return h >= 10 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`; }
+function mPauseSev(sec) { const s = Number(sec || 0); if (s >= 45 * 60) return 'crit'; if (s >= 20 * 60) return 'warn'; return 'good'; }
+
+const MDASH_RANGES = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7days', '7 days']];
+
+// Manager command dashboard — the operational landing view above the report
+// catalog. One call to /reports/manager-dashboard fills every panel.
+function ManagerDashboard({ token, user, onNavigate }) {
+  const [range, setRange] = useState('today');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    apiFetch(`/reports/manager-dashboard?range=${range}`, token)
+      .then((d) => { if (alive) { setData(d); setError(''); } })
+      .catch((e) => { if (alive) setError(e.status === 403 ? 'Reports not permitted for your role.' : 'Could not load the dashboard.'); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [range, token]);
+
+  const k = data?.kpis || { current: {}, previous: {} };
+  const cur = k.current || {}; const prev = k.previous || {};
+  const callsCur = Number(cur.calls || 0);
+  const contactRate = callsCur ? (Number(cur.contacts || 0) / callsCur) : 0;
+  const convRate = Number(cur.contacts || 0) ? (Number(cur.sales || 0) / Number(cur.contacts || 0)) : 0;
+  const abandon = callsCur ? (Number(cur.drops || 0) / callsCur) : 0;
+  const live = data?.live || { active: 0, paused: 0 };
+  const outcomesMax = Math.max(1, ...((data?.outcomes || []).map((o) => o.n)));
+  const outcomeColor = (s) => (s === 'SALE' ? 'var(--good)' : /CALLBK|CBHOLD/.test(s) ? 'var(--blue)' : /DNC/.test(s) ? 'var(--crit)' : /NI|N|NA|B|A|AM|AB|DROP/.test(s) ? 'var(--muted, #8494ad)' : 'var(--warn)');
+
+  return (
+    <section className="mdash">
+      <div className="mdash-bar">
+        <div><p className="eyebrow">Reporting Center</p><h2>Manager Dashboard</h2></div>
+        <div className="mseg" role="tablist" aria-label="Date range">
+          {MDASH_RANGES.map(([key, label]) => (
+            <button key={key} type="button" className={range === key ? 'on' : ''} onClick={() => setRange(key)}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {error && <p className="form-error">{error}</p>}
+
+      {/* KPI strip */}
+      <div className="mkpis" aria-busy={loading}>
+        <div className="mkpi"><div className="mkpi-l">Calls</div><div className="mkpi-v">{formatNumber(callsCur)}</div>
+          <div className="mkpi-d-row"><MDeltaChip cur={cur.calls} prev={prev.calls} /></div></div>
+        <div className="mkpi"><div className="mkpi-l">Contacts</div><div className="mkpi-v">{formatNumber(cur.contacts)}</div>
+          <div className="mkpi-d-row"><span className="mkpi-sub">{(contactRate * 100).toFixed(0)}% of dials</span></div></div>
+        <div className="mkpi"><div className="mkpi-l">Sales</div><div className="mkpi-v">{formatNumber(cur.sales)}</div>
+          <div className="mkpi-d-row"><MDeltaChip cur={cur.sales} prev={prev.sales} suffix={`· ${(convRate * 100).toFixed(1)}%`} /></div></div>
+        <div className="mkpi"><div className="mkpi-l">Talk Time</div><div className="mkpi-v">{mHours(cur.talk)}</div>
+          <div className="mkpi-d-row"><MDeltaChip cur={cur.talk} prev={prev.talk} /></div></div>
+        <div className="mkpi"><div className="mkpi-l">Agents Live</div><div className="mkpi-v">{live.active}<span className="mkpi-of">/{live.active + live.paused}</span></div>
+          <div className="mkpi-d-row"><span className="mkpi-sub">{live.paused} on break</span></div></div>
+        <div className={`mkpi${abandon > 0.03 ? ' alert' : ''}`}><div className="mkpi-l">Abandon %</div><div className="mkpi-v">{(abandon * 100).toFixed(1)}%</div>
+          <div className="mkpi-d-row"><MDeltaChip cur={cur.drops} prev={prev.drops} invert /></div></div>
+      </div>
+
+      {/* Row 1: agent performance + outcomes */}
+      <div className="mgrid">
+        <div className="mpanel">
+          <div className="mph"><h3>Agent Performance</h3><button type="button" className="mmore" onClick={() => onNavigate?.('reportAgentPerformance')}>Full report →</button></div>
+          <div className="table-wrap"><table className="mtable">
+            <thead><tr><th>Agent</th><th className="r">Calls</th><th className="r">Sales</th><th>Conv</th><th className="r">Talk</th><th>Pause</th></tr></thead>
+            <tbody>
+              {(data?.agents || []).map((a) => (
+                <tr key={a.user}>
+                  <td className="mname"><span className="mav">{String(a.user).slice(0, 2)}</span>{a.user}</td>
+                  <td className="r">{formatNumber(a.calls)}</td><td className="r">{formatNumber(a.sales)}</td>
+                  <td><span className="mpct">{(a.conv_rate * 100).toFixed(1)}%</span><div className="mcbar"><i style={{ width: `${Math.min(100, a.conv_rate * 100 * 6)}%` }} /></div></td>
+                  <td className="r">{formatSeconds(a.talk)}</td>
+                  <td><span className={`mchip c-${mPauseSev(a.pause_sec)}`}>{formatSeconds(a.pause_sec)}</span></td>
+                </tr>
+              ))}
+              {!loading && !(data?.agents || []).length && <tr><td colSpan={6} className="mempty">No agent activity in this range</td></tr>}
+            </tbody>
+          </table></div>
+        </div>
+        <div className="mpanel">
+          <div className="mph"><h3>Call Outcomes</h3><button type="button" className="mmore" onClick={() => onNavigate?.('reportOutboundCalling')}>Breakdown →</button></div>
+          <div className="mbars">
+            {(data?.outcomes || []).map((o) => (
+              <div className="mbar" key={o.status}>
+                <div className="mbar-top"><b>{o.name}</b><span>{formatNumber(o.n)}</span></div>
+                <div className="mtrack"><i style={{ width: `${Math.max(2, (o.n / outcomesMax) * 100)}%`, background: outcomeColor(o.status) }} /></div>
+              </div>
+            ))}
+            {!loading && !(data?.outcomes || []).length && <p className="mempty">No calls in this range</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Row 2: list conversion + callbacks + pause watch */}
+      <div className="mgrid mgrid3">
+        <div className="mpanel">
+          <div className="mph"><h3>Conversion by List</h3></div>
+          <div className="mbars">
+            {(data?.listConversion || []).map((l) => {
+              const rate = l.calls ? l.sales / l.calls : 0;
+              return (
+                <div className="mbar" key={l.list_id}>
+                  <div className="mbar-top"><b title={l.name}>{l.name}</b><span>{(rate * 100).toFixed(1)}%</span></div>
+                  <div className="mtrack"><i style={{ width: `${Math.min(100, rate * 100 * 6)}%`, background: rate >= 0.08 ? 'var(--good)' : rate >= 0.03 ? 'var(--blue)' : 'var(--warn)' }} /></div>
+                </div>
+              );
+            })}
+            {!loading && !(data?.listConversion || []).length && <p className="mempty">No list activity</p>}
+          </div>
+        </div>
+        <div className="mpanel">
+          <div className="mph"><h3>Callbacks Due</h3>{(data?.callbacksDue || []).length > 0 && <span className="mchip c-warn">{data.callbacksDue.length}</span>}</div>
+          <div className="mrows">
+            {(data?.callbacksDue || []).map((c) => (
+              <div className="mrw" key={`${c.lead_id}-${c.callback_time}`}>
+                <div className="grow"><b>Lead {c.lead_id}</b><small>{c.list_name} · {c.recipient === 'USERONLY' ? `agent ${c.user}` : 'any agent'}</small></div>
+                <span className="mval">{formatDateTime(c.callback_time)}</span>
+              </div>
+            ))}
+            {!loading && !(data?.callbacksDue || []).length && <p className="mempty">No callbacks scheduled</p>}
+          </div>
+        </div>
+        <div className="mpanel">
+          <div className="mph"><h3>Pause Watch</h3><span className="mchip c-good">avg {formatSeconds(data?.pauseAvg)}</span></div>
+          <div className="mrows">
+            {(data?.pauseWatch || []).map((pw) => (
+              <div className="mrw" key={pw.user}>
+                <div className="grow"><b>{pw.user}</b><small>total pause this range</small></div>
+                <span className={`mchip c-${mPauseSev(pw.pause_sec)}`}>{formatSeconds(pw.pause_sec)}</span>
+              </div>
+            ))}
+            {!loading && !(data?.pauseWatch || []).length && <p className="mempty">No pause data</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Row 3: QA / recording review */}
+      <div className="mpanel mpanel-wide">
+        <div className="mph"><h3>QA &amp; Recording Review</h3><button type="button" className="mmore" onClick={() => onNavigate?.('recordings')}>Recordings →</button></div>
+        <div className="mrows">
+          {(data?.qaQueue || []).map((q) => (
+            <div className="mrw" key={q.recording_id}>
+              <span className="mplay">▶</span>
+              <div className="grow"><b>{q.user || 'System'}{q.lead_id ? ` → lead ${q.lead_id}` : ''}</b><small>{formatSeconds(q.length_in_sec)} · {formatDateTime(q.start_time)}</small></div>
+              <span className={`mchip ${q.transcript_status === 'DONE' ? 'c-good' : q.transcript_status ? 'c-warn' : 'c-muted'}`}>{q.transcript_status === 'DONE' ? 'Transcribed' : q.transcript_status || 'No transcript'}</span>
+              <span className="mval mqa">QA —</span>
+            </div>
+          ))}
+          {!loading && !(data?.qaQueue || []).length && <p className="mempty">No recordings yet</p>}
+        </div>
+        <p className="mnote-inline">QA scores populate once automated scoring is enabled. Everything else is live data.</p>
+      </div>
+    </section>
+  );
+}
+
+function ReportsView({ dashboard, admin, user, token, onNavigate }) {
   const [query, setQuery] = useState('');
-  const metrics = dashboard?.metrics || {};
   const reportGroups = reportGroupsForUser(user);
-  const visibleReportCount = reportGroups.reduce((sum, group) => sum + group.items.length, 0);
 
   return (
     <>
-      <section className="metric-grid admin-metric-grid" aria-label="Report metrics">
-        <MetricCard icon={FileText} label="Reports" value={formatNumber(visibleReportCount)} detail="Native GenX reports" accent="#00d9ff" />
-        <MetricCard icon={PhoneCall} label="Calls Today" value={formatNumber(metrics.callsToday)} detail={`${formatNumber(metrics.outboundCalls)} outbound | ${formatNumber(metrics.inboundCalls)} inbound`} accent="#73fbd3" />
-        <MetricCard icon={Users} label="Users" value={formatNumber(admin?.counts?.users)} detail={`${formatNumber(admin?.counts?.activeUsers)} active`} accent="#a8c7ff" />
-        <MetricCard icon={Activity} label="Recordings" value={formatNumber(metrics.recordingsToday)} detail="Current selected range" accent="#ffd166" />
-      </section>
-
+      {user?.viewReports && <ManagerDashboard token={token} user={user} onNavigate={onNavigate} />}
 
       <section className="report-hero">
         <div>
           <p className="eyebrow">Reports</p>
-          <h2>Reporting Center</h2>
-          <p className="action-copy">GenX report screens, built for this platform. Legacy report pages moved to Admin Reports under the Admin section.</p>
+          <h2>Report Library</h2>
+          <p className="action-copy">Every GenX report, built for this platform. Legacy report pages moved to Admin Reports under the Admin section.</p>
         </div>
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
       </section>
@@ -18454,7 +18618,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'callTimes') return <CallTimesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'shifts') return <ShiftsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'statuses') return <StatusesView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} onNavigate={onNavigate} />;
+  if (activeView === 'reports') return <ReportsView dashboard={dashboard} admin={admin} user={user} token={token} onNavigate={onNavigate} />;
   if (activeView === 'reportAgentMonitorLog') return <AgentMonitorLogReportView admin={admin} user={user} token={token} />;
   if (activeView === 'reportRealtimeMain') return <RealtimeMainReportView token={token} user={user} />;
   if (activeView === 'reportCampaignSummary') return <CampaignSummaryReportView token={token} />;
