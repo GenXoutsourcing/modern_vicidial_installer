@@ -3936,7 +3936,10 @@ function userPayload(body, currentUser) {
     modify_statuses: boolFlag(body.modify_statuses),
     access_recordings: boolFlag(body.access_recordings),
     alter_admin_interface_options: boolFlag(body.alter_admin_interface_options),
-    modify_settings_containers: cleanInt(body.modify_settings_containers, 0, 0, 6),
+    // Digit-enum columns (enum('0','1',…)) must be bound as STRINGS: mysql2
+    // sends a JS number as an integer, and MySQL reads an integer in enum
+    // context as the 1-based enum INDEX — numeric 1 stores '0', 0 stores ''.
+    modify_settings_containers: String(cleanInt(body.modify_settings_containers, 0, 0, 6)),
     modify_email_accounts: boolFlag(body.modify_email_accounts),
     vdc_agent_api_access: boolFlag(body.vdc_agent_api_access),
     phone_pass: cleanText(body.phone_pass, 100),
@@ -3952,7 +3955,7 @@ function userPayload(body, currentUser) {
     delete_inbound_dids: boolFlag(body.delete_inbound_dids),
     delete_from_dnc: boolFlag(body.delete_from_dnc),
     load_leads: boolFlag(body.load_leads),
-    modify_leads: cleanInt(body.modify_leads, 0, 0, 6),
+    modify_leads: String(cleanInt(body.modify_leads, 0, 0, 6)),
     modify_remoteagents: boolFlag(body.modify_remoteagents),
     modify_shifts: boolFlag(body.modify_shifts),
     modify_labels: boolFlag(body.modify_labels),
@@ -3967,7 +3970,7 @@ function userPayload(body, currentUser) {
     modify_colors: boolFlag(body.modify_colors),
     modify_auto_reports: boolFlag(body.modify_auto_reports),
     modify_ip_lists: boolFlag(body.modify_ip_lists),
-    modify_dial_prefix: cleanInt(body.modify_dial_prefix, 0, 0, 6),
+    modify_dial_prefix: String(cleanInt(body.modify_dial_prefix, 0, 0, 6)),
     ast_admin_access: boolFlag(body.ast_admin_access),
     ast_delete_phones: boolFlag(body.ast_delete_phones),
     hotkeys_active: boolFlag(body.hotkeys_active),
@@ -3976,7 +3979,7 @@ function userPayload(body, currentUser) {
     closer_campaigns: scopedGroupListText(body.closer_campaigns, currentUser?.permissions?.allowedQueueGroups),
     scheduled_callbacks: boolFlag(body.scheduled_callbacks),
     agentonly_callbacks: boolFlag(body.agentonly_callbacks),
-    agentcall_manual: cleanInt(body.agentcall_manual, 0, 0, 5),
+    agentcall_manual: String(cleanInt(body.agentcall_manual, 0, 0, 5)),
     vicidial_recording: boolFlag(body.vicidial_recording),
     vicidial_transfers: boolFlag(body.vicidial_transfers),
     alter_agent_interface_options: boolFlag(body.alter_agent_interface_options),
