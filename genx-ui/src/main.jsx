@@ -6972,7 +6972,7 @@ function RefreshCountdown({ updatedAt, intervalMs = DASHBOARD_POLL_MS }) {
   );
 }
 
-function CommandView({ dashboard, admin, user, onAction }) {
+function CommandView({ dashboard, admin, user, token, onAction, onNavigate }) {
   const metrics = dashboard?.metrics || {};
   const counts = admin?.counts || {};
   const rangeLabel = dashboard?.range?.label || 'Today';
@@ -7031,11 +7031,15 @@ function CommandView({ dashboard, admin, user, onAction }) {
 
   return (
     <>
-      <section className="metric-grid command-metric-grid" aria-label="Operations metrics">
-        {metricCards.map((card) => (
-          <MetricCard key={card.label} {...card} />
-        ))}
-      </section>
+      {user?.viewReports ? (
+        <ManagerDashboard token={token} user={user} onNavigate={onNavigate} />
+      ) : (
+        <section className="metric-grid command-metric-grid" aria-label="Operations metrics">
+          {metricCards.map((card) => (
+            <MetricCard key={card.label} {...card} />
+          ))}
+        </section>
+      )}
 
       <section className="content-grid">
         <ActivityChart data={dashboard?.hourlyCalls || []} rangeLabel={rangeLabel} />
@@ -9515,13 +9519,11 @@ function ReportsView({ dashboard, admin, user, token, onNavigate }) {
 
   return (
     <>
-      {user?.viewReports && <ManagerDashboard token={token} user={user} onNavigate={onNavigate} />}
-
       <section className="report-hero">
         <div>
           <p className="eyebrow">Reports</p>
-          <h2>Report Library</h2>
-          <p className="action-copy">Every GenX report, built for this platform. Legacy report pages moved to Admin Reports under the Admin section.</p>
+          <h2>Reporting Center</h2>
+          <p className="action-copy">Every GenX report, built for this platform — each one downloadable to CSV. Legacy report pages moved to Admin Reports under the Admin section.</p>
         </div>
         <CatalogSearch value={query} onChange={setQuery} placeholder="Search reports" />
       </section>
@@ -18595,7 +18597,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (!canSeeView(user, activeView)) {
     return <AccessDenied onBack={() => onNavigate('command')} />;
   }
-  if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} token={token} onAction={onAction} onNavigate={onNavigate} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
