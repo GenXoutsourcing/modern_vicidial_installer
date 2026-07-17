@@ -331,6 +331,13 @@ body {
   border-radius: 8px;
   background: var(--surface);
   box-shadow: 0 14px 42px rgba(0, 0, 0, 0.24);
+  /* Keep the nav scrollable when it overflows, but hide the scrollbar chrome. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.side-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-group {
@@ -2880,75 +2887,3 @@ input:-webkit-autofill:focus {
 .mchip.c-muted { background: rgba(138, 167, 187, 0.14); color: var(--muted); }
 .mempty { padding: 16px; color: var(--muted); font-size: 0.8rem; text-align: center; }
 .mnote-inline { padding: 10px 16px; margin: 0; color: var(--muted); font-size: 0.72rem; border-top: 1px solid var(--line-soft); }
-
-/* ============================================================================
-   CALM PASS — experiment 2026-07-16. Glow-free, neutral borders, quieter type.
-   The whole "calm command center" first look lives in this one block, so it is
-   fully reversible: delete from here to end-of-file to restore the original.
-   ============================================================================ */
-
-:root {
-  /* Neutral slate borders replace the cyan ones — cascades to every --line user. */
-  --line: rgba(158, 178, 200, 0.22);
-  --line-soft: rgba(158, 178, 200, 0.12);
-}
-
-/* Calm ground: drop the cyan grid overlay, keep one soft gradient + faint corner wash. */
-body {
-  background:
-    radial-gradient(1100px 640px at 82% -6%, rgba(0, 217, 255, 0.045), transparent 60%),
-    linear-gradient(180deg, #0a1622 0%, #050812 54%, #03050a 100%);
-  background-size: 100% 100%;
-}
-
-/* Kill decorative glows. */
-.brand-mark,
-.workspace-strip,
-.icon-button:hover,
-.secondary-action:hover,
-.breakdown-fill,
-.agn-avatar,
-.agn-hero-icon,
-.agn-rail-btn.active,
-.range-control button.active,
-.side-nav a.active,
-.side-nav button.active,
-.primary-action {
-  box-shadow: none;
-}
-
-/* Cards flatten: neutral border, one soft drop shadow, no accent fill/glow. */
-.metric-card {
-  border-color: var(--line-soft);
-  background: var(--surface);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-}
-.metric-icon {
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-  box-shadow: none;
-}
-
-/* Focus stays visible — a crisp accent ring instead of a soft glow (accessibility). */
-.input-row:focus-within,
-.field-grid textarea:focus {
-  box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.5);
-}
-
-/* Quiet the pills (the "bunched" connections strip): hairline, transparent, lighter. */
-.row-action {
-  border: 1px solid var(--line-soft);
-  background: transparent;
-  font-weight: 550;
-}
-.row-action:hover {
-  border-color: var(--line);
-  color: var(--text);
-  background: rgba(158, 178, 200, 0.06);
-  box-shadow: none;
-}
-
-/* Lighter type on the loudest repeated labels (hierarchy returns). */
-.eyebrow { font-weight: 600; }
-.connection-status { font-weight: 600; }
-.connection-group-label { font-weight: 600; }
