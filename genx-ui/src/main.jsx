@@ -7201,25 +7201,34 @@ function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey,
 const TABLE_SEARCH_MIN = 8;
 const TABLE_PAGE_SIZE = 50;
 
-function DataTable({ columns, rows, emptyLabel, searchable = true }) {
-  const [query, setQuery] = useState('');
-  const [page, setPage] = useState(0);
+// Server-paged tables: the view owns query/page state (useServerRows) and
+// the table renders exactly what the server sent. Local mode filters and
+// slices client-side.
+function DataTable({ columns, rows, emptyLabel, searchable = true, server = null }) {
+  const [localQuery, setLocalQuery] = useState('');
+  const [localPage, setLocalPage] = useState(0);
+  const query = server ? server.q : localQuery;
+  const setQuery = server ? server.setQ : setLocalQuery;
+  const page = server ? server.page : localPage;
+  const setPage = server ? server.setPage : setLocalPage;
 
   // One lowercase haystack per row, from its primitive values only (render
   // functions and nested objects are skipped).
   const filtered = useMemo(() => {
+    if (server) return rows;
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((row) => Object.values(row).some((value) => (
       (typeof value === 'string' || typeof value === 'number') && String(value).toLowerCase().includes(q)
     )));
-  }, [rows, query]);
+  }, [rows, query, server]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / TABLE_PAGE_SIZE));
+  const totalRows = server ? server.total : filtered.length;
+  const pageCount = Math.max(1, Math.ceil(totalRows / TABLE_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const visible = filtered.slice(safePage * TABLE_PAGE_SIZE, (safePage + 1) * TABLE_PAGE_SIZE);
-  const showSearch = searchable && rows.length > TABLE_SEARCH_MIN;
-  const showPager = filtered.length > TABLE_PAGE_SIZE;
+  const visible = server ? filtered : filtered.slice(safePage * TABLE_PAGE_SIZE, (safePage + 1) * TABLE_PAGE_SIZE);
+  const showSearch = server ? true : (searchable && rows.length > TABLE_SEARCH_MIN);
+  const showPager = totalRows > TABLE_PAGE_SIZE;
 
   return (
     <div className="table-wrap">
@@ -7228,11 +7237,12 @@ function DataTable({ columns, rows, emptyLabel, searchable = true }) {
           <input
             type="search"
             className="table-search"
-            placeholder={`Search ${formatNumber(rows.length)} rows...`}
+            placeholder={`Search ${formatNumber(server ? server.total : rows.length)} rows...`}
             value={query}
             onChange={(event) => { setQuery(event.target.value); setPage(0); }}
           />
-          {query && <span className="table-count">{formatNumber(filtered.length)} match{filtered.length === 1 ? '' : 'es'}</span>}
+          {query && <span className="table-count">{formatNumber(totalRows)} match{totalRows === 1 ? '' : 'es'}</span>}
+          {server?.loading && <span className="table-count">Loading...</span>}
         </div>
       )}
       <table>
@@ -7261,12 +7271,39 @@ function DataTable({ columns, rows, emptyLabel, searchable = true }) {
       {showPager && (
         <div className="table-pager">
           <button type="button" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>‹ Prev</button>
-          <span>Page {safePage + 1} of {pageCount} · {formatNumber(filtered.length)} rows</span>
+          <span>Page {safePage + 1} of {pageCount} · {formatNumber(totalRows)} rows</span>
           <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Next ›</button>
         </div>
       )}
     </div>
   );
+}
+
+// Server-paged rows for the scale-risk entities (users/lists/dids/phones).
+// The /api/admin bundle hard-caps those lists, so views use this instead:
+// real offset/limit + server-side search. `admin` is a dependency so a
+// bundle refresh after save/delete refetches the visible page. `extra` is
+// an optional pre-encoded query-string suffix (e.g. 'activeOnly=1').
+function useServerRows(entity, token, admin, extra = '') {
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(0);
+  const [state, setState] = useState({ rows: [], total: 0, loading: true });
+  const seq = useRef(0);
+  useEffect(() => {
+    const mySeq = ++seq.current;
+    setState((current) => ({ ...current, loading: true }));
+    const timer = setTimeout(() => {
+      apiFetch(`/admin/paged/${entity}?offset=${page * TABLE_PAGE_SIZE}&limit=${TABLE_PAGE_SIZE}&q=${encodeURIComponent(q)}${extra ? `&${extra}` : ''}`, token)
+        .then((payload) => {
+          if (seq.current === mySeq) setState({ rows: payload.rows || [], total: Number(payload.total || 0), loading: false });
+        })
+        .catch(() => {
+          if (seq.current === mySeq) setState((current) => ({ ...current, loading: false }));
+        });
+    }, q ? 250 : 0); // debounce keystrokes; first load fires immediately
+    return () => clearTimeout(timer);
+  }, [entity, q, page, token, admin, extra]);
+  return { ...state, q, setQ, page, setPage };
 }
 
 function Panel({ eyebrow, title, icon: Icon, children, className = '', headerActions = null }) {
@@ -7591,13 +7628,13 @@ function CampaignsView({ admin, user, onAction }) {
   );
 }
 
-function UsersView({ admin, user, onAction }) {
-  const users = admin?.users || [];
+function UsersView({ admin, user, token, onAction }) {
   const canManage = userCan(user, 'users');
   // Inactive users are hidden by default; the header button reveals them.
   const [showInactive, setShowInactive] = useState(false);
-  const visibleUsers = showInactive ? users : users.filter((row) => row.active === 'Y');
-  const inactiveCount = users.filter((row) => row.active !== 'Y').length;
+  // Server-paged: real offset/limit + server search (the bundle caps at 200).
+  const paged = useServerRows('users', token, admin, showInactive ? '' : 'activeOnly=1');
+  const visibleUsers = paged.rows;
 
   return (
     <>
@@ -7614,14 +7651,15 @@ function UsersView({ admin, user, onAction }) {
           title="Users and Permissions"
           icon={Users}
           className="admin-wide-panel"
-          headerActions={inactiveCount > 0 ? (
+          headerActions={(
             <button type="button" className="secondary-action compact-action" onClick={() => setShowInactive((value) => !value)}>
-              {showInactive ? 'Hide Inactive' : `Show Inactive (${formatNumber(inactiveCount)})`}
+              {showInactive ? 'Hide Inactive' : 'Show Inactive'}
             </button>
-          ) : null}
+          )}
         >
           <DataTable
             emptyLabel="No users returned"
+            server={paged}
             rows={visibleUsers.map((row) => ({ ...row, id: row.user }))}
             columns={[
               {
@@ -7649,10 +7687,13 @@ function UsersView({ admin, user, onAction }) {
   );
 }
 
-function ListsView({ admin, user, onAction }) {
+function ListsView({ admin, user, token, onAction }) {
   const lists = admin?.lists || [];
   const totalLeads = lists.reduce((sum, row) => sum + Number(row.lead_count || 0), 0);
   const canManage = userCan(user, 'lists');
+  // Server-paged: the bundle caps lists at 100 (bundle still feeds the
+  // lead-share panel + pickers below).
+  const paged = useServerRows('lists', token, admin);
 
   return (
     <>
@@ -7663,7 +7704,8 @@ function ListsView({ admin, user, onAction }) {
         <Panel eyebrow="Lead Admin" title="Lists and Lead Inventory" icon={Database} className="admin-wide-panel">
           <DataTable
             emptyLabel="No lists configured"
-            rows={lists.map((row) => ({ ...row, id: row.list_id }))}
+            server={paged}
+            rows={paged.rows.map((row) => ({ ...row, id: row.list_id }))}
             columns={[
               {
                 key: 'list',
@@ -9134,9 +9176,11 @@ function UserGroupsView({ admin, user, onAction }) {
   );
 }
 
-function DidsView({ admin, user, onAction }) {
-  const dids = admin?.dids || [];
+function DidsView({ admin, user, token, onAction }) {
   const canManage = userCan(user, 'dids');
+  // Server-paged (bundle caps DIDs at 300).
+  const paged = useServerRows('dids', token, admin);
+  const dids = paged.rows;
 
   return (
     <>
@@ -9147,6 +9191,7 @@ function DidsView({ admin, user, onAction }) {
         <Panel eyebrow="Inbound" title="DID Routing" icon={PhoneCall} className="admin-wide-panel">
           <DataTable
             emptyLabel="No DIDs returned"
+            server={paged}
             rows={dids.map((row) => ({ ...row, id: row.did_pattern }))}
             columns={[
               {
@@ -9174,9 +9219,11 @@ function DidsView({ admin, user, onAction }) {
   );
 }
 
-function PhonesView({ admin, user, onAction }) {
-  const phones = admin?.phones || [];
+function PhonesView({ admin, user, token, onAction }) {
   const canManage = userCan(user, 'phones');
+  // Server-paged (bundle caps phones at 300).
+  const paged = useServerRows('phones', token, admin);
+  const phones = paged.rows;
 
   return (
     <>
@@ -9187,6 +9234,7 @@ function PhonesView({ admin, user, onAction }) {
         <Panel eyebrow="Platform" title="Phones and Webphones" icon={PhoneCall} className="admin-wide-panel">
           <DataTable
             emptyLabel="No phones returned"
+            server={paged}
             rows={phones.map((row) => ({ ...row, id: `${row.extension}-${row.server_ip}` }))}
             columns={[
               {
@@ -20170,22 +20218,22 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   }
   if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} token={token} onAction={onAction} onNavigate={onNavigate} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'users') return <UsersView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'users') return <UsersView admin={admin} user={user} token={token} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'mediaTools') return <MediaToolsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'display') return <DisplayView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'systemSettings') return <SystemSettingsView user={user} token={token} onLogout={() => onNavigate('command')} />;
-  if (activeView === 'lists') return <ListsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'lists') return <ListsView admin={admin} user={user} token={token} onAction={onAction} />;
   if (activeView === 'leadSearch') return <LeadSearchView admin={admin} user={user} token={token} viewParams={viewParams} />;
   if (activeView === 'leadLoader') return <LeadLoaderView admin={admin} user={user} token={token} onLoaded={onSaved} />;
   if (activeView === 'dnc') return <DncView admin={admin} user={user} token={token} />;
   if (activeView === 'inbound') return <InboundView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'dids') return <DidsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'dids') return <DidsView admin={admin} user={user} token={token} onAction={onAction} />;
   if (activeView === 'callMenus') return <CallMenusView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'filterPhoneGroups') return <FilterPhoneGroupsView admin={admin} user={user} onAction={onAction} />;
-  if (activeView === 'phones') return <PhonesView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'phones') return <PhonesView admin={admin} user={user} token={token} onAction={onAction} />;
   if (activeView === 'scripts') return <ScriptsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'leadFilters') return <LeadFiltersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'callTimes') return <CallTimesView admin={admin} user={user} onAction={onAction} />;

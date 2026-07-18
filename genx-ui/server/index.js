@@ -1713,6 +1713,117 @@ async function dashboardData(selectedRange = 'today') {
 // see and manage them.
 const SYSTEM_ONLY_USER_GROUPS = new Set(['ADMIN']);
 
+// ===== Server-side pagination for the scale-risk entities ===================
+// The /api/admin bundle hard-caps these (users 200 / lists 100 / dids+phones
+// 300), so past the cap rows were simply INVISIBLE in the UI. These paged
+// endpoints serve the list VIEWS with real offset/limit + server search;
+// the bundle still feeds pickers and small entities. Scoping mirrors
+// adminData exactly. Column lists come from SHOW COLUMNS minus secret
+// columns, so edit modals get every field they got from the bundle.
+const PAGED_ENTITIES = {
+  users: {
+    table: 'vicidial_users',
+    exclude: ['pass'],
+    search: ['user', 'full_name', 'email', 'user_group', 'phone_login'],
+    order: 'active DESC, user_level DESC, user ASC',
+    scope: (user) => {
+      const params = [];
+      let where = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', params);
+      const restrictedViewer = Array.isArray(user?.navSections) && !user.navSections.includes('admin');
+      if (restrictedViewer) {
+        where += ' AND user_level <= ?';
+        params.push(Number(user?.userLevel || 1));
+      }
+      return { where, params };
+    },
+  },
+  lists: {
+    table: 'vicidial_lists',
+    exclude: [],
+    search: ['list_id', 'list_name', 'campaign_id', 'list_description'],
+    order: 'active DESC, list_id DESC',
+    scope: (user) => {
+      const params = [];
+      return { where: scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', params), params };
+    },
+  },
+  dids: {
+    table: 'vicidial_inbound_dids',
+    exclude: [],
+    search: ['did_pattern', 'did_description', 'did_route', 'extension'],
+    order: 'did_active DESC, did_pattern ASC',
+    scope: (user) => {
+      const queueParams = [];
+      const queueWhere = scopeWhere(user?.permissions?.allowedQueueGroups, 'group_id', queueParams);
+      const groupParams = [];
+      const groupWhere = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', groupParams);
+      return { where: `(${queueWhere} OR ${groupWhere})`, params: [...queueParams, ...groupParams] };
+    },
+  },
+  phones: {
+    table: 'phones',
+    exclude: ['pass', 'conf_secret', 'login_pass', 'registration_password'],
+    search: ['extension', 'dialplan_number', 'fullname', 'server_ip', 'login'],
+    order: 'active DESC, extension ASC, server_ip ASC',
+    scope: (user) => {
+      const params = [];
+      return { where: `(${scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', params)} OR user_group = '---ALL---')`, params };
+    },
+  },
+};
+const pagedColumnCache = new Map();
+
+async function pagedColumns(cfg) {
+  if (pagedColumnCache.has(cfg.table)) return pagedColumnCache.get(cfg.table);
+  const cols = await rows(`SHOW COLUMNS FROM ${cfg.table}`, [], []);
+  const names = cols
+    .map((c) => String(c.Field || c.field))
+    .filter((name) => name && !cfg.exclude.includes(name))
+    .map((name) => `\`${name}\``)
+    .join(', ');
+  pagedColumnCache.set(cfg.table, names);
+  return names;
+}
+
+async function pagedList(req, res) {
+  const cfg = PAGED_ENTITIES[String(req.params.entity || '')];
+  if (!cfg) return res.status(404).json({ ok: false, error: 'unknown_entity' });
+  try {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    const { where: scopeW, params } = cfg.scope(req.genxUser);
+    const activeCol = { users: 'active', lists: 'active', phones: 'active', dids: 'did_active' }[req.params.entity];
+    const where = String(req.query.activeOnly || '') === '1' && activeCol ? `${scopeW} AND ${activeCol} = 'Y'` : scopeW;
+    let searchWhere = '';
+    const searchParams = [];
+    if (q) {
+      searchWhere = ` AND (${cfg.search.map((col) => `${col} LIKE ?`).join(' OR ')})`;
+      for (const _ of cfg.search) searchParams.push(`%${q}%`);
+    }
+    const columns = await pagedColumns(cfg);
+    const total = await dbContext.run(reportPool, () => scalar(
+      `SELECT COUNT(*) AS value FROM ${cfg.table} WHERE ${where}${searchWhere}`, [...params, ...searchParams], 0));
+    const data = await dbContext.run(reportPool, () => rows(
+      `SELECT ${columns} FROM ${cfg.table} WHERE ${where}${searchWhere} ORDER BY ${cfg.order} LIMIT ${limit} OFFSET ${offset}`,
+      [...params, ...searchParams], []));
+    if (String(req.params.entity) === 'lists' && data.length) {
+      // Same cached vicidial_list scan the bundle uses for lead counts.
+      const { perList } = await listLeadCountCache();
+      for (const row of data) {
+        const counts = perList.get(String(row.list_id)) || { lead_count: 0, new_leads: 0, called_leads: 0 };
+        row.lead_count = counts.lead_count;
+        row.new_leads = counts.new_leads;
+        row.called_leads = counts.called_leads;
+      }
+    }
+    return res.json({ ok: true, total: Number(total || 0), rows: data });
+  } catch (err) {
+    console.error(`paged ${req.params.entity} failed:`, err.message);
+    return res.status(500).json({ ok: false, error: 'paged_list_failed' });
+  }
+}
+
 async function adminData(user) {
   const isSuperAdmin = Number(user?.userLevel || 0) >= 9;
   const allowedCampaignParams = [];
@@ -17830,6 +17941,7 @@ app.get('/api/dashboard', requireAccess, async (req, res) => {
 // counts scan vicidial_list and were monopolizing primary pool connections at
 // scale. Save handlers still call adminData() directly (primary), so the
 // response returned right after an edit is never stale.
+app.get('/api/admin/paged/:entity', requireAccess, pagedList);
 app.get('/api/admin', requireAccess, async (req, res) => {
   try {
     const data = await dbContext.run(reportPool, () => adminData(req.genxUser));
