@@ -189,7 +189,7 @@ def emit_day(day, seq0):
     W(f"DELETE FROM vicidial_agent_log WHERE event_time>='{day_s} 00:00:00' AND event_time<'{nextday_s} 00:00:00' AND comments='DEMODAILY';\n")
     W(f"DELETE FROM vicidial_carrier_log WHERE call_date>='{day_s} 00:00:00' AND call_date<'{nextday_s} 00:00:00' AND caller_code LIKE 'MD%';\n")
     W(f"DELETE FROM vicidial_dial_log WHERE call_date>='{day_s} 00:00:00' AND call_date<'{nextday_s} 00:00:00' AND caller_code LIKE 'MD%';\n")
-    W(f"DELETE FROM recording_log WHERE start_time>='{day_s} 00:00:00' AND start_time<'{nextday_s} 00:00:00' AND vicidial_id LIKE 'MD%';\n")
+    W(f"DELETE FROM recording_log WHERE start_time>='{day_s} 00:00:00' AND start_time<'{nextday_s} 00:00:00' AND extension='8310';\n")
 
     vl = Tbl('vicidial_log', 'uniqueid,lead_id,list_id,campaign_id,call_date,start_epoch,end_epoch,length_in_sec,'
                              'status,phone_code,phone_number,user,comments,processed,user_group,term_reason,alt_dial,called_count')
@@ -236,8 +236,8 @@ def emit_day(day, seq0):
                 lead = rr(1_000_000, 4_000_000)
                 list_id = 111 + lead % 12
             phone = 2_000_000_000 + lead
-            uid = f'MD{sec}.{seq}'
-            cc = f'MD{seq}'
+            uid = f'{sec}.{seq}'          # Vici format, <=18 chars (uniqueid is VARCHAR(20))
+            cc = f'MD{seq}'                # 'MD' marker (distinct from DEMO6M's 'M<seq>')
             agent = agents[seq % len(agents)] if handled else 'VDAD'
             vl.add(f"('{uid}',{lead},{list_id},'{c['id']}','{dt}',{sec},{sec + length},{length},'{status}','1',"
                    f"'{phone}','{agent}','DEMODAILY','Y','{group}','{'AGENT' if handled else 'CALLER'}','MAIN',1)")
@@ -253,7 +253,7 @@ def emit_day(day, seq0):
                     fname = f"{c['id']}_{day_compact}-{sod // 3600:02d}{(sod % 3600) // 60:02d}{sod % 60:02d}_{agent}_{phone}"
                     loc = f'https://{HOST}/{AUDIO_DIR}/{AUDIO[seq % 5]}'
                     end_dt = f'{day_s} {(sod + length) // 3600:02d}:{((sod + length) % 3600) // 60:02d}:{(sod + length) % 60:02d}'
-                    rec.add(f"('PJSIP/demo-{seq % 16777216:08x}','{SIP}','8309','{dt}',{sec},'{end_dt}',{sec + length},"
+                    rec.add(f"('PJSIP/demo-{seq % 16777216:08x}','{SIP}','8310','{dt}',{sec},'{end_dt}',{sec + length},"
                             f"{length},'{length // 60}:{length % 60:02d}','{fname}','{loc}',{lead},'{agent}','{uid}')")
     for t in (vl, vcl, vdl, val, rec):
         t.flush()
@@ -285,7 +285,7 @@ def main():
     else:
         days = [today]                # cron default
 
-    seq = 900_000_000
+    seq = 1_000_000        # keep uniqueid ({sec}.{seq}) <=18 chars; a run stays well under 7 digits
     for day in days:
         seq = emit_day(day, seq)
     sys.stderr.write(f'demo-daily: {len(days)} day(s), through seq {seq}\n')
