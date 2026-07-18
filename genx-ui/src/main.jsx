@@ -7194,9 +7194,47 @@ function BreakdownPanel({ eyebrow, title, icon: Icon, items, valueKey, labelKey,
   );
 }
 
-function DataTable({ columns, rows, emptyLabel }) {
+// Rows-per-page for large tables. Search appears above any table longer
+// than SEARCH_MIN rows; the pager appears past PAGE_SIZE. Both are pure
+// client-side (the /api/admin bundle is still all-rows — server-side
+// pagination is the follow-up for very large installs).
+const TABLE_SEARCH_MIN = 8;
+const TABLE_PAGE_SIZE = 50;
+
+function DataTable({ columns, rows, emptyLabel, searchable = true }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+
+  // One lowercase haystack per row, from its primitive values only (render
+  // functions and nested objects are skipped).
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => Object.values(row).some((value) => (
+      (typeof value === 'string' || typeof value === 'number') && String(value).toLowerCase().includes(q)
+    )));
+  }, [rows, query]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / TABLE_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const visible = filtered.slice(safePage * TABLE_PAGE_SIZE, (safePage + 1) * TABLE_PAGE_SIZE);
+  const showSearch = searchable && rows.length > TABLE_SEARCH_MIN;
+  const showPager = filtered.length > TABLE_PAGE_SIZE;
+
   return (
     <div className="table-wrap">
+      {showSearch && (
+        <div className="table-tools">
+          <input
+            type="search"
+            className="table-search"
+            placeholder={`Search ${formatNumber(rows.length)} rows...`}
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+          />
+          {query && <span className="table-count">{formatNumber(filtered.length)} match{filtered.length === 1 ? '' : 'es'}</span>}
+        </div>
+      )}
       <table>
         <thead>
           <tr>
@@ -7206,20 +7244,27 @@ function DataTable({ columns, rows, emptyLabel }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
+          {visible.map((row, index) => (
             <tr key={row.id || row.key || index}>
               {columns.map((column) => (
                 <td key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>
               ))}
             </tr>
           ))}
-          {!rows.length && (
+          {!filtered.length && (
             <tr>
-              <td colSpan={columns.length} className="empty-row">{emptyLabel}</td>
+              <td colSpan={columns.length} className="empty-row">{query ? 'No rows match the search' : emptyLabel}</td>
             </tr>
           )}
         </tbody>
       </table>
+      {showPager && (
+        <div className="table-pager">
+          <button type="button" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>‹ Prev</button>
+          <span>Page {safePage + 1} of {pageCount} · {formatNumber(filtered.length)} rows</span>
+          <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Next ›</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -7414,9 +7459,37 @@ function ServersPanel({ admin, user, onAction }) {
               </>
             ),
           },
+          {
+            key: 'roles',
+            label: 'Roles',
+            render: (row) => (
+              <span className="server-roles">
+                {row.active_asterisk_server === 'Y' && <span className="role-chip">Dialer</span>}
+                {row.active_agent_login_server === 'Y' && <span className="role-chip">Agents</span>}
+                {row.recording_web_link === 'Y' && <span className="role-chip">Rec</span>}
+              </span>
+            ),
+          },
           { key: 'channels_total', label: 'Channels', render: (row) => formatNumber(row.channels_total) },
-          { key: 'sysload', label: 'Load', render: (row) => row.sysload ?? '0' },
-          { key: 'cpu_idle_percent', label: 'CPU Load', render: (row) => (row.cpu_idle_percent !== null && row.cpu_idle_percent !== undefined && row.cpu_idle_percent !== '') ? `${Math.max(0, 100 - Number(row.cpu_idle_percent))}%` : 'Unknown' },
+          {
+            key: 'sysload',
+            label: 'Load',
+            // servers.sysload is load-average x100 (AST_update_AMI2.pl).
+            render: (row) => {
+              const load = Number(row.sysload || 0) / 100;
+              const label = load.toFixed(2);
+              return load >= 8 ? <StatusPill ok={false}>{label}</StatusPill> : label;
+            },
+          },
+          {
+            key: 'cpu_idle_percent',
+            label: 'CPU Load',
+            render: (row) => {
+              if (row.cpu_idle_percent === null || row.cpu_idle_percent === undefined || row.cpu_idle_percent === '') return 'Unknown';
+              const used = Math.max(0, 100 - Number(row.cpu_idle_percent));
+              return used >= 85 ? <StatusPill ok={false}>{used}%</StatusPill> : `${used}%`;
+            },
+          },
           {
             key: 'disk_usage',
             label: 'HD Usage',
@@ -7440,7 +7513,9 @@ function ServersPanel({ admin, user, onAction }) {
               // 15s stale means the box is unreachable/unusable.
               const age = Number(row.heartbeat_age_sec);
               const down = !Number.isFinite(age) || age > 15;
-              return down ? <StatusPill ok={false}>DOWN</StatusPill> : <StatusPill ok>Online</StatusPill>;
+              return down
+                ? <StatusPill ok={false}>{Number.isFinite(age) ? `DOWN ${age > 3600 ? `${Math.round(age / 3600)}h` : age > 90 ? `${Math.round(age / 60)}m` : `${age}s`}` : 'DOWN'}</StatusPill>
+                : <StatusPill ok>Online {age}s</StatusPill>;
             },
           },
           ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction?.('servers', 'edit', row)} /> }] : []),
@@ -9706,21 +9781,23 @@ function ManagerDashboard({ token, user, onNavigate }) {
   // clears it back to relative windows. From alone = that single day.
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // '' = all allowed campaigns; the server only ever narrows the user scope.
+  const [campaign, setCampaign] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    const query = dateFrom
+    const query = (dateFrom
       ? `range=custom&from=${dateFrom}&to=${dateTo || dateFrom}`
-      : `range=${range}`;
+      : `range=${range}`) + (campaign ? `&campaign=${encodeURIComponent(campaign)}` : '');
     apiFetch(`/reports/manager-dashboard?${query}`, token)
       .then((d) => { if (alive) { setData(d); setError(''); } })
       .catch((e) => { if (alive) setError(e.status === 403 ? 'Reports not permitted for your role.' : 'Could not load the dashboard.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [range, dateFrom, dateTo, token]);
+  }, [range, dateFrom, dateTo, campaign, token]);
 
   const k = data?.kpis || { current: {}, previous: {} };
   const cur = k.current || {}; const prev = k.previous || {};
@@ -9745,6 +9822,17 @@ function ManagerDashboard({ token, user, onNavigate }) {
     <section className="mdash">
       <div className="mdash-bar">
         <div><p className="eyebrow">Reporting Center</p><h2>Manager Dashboard</h2></div>
+        <select
+          className={campaign ? 'mcamp on' : 'mcamp'}
+          aria-label="Campaign filter"
+          value={campaign}
+          onChange={(event) => setCampaign(event.target.value)}
+        >
+          <option value="">All campaigns</option>
+          {(data?.campaigns || []).map((c) => (
+            <option key={c.id} value={c.id}>{c.id} — {c.name}</option>
+          ))}
+        </select>
         <div className="mseg" role="tablist" aria-label="Date range">
           {MDASH_RANGES.map(([key, label]) => (
             <button key={key} type="button" className={!dateFrom && range === key ? 'on' : ''} onClick={() => { setDateFrom(''); setDateTo(''); setRange(key); }}>{label}</button>

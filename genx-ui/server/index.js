@@ -7751,10 +7751,24 @@ async function managerDashboard(req, res) {
   const win = (col, w, end) => end ? `${col} >= ${w} AND ${col} < ${end}` : `${col} >= ${w}`;
   const curW = (col) => win(col, WIN.cur, WIN.curEnd);
   const prevW = (col) => win(col, WIN.prev, WIN.prevEnd);
-  const scope = req.genxUser?.permissions?.allowedCampaigns;
+  const userScope = req.genxUser?.permissions?.allowedCampaigns;
+  // Optional single-campaign filter from the dashboard picker. It can only
+  // NARROW the user's allowed-campaigns scope — a campaign outside the
+  // user's scope is ignored, never widened to.
+  const campaignFilter = String(req.query?.campaign || '').trim();
+  const filterValid = /^[A-Za-z0-9_-]{1,8}$/.test(campaignFilter)
+    && (!Array.isArray(userScope) || userScope.includes(campaignFilter));
+  const scope = filterValid ? [campaignFilter] : userScope;
   const sc = (params) => scopeWhere(scope, 'campaign_id', params); // '1=1' or 'campaign_id IN (?,...)'
   const onReplica = (fn) => dbContext.run(reportPool, fn);
   const safe = (p, fallback) => p.catch(() => fallback);
+
+  // Campaign list for the dashboard's picker (user-scope, not filter-scope).
+  const pickerParams = [];
+  const pickerWhere = scopeWhere(userScope, 'campaign_id', pickerParams);
+  const campaignChoices = await safe(onReplica(() => rows(
+    `SELECT campaign_id, campaign_name FROM vicidial_campaigns WHERE active='Y' AND ${pickerWhere} ORDER BY campaign_id LIMIT 500`,
+    pickerParams, [])), []);
 
   // Contacts use VICIdial's own definition: statuses flagged human_answered
   // ('Y' in vicidial_statuses / vicidial_campaign_statuses) — NOT
@@ -7849,6 +7863,8 @@ async function managerDashboard(req, res) {
   return res.json({
     ok: true,
     range: rangeKey,
+    campaign: filterValid ? campaignFilter : '',
+    campaigns: campaignChoices.map((c) => ({ id: String(c.campaign_id), name: c.campaign_name || String(c.campaign_id) })),
     kpis: { current, previous },
     live,
     agents,

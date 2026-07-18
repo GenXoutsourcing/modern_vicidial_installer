@@ -3230,6 +3230,8 @@ input:-webkit-autofill:focus {
 .mseg .mdate.on { background: var(--blue-soft); color: var(--blue); }
 .mseg .mdate::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.7; }
 .mseg .mdate-sep { align-self: center; color: var(--muted); font-weight: 700; }
+.mcamp { margin-right: 8px; padding: 7px 11px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface); color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer; max-width: 260px; }
+.mcamp.on { color: var(--blue); border-color: var(--line); }
 
 /* Topbar quick links (API Docs / User Guide moved up from the strip). */
 .topbar-link {
@@ -3249,6 +3251,88 @@ input:-webkit-autofill:focus {
 .topbar-link:hover {
   border-color: rgba(0, 217, 255, 0.22);
   background: rgba(0, 217, 255, 0.08);
+}
+
+/* Table search + pager (client-side, all DataTables). */
+.table-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 10px;
+}
+
+.table-search {
+  width: min(320px, 100%);
+  padding: 7px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.table-search:focus {
+  border-color: var(--line);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 217, 255, 0.18);
+}
+
+.table-count {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 10px 2px 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.table-pager button {
+  padding: 5px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: none;
+  color: var(--blue);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.table-pager button:hover:not(:disabled) {
+  border-color: var(--line);
+  background: rgba(0, 217, 255, 0.07);
+}
+
+.table-pager button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Server role chips in the System Servers health table. */
+.server-roles {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.role-chip {
+  padding: 2px 7px;
+  border: 1px solid rgba(0, 217, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 217, 255, 0.07);
+  color: var(--blue);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 /* Critical DB-health alert band (crashed tables / dead keepalives). */
