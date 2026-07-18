@@ -20386,12 +20386,24 @@ function AdminShell({ token, user, onLogout }) {
             <Server size={14} aria-hidden="true" />
             {dbAlertCount ? `DB ALERT (${dbAlertCount})` : system.dbOnline ? 'DB Online' : 'DB Offline'}
           </StatusPill>
-          {(system.slaves || []).map((slave, index) => (
-            <StatusPill key={slave.host || index} ok={slave.online}>
-              <Database size={14} aria-hidden="true" />
-              {(system.slaves || []).length > 1 ? `Slave ${slave.id || index + 1}` : 'Slave'} {slave.online ? 'Online' : 'Offline'}
-            </StatusPill>
-          ))}
+          {(system.slaves || []).map((slave, index) => {
+            const name = (system.slaves || []).length > 1 ? `Slave ${slave.id || index + 1}` : 'Slave';
+            // Health order: replication broken > lagging > online-with-lag > reachability only.
+            let label;
+            let ok;
+            if (slave.replRunning === false) { label = `${name} BROKEN`; ok = false; }
+            else if (slave.lagSeconds !== null && slave.lagSeconds !== undefined) {
+              const lag = Number(slave.lagSeconds);
+              ok = lag <= 30;
+              label = ok ? `${name} Online · ${lag}s` : `${name} LAG ${lag >= 3600 ? `${Math.round(lag / 3600)}h` : lag >= 90 ? `${Math.round(lag / 60)}m` : `${lag}s`}`;
+            } else { ok = slave.online; label = `${name} ${slave.online ? 'Online' : 'Offline'}`; }
+            return (
+              <StatusPill key={slave.host || index} ok={ok}>
+                <Database size={14} aria-hidden="true" />
+                {label}
+              </StatusPill>
+            );
+          })}
           <button type="button" className="icon-button" onClick={refreshAll} aria-label="Refresh" title="Refresh">
             <RefreshCcw size={18} aria-hidden="true" />
           </button>

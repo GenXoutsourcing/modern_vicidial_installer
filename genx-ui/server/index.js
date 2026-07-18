@@ -1420,7 +1420,8 @@ async function systemStatus() {
   //    stale >120s = that dialer's keepalive is dead.
   const dbHealth = { crashedTables: [], staleServers: [] };
   try {
-    const crashed = await rows('SELECT table_name, crashed_datetime FROM crashed_tables', [], []);
+    const crashed = await rows(
+      "SELECT table_name, DATE_FORMAT(crashed_datetime, '%Y-%m-%d %H:%i:%s') AS crashed_datetime FROM crashed_tables", [], []);
     for (const row of crashed) {
       dbHealth.crashedTables.push({ table: String(row.table_name), since: row.crashed_datetime, source: 'vicidial' });
     }
@@ -1474,6 +1475,24 @@ async function systemStatus() {
     const online = await dbContext.run(reportPool, () => rows('SELECT 1 AS ok', [], []))
       .then((r) => Boolean(r?.length)).catch(() => false);
     slaves.push({ id: '', host: config.dbSlave.host, online });
+  }
+  // TRUE replica health = SHOW SLAVE STATUS on the replica itself:
+  // IO/SQL threads running + Seconds_Behind_Master. "Connected" alone can
+  // hide a replica that is hours behind (stale dashboards). Requires the
+  // SLAVE MONITOR grant for the app's DB user on the replica; without it
+  // this silently stays at reachability-only.
+  if (config.dbSlave.host) {
+    try {
+      const [st] = await dbContext.run(reportPool, () => rows('SHOW SLAVE STATUS', [], []));
+      if (st) {
+        const entry = slaves.find((s) => s.host === config.dbSlave.host) || slaves[slaves.length - 1];
+        if (entry) {
+          entry.replRunning = String(st.Slave_IO_Running || '') === 'Yes' && String(st.Slave_SQL_Running || '') === 'Yes';
+          const lag = st.Seconds_Behind_Master;
+          entry.lagSeconds = (lag === null || lag === undefined) ? null : Number(lag);
+        }
+      }
+    } catch { /* SLAVE MONITOR grant missing — reachability-only */ }
   }
 
   return {
