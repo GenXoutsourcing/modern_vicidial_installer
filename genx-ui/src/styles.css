@@ -3317,6 +3317,21 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Agent Guidance panel (decision trees). */
+.agn-guide { display: grid; gap: 10px; padding: 12px 4px; align-content: start; }
+.guide-crumbs { display: flex; flex-wrap: wrap; gap: 5px; }
+.guide-crumbs .crumb { padding: 2px 9px; border: 1px solid var(--line-soft); border-radius: 999px; color: var(--muted); font-size: 0.68rem; font-weight: 700; }
+.guide-crumbs .crumb.on { color: var(--blue); border-color: var(--line); background: rgba(0, 217, 255, 0.07); }
+.guide-title { margin: 2px 0 0; font-size: 1rem; }
+.guide-step { border-radius: 10px; background: #fff; color: #1c1c1c; padding: 14px 16px; font-size: 0.95rem; }
+.guide-ask { margin: 4px 0 2px; color: var(--muted); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.guide-responses { display: grid; gap: 7px; justify-items: start; }
+.guide-resp { padding: 9px 16px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 217, 255, 0.08); color: var(--text); font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer; text-align: left; width: 100%; }
+.guide-resp:hover { background: rgba(0, 217, 255, 0.16); box-shadow: 0 0 14px rgba(0, 217, 255, 0.2); }
+.guide-exit { border: 1px solid rgba(115, 251, 211, 0.35); border-radius: 10px; background: rgba(115, 251, 211, 0.07); padding: 10px 14px; font-size: 0.86rem; }
+.guide-exit b { color: var(--green); }
+.guide-nav { display: flex; }
+
 /* Script Builder: two-pane block editor + agent-style preview. */
 .sb-meta {
   display: flex;

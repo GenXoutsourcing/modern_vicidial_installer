@@ -18968,6 +18968,46 @@ function AgentConsole({ token, authInfo, onExit }) {
   const threewayHungupRef = useRef(false);
   // Legacy screen chrome: MAIN/SCRIPT/FORM tabs, header clock, DTMF box.
   const [mainTab, setMainTab] = useState('main');
+  // Agent Guidance (decision trees): one step at a time, click the customer
+  // response, tree advances; every step logged server-side. Auto-starts on
+  // call connect when the campaign has a published guide.
+  const [guideRun, setGuideRun] = useState(null); // {session_key, guide, step, responses, exit, dispo_mode, crumbs, ended}
+  const guideLeadRef = useRef(null);
+  useEffect(() => {
+    const leadId = lead?.lead_id || null;
+    if (!leadId || !live?.campaign_id) { guideLeadRef.current = null; setGuideRun(null); return; }
+    if (guideLeadRef.current === leadId) return;
+    guideLeadRef.current = leadId;
+    apiFetch('/agent/guide/start', token, {
+      method: 'POST',
+      body: JSON.stringify({ campaign_id: live.campaign_id, lead_id: leadId, uniqueid: live?.uniqueid || '' }),
+    }).then((payload) => {
+      if (guideLeadRef.current !== leadId) return;
+      if (!payload.guide) { setGuideRun(null); return; }
+      setGuideRun({ ...payload, crumbs: [payload.step.title], ended: false });
+      setMainTab('guide'); // auto-launch per spec
+    }).catch(() => setGuideRun(null));
+  }, [lead ? lead.lead_id : 0, live ? live.campaign_id : '', token]);
+
+  async function guideRespond(responseNodeId) {
+    if (!guideRun) return;
+    try {
+      const payload = await apiFetch('/agent/guide/respond', token, {
+        method: 'POST', body: JSON.stringify({ session_key: guideRun.session_key, response_node_id: responseNodeId }),
+      });
+      setGuideRun((current) => ({ ...current, ...payload, crumbs: [...(current?.crumbs || []), payload.step.title] }));
+    } catch { /* keep current step */ }
+  }
+
+  async function guideBack() {
+    if (!guideRun) return;
+    try {
+      const payload = await apiFetch('/agent/guide/back', token, {
+        method: 'POST', body: JSON.stringify({ session_key: guideRun.session_key }),
+      });
+      setGuideRun((current) => ({ ...current, ...payload, crumbs: [...(current?.crumbs || []), `↩ ${payload.step.title}`] }));
+    } catch { /* at root */ }
+  }
   const [dtmfDigits, setDtmfDigits] = useState('');
   const [xferOpen, setXferOpen] = useState(false);
   const [queueCalls, setQueueCalls] = useState(0);
@@ -20057,7 +20097,7 @@ function AgentConsole({ token, authInfo, onExit }) {
               <p className="form-error">No customer channel in your session — the caller may have hung up</p>
             )}
             <div className="agc-tabs">
-              {[['main', 'Contact'], ['script', 'Script'], ['form', 'Form']].map(([key, label]) => (
+              {[['main', 'Contact'], ['script', 'Script'], ['form', 'Form'], ...(guideRun?.guide ? [['guide', 'Guide']] : [])].map(([key, label]) => (
                 <button
                   type="button"
                   key={key}
@@ -20092,6 +20132,39 @@ function AgentConsole({ token, authInfo, onExit }) {
                     srcDoc={applyScriptConditions(mergeFields(scriptData.script.script_text, { escapeHtml: true }), lead)}
                   />
                 )}
+              </div>
+            )}
+            {mainTab === 'guide' && guideRun?.step && (
+              <div className="agn-guide">
+                <div className="guide-crumbs">
+                  {guideRun.crumbs.map((title, index) => (
+                    <span key={index} className={index === guideRun.crumbs.length - 1 ? 'crumb on' : 'crumb'}>{title}</span>
+                  ))}
+                </div>
+                <h3 className="guide-title">{guideRun.step.title}</h3>
+                {/* Server-side merged + escaped lead values; node HTML is
+                    admin-authored, same trust level as scripts. */}
+                <div className="guide-step" dangerouslySetInnerHTML={{ __html: guideRun.step.html || '' }} />
+                {!guideRun.exit && (
+                  <div className="guide-responses">
+                    <p className="guide-ask">Customer response:</p>
+                    {guideRun.responses.map((response) => (
+                      <button key={response.node_id} type="button" className="guide-resp" onClick={() => guideRespond(response.node_id)}>
+                        {response.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {guideRun.exit && (
+                  <div className="guide-exit">
+                    <p>End of guide{guideRun.step.disposition ? <> — suggested disposition: <b>{guideRun.step.disposition}</b></> : null}</p>
+                  </div>
+                )}
+                <div className="guide-nav">
+                  {guideRun.crumbs.length > 1 && (
+                    <button type="button" className="t-action" onClick={guideBack}>← Back a step</button>
+                  )}
+                </div>
               </div>
             )}
             {showAltPhones && altPhones && (

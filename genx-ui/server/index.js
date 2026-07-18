@@ -18564,6 +18564,148 @@ app.get('/api/admin/audio-store/file/:name', requireAccess, streamAudio);
 app.delete('/api/admin/audio-store/:name', requireAccess, deleteAudio);
 
 app.post('/api/agent/auth', agentAuth);
+// ===== Agent Guidance runtime (decision trees, spec: docs/future/...) ======
+// Stateless beyond genx_guide_traversal: the session's current node is its
+// latest traversal row, so refreshes and transfers recover for free. Back
+// navigation LOGS a revisit row (QA signal) — history is never deleted.
+function guideEscapeHtml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function guideMergeHtml(html, leadId) {
+  if (!/--A--\w+--B--/.test(String(html || ''))) return String(html || '');
+  const [lead] = leadId
+    ? await dbContext.run(reportPool, () => rows('SELECT * FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []))
+    : [null];
+  return String(html).replace(/--A--(\w+)--B--/g, (m, field) => {
+    if (field === 'pass') return '';
+    return guideEscapeHtml(lead?.[field] != null ? String(lead[field]) : '');
+  });
+}
+
+// A step + its response options (steps with no responses are exits).
+async function guideStepPayload(versionId, stepNode, leadId, guide) {
+  const responses = await rows(
+    `SELECT n.node_id, n.title FROM genx_guide_edge e
+     JOIN genx_guide_node n ON n.node_id = e.child_node_id AND n.type = 'response'
+     WHERE e.version_id = ? AND e.parent_node_id = ? ORDER BY e.sort_order`, [versionId, stepNode.node_id], []);
+  return {
+    step: {
+      node_id: stepNode.node_id,
+      title: stepNode.title,
+      html: await guideMergeHtml(stepNode.script_html, leadId),
+      disposition: stepNode.disposition || null,
+    },
+    responses,
+    exit: !responses.length,
+    dispo_mode: guide?.dispo_mode || 'SUGGEST',
+  };
+}
+
+async function guideLog(row) {
+  await execute(
+    `INSERT INTO genx_guide_traversal (session_key, uniqueid, lead_id, campaign_id, user, version_id, node_id, entered_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [row.session_key, row.uniqueid || '', row.lead_id || null, row.campaign_id || '', row.user || '', row.version_id, row.node_id]);
+}
+
+async function guideSessionContext(sessionKey) {
+  const [last] = await rows(
+    'SELECT * FROM genx_guide_traversal WHERE session_key = ? ORDER BY traversal_id DESC LIMIT 1', [sessionKey], []);
+  return last || null;
+}
+
+app.post('/api/agent/guide/start', requireAgentAccess, async (req, res) => {
+  try {
+    const campaign = cleanId(req.body?.campaign_id, 8);
+    const [guide] = await rows(
+      `SELECT g.*, g.published_version AS version_id FROM genx_guide g
+       WHERE g.active = 'Y' AND g.published_version IS NOT NULL AND g.campaign_id = ? LIMIT 1`, [campaign], []);
+    if (!guide) return res.json({ ok: true, guide: null });
+    const [root] = await rows(
+      `SELECT n.* FROM genx_guide_node n
+       WHERE n.version_id = ? AND n.type = 'step'
+         AND n.node_id NOT IN (SELECT child_node_id FROM genx_guide_edge WHERE version_id = ?)
+       ORDER BY n.node_id LIMIT 1`, [guide.version_id, guide.version_id], []);
+    if (!root) return res.json({ ok: true, guide: null });
+    const sessionKey = crypto.randomBytes(16).toString('hex');
+    const leadId = Number(req.body?.lead_id) || null;
+    await guideLog({
+      session_key: sessionKey, uniqueid: cleanText(req.body?.uniqueid, 20), lead_id: leadId,
+      campaign_id: campaign, user: req.genxUser?.user || '', version_id: guide.version_id, node_id: root.node_id,
+    });
+    const payload = await guideStepPayload(guide.version_id, root, leadId, guide);
+    return res.json({ ok: true, guide: { guide_id: guide.guide_id, name: guide.name }, session_key: sessionKey, ...payload });
+  } catch (err) {
+    console.error('guide start failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'guide_start_failed' });
+  }
+});
+
+app.post('/api/agent/guide/respond', requireAgentAccess, async (req, res) => {
+  try {
+    const sessionKey = cleanText(req.body?.session_key, 40);
+    const responseId = Number(req.body?.response_node_id) || 0;
+    const context = await guideSessionContext(sessionKey);
+    if (!context) return res.status(404).json({ ok: false, error: 'session_not_found' });
+    const [response] = await rows(
+      "SELECT * FROM genx_guide_node WHERE node_id = ? AND version_id = ? AND type = 'response' LIMIT 1",
+      [responseId, context.version_id], []);
+    if (!response) return res.status(400).json({ ok: false, error: 'bad_response' });
+    const [next] = await rows(
+      `SELECT n.* FROM genx_guide_edge e JOIN genx_guide_node n ON n.node_id = e.child_node_id
+       WHERE e.version_id = ? AND e.parent_node_id = ? AND n.type = 'step' ORDER BY e.sort_order LIMIT 1`,
+      [context.version_id, responseId], []);
+    if (!next) return res.status(400).json({ ok: false, error: 'dead_end' });
+    const base = { session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id, campaign_id: context.campaign_id, user: context.user, version_id: context.version_id };
+    await guideLog({ ...base, node_id: responseId });
+    await guideLog({ ...base, node_id: next.node_id });
+    const [guide] = await rows('SELECT * FROM genx_guide WHERE published_version = ? LIMIT 1', [context.version_id], []);
+    const payload = await guideStepPayload(context.version_id, next, context.lead_id, guide);
+    return res.json({ ok: true, session_key: sessionKey, ...payload });
+  } catch (err) {
+    console.error('guide respond failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'guide_respond_failed' });
+  }
+});
+
+app.post('/api/agent/guide/back', requireAgentAccess, async (req, res) => {
+  try {
+    const sessionKey = cleanText(req.body?.session_key, 40);
+    const context = await guideSessionContext(sessionKey);
+    if (!context) return res.status(404).json({ ok: false, error: 'session_not_found' });
+    // Previous DISTINCT step before the current one (skip response rows).
+    const steps = await rows(
+      `SELECT t.node_id FROM genx_guide_traversal t
+       JOIN genx_guide_node n ON n.node_id = t.node_id AND n.type = 'step'
+       WHERE t.session_key = ? ORDER BY t.traversal_id DESC LIMIT 20`, [sessionKey], []);
+    const prior = steps.map((s) => s.node_id).find((id) => id !== context.node_id);
+    if (!prior) return res.status(400).json({ ok: false, error: 'at_root' });
+    const [node] = await rows('SELECT * FROM genx_guide_node WHERE node_id = ? LIMIT 1', [prior], []);
+    await guideLog({ session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id, campaign_id: context.campaign_id, user: context.user, version_id: context.version_id, node_id: prior });
+    const [guide] = await rows('SELECT * FROM genx_guide WHERE published_version = ? LIMIT 1', [context.version_id], []);
+    const payload = await guideStepPayload(context.version_id, node, context.lead_id, guide);
+    return res.json({ ok: true, session_key: sessionKey, ...payload });
+  } catch (err) {
+    console.error('guide back failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'guide_back_failed' });
+  }
+});
+
+app.post('/api/agent/guide/end', requireAgentAccess, async (req, res) => {
+  try {
+    const sessionKey = cleanText(req.body?.session_key, 40);
+    const path = await rows(
+      `SELECT t.node_id, n.type, n.title, n.disposition, t.entered_at
+       FROM genx_guide_traversal t JOIN genx_guide_node n ON n.node_id = t.node_id
+       WHERE t.session_key = ? ORDER BY t.traversal_id`, [sessionKey], []);
+    const lastDispo = [...path].reverse().find((p) => p.disposition)?.disposition || null;
+    return res.json({ ok: true, steps: path.length, suggested_disposition: lastDispo, path });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'guide_end_failed' });
+  }
+});
+
 app.get('/api/agent/setup', requireAgentAccess, agentSetup);
 app.post('/api/agent/login', requireAgentAccess, agentLogin);
 app.post('/api/agent/webphone-call', requireAgentAccess, agentWebphoneCall);
