@@ -7706,16 +7706,29 @@ async function managerDashboard(req, res) {
   const onReplica = (fn) => dbContext.run(reportPool, fn);
   const safe = (p, fallback) => p.catch(() => fallback);
 
-  // KPI totals for a given date window (outbound vicidial_log). Contacts =
-  // connected (talk>0); sales = SALE status; drops = DROP/AB for abandon rate.
+  // Contacts use VICIdial's own definition: statuses flagged human_answered
+  // ('Y' in vicidial_statuses / vicidial_campaign_statuses) — NOT
+  // length_in_sec>0, which includes ring time and counted nearly every dial
+  // as a "contact" (the dashboard pinned at 100% of dials).
+  const humanStatuses = await safe(onReplica(() => rows(
+    `SELECT status FROM vicidial_statuses WHERE human_answered='Y'
+     UNION SELECT DISTINCT status FROM vicidial_campaign_statuses WHERE human_answered='Y'`, [], [])), [])
+    .then((list) => list.map((row) => String(row.status)));
+
+  // KPI totals for a given date window (outbound vicidial_log). Sales = SALE
+  // status; drops = DROP/AB for abandon rate.
   const kpiFor = (dateClause) => {
     const p = [];
     const where = `${dateClause} AND ${sc(p)}`;
     return onReplica(() => scalar(
       `SELECT COUNT(*) AS value FROM vicidial_log WHERE ${where}`, p, 0)).then(async (calls) => {
       const p2 = []; const w2 = `${dateClause} AND ${sc(p2)}`;
+      const pC = []; const wC = `${dateClause} AND ${sc(pC)}`;
+      const contactsSql = humanStatuses.length
+        ? `SELECT COUNT(*) AS value FROM vicidial_log WHERE ${wC} AND status IN (${humanStatuses.map(() => '?').join(',')})`
+        : `SELECT COUNT(*) AS value FROM vicidial_log WHERE ${wC} AND length_in_sec > 0`;
       const [contacts, sales, talk, drops] = await Promise.all([
-        onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND length_in_sec > 0`, p2, 0)),
+        onReplica(() => scalar(contactsSql, humanStatuses.length ? [...pC, ...humanStatuses] : pC, 0)),
         onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND status = 'SALE'`, p2, 0)),
         onReplica(() => scalar(`SELECT COALESCE(SUM(length_in_sec),0) AS value FROM vicidial_log WHERE ${w2}`, p2, 0)),
         onReplica(() => scalar(`SELECT COUNT(*) AS value FROM vicidial_log WHERE ${w2} AND status IN ('DROP','AB')`, p2, 0)),
