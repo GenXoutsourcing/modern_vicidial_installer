@@ -973,7 +973,7 @@ body {
 }
 
 .t-action.danger {
-  margin-left: auto;
+  margin-left: 14px;
   color: var(--danger);
 }
 
