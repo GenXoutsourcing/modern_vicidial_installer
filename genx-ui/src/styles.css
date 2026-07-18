@@ -3317,6 +3317,50 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Bulk operations: selection checkboxes + action strip. */
+.sel-col {
+  width: 34px;
+  text-align: center;
+}
+
+.sel-col input {
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+
+.row-selected td {
+  background: rgba(0, 217, 255, 0.05);
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 217, 255, 0.06);
+}
+
+.bulk-count {
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.bulk-bar select {
+  padding: 6px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  max-width: 260px;
+}
+
 /* Server role chips in the System Servers health table. */
 .server-roles {
   display: inline-flex;

@@ -1902,6 +1902,96 @@ async function unlockAccount(req, res) {
   }
 }
 
+// Bulk operations on the paged entities. Every target row must pass the
+// caller's permission scope (the WHERE includes it), values are whitelisted
+// per action, and each run lands one vicidial_admin_log entry.
+const BULK_ENTITIES = {
+  users: {
+    permission: 'modifyUsers',
+    table: 'vicidial_users',
+    idCol: 'user',
+    section: 'users',
+    actions: {
+      active: { col: 'active', validate: (v) => ['Y', 'N'].includes(v) },
+      user_group: { col: 'user_group', validate: null /* checked against groups below */ },
+    },
+    scope: (user) => {
+      const params = [];
+      let where = scopeWhere(user?.permissions?.adminViewableGroups, 'user_group', params);
+      // Never bulk-edit users above the caller's own level (SuperAdmins exempt).
+      if (Number(user?.userLevel || 0) < 9) {
+        where += ' AND user_level <= ?';
+        params.push(Number(user?.userLevel || 1));
+      }
+      return { where, params };
+    },
+  },
+  lists: {
+    permission: 'modifyLists',
+    table: 'vicidial_lists',
+    idCol: 'list_id',
+    section: 'lists',
+    actions: {
+      active: { col: 'active', validate: (v) => ['Y', 'N'].includes(v) },
+      campaign_id: { col: 'campaign_id', validate: null /* checked against campaigns below */ },
+    },
+    scope: (user) => {
+      const params = [];
+      return { where: scopeWhere(user?.permissions?.allowedCampaigns, 'campaign_id', params), params };
+    },
+  },
+};
+
+async function bulkUpdate(req, res) {
+  const cfg = BULK_ENTITIES[String(req.params.entity || '')];
+  if (!cfg) return res.status(404).json({ ok: false, error: 'unknown_entity' });
+  if (!requireModify(req, res, cfg.permission)) return;
+  try {
+    const actionKey = String(req.body?.action || '');
+    const action = cfg.actions[actionKey];
+    const value = String(req.body?.value ?? '');
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((v) => String(v)).filter(Boolean).slice(0, 500) : [];
+    if (!action || !ids.length) return res.status(400).json({ ok: false, error: 'bad_request' });
+    if (action.validate && !action.validate(value)) return res.status(400).json({ ok: false, error: 'bad_value' });
+    // Reference-valued actions: the target must exist AND be inside the
+    // caller's scope for that dimension.
+    if (actionKey === 'user_group') {
+      if (SYSTEM_ONLY_USER_GROUPS.has(value) && Number(req.genxUser?.userLevel || 0) < 9) {
+        return res.status(403).json({ ok: false, error: 'group_not_allowed' });
+      }
+      if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, value)) {
+        return res.status(403).json({ ok: false, error: 'group_not_allowed' });
+      }
+      const [group] = await rows('SELECT user_group FROM vicidial_user_groups WHERE user_group = ? LIMIT 1', [value], []);
+      if (!group) return res.status(400).json({ ok: false, error: 'group_not_found' });
+    }
+    if (actionKey === 'campaign_id') {
+      if (!scopeAllows(req.genxUser?.permissions?.allowedCampaigns, value)) {
+        return res.status(403).json({ ok: false, error: 'campaign_not_allowed' });
+      }
+      const [camp] = await rows('SELECT campaign_id FROM vicidial_campaigns WHERE campaign_id = ? LIMIT 1', [value], []);
+      if (!camp) return res.status(400).json({ ok: false, error: 'campaign_not_found' });
+    }
+    // Bulk-deactivating yourself is always a mistake.
+    const targetIds = (cfg.table === 'vicidial_users' && actionKey === 'active' && value === 'N')
+      ? ids.filter((id) => id !== String(req.genxUser?.user || ''))
+      : ids;
+    if (!targetIds.length) return res.status(400).json({ ok: false, error: 'no_targets' });
+    const { where, params } = cfg.scope(req.genxUser);
+    const placeholders = targetIds.map(() => '?').join(',');
+    const result = await execute(
+      `UPDATE ${cfg.table} SET ${action.col} = ? WHERE ${cfg.idCol} IN (${placeholders}) AND ${where}`,
+      [value, ...targetIds, ...params]);
+    await adminLog(req, cfg.section, 'BULK', targetIds.slice(0, 20).join(','), actionKey,
+      `UPDATE ${cfg.table} SET ${action.col}='${value}' WHERE ${cfg.idCol} IN (${targetIds.length} ids)`,
+      `bulk ${actionKey} on ${result.affectedRows} of ${targetIds.length}`).catch(() => {});
+    return res.json({ ok: true, updated: Number(result.affectedRows || 0), requested: targetIds.length });
+  } catch (err) {
+    console.error(`bulk ${req.params.entity} failed:`, err.message);
+    return res.status(500).json({ ok: false, error: 'bulk_failed' });
+  }
+}
+
 async function pagedList(req, res) {
   const cfg = PAGED_ENTITIES[String(req.params.entity || '')];
   if (!cfg) return res.status(404).json({ ok: false, error: 'unknown_entity' });
@@ -18059,6 +18149,7 @@ app.get('/api/dashboard', requireAccess, async (req, res) => {
 // scale. Save handlers still call adminData() directly (primary), so the
 // response returned right after an edit is never stale.
 app.get('/api/admin/paged/:entity', requireAccess, pagedList);
+app.post('/api/admin/bulk/:entity', requireAccess, bulkUpdate);
 app.get('/api/admin/locked-accounts', requireAccess, lockedAccounts);
 app.post('/api/admin/users/:id/unlock', requireAccess, unlockAccount);
 app.get('/api/admin', requireAccess, async (req, res) => {

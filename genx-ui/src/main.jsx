@@ -7204,7 +7204,9 @@ const TABLE_PAGE_SIZE = 50;
 // Server-paged tables: the view owns query/page state (useServerRows) and
 // the table renders exactly what the server sent. Local mode filters and
 // slices client-side.
-function DataTable({ columns, rows, emptyLabel, searchable = true, server = null }) {
+// selection (optional): { ids: Set<string>, onToggle(id), onToggleAll(pageIds) }
+// adds a checkbox column for bulk operations; the view owns the Set.
+function DataTable({ columns, rows, emptyLabel, searchable = true, server = null, selection = null }) {
   const [localQuery, setLocalQuery] = useState('');
   const [localPage, setLocalPage] = useState(0);
   const query = server ? server.q : localQuery;
@@ -7248,6 +7250,16 @@ function DataTable({ columns, rows, emptyLabel, searchable = true, server = null
       <table>
         <thead>
           <tr>
+            {selection && (
+              <th className="sel-col">
+                <input
+                  type="checkbox"
+                  aria-label="Select all on page"
+                  checked={visible.length > 0 && visible.every((row) => selection.ids.has(String(row.id)))}
+                  onChange={() => selection.onToggleAll(visible.map((row) => String(row.id)))}
+                />
+              </th>
+            )}
             {columns.map((column) => (
               <th key={column.key}>{column.label}</th>
             ))}
@@ -7255,7 +7267,17 @@ function DataTable({ columns, rows, emptyLabel, searchable = true, server = null
         </thead>
         <tbody>
           {visible.map((row, index) => (
-            <tr key={row.id || row.key || index}>
+            <tr key={row.id || row.key || index} className={selection?.ids.has(String(row.id)) ? 'row-selected' : ''}>
+              {selection && (
+                <td className="sel-col">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${row.id}`}
+                    checked={selection.ids.has(String(row.id))}
+                    onChange={() => selection.onToggle(String(row.id))}
+                  />
+                </td>
+              )}
               {columns.map((column) => (
                 <td key={column.key}>{column.render ? column.render(row) : row[column.key]}</td>
               ))}
@@ -7263,7 +7285,7 @@ function DataTable({ columns, rows, emptyLabel, searchable = true, server = null
           ))}
           {!filtered.length && (
             <tr>
-              <td colSpan={columns.length} className="empty-row">{query ? 'No rows match the search' : emptyLabel}</td>
+              <td colSpan={columns.length + (selection ? 1 : 0)} className="empty-row">{query ? 'No rows match the search' : emptyLabel}</td>
             </tr>
           )}
         </tbody>
@@ -7287,6 +7309,7 @@ function DataTable({ columns, rows, emptyLabel, searchable = true, server = null
 function useServerRows(entity, token, admin, extra = '') {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(0);
+  const [bump, setBump] = useState(0);
   const [state, setState] = useState({ rows: [], total: 0, loading: true });
   const seq = useRef(0);
   useEffect(() => {
@@ -7302,8 +7325,8 @@ function useServerRows(entity, token, admin, extra = '') {
         });
     }, q ? 250 : 0); // debounce keystrokes; first load fires immediately
     return () => clearTimeout(timer);
-  }, [entity, q, page, token, admin, extra]);
-  return { ...state, q, setQ, page, setPage };
+  }, [entity, q, page, token, admin, extra, bump]);
+  return { ...state, q, setQ, page, setPage, refresh: () => setBump((n) => n + 1) };
 }
 
 function Panel({ eyebrow, title, icon: Icon, children, className = '', headerActions = null }) {
@@ -7628,6 +7651,75 @@ function CampaignsView({ admin, user, onAction }) {
   );
 }
 
+// Multi-select state for bulk operations (Set of row ids, page-aware
+// select-all toggle).
+function useBulkSelection() {
+  const [ids, setIds] = useState(() => new Set());
+  const onToggle = (id) => setIds((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const onToggleAll = (pageIds) => setIds((current) => {
+    const next = new Set(current);
+    const allSelected = pageIds.every((id) => next.has(id));
+    for (const id of pageIds) { if (allSelected) next.delete(id); else next.add(id); }
+    return next;
+  });
+  const clear = () => setIds(new Set());
+  return { ids, onToggle, onToggleAll, clear };
+}
+
+// Action strip shown while rows are selected: activate/deactivate plus one
+// reassign dropdown (group for users, campaign for lists). The server
+// re-checks permission scope on every id.
+function BulkBar({ entity, selection, token, refresh, moveLabel, moveAction, moveOptions }) {
+  const [busy, setBusy] = useState(false);
+  const [choice, setChoice] = useState('');
+  const [note, setNote] = useState('');
+  if (!selection.ids.size && !note) return null;
+
+  async function run(action, value) {
+    setBusy(true);
+    setNote('');
+    try {
+      const payload = await apiFetch(`/admin/bulk/${entity}`, token, {
+        method: 'POST',
+        body: JSON.stringify({ action, value, ids: [...selection.ids] }),
+      });
+      setNote(`Updated ${formatNumber(payload.updated)} of ${formatNumber(payload.requested)}`);
+      setChoice('');
+      selection.clear();
+      refresh?.();
+    } catch (requestError) {
+      setNote(requestError.status === 403 ? 'Not permitted' : 'Bulk update failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bulk-bar">
+      {selection.ids.size > 0 && (
+        <>
+          <span className="bulk-count">{formatNumber(selection.ids.size)} selected</span>
+          <button type="button" className="secondary-action compact-action" disabled={busy} onClick={() => run('active', 'Y')}>Activate</button>
+          <button type="button" className="secondary-action compact-action" disabled={busy} onClick={() => run('active', 'N')}>Deactivate</button>
+          <select value={choice} onChange={(event) => setChoice(event.target.value)} disabled={busy}>
+            <option value="">{moveLabel}...</option>
+            {moveOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <button type="button" className="primary-action compact-action" disabled={busy || !choice} onClick={() => run(moveAction, choice)}>Apply</button>
+          <button type="button" className="t-action" onClick={() => { selection.clear(); setNote(''); }}>Clear</button>
+        </>
+      )}
+      {note && <span className="connection-status">{note}</span>}
+    </div>
+  );
+}
+
 // Accounts at/over the failed-login threshold, with one-click reset
 // (mirrors stock ADMIN_reset_failed_count.pl). Renders nothing when clean.
 function LockedAccountsPanel({ token, user }) {
@@ -7687,6 +7779,7 @@ function UsersView({ admin, user, token, onAction }) {
   // Server-paged: real offset/limit + server search (the bundle caps at 200).
   const paged = useServerRows('users', token, admin, showInactive ? '' : 'activeOnly=1');
   const visibleUsers = paged.rows;
+  const bulk = useBulkSelection();
 
   return (
     <>
@@ -7710,9 +7803,21 @@ function UsersView({ admin, user, token, onAction }) {
             </button>
           )}
         >
+          {canManage && (
+            <BulkBar
+              entity="users"
+              selection={bulk}
+              token={token}
+              refresh={paged.refresh}
+              moveLabel="Move to group"
+              moveAction="user_group"
+              moveOptions={(admin?.userGroups || []).map((group) => ({ value: group.user_group, label: `${group.user_group} — ${group.group_name || ''}` }))}
+            />
+          )}
           <DataTable
             emptyLabel="No users returned"
             server={paged}
+            selection={canManage ? bulk : null}
             rows={visibleUsers.map((row) => ({ ...row, id: row.user }))}
             columns={[
               {
@@ -7747,6 +7852,7 @@ function ListsView({ admin, user, token, onAction }) {
   // Server-paged: the bundle caps lists at 100 (bundle still feeds the
   // lead-share panel + pickers below).
   const paged = useServerRows('lists', token, admin);
+  const bulk = useBulkSelection();
 
   return (
     <>
@@ -7755,9 +7861,21 @@ function ListsView({ admin, user, token, onAction }) {
       </ActionBar>
       <section className="admin-grid">
         <Panel eyebrow="Lead Admin" title="Lists and Lead Inventory" icon={Database} className="admin-wide-panel">
+          {canManage && (
+            <BulkBar
+              entity="lists"
+              selection={bulk}
+              token={token}
+              refresh={paged.refresh}
+              moveLabel="Move to campaign"
+              moveAction="campaign_id"
+              moveOptions={(admin?.campaigns || []).map((campaign) => ({ value: campaign.campaign_id, label: `${campaign.campaign_id} — ${campaign.campaign_name || ''}` }))}
+            />
+          )}
           <DataTable
             emptyLabel="No lists configured"
             server={paged}
+            selection={canManage ? bulk : null}
             rows={paged.rows.map((row) => ({ ...row, id: row.list_id }))}
             columns={[
               {
