@@ -20081,10 +20081,10 @@ function AgentConsole({ token, authInfo, onExit }) {
             {mainTab === 'script' && (
               <div className="agn-script">
                 {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
+                {/* Dynamic script: conditional sections (data-gxwhen, from
+                    the Script Builder) are evaluated against the LIVE lead
+                    and stripped when they don't apply. */}
                 {scriptData?.script && (
-                  {/* Dynamic script: conditional sections (data-gxwhen, from
-                      the Script Builder) are evaluated against the LIVE lead
-                      and stripped when they don't apply. */}
                   <iframe
                     title="Campaign script"
                     style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
