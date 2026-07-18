@@ -7639,6 +7639,10 @@ function CampaignWizard({ admin, user, token, onClose, onCreated }) {
       await apiFetch('/admin/campaigns', token, {
         method: 'POST',
         body: JSON.stringify({
+          // _detailMode unlocks the detail-tier fields (dial_timeout, CID,
+          // DNC flags) in campaignPayload; without it they silently fall to
+          // defaults. Server still gates it on canUseCampaignDetail.
+          _detailMode: true,
           campaign_id: cid, campaign_name: w.campaign_name.trim(), campaign_description: w.campaign_description.trim(),
           active: 'Y', dial_method: w.dial_method, auto_dial_level: w.auto_dial_level,
           hopper_level: w.hopper_level, lead_order: 'DOWN', local_call_time: w.local_call_time,
