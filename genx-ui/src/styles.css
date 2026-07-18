@@ -2870,7 +2870,8 @@ input:-webkit-autofill:focus {
 .mbars { padding: 13px 16px; display: flex; flex-direction: column; gap: 11px; }
 .mbar-top { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 5px; gap: 10px; }
 .mbar-top b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mbar-top span { font-family: ui-monospace, Menlo, monospace; color: var(--muted); flex: none; }
+.mbar-top span { font-family: ui-monospace, Menlo, monospace; color: var(--text); flex: none; font-variant-numeric: tabular-nums; }
+.mbar-pct { font-style: normal; color: var(--muted); font-size: 0.88em; margin-left: 3px; }
 .mtrack { height: 8px; border-radius: 5px; background: var(--blue-soft); overflow: hidden; }
 .mtrack i { display: block; height: 100%; border-radius: 5px; background: var(--blue); }
 /* row lists */

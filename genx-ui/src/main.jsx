@@ -9414,6 +9414,7 @@ function ManagerDashboard({ token, user, onNavigate }) {
   const abandon = callsCur ? (Number(cur.drops || 0) / callsCur) : 0;
   const live = data?.live || { active: 0, paused: 0 };
   const outcomesMax = Math.max(1, ...((data?.outcomes || []).map((o) => o.n)));
+  const outcomesTotal = Math.max(1, (data?.outcomes || []).reduce((sum, o) => sum + (o.n || 0), 0));
   // Vivid, on-brand outcome colors — no grey fallback (everything gets a real hue).
   const outcomeColor = (s) => (
     s === 'SALE' ? 'var(--good)'                    // sale → green
@@ -9478,7 +9479,7 @@ function ManagerDashboard({ token, user, onNavigate }) {
           <div className="mbars">
             {(data?.outcomes || []).map((o) => (
               <div className="mbar" key={o.status}>
-                <div className="mbar-top"><b>{o.name}</b><span>{formatNumber(o.n)}</span></div>
+                <div className="mbar-top"><b>{o.name}</b><span>{formatNumber(o.n)} <em className="mbar-pct">{((o.n / outcomesTotal) * 100).toFixed(1)}%</em></span></div>
                 <div className="mtrack"><i style={{ width: `${Math.max(2, (o.n / outcomesMax) * 100)}%`, background: outcomeColor(o.status) }} /></div>
               </div>
             ))}
