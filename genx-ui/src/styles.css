@@ -2336,7 +2336,8 @@ td span {
 
 .footer-line {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 12px;
   padding: 12px 14px;
 }
@@ -3228,6 +3229,27 @@ input:-webkit-autofill:focus {
 .mseg .mdate { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.78rem; font-weight: 700; padding: 5px 10px; border-radius: 7px; cursor: pointer; color-scheme: dark; }
 .mseg .mdate.on { background: var(--blue-soft); color: var(--blue); }
 .mseg .mdate::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.7; }
+.mseg .mdate-sep { align-self: center; color: var(--muted); font-weight: 700; }
+
+/* Topbar quick links (API Docs / User Guide moved up from the strip). */
+.topbar-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-link:hover {
+  border-color: rgba(0, 217, 255, 0.22);
+  background: rgba(0, 217, 255, 0.08);
+}
 /* KPI strip */
 .mkpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
 .mkpi { background: linear-gradient(180deg, rgba(0, 217, 255, 0.10), transparent 64%), var(--surface); border: 1px solid rgba(0, 217, 255, 0.42); border-radius: 13px; padding: 13px 15px; box-shadow: inset 0 0 0 1px rgba(0, 217, 255, 0.10), 0 0 30px rgba(0, 217, 255, 0.22), 0 12px 30px rgba(0, 0, 0, 0.28); }

@@ -1297,12 +1297,37 @@ async function systemStatus() {
     [{}],
   );
 
+  // Replica health. SHOW SLAVE HOSTS on the primary lists every replica
+  // currently REGISTERED AND CONNECTED (being listed = online) — that's how
+  // multiple slaves get detected without configuring each one here. If the
+  // configured report slave (GENX_UI_DB_SLAVE_HOST) isn't in that list (not
+  // registered, or the grant is missing), fall back to pinging its pool.
+  const slaves = [];
+  try {
+    const hosts = await rows('SHOW SLAVE HOSTS', [], []);
+    for (const row of hosts) {
+      slaves.push({
+        id: String(row.Server_id ?? row.server_id ?? ''),
+        host: String(row.Host ?? row.host ?? ''),
+        online: true,
+      });
+    }
+  } catch {
+    /* cron user may lack REPLICATION privileges — ping fallback below */
+  }
+  if (config.dbSlave.host && !slaves.some((s) => s.host === config.dbSlave.host)) {
+    const online = await dbContext.run(reportPool, () => rows('SELECT 1 AS ok', [], []))
+      .then((r) => Boolean(r?.length)).catch(() => false);
+    slaves.push({ id: '', host: config.dbSlave.host, online });
+  }
+
   return {
     dbOnline: Boolean(identity?.hostname),
     hostname: identity?.hostname || 'unknown',
     version: identity?.version || 'unknown',
     database: identity?.database_name || config.db.database,
     dbTime: identity?.db_time || null,
+    slaves,
   };
 }
 
@@ -7652,12 +7677,19 @@ async function managerDashboard(req, res) {
   // Windows use the DB server clock (cluster TZ). Date SQL carries no user
   // input — rangeKey is enum-validated, and the specific-date variant only
   // inlines after a strict YYYY-MM-DD regex — so it's safe to inline.
-  const pickedDate = String(req.query?.date || '');
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const fromStr = String(req.query?.from || req.query?.date || '');
+  const toStr = String(req.query?.to || fromStr);
   let WIN;
-  if (String(req.query?.range) === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(pickedDate)) {
-    // One specific calendar day; the comparison window is the day before.
-    const d = `'${pickedDate}'`;
-    WIN = { cur: d, curEnd: `DATE_ADD(${d}, INTERVAL 1 DAY)`, prev: `DATE_SUB(${d}, INTERVAL 1 DAY)`, prevEnd: d };
+  if (['date', 'custom'].includes(String(req.query?.range)) && DATE_RE.test(fromStr) && DATE_RE.test(toStr)) {
+    // Specific date range (single day when from == to). Comparison window =
+    // the equal-length window immediately before it. ISO strings compare
+    // lexically, so a reversed pair just swaps.
+    let [a, b] = fromStr <= toStr ? [fromStr, toStr] : [toStr, fromStr];
+    const days = Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1);
+    const A = `'${a}'`;
+    const B = `'${b}'`;
+    WIN = { cur: A, curEnd: `DATE_ADD(${B}, INTERVAL 1 DAY)`, prev: `DATE_SUB(${A}, INTERVAL ${days} DAY)`, prevEnd: A };
   } else {
     WIN = {
       today: { cur: 'CURDATE()', curEnd: '', prev: 'CURDATE() - INTERVAL 1 DAY', prevEnd: 'CURDATE()' },

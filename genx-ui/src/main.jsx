@@ -9702,22 +9702,25 @@ const MDASH_RANGES = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7days', 
 // catalog. One call to /reports/manager-dashboard fills every panel.
 function ManagerDashboard({ token, user, onNavigate }) {
   const [range, setRange] = useState('today');
-  // A picked calendar date overrides the range buttons; picking a range
-  // button clears it back to relative windows.
-  const [customDate, setCustomDate] = useState('');
+  // A picked date range overrides the range buttons; picking a range button
+  // clears it back to relative windows. From alone = that single day.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    const query = customDate ? `range=date&date=${customDate}` : `range=${range}`;
+    const query = dateFrom
+      ? `range=custom&from=${dateFrom}&to=${dateTo || dateFrom}`
+      : `range=${range}`;
     apiFetch(`/reports/manager-dashboard?${query}`, token)
       .then((d) => { if (alive) { setData(d); setError(''); } })
       .catch((e) => { if (alive) setError(e.status === 403 ? 'Reports not permitted for your role.' : 'Could not load the dashboard.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [range, customDate, token]);
+  }, [range, dateFrom, dateTo, token]);
 
   const k = data?.kpis || { current: {}, previous: {} };
   const cur = k.current || {}; const prev = k.previous || {};
@@ -9744,14 +9747,23 @@ function ManagerDashboard({ token, user, onNavigate }) {
         <div><p className="eyebrow">Reporting Center</p><h2>Manager Dashboard</h2></div>
         <div className="mseg" role="tablist" aria-label="Date range">
           {MDASH_RANGES.map(([key, label]) => (
-            <button key={key} type="button" className={!customDate && range === key ? 'on' : ''} onClick={() => { setCustomDate(''); setRange(key); }}>{label}</button>
+            <button key={key} type="button" className={!dateFrom && range === key ? 'on' : ''} onClick={() => { setDateFrom(''); setDateTo(''); setRange(key); }}>{label}</button>
           ))}
           <input
             type="date"
-            className={customDate ? 'mdate on' : 'mdate'}
-            aria-label="Specific date"
-            value={customDate}
-            onChange={(event) => setCustomDate(event.target.value)}
+            className={dateFrom ? 'mdate on' : 'mdate'}
+            aria-label="From date"
+            value={dateFrom}
+            onChange={(event) => setDateFrom(event.target.value)}
+          />
+          <span className="mdate-sep">–</span>
+          <input
+            type="date"
+            className={dateTo ? 'mdate on' : 'mdate'}
+            aria-label="To date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => setDateTo(event.target.value)}
           />
         </div>
       </div>
@@ -20268,6 +20280,12 @@ function AdminShell({ token, user, onLogout }) {
           </div>
         </div>
         <div className="topbar-actions">
+          <a className="topbar-link" href="/genxapi/" target="_blank" rel="noreferrer">
+            <FileText size={14} aria-hidden="true" /> API Docs
+          </a>
+          <a className="topbar-link" href="/genxguide/" target="_blank" rel="noreferrer">
+            <BookOpen size={14} aria-hidden="true" /> User Guide
+          </a>
           {user && (
             <span className="user-pill">
               <ShieldCheck size={14} aria-hidden="true" />
@@ -20278,6 +20296,12 @@ function AdminShell({ token, user, onLogout }) {
             <Server size={14} aria-hidden="true" />
             {system.dbOnline ? 'DB Online' : 'DB Offline'}
           </StatusPill>
+          {(system.slaves || []).map((slave, index) => (
+            <StatusPill key={slave.host || index} ok={slave.online}>
+              <Database size={14} aria-hidden="true" />
+              {(system.slaves || []).length > 1 ? `Slave ${slave.id || index + 1}` : 'Slave'} {slave.online ? 'Online' : 'Offline'}
+            </StatusPill>
+          ))}
           <button type="button" className="icon-button" onClick={refreshAll} aria-label="Refresh" title="Refresh">
             <RefreshCcw size={18} aria-hidden="true" />
           </button>
@@ -20329,22 +20353,11 @@ function AdminShell({ token, user, onLogout }) {
               <h2>{activeMeta.title}</h2>
             </div>
             <div className="strip-items">
-              {/* Range control removed (Steve 2026-07-18): the Manager
-                  Dashboard's own range picker is the one that matters. */}
+              {/* Slimmed 2026-07-18: range toggle removed (the Manager
+                  Dashboard picker rules); API Docs / User Guide live in the
+                  topbar; DB name dropped; version moved to the footer. */}
               {activeView === 'command' && <RefreshCountdown updatedAt={updatedAt} />}
-              {activeView === 'command' && (
-                <a href="/genxapi/" target="_blank" rel="noreferrer">
-                  <FileText size={16} aria-hidden="true" /> API Docs
-                </a>
-              )}
-              {activeView === 'command' && (
-                <a href="/genxguide/" target="_blank" rel="noreferrer">
-                  <BookOpen size={16} aria-hidden="true" /> User Guide
-                </a>
-              )}
               <span><Clock3 size={16} aria-hidden="true" /> Updated {formatTime(updatedAt)}</span>
-              <span><Database size={16} aria-hidden="true" /> {system.database || 'asterisk'}</span>
-              <span><Sparkles size={16} aria-hidden="true" /> GenX UI v{APP_VERSION}</span>
             </div>
           </section>
 
@@ -20365,6 +20378,7 @@ function AdminShell({ token, user, onLogout }) {
 
           <footer className="footer-line">
             <span><Search size={14} aria-hidden="true" /> GenX admin app connected to the dialer data layer</span>
+            <span><Sparkles size={14} aria-hidden="true" /> GenX UI v{APP_VERSION}</span>
           </footer>
         </div>
       </div>
