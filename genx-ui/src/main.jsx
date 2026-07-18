@@ -4319,8 +4319,38 @@ function ApiKeysPanel({ userId, token, onLogout }) {
   );
 }
 
-function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCount = 0, onManageDialStatuses, campaignForm = null }) {
+function CampaignScopedTools({ admin, campaignId, user, token, onLogout, onAction, dialStatusCount = 0, onManageDialStatuses, campaignForm = null }) {
   const campaign = String(campaignId || '');
+  // Log All Agents Out lives up here on Detail (next to the state chips) —
+  // same reason-required confirm flow the strip button had.
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [logoutReason, setLogoutReason] = useState('');
+  const [logoutState, setLogoutState] = useState('');
+
+  async function logoutAgents() {
+    if (!confirmingLogout) {
+      setConfirmingLogout(true);
+      return;
+    }
+    if (!logoutReason.trim()) return; // reason is required before it fires
+    setLogoutState('working');
+    try {
+      const payload = await apiFetch(`/admin/campaigns/${encodeURIComponent(campaign)}/logout-agents`, token, {
+        method: 'POST',
+        body: JSON.stringify({ reason: logoutReason.trim() }),
+      });
+      setLogoutState(`Logged out ${payload.loggedOut} agent${payload.loggedOut === 1 ? '' : 's'}`);
+      setLogoutReason('');
+      setConfirmingLogout(false);
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setLogoutState(requestError.status === 403 ? 'Not permitted' : 'Logout failed');
+      setConfirmingLogout(false);
+    }
+  }
   // At-a-glance state chips so the basics never require scanning the form.
   const heroChips = campaignForm ? [
     { label: '', value: campaignForm.active === 'Y' ? 'Active' : 'Inactive', tone: campaignForm.active === 'Y' ? 'on' : 'off' },
@@ -4400,6 +4430,32 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
             ))}
           </div>
         )}
+        {userCan(user, 'campaigns') && !confirmingLogout && (
+          <button type="button" className="t-action danger head-logout" disabled={logoutState === 'working'} onClick={logoutAgents}>
+            <LogOut size={14} aria-hidden="true" />
+            Log All Agents Out
+          </button>
+        )}
+        {userCan(user, 'campaigns') && confirmingLogout && (
+          <span className="logout-confirm">
+            <input
+              type="text"
+              className="logout-reason"
+              placeholder="Reason (required) — logged to admin history"
+              value={logoutReason}
+              maxLength={200}
+              autoFocus
+              onChange={(event) => setLogoutReason(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') logoutAgents(); if (event.key === 'Escape') { setConfirmingLogout(false); setLogoutReason(''); } }}
+            />
+            <button type="button" className="danger-action compact-action" disabled={logoutState === 'working' || !logoutReason.trim()} onClick={logoutAgents}>
+              <LogOut size={15} aria-hidden="true" />
+              {logoutState === 'working' ? 'Logging out' : 'Confirm — log out all'}
+            </button>
+            <button type="button" className="t-action" onClick={() => { setConfirmingLogout(false); setLogoutReason(''); }}>Cancel</button>
+          </span>
+        )}
+        {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
         <SlidersHorizontal size={20} aria-hidden="true" />
       </div>
       <div className="campaign-tool-grid">
@@ -5049,13 +5105,15 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
             </a>
           );
         })}
-        {userCan(user, 'campaigns') && !confirmingLogout && (
+        {/* On Detail the logout lives in the Campaign Tools head (next to the
+            state chips); the basic edit page keeps it here in the strip. */}
+        {basic && userCan(user, 'campaigns') && !confirmingLogout && (
           <button type="button" className="t-action danger" disabled={logoutState === 'working'} onClick={logoutAgents}>
             <LogOut size={14} aria-hidden="true" />
             Log All Agents Out
           </button>
         )}
-        {userCan(user, 'campaigns') && confirmingLogout && (
+        {basic && userCan(user, 'campaigns') && confirmingLogout && (
           <span className="logout-confirm">
             <input
               type="text"
@@ -5074,7 +5132,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
             <button type="button" className="t-action" onClick={() => { setConfirmingLogout(false); setLogoutReason(''); }}>Cancel</button>
           </span>
         )}
-        {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
+        {basic && logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
       {!basic && (() => {
         // Row click handlers: the two URL modals are local; everything else
@@ -6526,6 +6584,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             admin={admin}
             campaignId={form.campaign_id}
             user={user}
+            token={token}
+            onLogout={onLogout}
             onAction={stackAction}
             dialStatusCount={campaignDialStatuses(form).length}
             onManageDialStatuses={() => setDialStatusModal(true)}
