@@ -1076,6 +1076,82 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* Campaign hero chips: at-a-glance state in the Campaign Tools head. */
+.hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-left: auto;
+  margin-right: 12px;
+}
+
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 217, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 217, 255, 0.07);
+  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.hero-chip i {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.hero-chip.on {
+  border-color: rgba(115, 251, 211, 0.35);
+  background: rgba(115, 251, 211, 0.08);
+  color: var(--green);
+}
+
+.hero-chip.off {
+  border-color: rgba(255, 124, 155, 0.35);
+  background: rgba(255, 124, 155, 0.08);
+  color: var(--danger);
+}
+
+.hero-chip.warn {
+  border-color: rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.08);
+  color: var(--amber);
+}
+
+/* Lists panel collapsed-by-default: the whole head is the toggle. */
+.lists-toggle {
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  gap: 12px;
+}
+
+.lists-summary {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.lists-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.lists-toggle .chev-open {
+  transform: rotate(90deg);
+}
+
 .rank-grids {
   display: grid;
   gap: 12px;

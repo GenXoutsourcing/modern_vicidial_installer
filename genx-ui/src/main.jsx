@@ -4319,8 +4319,17 @@ function ApiKeysPanel({ userId, token, onLogout }) {
   );
 }
 
-function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCount = 0, onManageDialStatuses }) {
+function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCount = 0, onManageDialStatuses, campaignForm = null }) {
   const campaign = String(campaignId || '');
+  // At-a-glance state chips so the basics never require scanning the form.
+  const heroChips = campaignForm ? [
+    { label: '', value: campaignForm.active === 'Y' ? 'Active' : 'Inactive', tone: campaignForm.active === 'Y' ? 'on' : 'off' },
+    { label: 'Method', value: campaignForm.dial_method || '' },
+    { label: 'Level', value: campaignForm.auto_dial_level || '' },
+    { label: 'Hopper', value: campaignForm.hopper_level || '' },
+    ...(String(campaignForm.amd_type || '').trim() && campaignForm.amd_type !== 'N' && campaignForm.amd_type !== 'DISABLED'
+      ? [{ label: 'AMD', value: campaignForm.amd_type, tone: 'warn' }] : []),
+  ].filter((chip) => String(chip.value) !== '') : [];
   // Cards show counts only; clicking one opens a stacked manager modal
   // listing the entries (click = edit/delete via nested ActionModal) with
   // the Add button. Closing anything lands back on the campaign Detail.
@@ -4381,6 +4390,16 @@ function CampaignScopedTools({ admin, campaignId, user, onAction, dialStatusCoun
           <p className="eyebrow">Campaign Tools</p>
           <h3>{campaign}</h3>
         </div>
+        {heroChips.length > 0 && (
+          <div className="hero-chips">
+            {heroChips.map((chip) => (
+              <span key={chip.label + chip.value} className={`hero-chip${chip.tone ? ` ${chip.tone}` : ''}`}>
+                {chip.label && <i>{chip.label}</i>}
+                {chip.value}
+              </span>
+            ))}
+          </div>
+        )}
         <SlidersHorizontal size={20} aria-hidden="true" />
       </div>
       <div className="campaign-tool-grid">
@@ -4919,12 +4938,19 @@ const DETAIL_REPORT_KINDS = Object.keys(REPORT_MODALS);
 // labels here must match the extraActions labels (PILL_SECTIONS after the
 // ' and ' -> ' & ' replace) plus the two URL modals handled locally.
 const CAMPAIGN_SETTINGS_GROUPS = [
-  { title: 'Dialing & Pacing', items: ['Manual Dial', 'AMD', 'Dead Call Handling', 'Auto Alt Statuses'] },
-  { title: 'Agent Experience', items: ['Agent Screen', 'Agent Controls', 'Transfers & 3-Way Calls', 'Callbacks'] },
+  { title: 'Identity & Status', items: ['Basic Campaign'] },
+  { title: 'Dialing & Pacing', items: ['Dialing & Hopper', 'Manual Dial', 'AMD', 'Dead Call Handling', 'Auto Alt Statuses'] },
+  { title: 'Routing & Audio', items: ['Routing & Inbound', 'Voicemail'] },
+  { title: 'Agent Experience', items: ['Agent Limits', 'Agent Screen', 'Agent Controls', 'Transfers & 3-Way Calls', 'Callbacks'] },
   { title: 'Data & Integrations', items: ['Webform URLs', 'Call URLs', 'CRM', 'List Controls'] },
   { title: 'Compliance', items: ['Compliance'] },
 ];
 const CAMPAIGN_SETTINGS_META = {
+  'Basic Campaign': [CircleDot, 'Name, description, CID, scripts, groups'],
+  'Dialing & Hopper': [Gauge, 'Pacing, ratios, hopper, timeouts'],
+  'Routing & Inbound': [ArrowRightLeft, 'Routing extension, in-groups, blended'],
+  Voicemail: [Mail, 'VM message, drop extension'],
+  'Agent Limits': [Users, 'Concurrency, wrap-up, call caps'],
   'Manual Dial': [Phone, 'Prefix, permissions, dial overrides'],
   AMD: [Radio, 'Answering machine detection & routing'],
   'Dead Call Handling': [PhoneOff, 'Max dead time, action, audio'],
@@ -5170,7 +5196,11 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
     .sort((a, b) => Number(a.list_id) - Number(b.list_id)); // smallest list ID first
   const activeLists = lists.filter((row) => row.active === 'Y').length;
   const [breakdown, setBreakdown] = useState(null);
+  // Collapsed by default: the Detail page shows just the summary bar; the
+  // full list/breakdown grid expands on click.
+  const [expanded, setExpanded] = useState(false);
   const canToggle = userCan(user, 'lists');
+  const totalLeads = lists.reduce((sum, row) => sum + (Number(row.lead_count) || 0), 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -5215,19 +5245,20 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
 
   return (
     <div className="campaign-tool-panel campaign-connections">
-      <div className="campaign-tool-head">
+      <button type="button" className="campaign-tool-head lists-toggle" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded}>
         <div>
           <p className="eyebrow">Leads</p>
           <h3>Lists and lead statuses</h3>
         </div>
-        <Database size={20} aria-hidden="true" />
-      </div>
-      <div className="connection-lists">
-        <p className="connection-summary">
+        <span className="lists-summary">
           {lists.length
-            ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} in this campaign (${formatNumber(activeLists)} active)`
+            ? `${formatNumber(lists.length)} list${lists.length === 1 ? '' : 's'} · ${formatNumber(totalLeads)} leads · ${formatNumber(activeLists)} active`
             : 'No lists point at this campaign yet'}
-        </p>
+        </span>
+        <ChevronRight size={18} aria-hidden="true" className={expanded ? 'chev-open' : ''} />
+      </button>
+      {expanded && (<>
+      <div className="connection-lists">
         {toggleError && <p className="form-error">{toggleError}</p>}
         {lists.slice(0, 20).map((row) => (
           <div className="list-toggle-row" key={row.list_id}>
@@ -5279,6 +5310,7 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
       {breakdown && !breakdown.statuses?.length && lists.length > 0 && (
         <p className="connection-summary">{breakdown.error ? 'Lead status counts unavailable' : 'No leads in the active lists yet'}</p>
       )}
+      </>)}
     </div>
   );
 }
@@ -6271,8 +6303,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   // same form state; the section modal's Save runs the normal campaign save
   // without closing the Detail modal.
   const PILL_SECTIONS = isDetail && action.entity === 'campaigns'
-    ? ['Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls', 'Agent Controls', 'Agent Screen', 'Manual Dial', 'Callbacks', 'Dead Call Handling']
+    ? ['Basic Campaign', 'Dialing and Hopper', 'Routing and Inbound', 'Voicemail', 'Agent Limits',
+      'Transfers and 3-Way Calls', 'Compliance', 'CRM', 'AMD', 'List Controls', 'Agent Controls', 'Agent Screen', 'Manual Dial', 'Callbacks', 'Dead Call Handling']
     : [];
+  // The handful of fields an admin touches weekly stay inline as Essentials;
+  // they ALSO appear in their section modals (same form state, same save).
+  const ESSENTIAL_CAMPAIGN_KEYS = ['campaign_name', 'active', 'dial_method', 'auto_dial_level', 'hopper_level', 'local_call_time'];
   const mainFields = [];
   const pillFields = {};
   let pillSection = null;
@@ -6493,6 +6529,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             onAction={stackAction}
             dialStatusCount={campaignDialStatuses(form).length}
             onManageDialStatuses={() => setDialStatusModal(true)}
+            campaignForm={form}
           />
         )}
 
@@ -6631,6 +6668,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
 
         <form className="entity-form" onSubmit={submit}>
           <div className="field-grid">
+            {isDetail && action.entity === 'campaigns' && (
+              <>
+                <div className="form-section">Essentials</div>
+                {fields.filter((field) => field.key && ESSENTIAL_CAMPAIGN_KEYS.includes(field.key)).map(renderField)}
+              </>
+            )}
             {mainFields.map(renderField)}
           </div>
           {error && <p className="form-error">{error}</p>}
