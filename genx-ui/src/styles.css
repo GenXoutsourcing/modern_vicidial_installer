@@ -3432,6 +3432,38 @@ input:-webkit-autofill:focus {
   resize: vertical;
 }
 
+.sb-block-tools .sb-when-on {
+  color: var(--amber);
+  border-color: rgba(255, 209, 102, 0.4);
+}
+
+.sb-when-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(255, 209, 102, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 209, 102, 0.05);
+}
+
+.sb-when-row span {
+  color: var(--amber);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.sb-when-row select,
+.sb-when-row input {
+  width: auto;
+  flex: 0 1 auto;
+  padding: 5px 9px;
+  font-size: 0.76rem;
+}
+
 .sb-flds {
   display: grid;
   gap: 6px;

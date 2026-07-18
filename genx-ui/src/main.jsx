@@ -9820,24 +9820,68 @@ function sbEscape(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Blocks -> the HTML stored in script_text / shown on the agent screen.
-// Inline styles only: the agent screen and legacy agc render this outside
-// our stylesheet.
+// One block -> its HTML (inline styles only: the agent screen and legacy
+// agc render this outside our stylesheet).
+function sbBlockHtml(block) {
+  if (block.t === 'h') return `<h3 style="margin:14px 0 6px;font-family:Arial,sans-serif;">${sbEscape(block.text)}</h3>`;
+  if (block.t === 'say') return `<div style="margin:8px 0;padding:9px 13px;border-left:4px solid #2d7dff;background:#eef4ff;font-family:Arial,sans-serif;"><b>SAY:</b> ${sbEscape(block.text)}</div>`;
+  if (block.t === 'txt') return `<p style="margin:8px 0;font-family:Arial,sans-serif;">${sbEscape(block.text)}</p>`;
+  if (block.t === 'div') return '<hr style="margin:14px 0;border:none;border-top:1px solid #ccc;">';
+  if (block.t === 'raw') return String(block.html || '');
+  if (block.t === 'flds') {
+    const rows = (block.items || [])
+      .map((item) => `<tr><td style="padding:3px 14px 3px 0;color:#555;white-space:nowrap;">${sbEscape(item.label)}</td><td style="padding:3px 0;"><b>--A--${item.field}--B--</b></td></tr>`)
+      .join('');
+    return `<table style="margin:8px 0;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">${rows}</table>`;
+  }
+  return '';
+}
+
+const SB_WHEN_OPS = [
+  ['eq', 'equals'], ['ne', 'does not equal'], ['contains', 'contains'], ['notempty', 'is not empty'], ['empty', 'is empty'],
+];
+
+// Shared condition evaluator: builder preview AND the agent runtime.
+function sbEvalWhen(when, lead) {
+  if (!when || !when.field) return true;
+  const value = String(lead?.[when.field] ?? '').trim().toLowerCase();
+  const target = String(when.value ?? '').trim().toLowerCase();
+  if (when.op === 'ne') return value !== target;
+  if (when.op === 'contains') return value.includes(target);
+  if (when.op === 'notempty') return value !== '';
+  if (when.op === 'empty') return value === '';
+  return value === target; // eq default
+}
+
+// Blocks -> stored HTML. Conditional blocks are wrapped in a marker div the
+// agent runtime evaluates against the live lead (legacy agc shows them
+// unconditionally — graceful degradation).
 function sbRenderHtml(blocks) {
   return blocks.map((block) => {
-    if (block.t === 'h') return `<h3 style="margin:14px 0 6px;font-family:Arial,sans-serif;">${sbEscape(block.text)}</h3>`;
-    if (block.t === 'say') return `<div style="margin:8px 0;padding:9px 13px;border-left:4px solid #2d7dff;background:#eef4ff;font-family:Arial,sans-serif;"><b>SAY:</b> ${sbEscape(block.text)}</div>`;
-    if (block.t === 'txt') return `<p style="margin:8px 0;font-family:Arial,sans-serif;">${sbEscape(block.text)}</p>`;
-    if (block.t === 'div') return '<hr style="margin:14px 0;border:none;border-top:1px solid #ccc;">';
-    if (block.t === 'raw') return String(block.html || '');
-    if (block.t === 'flds') {
-      const rows = (block.items || [])
-        .map((item) => `<tr><td style="padding:3px 14px 3px 0;color:#555;white-space:nowrap;">${sbEscape(item.label)}</td><td style="padding:3px 0;"><b>--A--${item.field}--B--</b></td></tr>`)
-        .join('');
-      return `<table style="margin:8px 0;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">${rows}</table>`;
+    const html = sbBlockHtml(block);
+    if (block.when?.field) {
+      const attr = `${block.when.field}|${block.when.op || 'eq'}|${String(block.when.value ?? '').replace(/[|"<>]/g, '')}`;
+      return `<div data-gxwhen="${attr}">${html}</div>`;
     }
-    return '';
+    return html;
   }).join('\n');
+}
+
+// Agent runtime: strip conditional sections whose condition fails for the
+// CURRENT lead. DOM-based (blocks never nest markers, but DOM is safer than
+// regex regardless).
+function applyScriptConditions(html, lead) {
+  if (!/data-gxwhen/.test(String(html || ''))) return html;
+  try {
+    const doc = new DOMParser().parseFromString(String(html), 'text/html');
+    for (const node of [...doc.querySelectorAll('[data-gxwhen]')]) {
+      const [field, op, value] = String(node.getAttribute('data-gxwhen') || '').split('|');
+      if (!sbEvalWhen({ field, op, value }, lead)) node.remove();
+    }
+    return doc.body.innerHTML;
+  } catch {
+    return html; // never let a parse hiccup blank the script
+  }
 }
 
 function sbSerialize(blocks) {
@@ -9891,7 +9935,18 @@ function ScriptBuilder({ script, token, onClose, onSaved }) {
 
   const serialized = sbSerialize(blocks);
   const tooLong = serialized.length > 12000;
-  const previewHtml = sbRenderHtml(blocks).replace(/--A--(\w+)--B--/g, (m, f) => sbEscape(SB_SAMPLE_LEAD[f] ?? `[${f}]`));
+  // Preview is TRUTHFUL about conditions: blocks whose condition fails for
+  // the sample lead render greyed with a "hidden" tag (the agent runtime
+  // removes them entirely); passing conditional blocks get a dashed edge.
+  const previewHtml = blocks.map((block) => {
+    const html = sbBlockHtml(block).replace(/--A--(\w+)--B--/g, (m, f) => sbEscape(SB_SAMPLE_LEAD[f] ?? `[${f}]`));
+    if (!block.when?.field) return html;
+    const passes = sbEvalWhen(block.when, SB_SAMPLE_LEAD);
+    const label = `${block.when.field} ${SB_WHEN_OPS.find(([op]) => op === (block.when.op || 'eq'))?.[1] || '='} ${block.when.value || ''}`;
+    return passes
+      ? `<div style="outline:1px dashed #7bb7ff;outline-offset:3px;position:relative;"><div style="font-size:10px;color:#2d7dff;font-family:Arial;">shown when ${sbEscape(label)}</div>${html}</div>`
+      : `<div style="opacity:0.35;"><div style="font-size:10px;color:#b00;font-family:Arial;">hidden (when ${sbEscape(label)})</div>${html}</div>`;
+  }).join('\n');
 
   async function save() {
     setSaving(true);
@@ -9953,11 +10008,38 @@ function ScriptBuilder({ script, token, onClose, onSaved }) {
                         {SB_MERGE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
                       </select>
                     )}
+                    <button
+                      type="button"
+                      className={block.when ? 'sb-when-on' : ''}
+                      title="Show this block conditionally"
+                      onClick={() => setBlock(index, { when: block.when ? undefined : { field: 'state', op: 'eq', value: '' } })}
+                    >
+                      ⚡
+                    </button>
                     <button type="button" onClick={() => move(index, -1)} title="Move up">↑</button>
                     <button type="button" onClick={() => move(index, 1)} title="Move down">↓</button>
                     <button type="button" onClick={() => remove(index)} title="Remove">✕</button>
                   </span>
                 </div>
+                {block.when && (
+                  <div className="sb-when-row">
+                    <span>Show when</span>
+                    <select value={block.when.field} onChange={(e) => setBlock(index, { when: { ...block.when, field: e.target.value } })}>
+                      {SB_MERGE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                    <select value={block.when.op || 'eq'} onChange={(e) => setBlock(index, { when: { ...block.when, op: e.target.value } })}>
+                      {SB_WHEN_OPS.map(([op, label]) => <option key={op} value={op}>{label}</option>)}
+                    </select>
+                    {!['empty', 'notempty'].includes(block.when.op) && (
+                      <input
+                        type="text"
+                        value={block.when.value || ''}
+                        placeholder="value"
+                        onChange={(e) => setBlock(index, { when: { ...block.when, value: e.target.value.replace(/[|"<>]/g, '') } })}
+                      />
+                    )}
+                  </div>
+                )}
                 {(block.t === 'h') && <input type="text" value={block.text || ''} onChange={(e) => setBlock(index, { text: e.target.value })} placeholder="Section heading" />}
                 {(block.t === 'say' || block.t === 'txt') && (
                   <textarea rows={block.t === 'say' ? 3 : 2} value={block.text || ''} onChange={(e) => setBlock(index, { text: e.target.value })} placeholder={block.t === 'say' ? 'What the agent says out loud' : 'Notes / instructions'} />
@@ -20000,11 +20082,14 @@ function AgentConsole({ token, authInfo, onExit }) {
               <div className="agn-script">
                 {scriptData && !scriptData.script && <p className="connection-summary">No script assigned to this campaign</p>}
                 {scriptData?.script && (
+                  {/* Dynamic script: conditional sections (data-gxwhen, from
+                      the Script Builder) are evaluated against the LIVE lead
+                      and stripped when they don't apply. */}
                   <iframe
                     title="Campaign script"
                     style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
                     sandbox="allow-scripts"
-                    srcDoc={mergeFields(scriptData.script.script_text, { escapeHtml: true })}
+                    srcDoc={applyScriptConditions(mergeFields(scriptData.script.script_text, { escapeHtml: true }), lead)}
                   />
                 )}
               </div>
