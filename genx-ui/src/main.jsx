@@ -9795,13 +9795,247 @@ function PhonesView({ admin, user, token, onAction }) {
   );
 }
 
-function ScriptsView({ admin, user, onAction }) {
+// ===== Script Builder ========================================================
+// Visual block editor for agent scripts. Emits plain HTML into script_text
+// (fully compatible with the agent screen's --A--field--B-- merge renderer
+// and legacy agc), and embeds its own block JSON in a leading HTML comment
+// (<!--GENXSB1 {...}-->) so builder scripts stay re-editable as blocks.
+// Legacy/hand-written scripts open with their HTML preserved in a Raw block.
+const SB_MERGE_FIELDS = [
+  'first_name', 'last_name', 'title', 'address1', 'address2', 'address3', 'city', 'state', 'postal_code',
+  'phone_number', 'alt_phone', 'email', 'vendor_lead_code', 'source_id', 'gender', 'date_of_birth',
+  'security_phrase', 'comments', 'lead_id', 'list_id', 'campaign', 'user', 'SQLdate',
+];
+const SB_SAMPLE_LEAD = {
+  first_name: 'Maria', last_name: 'Lopez', title: 'Ms', address1: '480 Harbor St', address2: '', address3: '',
+  city: 'Tampa', state: 'FL', postal_code: '33601', phone_number: '8135551234', alt_phone: '', email: 'maria@example.com',
+  vendor_lead_code: 'VLC1001', source_id: 'WEB', gender: 'F', date_of_birth: '1978-04-12', security_phrase: 'blue kayak',
+  comments: '', lead_id: '1000123', list_id: '301', campaign: 'WIZTEST', user: 'agent1001', SQLdate: '2026-07-18 12:00:00',
+};
+const SB_BLOCK_TYPES = [
+  ['h', 'Heading'], ['say', 'Agent Says'], ['txt', 'Text'], ['flds', 'Lead Fields'], ['div', 'Divider'], ['raw', 'Raw HTML'],
+];
+
+function sbEscape(text) {
+  return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Blocks -> the HTML stored in script_text / shown on the agent screen.
+// Inline styles only: the agent screen and legacy agc render this outside
+// our stylesheet.
+function sbRenderHtml(blocks) {
+  return blocks.map((block) => {
+    if (block.t === 'h') return `<h3 style="margin:14px 0 6px;font-family:Arial,sans-serif;">${sbEscape(block.text)}</h3>`;
+    if (block.t === 'say') return `<div style="margin:8px 0;padding:9px 13px;border-left:4px solid #2d7dff;background:#eef4ff;font-family:Arial,sans-serif;"><b>SAY:</b> ${sbEscape(block.text)}</div>`;
+    if (block.t === 'txt') return `<p style="margin:8px 0;font-family:Arial,sans-serif;">${sbEscape(block.text)}</p>`;
+    if (block.t === 'div') return '<hr style="margin:14px 0;border:none;border-top:1px solid #ccc;">';
+    if (block.t === 'raw') return String(block.html || '');
+    if (block.t === 'flds') {
+      const rows = (block.items || [])
+        .map((item) => `<tr><td style="padding:3px 14px 3px 0;color:#555;white-space:nowrap;">${sbEscape(item.label)}</td><td style="padding:3px 0;"><b>--A--${item.field}--B--</b></td></tr>`)
+        .join('');
+      return `<table style="margin:8px 0;border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;">${rows}</table>`;
+    }
+    return '';
+  }).join('\n');
+}
+
+function sbSerialize(blocks) {
+  return `<!--GENXSB1 ${JSON.stringify({ v: 1, blocks })}-->\n${sbRenderHtml(blocks)}`;
+}
+
+function sbParse(scriptText) {
+  const match = /^<!--GENXSB1 (.*?)-->/s.exec(String(scriptText || ''));
+  if (match) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (Array.isArray(data.blocks)) return data.blocks;
+    } catch { /* fall through to raw */ }
+  }
+  const text = String(scriptText || '').trim();
+  return text ? [{ t: 'raw', html: text }] : [];
+}
+
+function ScriptBuilder({ script, token, onClose, onSaved }) {
+  const isNew = !script;
+  const [meta, setMeta] = useState({
+    script_id: script?.script_id || '',
+    script_name: script?.script_name || '',
+    active: script?.active || 'Y',
+    user_group: script?.user_group || '---ALL---',
+    script_color: script?.script_color || 'white',
+    script_comments: script?.script_comments || '',
+  });
+  const [blocks, setBlocks] = useState(() => (script ? sbParse(script.script_text) : [
+    { t: 'h', text: 'Opening' },
+    { t: 'say', text: 'Hi --A--first_name--B--, this is --A--user--B-- calling from ...' },
+    { t: 'flds', items: [{ label: 'Name', field: 'first_name' }, { label: 'Phone', field: 'phone_number' }, { label: 'City', field: 'city' }] },
+  ]));
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState('');
+
+  const setBlock = (index, patch) => setBlocks((current) => current.map((b, i) => (i === index ? { ...b, ...patch } : b)));
+  const move = (index, delta) => setBlocks((current) => {
+    const next = [...current];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return current;
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+  });
+  const remove = (index) => setBlocks((current) => current.filter((_, i) => i !== index));
+  const add = (type) => setBlocks((current) => [...current, type === 'flds'
+    ? { t: 'flds', items: [{ label: 'Name', field: 'first_name' }] }
+    : type === 'div' ? { t: 'div' } : type === 'raw' ? { t: 'raw', html: '' } : { t: type, text: '' }]);
+  const appendField = (index, field) => setBlocks((current) => current.map((b, i) => (
+    i === index ? { ...b, text: `${b.text || ''}--A--${field}--B--` } : b)));
+
+  const serialized = sbSerialize(blocks);
+  const tooLong = serialized.length > 12000;
+  const previewHtml = sbRenderHtml(blocks).replace(/--A--(\w+)--B--/g, (m, f) => sbEscape(SB_SAMPLE_LEAD[f] ?? `[${f}]`));
+
+  async function save() {
+    setSaving(true);
+    setNote('');
+    try {
+      const body = { ...meta, script_text: serialized };
+      if (isNew) {
+        await apiFetch('/admin/scripts', token, { method: 'POST', body: JSON.stringify(body) });
+      } else {
+        await apiFetch(`/admin/scripts/${encodeURIComponent(meta.script_id)}`, token, { method: 'PUT', body: JSON.stringify(body) });
+      }
+      setNote('Saved');
+      onSaved?.();
+    } catch (requestError) {
+      setNote(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal rail-modal" role="dialog" aria-modal="true" aria-label="Script Builder">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">{isNew ? 'New Script' : `Script ${meta.script_id}`}</p>
+            <h2>Script Builder</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="sb-meta">
+          {isNew && (
+            <label><span>Script ID</span>
+              <input type="text" maxLength={10} value={meta.script_id} onChange={(e) => setMeta((c) => ({ ...c, script_id: e.target.value.replace(/[^A-Za-z0-9_-]/g, '') }))} />
+            </label>
+          )}
+          <label><span>Name</span>
+            <input type="text" maxLength={50} value={meta.script_name} onChange={(e) => setMeta((c) => ({ ...c, script_name: e.target.value }))} />
+          </label>
+          <label><span>Status</span>
+            <select value={meta.active} onChange={(e) => setMeta((c) => ({ ...c, active: e.target.value }))}>
+              <option value="Y">Active</option><option value="N">Off</option>
+            </select>
+          </label>
+          <span className={tooLong ? 'sb-size over' : 'sb-size'}>{formatNumber(serialized.length)} / 12,000</span>
+        </div>
+        <div className="sb-layout">
+          <div className="sb-editor">
+            {blocks.map((block, index) => (
+              <div key={index} className="sb-block">
+                <div className="sb-block-head">
+                  <span className="sb-type">{SB_BLOCK_TYPES.find(([t]) => t === block.t)?.[1] || block.t}</span>
+                  <span className="sb-block-tools">
+                    {(block.t === 'say' || block.t === 'txt' || block.t === 'h') && (
+                      <select value="" onChange={(e) => { if (e.target.value) appendField(index, e.target.value); }}>
+                        <option value="">+ field</option>
+                        {SB_MERGE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    )}
+                    <button type="button" onClick={() => move(index, -1)} title="Move up">↑</button>
+                    <button type="button" onClick={() => move(index, 1)} title="Move down">↓</button>
+                    <button type="button" onClick={() => remove(index)} title="Remove">✕</button>
+                  </span>
+                </div>
+                {(block.t === 'h') && <input type="text" value={block.text || ''} onChange={(e) => setBlock(index, { text: e.target.value })} placeholder="Section heading" />}
+                {(block.t === 'say' || block.t === 'txt') && (
+                  <textarea rows={block.t === 'say' ? 3 : 2} value={block.text || ''} onChange={(e) => setBlock(index, { text: e.target.value })} placeholder={block.t === 'say' ? 'What the agent says out loud' : 'Notes / instructions'} />
+                )}
+                {block.t === 'raw' && <textarea rows={4} value={block.html || ''} onChange={(e) => setBlock(index, { html: e.target.value })} placeholder="Raw HTML (legacy)" />}
+                {block.t === 'flds' && (
+                  <div className="sb-flds">
+                    {(block.items || []).map((item, itemIndex) => (
+                      <div key={itemIndex} className="sb-fld-row">
+                        <input type="text" value={item.label} placeholder="Label" onChange={(e) => setBlock(index, { items: block.items.map((it, ii) => (ii === itemIndex ? { ...it, label: e.target.value } : it)) })} />
+                        <select value={item.field} onChange={(e) => setBlock(index, { items: block.items.map((it, ii) => (ii === itemIndex ? { ...it, field: e.target.value } : it)) })}>
+                          {SB_MERGE_FIELDS.map((f) => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                        <button type="button" onClick={() => setBlock(index, { items: block.items.filter((_, ii) => ii !== itemIndex) })}>✕</button>
+                      </div>
+                    ))}
+                    <button type="button" className="t-action" onClick={() => setBlock(index, { items: [...(block.items || []), { label: '', field: 'first_name' }] })}>+ row</button>
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="sb-add">
+              {SB_BLOCK_TYPES.map(([type, label]) => (
+                <button key={type} type="button" className="secondary-action compact-action" onClick={() => add(type)}>+ {label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="sb-preview">
+            <p className="sb-preview-label">Agent preview (sample lead: Maria Lopez)</p>
+            {/* Builder-generated markup only: sbRenderHtml escapes all block
+                text; the raw block is admin-authored HTML, same trust level
+                as the legacy script editor it replaces. */}
+            <div className="sb-preview-card" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+          </div>
+        </div>
+        {tooLong && <p className="form-error">Script exceeds the 12,000 character limit — shorten it or it will be truncated.</p>}
+        <div className="modal-actions sb-actions">
+          <span className="modal-actions-spacer" />
+          {note && <span className="connection-status">{note}</span>}
+          <button type="button" className="secondary-action" onClick={onClose}>Close</button>
+          <button type="button" className="primary-action" disabled={saving || tooLong || (isNew && !meta.script_id)} onClick={save}>
+            <Save size={16} aria-hidden="true" />
+            {saving ? 'Saving' : 'Save Script'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ScriptsView({ admin, user, token, onSaved, onAction }) {
   const scripts = admin?.scripts || [];
   const canManage = userCan(user, 'scripts');
+  // null = closed, 'new' = create, row object = edit that script as blocks.
+  const [builder, setBuilder] = useState(null);
 
   return (
     <>
-      <ActionBar entity="scripts" label="Script" user={user} onAction={onAction}>
+      {builder !== null && (
+        <ScriptBuilder
+          script={builder === 'new' ? null : builder}
+          token={token}
+          onClose={() => setBuilder(null)}
+          onSaved={onSaved}
+        />
+      )}
+      <ActionBar
+        entity="scripts"
+        label="Script"
+        user={user}
+        onAction={onAction}
+        extraActions={canManage ? (
+          <button type="button" className="primary-action compact-action" onClick={() => setBuilder('new')}>
+            <Sparkles size={17} aria-hidden="true" />
+            Script Builder
+          </button>
+        ) : null}
+      >
         <p className="action-copy">Manage agent scripts, prompt text, active state, color, and user-group ownership.</p>
       </ActionBar>
       <section className="admin-grid">
@@ -9822,9 +10056,22 @@ function ScriptsView({ admin, user, onAction }) {
               },
               { key: 'user_group', label: 'Group', render: (row) => row.user_group || '---ALL---' },
               { key: 'script_color', label: 'Color', render: (row) => row.script_color || 'white' },
-              { key: 'script_text', label: 'Text', render: (row) => `${String(row.script_text || '').length} chars` },
+              {
+                key: 'script_text',
+                label: 'Text',
+                render: (row) => `${String(row.script_text || '').length} chars${/^<!--GENXSB1 /.test(String(row.script_text || '')) ? ' · builder' : ''}`,
+              },
               { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-              ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction('scripts', 'edit', row)} /> }] : []),
+              ...(canManage ? [{
+                key: 'actions',
+                label: 'Action',
+                render: (row) => (
+                  <span className="row-action-group">
+                    <button type="button" className="secondary-action compact-action" onClick={() => setBuilder(row)}>Builder</button>
+                    <ManageButton onClick={() => onAction('scripts', 'edit', row)} />
+                  </span>
+                ),
+              }] : []),
             ]}
           />
         </Panel>
@@ -20724,7 +20971,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   if (activeView === 'callMenus') return <CallMenusView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'filterPhoneGroups') return <FilterPhoneGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'phones') return <PhonesView admin={admin} user={user} token={token} onAction={onAction} />;
-  if (activeView === 'scripts') return <ScriptsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'scripts') return <ScriptsView admin={admin} user={user} token={token} onSaved={onSaved} onAction={onAction} />;
   if (activeView === 'leadFilters') return <LeadFiltersView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'callTimes') return <CallTimesView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'shifts') return <ShiftsView admin={admin} user={user} onAction={onAction} />;

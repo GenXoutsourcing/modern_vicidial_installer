@@ -3317,6 +3317,192 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Script Builder: two-pane block editor + agent-style preview. */
+.sb-meta {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 20px 0;
+}
+
+.sb-meta label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.sb-meta input,
+.sb-meta select {
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.sb-size {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.sb-size.over {
+  color: var(--danger);
+}
+
+.sb-layout {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px 20px 0;
+}
+
+.sb-editor {
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding-right: 4px;
+}
+
+.sb-block {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 9px 11px;
+  display: grid;
+  gap: 7px;
+}
+
+.sb-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sb-type {
+  color: var(--blue);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.sb-block-tools {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.sb-block-tools button,
+.sb-block-tools select {
+  padding: 2px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.sb-block-tools button:hover {
+  color: var(--blue);
+  border-color: var(--line);
+}
+
+.sb-block input,
+.sb-block textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  resize: vertical;
+}
+
+.sb-flds {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.sb-fld-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+}
+
+.sb-fld-row select {
+  padding: 7px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(5, 15, 27, 0.72);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.sb-fld-row button {
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sb-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 12px;
+}
+
+.sb-preview {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sb-preview-label {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The preview card mimics the agent script tab: light background, dark
+   text, exactly what the emitted inline-styled HTML expects. */
+.sb-preview-card {
+  border-radius: 10px;
+  background: #fff;
+  color: #1c1c1c;
+  padding: 16px 18px;
+  min-height: 200px;
+}
+
+.sb-actions {
+  padding: 10px 20px 16px;
+}
+
+@media (max-width: 980px) {
+  .sb-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Campaign creation wizard. */
 .wizard-modal {
   width: min(860px, 96vw);
