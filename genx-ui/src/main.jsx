@@ -848,7 +848,9 @@ function userCan(user, entity) {
   if (entity === 'campaignHotkeys') return Boolean(user?.modifyCampaigns);
   if (entity === 'leadRecycle') return Boolean(user?.modifyCampaigns);
   if (entity === 'listMixes') return Boolean(user?.modifyCampaigns);
-  if (entity === 'guides') return Boolean(user?.modifyGuides);
+  // Column defaults to granted, so a pre-flag session (modifyGuides
+  // undefined) stays granted; only an explicit revoke ('0' at login) hides.
+  if (entity === 'guides') return user?.modifyGuides !== false;
   if (entity === 'users') return Boolean(user?.modifyUsers);
   if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);

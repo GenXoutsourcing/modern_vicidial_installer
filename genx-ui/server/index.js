@@ -1091,6 +1091,10 @@ async function copyCampaignSettingsContainer(sourceCampaignId, targetCampaignId)
 function canModify(user, permission) {
   if (!user) return false;
   if (Number(user.userLevel || 0) >= 9) return true;
+  // genx_modify_guides defaults to granted: sessions minted before the
+  // column existed carry no flag at all — treat undefined as granted so a
+  // deploy doesn't lock out logged-in authors. Explicit false ('0') revokes.
+  if (permission === 'modifyGuides') return user.modifyGuides !== false;
   return Boolean(user[permission]);
 }
 
