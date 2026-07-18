@@ -20681,28 +20681,58 @@ function AgentConsole({ token, authInfo, onExit }) {
             <span>Add a note (optional):</span>
             <textarea rows={2} value={dispoComments} onChange={(event) => setDispoComments(event.target.value)} maxLength={255} placeholder="Enter a note before choosing a status…" />
           </label>
-          <div className="agr-radios">
-            {dispoStatuses.map((row) => {
-              const hk = dispoHotkeys.find((h) => h.status === row.status);
-              return (
-                <label key={row.status} className="agr-radio">
-                  <input
-                    type="radio"
-                    name="agent-dispo"
-                    checked={dispoPick === row.status}
-                    // Auto-save on select. CALLBK needs a time, so it only
-                    // sets the pick and reveals the callback picker below.
-                    onChange={() => {
-                      setDispoPick(row.status);
-                      if (row.status !== 'CALLBK') submitDispo(row.status);
-                    }}
-                  />
-                  <span>{row.status_name || row.status}{hk ? ` [${hk.hotkey}]` : ''}</span>
-                </label>
-              );
-            })}
-            {!dispoStatuses.length && <span className="connection-summary">No selectable statuses</span>}
-          </div>
+          {/* Guide exit -> disposition pre-select. Radios auto-save, so the
+              suggestion is a one-click banner, never a silent submit.
+              SUGGEST highlights + offers Apply; FORCE narrows the grid to
+              the guide's disposition (full grid returns if that status
+              isn't selectable for this campaign — never dead-end). */}
+          {(() => {
+            const guideDispo = guideRun?.exit && guideRun.step?.disposition
+              && dispoStatuses.some((row) => row.status === guideRun.step.disposition)
+              ? guideRun.step.disposition : '';
+            const guideForced = guideDispo && guideRun.dispo_mode === 'FORCE';
+            const visibleStatuses = guideForced ? dispoStatuses.filter((row) => row.status === guideDispo) : dispoStatuses;
+            return (
+              <>
+                {guideDispo && (
+                  <div className="agr-guide-suggest">
+                    <span>Guide {guideForced ? 'requires' : 'suggests'}: <b>{dispoStatuses.find((row) => row.status === guideDispo)?.status_name || guideDispo}</b></span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDispoPick(guideDispo);
+                        if (guideDispo !== 'CALLBK') submitDispo(guideDispo);
+                      }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                )}
+                <div className="agr-radios">
+                  {visibleStatuses.map((row) => {
+                    const hk = dispoHotkeys.find((h) => h.status === row.status);
+                    return (
+                      <label key={row.status} className={row.status === guideDispo ? 'agr-radio guide-pick' : 'agr-radio'}>
+                        <input
+                          type="radio"
+                          name="agent-dispo"
+                          checked={dispoPick === row.status}
+                          // Auto-save on select. CALLBK needs a time, so it only
+                          // sets the pick and reveals the callback picker below.
+                          onChange={() => {
+                            setDispoPick(row.status);
+                            if (row.status !== 'CALLBK') submitDispo(row.status);
+                          }}
+                        />
+                        <span>{row.status_name || row.status}{hk ? ` [${hk.hotkey}]` : ''}</span>
+                      </label>
+                    );
+                  })}
+                  {!visibleStatuses.length && <span className="connection-summary">No selectable statuses</span>}
+                </div>
+              </>
+            );
+          })()}
           {dispoPick === 'CALLBK' && (
             <>
               <div className="agn-cbpresets">

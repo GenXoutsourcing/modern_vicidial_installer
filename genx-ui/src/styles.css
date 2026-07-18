@@ -3317,6 +3317,13 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Guide dispo pre-select on the agent dispo card. */
+.agr-guide-suggest { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 8px; padding: 8px 11px; border: 1px solid rgba(115, 251, 211, 0.4); border-radius: 9px; background: rgba(115, 251, 211, 0.08); font-size: 0.78rem; }
+.agr-guide-suggest b { color: var(--green); }
+.agr-guide-suggest button { padding: 5px 14px; border: 1px solid rgba(115, 251, 211, 0.5); border-radius: 8px; background: rgba(115, 251, 211, 0.15); color: var(--green); font: inherit; font-size: 0.76rem; font-weight: 800; cursor: pointer; }
+.agr-guide-suggest button:hover { background: rgba(115, 251, 211, 0.28); }
+.agr-radio.guide-pick { outline: 1px dashed rgba(115, 251, 211, 0.5); outline-offset: 2px; border-radius: 6px; }
+
 /* Guide outline editor (authoring). */
 .go-node { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 5px 12px; margin: 2px 0; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: 0.8rem; cursor: pointer; text-align: left; }
 .go-node:hover { background: rgba(0, 217, 255, 0.06); }
