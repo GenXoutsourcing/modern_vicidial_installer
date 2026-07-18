@@ -9414,7 +9414,15 @@ function ManagerDashboard({ token, user, onNavigate }) {
   const abandon = callsCur ? (Number(cur.drops || 0) / callsCur) : 0;
   const live = data?.live || { active: 0, paused: 0 };
   const outcomesMax = Math.max(1, ...((data?.outcomes || []).map((o) => o.n)));
-  const outcomeColor = (s) => (s === 'SALE' ? 'var(--good)' : /CALLBK|CBHOLD/.test(s) ? 'var(--blue)' : /DNC/.test(s) ? 'var(--crit)' : /NI|N|NA|B|A|AM|AB|DROP/.test(s) ? 'var(--muted, #8494ad)' : 'var(--warn)');
+  // Vivid, on-brand outcome colors — no grey fallback (everything gets a real hue).
+  const outcomeColor = (s) => (
+    s === 'SALE' ? 'var(--good)'                    // sale → green
+      : /CALLBK|CBHOLD/.test(s) ? 'var(--blue-strong)' // callback → deep blue
+      : /DNC/.test(s) ? 'var(--crit)'               // DNC → red
+      : /DROP/.test(s) ? 'var(--danger)'            // drop → red
+      : /^(AA|AM|AL|SM)$/.test(s) ? 'var(--warn)'   // answering machine → amber
+      : 'var(--blue)'                               // everything else → cyan
+  );
 
   return (
     <section className="mdash">
