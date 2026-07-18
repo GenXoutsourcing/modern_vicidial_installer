@@ -7756,9 +7756,9 @@ async function managerDashboard(req, res) {
   // NARROW the user's allowed-campaigns scope — a campaign outside the
   // user's scope is ignored, never widened to.
   const campaignFilter = String(req.query?.campaign || '').trim();
-  const filterValid = /^[A-Za-z0-9_-]{1,8}$/.test(campaignFilter)
-    && (!Array.isArray(userScope) || userScope.includes(campaignFilter));
-  const scope = filterValid ? [campaignFilter] : userScope;
+  const filterValid = /^[A-Za-z0-9_-]{1,8}$/.test(campaignFilter) && scopeAllows(userScope, campaignFilter);
+  // Scope objects are { all, values } (see accessScope/scopeWhere).
+  const scope = filterValid ? { all: false, values: [campaignFilter] } : userScope;
   const sc = (params) => scopeWhere(scope, 'campaign_id', params); // '1=1' or 'campaign_id IN (?,...)'
   const onReplica = (fn) => dbContext.run(reportPool, fn);
   const safe = (p, fallback) => p.catch(() => fallback);
