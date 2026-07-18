@@ -7628,6 +7628,58 @@ function CampaignsView({ admin, user, onAction }) {
   );
 }
 
+// Accounts at/over the failed-login threshold, with one-click reset
+// (mirrors stock ADMIN_reset_failed_count.pl). Renders nothing when clean.
+function LockedAccountsPanel({ token, user }) {
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/admin/locked-accounts', token)
+      .then((payload) => { if (alive) setRows(payload.rows || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [token, refreshKey]);
+  if (!rows.length || !userCan(user, 'users')) return null;
+
+  async function unlock(target) {
+    setBusy(target);
+    try {
+      await apiFetch(`/admin/users/${encodeURIComponent(target)}/unlock`, token, { method: 'POST' });
+      setRefreshKey((k) => k + 1);
+    } catch { /* row stays; retry available */ } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <Panel eyebrow="Security" title="Locked / Lockout-Risk Accounts" icon={LockKeyhole} className="admin-wide-panel">
+      <DataTable
+        emptyLabel="No locked accounts"
+        searchable={false}
+        rows={rows.map((row) => ({ ...row, id: row.user }))}
+        columns={[
+          { key: 'user', label: 'User', render: (row) => (<><strong>{row.user}</strong><span>{row.full_name || ''}</span></>) },
+          { key: 'user_group', label: 'Group' },
+          { key: 'failed_login_count', label: 'Failed (lockout)', render: (row) => <StatusPill ok={false}>{row.failed_login_count}</StatusPill> },
+          { key: 'failed_login_attempts_today', label: 'Attempts Today' },
+          { key: 'failed_last_ip_today', label: 'Last IP', render: (row) => row.failed_last_ip_today || '—' },
+          {
+            key: 'actions',
+            label: 'Action',
+            render: (row) => (
+              <button type="button" className="secondary-action compact-action" disabled={busy === row.user} onClick={() => unlock(row.user)}>
+                {busy === row.user ? 'Unlocking' : 'Unlock'}
+              </button>
+            ),
+          },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function UsersView({ admin, user, token, onAction }) {
   const canManage = userCan(user, 'users');
   // Inactive users are hidden by default; the header button reveals them.
@@ -7646,6 +7698,7 @@ function UsersView({ admin, user, token, onAction }) {
         </p>
       </ActionBar>
       <section className="admin-grid">
+        <LockedAccountsPanel token={token} user={user} />
         <Panel
           eyebrow="User Admin"
           title="Users and Permissions"

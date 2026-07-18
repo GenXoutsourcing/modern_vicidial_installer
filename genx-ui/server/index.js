@@ -39,8 +39,9 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,6 +76,13 @@ const config = {
     connectionLimit: Number(process.env.GENX_UI_DB_SLAVE_POOL || 4),
     namedPlaceholders: true,
   },
+  // Outbound health-alert notifications (crashed tables, dead keepalives,
+  // broken/lagging replication). Both optional; unset = in-app alerts only.
+  // GENX_UI_ALERT_WEBHOOK: URL POSTed JSON {text, alerts[], host} — the
+  //   `text` field makes it Slack/Teams/Discord-compatible out of the box.
+  // GENX_UI_ALERT_EMAIL: comma-separated recipients, sent via local sendmail.
+  alertWebhook: process.env.GENX_UI_ALERT_WEBHOOK || '',
+  alertEmail: process.env.GENX_UI_ALERT_EMAIL || '',
 };
 
 const app = express();
@@ -1396,6 +1404,74 @@ async function refreshRollups() {
 setTimeout(refreshRollups, 20 * 1000);
 setInterval(refreshRollups, 5 * 60 * 1000);
 
+// ===== Outbound health-alert notifications ==================================
+// Fired from systemStatus() when the health picture CHANGES (new alert,
+// different alert set, or full recovery), re-sent at most every 30 min while
+// a condition persists. Multiple browser tabs poll systemStatus, so the
+// dedupe state is module-level.
+const ALERT_RENOTIFY_MS = 30 * 60 * 1000;
+const alertNotifyState = { fingerprint: '', lastSentAt: 0 };
+
+function healthAlertLines(dbHealth, slaves) {
+  const lines = [];
+  for (const t of dbHealth.crashedTables) {
+    lines.push(`Crashed table ${t.table} (${t.source})${t.since ? ` since ${t.since}` : ''} — run: REPAIR TABLE ${t.table};`);
+  }
+  for (const s of dbHealth.staleServers) {
+    lines.push(`Server ${s.server} keepalive heartbeat stale ${Math.round(s.seconds / 60)} min`);
+  }
+  for (const s of slaves) {
+    if (s.replRunning === false) lines.push(`Replication BROKEN on slave ${s.host}`);
+    else if (Number(s.lagSeconds) > 120) lines.push(`Slave ${s.host} lagging ${s.lagSeconds}s behind master`);
+    else if (!s.online) lines.push(`Slave ${s.host} unreachable`);
+  }
+  return lines;
+}
+
+function sendHealthNotification(subject, lines) {
+  const text = `${subject}\n${lines.map((l) => `• ${l}`).join('\n')}`;
+  if (config.alertWebhook) {
+    fetch(config.alertWebhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, alerts: lines, host: os.hostname() }),
+      signal: AbortSignal.timeout(8000),
+    }).catch((err) => console.error('alert webhook failed:', err.message));
+  }
+  if (config.alertEmail) {
+    try {
+      const mail = spawn('/usr/sbin/sendmail', ['-t'], { stdio: ['pipe', 'ignore', 'ignore'] });
+      mail.on('error', (err) => console.error('alert sendmail failed:', err.message));
+      mail.stdin.write(`To: ${config.alertEmail}\nSubject: ${subject}\nFrom: genx-ui@${os.hostname()}\n\n${lines.join('\n')}\n`);
+      mail.stdin.end();
+    } catch (err) {
+      console.error('alert email failed:', err.message);
+    }
+  }
+}
+
+function maybeNotifyHealth(dbHealth, slaves) {
+  if (!config.alertWebhook && !config.alertEmail) return;
+  const lines = healthAlertLines(dbHealth, slaves);
+  const fingerprint = lines.join('|');
+  const now = Date.now();
+  if (!lines.length) {
+    if (alertNotifyState.fingerprint) {
+      sendHealthNotification('RESOLVED: GenX dialer health back to normal', ['All previously reported issues have cleared.']);
+      alertNotifyState.fingerprint = '';
+      alertNotifyState.lastSentAt = now;
+    }
+    return;
+  }
+  const changed = fingerprint !== alertNotifyState.fingerprint;
+  const renotifyDue = now - alertNotifyState.lastSentAt > ALERT_RENOTIFY_MS;
+  if (changed || renotifyDue) {
+    sendHealthNotification(`ALERT: ${lines.length} GenX dialer health issue${lines.length === 1 ? '' : 's'}`, lines);
+    alertNotifyState.fingerprint = fingerprint;
+    alertNotifyState.lastSentAt = now;
+  }
+}
+
 // DB-health cache: the direct crashed-table scan (SHOW TABLE STATUS) opens
 // every table's metadata, so it runs at most every 10 minutes; the tiny
 // state/heartbeat tables are read on every poll.
@@ -1494,6 +1570,9 @@ async function systemStatus() {
       }
     } catch { /* SLAVE MONITOR grant missing — reachability-only */ }
   }
+
+  // Outbound notifications (webhook/email) on change or 30-min re-notify.
+  maybeNotifyHealth(dbHealth, slaves);
 
   return {
     dbOnline: Boolean(identity?.hostname),
@@ -1783,6 +1862,44 @@ async function pagedColumns(cfg) {
     .join(', ');
   pagedColumnCache.set(cfg.table, names);
   return names;
+}
+
+// Locked / lockout-risk accounts: VICIdial tracks failed logins per user
+// (failed_login_count trips the stock lockout; *_today columns power the
+// daily counters). Surfacing + one-click reset mirrors the stock
+// ADMIN_reset_failed_count.pl tool.
+async function lockedAccounts(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  try {
+    const params = [];
+    const where = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', params);
+    const data = await rows(
+      `SELECT user, full_name, user_group, failed_login_count, failed_login_attempts_today,
+              failed_last_ip_today, failed_last_type_today
+       FROM vicidial_users
+       WHERE ${where} AND (failed_login_count >= 5 OR failed_login_attempts_today >= 5)
+       ORDER BY failed_login_count DESC, failed_login_attempts_today DESC LIMIT 100`, params, []);
+    return res.json({ ok: true, rows: data });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'locked_accounts_failed' });
+  }
+}
+
+async function unlockAccount(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  try {
+    const target = String(req.params.id || '');
+    const params = [];
+    const where = scopeWhere(req.genxUser?.permissions?.adminViewableGroups, 'user_group', params);
+    const result = await execute(
+      `UPDATE vicidial_users
+       SET failed_login_count = 0, failed_login_attempts_today = 0, failed_login_count_today = 0
+       WHERE user = ? AND ${where} LIMIT 1`, [target, ...params]);
+    if (!result.affectedRows) return res.status(404).json({ ok: false, error: 'user_not_found' });
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ ok: false, error: 'unlock_failed' });
+  }
 }
 
 async function pagedList(req, res) {
@@ -17942,6 +18059,8 @@ app.get('/api/dashboard', requireAccess, async (req, res) => {
 // scale. Save handlers still call adminData() directly (primary), so the
 // response returned right after an edit is never stale.
 app.get('/api/admin/paged/:entity', requireAccess, pagedList);
+app.get('/api/admin/locked-accounts', requireAccess, lockedAccounts);
+app.post('/api/admin/users/:id/unlock', requireAccess, unlockAccount);
 app.get('/api/admin', requireAccess, async (req, res) => {
   try {
     const data = await dbContext.run(reportPool, () => adminData(req.genxUser));
