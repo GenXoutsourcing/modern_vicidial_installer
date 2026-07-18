@@ -3317,6 +3317,19 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Guide outline editor (authoring). */
+.go-node { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 5px 12px; margin: 2px 0; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--text); font: inherit; font-size: 0.8rem; cursor: pointer; text-align: left; }
+.go-node:hover { background: rgba(0, 217, 255, 0.06); }
+.go-node.on { border-color: var(--line); background: rgba(0, 217, 255, 0.1); color: var(--blue); }
+.go-node i { font-style: normal; color: var(--muted); }
+.go-node.step i { color: var(--blue); }
+.go-node.response { color: var(--muted); }
+.go-node em { font-style: normal; padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(115, 251, 211, 0.35); background: rgba(115, 251, 211, 0.08); color: var(--green); font-size: 0.64rem; font-weight: 800; }
+.go-edit { display: grid; gap: 10px; align-content: start; overflow-y: auto; }
+.go-edit label { display: grid; gap: 4px; color: var(--muted); font-size: 0.7rem; font-weight: 700; }
+.go-edit input, .go-edit textarea { padding: 8px 11px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(5, 15, 27, 0.72); color: var(--text); font: inherit; font-size: 0.82rem; resize: vertical; }
+.go-btns { display: flex; flex-wrap: wrap; gap: 7px; }
+
 /* Agent Guidance panel (decision trees). */
 .agn-guide { display: grid; gap: 10px; padding: 12px 4px; align-content: start; }
 .guide-crumbs { display: flex; flex-wrap: wrap; gap: 5px; }

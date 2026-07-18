@@ -10090,6 +10090,177 @@ function ScriptBuilder({ script, token, onClose, onSaved }) {
   );
 }
 
+// ===== Guide outline editor (Agent Guidance authoring, spec v1) =============
+// Plain indented outline: steps with responses nested under them, click to
+// edit, up/down reorder, draft/publish. Edits hit the guide's mutable DRAFT
+// version; Publish freezes a snapshot agents traverse.
+function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
+  const [tree, setTree] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '' });
+  const [note, setNote] = useState('');
+  const [bump, setBump] = useState(0);
+  useEffect(() => {
+    apiFetch(`/admin/guides/${guideId}/tree`, token)
+      .then((payload) => {
+        setTree(payload);
+        if (selected) {
+          const still = payload.nodes.find((n) => n.node_id === selected.node_id);
+          setSelected(still || null);
+          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || '' });
+        }
+      })
+      .catch(() => setNote('Could not load guide'));
+  }, [guideId, token, bump]);
+  if (!tree) return null;
+
+  const kids = new Map();
+  for (const edge of tree.edges) {
+    if (!kids.has(edge.parent_node_id)) kids.set(edge.parent_node_id, []);
+    kids.get(edge.parent_node_id).push(edge.child_node_id);
+  }
+  const byId = new Map(tree.nodes.map((n) => [n.node_id, n]));
+  const childIds = new Set(tree.edges.map((e) => e.child_node_id));
+  const root = tree.nodes.find((n) => n.type === 'step' && !childIds.has(n.node_id));
+
+  const pick = (node) => {
+    setSelected(node);
+    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || '' });
+    setNote('');
+  };
+  const api = (path, method, body) => apiFetch(path, token, { method, body: body ? JSON.stringify(body) : undefined })
+    .then(() => setBump((n) => n + 1)).catch((e) => setNote(e.status === 400 ? 'Not allowed there' : 'Failed'));
+  const saveNode = () => selected && apiFetch(`/admin/guides/${guideId}/nodes/${selected.node_id}`, token, {
+    method: 'PUT', body: JSON.stringify(draft),
+  }).then(() => { setNote('Saved'); setBump((n) => n + 1); onChanged?.(); }).catch(() => setNote('Save failed'));
+  const publish = () => api(`/admin/guides/${guideId}/publish`, 'POST').then(() => { setNote('Published'); onChanged?.(); });
+
+  const renderNode = (nodeId, depth) => {
+    const node = byId.get(nodeId);
+    if (!node) return null;
+    return (
+      <div key={nodeId}>
+        <button
+          type="button"
+          className={`go-node ${node.type}${selected?.node_id === nodeId ? ' on' : ''}`}
+          style={{ marginLeft: depth * 18 }}
+          onClick={() => pick(node)}
+        >
+          <i>{node.type === 'step' ? (kids.get(nodeId)?.length ? '■' : '◆') : '↳'}</i>
+          {node.title || '(untitled)'}
+          {node.disposition && <em>{node.disposition}</em>}
+        </button>
+        {(kids.get(nodeId) || []).map((childId) => renderNode(childId, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal rail-modal" role="dialog" aria-modal="true" aria-label="Guide Editor">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Agent Guidance — draft v{tree.version_id}</p>
+            <h2>{tree.guide.name}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close"><X size={18} aria-hidden="true" /></button>
+        </div>
+        <div className="sb-layout">
+          <div className="sb-editor">
+            {root ? renderNode(root.node_id, 0) : <p className="connection-summary">Empty guide</p>}
+          </div>
+          <div className="go-edit">
+            {!selected && <p className="connection-summary">Select a node to edit. ■ step · ◆ exit step · ↳ customer response.</p>}
+            {selected && (
+              <>
+                <p className="sb-preview-label">{selected.type === 'step' ? 'Guidance step' : 'Customer response'}</p>
+                <label><span>Title</span>
+                  <input type="text" maxLength={120} value={draft.title} onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))} />
+                </label>
+                {selected.type === 'step' && (
+                  <>
+                    <label><span>Script (HTML, --A--field--B-- merge fields)</span>
+                      <textarea rows={7} value={draft.script_html} onChange={(e) => setDraft((c) => ({ ...c, script_html: e.target.value }))} />
+                    </label>
+                    <label><span>Exit disposition (blank = not an exit)</span>
+                      <input type="text" maxLength={6} value={draft.disposition} onChange={(e) => setDraft((c) => ({ ...c, disposition: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))} />
+                    </label>
+                  </>
+                )}
+                <div className="go-btns">
+                  <button type="button" className="primary-action compact-action" onClick={saveNode}>Save Node</button>
+                  {selected.type === 'step' && (
+                    <button type="button" className="secondary-action compact-action" onClick={() => api(`/admin/guides/${guideId}/nodes`, 'POST', { parent_node_id: selected.node_id, type: 'response' })}>+ Response</button>
+                  )}
+                  {selected.type === 'response' && !(kids.get(selected.node_id) || []).length && (
+                    <button type="button" className="secondary-action compact-action" onClick={() => api(`/admin/guides/${guideId}/nodes`, 'POST', { parent_node_id: selected.node_id, type: 'step' })}>+ Next Step</button>
+                  )}
+                  {root && selected.node_id !== root.node_id && (
+                    <button type="button" className="danger-action compact-action" onClick={() => { setSelected(null); api(`/admin/guides/${guideId}/nodes/${selected.node_id}`, 'DELETE'); }}>Delete + subtree</button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="modal-actions sb-actions">
+          {note && <span className="connection-status">{note}</span>}
+          <span className="modal-actions-spacer" />
+          <button type="button" className="secondary-action" onClick={onClose}>Close</button>
+          <button type="button" className="primary-action" onClick={publish}><Sparkles size={16} aria-hidden="true" /> Publish</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GuidesPanel({ admin, user, token }) {
+  const [guides, setGuides] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [bump, setBump] = useState(0);
+  const canManage = userCan(user, 'scripts');
+  useEffect(() => {
+    apiFetch('/admin/guides', token).then((p) => setGuides(p.guides || [])).catch(() => {});
+  }, [token, bump]);
+  if (!canManage) return null;
+
+  async function createGuide() {
+    const name = window.prompt('Guide name?');
+    if (!name) return;
+    const campaign = window.prompt('Bind to campaign ID (blank = none yet)?') || '';
+    try {
+      const payload = await apiFetch('/admin/guides', token, { method: 'POST', body: JSON.stringify({ name, campaign_id: campaign }) });
+      setBump((n) => n + 1);
+      setEditing(payload.guide_id);
+    } catch { /* noop */ }
+  }
+
+  return (
+    <Panel
+      eyebrow="Agent Guidance"
+      title="Decision-Tree Guides"
+      icon={Compass}
+      className="admin-wide-panel"
+      headerActions={<button type="button" className="primary-action compact-action" onClick={createGuide}><Plus size={15} aria-hidden="true" /> New Guide</button>}
+    >
+      {editing && <GuideOutlineEditor guideId={editing} token={token} onClose={() => setEditing(null)} onChanged={() => setBump((n) => n + 1)} />}
+      <DataTable
+        emptyLabel="No guides yet — create one and bind it to a campaign"
+        searchable={false}
+        rows={guides.map((g) => ({ ...g, id: g.guide_id }))}
+        columns={[
+          { key: 'name', label: 'Guide', render: (row) => (<><strong>{row.name}</strong><span>#{row.guide_id}</span></>) },
+          { key: 'campaign_id', label: 'Campaign', render: (row) => row.campaign_id || '—' },
+          { key: 'published_no', label: 'Published', render: (row) => (row.published_no ? <StatusPill ok>v{row.published_no}</StatusPill> : <StatusPill ok={false}>never</StatusPill>) },
+          { key: 'dispo_mode', label: 'Dispo', render: (row) => row.dispo_mode },
+          { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
+          { key: 'actions', label: 'Action', render: (row) => <button type="button" className="secondary-action compact-action" onClick={() => setEditing(row.guide_id)}>Edit Outline</button> },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function ScriptsView({ admin, user, token, onSaved, onAction }) {
   const scripts = admin?.scripts || [];
   const canManage = userCan(user, 'scripts');
@@ -10121,6 +10292,7 @@ function ScriptsView({ admin, user, token, onSaved, onAction }) {
         <p className="action-copy">Manage agent scripts, prompt text, active state, color, and user-group ownership.</p>
       </ActionBar>
       <section className="admin-grid">
+        <GuidesPanel admin={admin} user={user} token={token} />
         <Panel eyebrow="Agent Screen" title="Scripts and Agent Prompts" icon={FileText} className="admin-wide-panel">
           <DataTable
             emptyLabel="No scripts returned"

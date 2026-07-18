@@ -18615,6 +18615,175 @@ async function guideSessionContext(sessionKey) {
   return last || null;
 }
 
+// ===== Guide authoring (admin lane) =========================================
+// Draft/publish per spec: every guide keeps ONE mutable draft version
+// (published_at NULL); publishing deep-copies the draft into a frozen
+// version row set and points published_version at the copy, so traversals
+// never reference mutated nodes. Gated on modifyScripts for v1 (guides are
+// the scripts' successor; a dedicated flag is a follow-up).
+async function guideCopyVersion(guideId, fromVersionId, publishedBy) {
+  const [{ maxNo }] = await rows('SELECT COALESCE(MAX(version_no),0) AS maxNo FROM genx_guide_version WHERE guide_id = ?', [guideId], [{}]);
+  const insert = await execute(
+    'INSERT INTO genx_guide_version (guide_id, version_no, published_at, published_by) VALUES (?, ?, NOW(), ?)',
+    [guideId, Number(maxNo) + 1, publishedBy]);
+  const newVersion = insert.insertId;
+  const nodes = await rows('SELECT * FROM genx_guide_node WHERE version_id = ?', [fromVersionId], []);
+  const idMap = new Map();
+  for (const node of nodes) {
+    const r = await execute(
+      'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [newVersion, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id]);
+    idMap.set(node.node_id, r.insertId);
+  }
+  const edges = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ?', [fromVersionId], []);
+  for (const edge of edges) {
+    await execute('INSERT INTO genx_guide_edge (version_id, parent_node_id, child_node_id, sort_order) VALUES (?, ?, ?, ?)',
+      [newVersion, idMap.get(edge.parent_node_id), idMap.get(edge.child_node_id), edge.sort_order]);
+  }
+  return newVersion;
+}
+
+// The mutable draft for a guide; auto-created as a copy of the published
+// version the first time an already-published guide is edited.
+async function guideDraftVersion(guideId) {
+  const [draft] = await rows(
+    'SELECT version_id FROM genx_guide_version WHERE guide_id = ? AND published_at IS NULL ORDER BY version_id DESC LIMIT 1', [guideId], []);
+  if (draft) return draft.version_id;
+  const [guide] = await rows('SELECT published_version FROM genx_guide WHERE guide_id = ? LIMIT 1', [guideId], []);
+  if (!guide) return null;
+  const [{ maxNo }] = await rows('SELECT COALESCE(MAX(version_no),0) AS maxNo FROM genx_guide_version WHERE guide_id = ?', [guideId], [{}]);
+  const insert = await execute(
+    'INSERT INTO genx_guide_version (guide_id, version_no, published_at, published_by) VALUES (?, ?, NULL, "")',
+    [guideId, Number(maxNo) + 1]);
+  const draftId = insert.insertId;
+  if (guide.published_version) {
+    // copy published -> draft (in place, keeping draftId as the target)
+    const nodes = await rows('SELECT * FROM genx_guide_node WHERE version_id = ?', [guide.published_version], []);
+    const idMap = new Map();
+    for (const node of nodes) {
+      const r = await execute(
+        'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [draftId, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id]);
+      idMap.set(node.node_id, r.insertId);
+    }
+    const edges = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ?', [guide.published_version], []);
+    for (const edge of edges) {
+      await execute('INSERT INTO genx_guide_edge (version_id, parent_node_id, child_node_id, sort_order) VALUES (?, ?, ?, ?)',
+        [draftId, idMap.get(edge.parent_node_id), idMap.get(edge.child_node_id), edge.sort_order]);
+    }
+  } else {
+    await execute("INSERT INTO genx_guide_node (version_id, type, title, script_html) VALUES (?, 'step', 'Opening', '<p>New guide</p>')", [draftId]);
+  }
+  return draftId;
+}
+
+app.get('/api/admin/guides', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  const guides = await rows(
+    `SELECT g.*, pv.version_no AS published_no,
+       (SELECT COUNT(*) FROM genx_guide_version dv WHERE dv.guide_id = g.guide_id AND dv.published_at IS NULL) AS has_draft
+     FROM genx_guide g LEFT JOIN genx_guide_version pv ON pv.version_id = g.published_version
+     ORDER BY g.guide_id`, [], []).catch(() => []);
+  res.json({ ok: true, guides });
+});
+
+app.post('/api/admin/guides', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const name = cleanText(req.body?.name, 80) || 'New Guide';
+    const campaign = cleanId(req.body?.campaign_id, 8) || null;
+    const mode = req.body?.dispo_mode === 'FORCE' ? 'FORCE' : 'SUGGEST';
+    const r = await execute(
+      'INSERT INTO genx_guide (name, description, active, campaign_id, dispo_mode, created_by, created_at, updated_at) VALUES (?, "", "Y", ?, ?, ?, NOW(), NOW())',
+      [name, campaign, mode, req.genxUser?.user || '']);
+    await guideDraftVersion(r.insertId);
+    res.json({ ok: true, guide_id: r.insertId });
+  } catch { res.status(500).json({ ok: false, error: 'guide_create_failed' }); }
+});
+
+app.get('/api/admin/guides/:id/tree', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const guideId = Number(req.params.id);
+    const [guide] = await rows('SELECT * FROM genx_guide WHERE guide_id = ? LIMIT 1', [guideId], []);
+    if (!guide) return res.status(404).json({ ok: false, error: 'not_found' });
+    const versionId = await guideDraftVersion(guideId);
+    const nodes = await rows('SELECT * FROM genx_guide_node WHERE version_id = ?', [versionId], []);
+    const edges = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ? ORDER BY sort_order', [versionId], []);
+    res.json({ ok: true, guide, version_id: versionId, nodes, edges });
+  } catch { res.status(500).json({ ok: false, error: 'guide_tree_failed' }); }
+});
+
+app.post('/api/admin/guides/:id/nodes', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const versionId = await guideDraftVersion(Number(req.params.id));
+    const parentId = Number(req.body?.parent_node_id) || 0;
+    const type = req.body?.type === 'response' ? 'response' : 'step';
+    const [parent] = await rows('SELECT type FROM genx_guide_node WHERE node_id = ? AND version_id = ? LIMIT 1', [parentId, versionId], []);
+    if (!parent) return res.status(400).json({ ok: false, error: 'bad_parent' });
+    // Alternation: steps hold responses; a response leads to exactly one step.
+    if (parent.type === 'step' && type !== 'response') return res.status(400).json({ ok: false, error: 'step_children_are_responses' });
+    if (parent.type === 'response') {
+      if (type !== 'step') return res.status(400).json({ ok: false, error: 'response_child_is_step' });
+      const [existing] = await rows('SELECT edge_id FROM genx_guide_edge WHERE version_id = ? AND parent_node_id = ? LIMIT 1', [versionId, parentId], []);
+      if (existing) return res.status(400).json({ ok: false, error: 'response_already_routed' });
+    }
+    const node = await execute('INSERT INTO genx_guide_node (version_id, type, title, script_html) VALUES (?, ?, ?, ?)',
+      [versionId, type, cleanText(req.body?.title, 120) || (type === 'step' ? 'New step' : 'New response'), type === 'step' ? '<p></p>' : null]);
+    const [{ maxSort }] = await rows('SELECT COALESCE(MAX(sort_order),0) AS maxSort FROM genx_guide_edge WHERE version_id = ? AND parent_node_id = ?', [versionId, parentId], [{}]);
+    await execute('INSERT INTO genx_guide_edge (version_id, parent_node_id, child_node_id, sort_order) VALUES (?, ?, ?, ?)',
+      [versionId, parentId, node.insertId, Number(maxSort) + 1]);
+    res.json({ ok: true, node_id: node.insertId });
+  } catch { res.status(500).json({ ok: false, error: 'node_add_failed' }); }
+});
+
+app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const versionId = await guideDraftVersion(Number(req.params.id));
+    const dispo = cleanId(req.body?.disposition, 6);
+    await execute(
+      'UPDATE genx_guide_node SET title = ?, script_html = ?, disposition = ? WHERE node_id = ? AND version_id = ?',
+      [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, Number(req.params.nodeId), versionId]);
+    res.json({ ok: true });
+  } catch { res.status(500).json({ ok: false, error: 'node_update_failed' }); }
+});
+
+app.delete('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const versionId = await guideDraftVersion(Number(req.params.id));
+    const target = Number(req.params.nodeId);
+    const [isRoot] = await rows(
+      'SELECT node_id FROM genx_guide_node WHERE node_id = ? AND version_id = ? AND node_id NOT IN (SELECT child_node_id FROM genx_guide_edge WHERE version_id = ?) LIMIT 1',
+      [target, versionId, versionId], []);
+    if (isRoot) return res.status(400).json({ ok: false, error: 'cannot_delete_root' });
+    // collect subtree breadth-first
+    const doomed = [target];
+    for (let i = 0; i < doomed.length; i += 1) {
+      const kids = await rows('SELECT child_node_id FROM genx_guide_edge WHERE version_id = ? AND parent_node_id = ?', [versionId, doomed[i]], []);
+      for (const k of kids) if (!doomed.includes(k.child_node_id)) doomed.push(k.child_node_id);
+    }
+    const marks = doomed.map(() => '?').join(',');
+    await execute(`DELETE FROM genx_guide_edge WHERE version_id = ? AND (parent_node_id IN (${marks}) OR child_node_id IN (${marks}))`, [versionId, ...doomed, ...doomed]);
+    await execute(`DELETE FROM genx_guide_node WHERE version_id = ? AND node_id IN (${marks})`, [versionId, ...doomed]);
+    res.json({ ok: true, removed: doomed.length });
+  } catch { res.status(500).json({ ok: false, error: 'node_delete_failed' }); }
+});
+
+app.post('/api/admin/guides/:id/publish', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyScripts')) return;
+  try {
+    const guideId = Number(req.params.id);
+    const draftId = await guideDraftVersion(guideId);
+    const newVersion = await guideCopyVersion(guideId, draftId, req.genxUser?.user || '');
+    await execute('UPDATE genx_guide SET published_version = ?, updated_at = NOW() WHERE guide_id = ?', [newVersion, guideId]);
+    await adminLog(req, 'guides', 'PUBLISH', String(guideId), 'publish', '', `guide ${guideId} published version ${newVersion}`).catch(() => {});
+    res.json({ ok: true, published_version: newVersion });
+  } catch { res.status(500).json({ ok: false, error: 'guide_publish_failed' }); }
+});
+
 app.post('/api/agent/guide/start', requireAgentAccess, async (req, res) => {
   try {
     const campaign = cleanId(req.body?.campaign_id, 8);
