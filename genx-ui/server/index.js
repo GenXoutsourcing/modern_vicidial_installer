@@ -1290,6 +1290,112 @@ function secondsLabel(seconds) {
   return `${minutes}m`;
 }
 
+// ===== GenX daily stats rollups =============================================
+// Pre-aggregated per-day tables so long-range dashboards (30 days / custom
+// spans) read thousands of rollup rows instead of scanning millions of
+// vicidial_log rows (~20s -> instant). Written on the PRIMARY (replicates to
+// the report slave the dashboard reads). Today re-rolls every 5 minutes;
+// missing days over the last 60 (vicidial_log's live retention) backfill in
+// the background at startup. Rollup rows survive log archiving, so history
+// eventually extends BEYOND raw-table retention.
+const ROLLUP_DDL = [
+  `CREATE TABLE IF NOT EXISTS genx_daily_campaign_stats (
+     stat_date DATE NOT NULL,
+     campaign_id VARCHAR(8) NOT NULL DEFAULT '',
+     status VARCHAR(6) NOT NULL DEFAULT '',
+     calls INT UNSIGNED NOT NULL DEFAULT 0,
+     talk_sec BIGINT UNSIGNED NOT NULL DEFAULT 0,
+     PRIMARY KEY (stat_date, campaign_id, status)
+   ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS genx_daily_agent_stats (
+     stat_date DATE NOT NULL,
+     campaign_id VARCHAR(8) NOT NULL DEFAULT '',
+     user VARCHAR(20) NOT NULL DEFAULT '',
+     calls INT UNSIGNED NOT NULL DEFAULT 0,
+     sales INT UNSIGNED NOT NULL DEFAULT 0,
+     talk_sec BIGINT UNSIGNED NOT NULL DEFAULT 0,
+     pause_sec BIGINT UNSIGNED NOT NULL DEFAULT 0,
+     PRIMARY KEY (stat_date, campaign_id, user)
+   ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS genx_daily_list_stats (
+     stat_date DATE NOT NULL,
+     campaign_id VARCHAR(8) NOT NULL DEFAULT '',
+     list_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+     calls INT UNSIGNED NOT NULL DEFAULT 0,
+     sales INT UNSIGNED NOT NULL DEFAULT 0,
+     PRIMARY KEY (stat_date, campaign_id, list_id)
+   ) ENGINE=InnoDB`,
+];
+let rollupTablesReady = false;
+let rollupBusy = false;
+
+async function rollupDay(dateStr) {
+  const start = `${dateStr} 00:00:00`;
+  const [next] = await rows('SELECT DATE_ADD(?, INTERVAL 1 DAY) AS d', [dateStr], [{}]);
+  const end = `${next.d instanceof Date ? next.d.toISOString().slice(0, 10) : String(next.d).slice(0, 10)} 00:00:00`;
+  await execute('DELETE FROM genx_daily_campaign_stats WHERE stat_date = ?', [dateStr]);
+  await execute(
+    `INSERT INTO genx_daily_campaign_stats (stat_date, campaign_id, status, calls, talk_sec)
+     SELECT DATE(call_date), COALESCE(campaign_id,''), COALESCE(status,''), COUNT(*), COALESCE(SUM(length_in_sec),0)
+     FROM vicidial_log WHERE call_date >= ? AND call_date < ?
+     GROUP BY DATE(call_date), COALESCE(campaign_id,''), COALESCE(status,'')`, [start, end]);
+  await execute('DELETE FROM genx_daily_agent_stats WHERE stat_date = ?', [dateStr]);
+  await execute(
+    `INSERT INTO genx_daily_agent_stats (stat_date, campaign_id, user, calls, sales, talk_sec)
+     SELECT DATE(call_date), COALESCE(campaign_id,''), user, COUNT(*), COALESCE(SUM(status='SALE'),0), COALESCE(SUM(length_in_sec),0)
+     FROM vicidial_log WHERE call_date >= ? AND call_date < ? AND user <> '' AND user NOT IN ('VDAD','VDCL')
+     GROUP BY DATE(call_date), COALESCE(campaign_id,''), user`, [start, end]);
+  await execute(
+    `INSERT INTO genx_daily_agent_stats (stat_date, campaign_id, user, pause_sec)
+     SELECT DATE(event_time), COALESCE(campaign_id,''), user, COALESCE(SUM(pause_sec),0)
+     FROM vicidial_agent_log WHERE event_time >= ? AND event_time < ? AND user <> '' AND user NOT IN ('VDAD','VDCL')
+     GROUP BY DATE(event_time), COALESCE(campaign_id,''), user
+     ON DUPLICATE KEY UPDATE pause_sec = VALUES(pause_sec)`, [start, end]);
+  await execute('DELETE FROM genx_daily_list_stats WHERE stat_date = ?', [dateStr]);
+  await execute(
+    `INSERT INTO genx_daily_list_stats (stat_date, campaign_id, list_id, calls, sales)
+     SELECT DATE(call_date), COALESCE(campaign_id,''), COALESCE(list_id,0), COUNT(*), COALESCE(SUM(status='SALE'),0)
+     FROM vicidial_log WHERE call_date >= ? AND call_date < ?
+     GROUP BY DATE(call_date), COALESCE(campaign_id,''), COALESCE(list_id,0)`, [start, end]);
+}
+
+async function refreshRollups() {
+  if (rollupBusy) return;
+  rollupBusy = true;
+  try {
+    if (!rollupTablesReady) {
+      for (const ddl of ROLLUP_DDL) await execute(ddl, []);
+      rollupTablesReady = true;
+    }
+    // DB-clock dates (cluster TZ), not the app server's.
+    const dayList = await rows(
+      `SELECT DATE_FORMAT(CURDATE() - INTERVAL seq DAY, '%Y-%m-%d') AS d
+       FROM (SELECT 0 seq UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6
+             UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
+            (SELECT 0 s2 UNION SELECT 10 UNION SELECT 20 UNION SELECT 30 UNION SELECT 40 UNION SELECT 50) b
+       WHERE (seq + s2) < 60 ORDER BY 1 DESC`, [], []).catch(() => []);
+    const wanted = dayList.map((r) => String(r.d)).filter(Boolean);
+    if (!wanted.length) return;
+    const have = new Set((await rows(
+      "SELECT DATE_FORMAT(stat_date, '%Y-%m-%d') AS d FROM genx_daily_campaign_stats GROUP BY stat_date", [], []).catch(() => []))
+      .map((r) => String(r.d)));
+    // Always re-roll today and yesterday (partial day / late writes);
+    // backfill anything else missing.
+    for (const day of wanted) {
+      const isRecent = day === wanted[0] || day === wanted[1];
+      if (isRecent || !have.has(day)) {
+        await rollupDay(day).catch((err) => console.error(`rollup ${day} failed:`, err.message));
+      }
+    }
+  } catch (err) {
+    console.error('rollup refresh failed:', err.message);
+  } finally {
+    rollupBusy = false;
+  }
+}
+setTimeout(refreshRollups, 20 * 1000);
+setInterval(refreshRollups, 5 * 60 * 1000);
+
 // DB-health cache: the direct crashed-table scan (SHOW TABLE STATUS) opens
 // every table's metadata, so it runs at most every 10 minutes; the tiny
 // state/heartbeat tables are read on every poll.
@@ -7731,12 +7837,14 @@ async function managerDashboard(req, res) {
   const fromStr = String(req.query?.from || req.query?.date || '');
   const toStr = String(req.query?.to || fromStr);
   let WIN;
+  let spanDays = { today: 1, yesterday: 1, '7days': 7, '30days': 30 }[rangeKey] || 1;
   if (['date', 'custom'].includes(String(req.query?.range)) && DATE_RE.test(fromStr) && DATE_RE.test(toStr)) {
     // Specific date range (single day when from == to). Comparison window =
     // the equal-length window immediately before it. ISO strings compare
     // lexically, so a reversed pair just swaps.
     let [a, b] = fromStr <= toStr ? [fromStr, toStr] : [toStr, fromStr];
     const days = Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1);
+    spanDays = days;
     const A = `'${a}'`;
     const B = `'${b}'`;
     WIN = { cur: A, curEnd: `DATE_ADD(${B}, INTERVAL 1 DAY)`, prev: `DATE_SUB(${A}, INTERVAL ${days} DAY)`, prevEnd: A };
@@ -7779,6 +7887,11 @@ async function managerDashboard(req, res) {
      UNION SELECT DISTINCT status FROM vicidial_campaign_statuses WHERE human_answered='Y'`, [], [])), [])
     .then((list) => list.map((row) => String(row.status)));
 
+  // Windows longer than 7 days read the pre-aggregated genx_daily_* rollup
+  // tables (refreshed every 5 min; replicated to the report slave) instead
+  // of scanning millions of vicidial_log rows.
+  const useRollup = spanDays > 7;
+
   // KPI totals for a given date window (outbound vicidial_log). Sales = SALE
   // status; drops = DROP/AB for abandon rate.
   const kpiFor = (dateClause) => {
@@ -7801,35 +7914,80 @@ async function managerDashboard(req, res) {
     });
   };
 
+  // Rollup variant: one aggregate over genx_daily_campaign_stats.
+  const kpiFromRollup = (dateClause) => {
+    const p = [];
+    const where = `${dateClause} AND ${sc(p)}`;
+    const humanIn = humanStatuses.length ? `status IN (${humanStatuses.map(() => '?').join(',')})` : '1=0';
+    return onReplica(() => rows(
+      `SELECT COALESCE(SUM(calls),0) AS calls,
+              COALESCE(SUM(CASE WHEN ${humanIn} THEN calls ELSE 0 END),0) AS contacts,
+              COALESCE(SUM(CASE WHEN status='SALE' THEN calls ELSE 0 END),0) AS sales,
+              COALESCE(SUM(talk_sec),0) AS talk,
+              COALESCE(SUM(CASE WHEN status IN ('DROP','AB') THEN calls ELSE 0 END),0) AS drops
+       FROM genx_daily_campaign_stats WHERE ${where}`,
+      [...humanStatuses, ...p], [{}]))
+      .then(([r]) => ({
+        calls: Number(r?.calls || 0), contacts: Number(r?.contacts || 0), sales: Number(r?.sales || 0),
+        talk: Number(r?.talk || 0), drops: Number(r?.drops || 0),
+      }));
+  };
+  const kpi = useRollup ? kpiFromRollup : kpiFor;
+
   const scLA = []; const laWhere = scopeWhere(scope, 'campaign_id', scLA);
   const scCb = []; const cbWhere = scopeWhere(scope, 'campaign_id', scCb);
 
   const [current, previous, liveAgents, agentRows, pauseRows, outcomes, listConv, callbacks, qaQueue] = await Promise.all([
-    safe(kpiFor(curW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
-    safe(kpiFor(prevW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
+    safe(kpi(useRollup ? curW('stat_date') : curW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
+    safe(kpi(useRollup ? prevW('stat_date') : prevW('call_date')), { calls: 0, contacts: 0, sales: 0, talk: 0, drops: 0 }),
     // live agents (scoped) — MEMORY table, primary
     safe(rows(`SELECT status, COUNT(*) AS n FROM vicidial_live_agents WHERE ${laWhere} GROUP BY status`, scLA, []), []),
     // agent performance: calls/sales/talk by user
-    safe(onReplica(() => { const p = []; const w = `${curW('call_date')} AND ${sc(p)}`; return rows(
-      `SELECT user, COUNT(*) AS calls, SUM(status='SALE') AS sales,
-              COALESCE(SUM(length_in_sec),0) AS talk
-       FROM vicidial_log WHERE ${w} AND user <> '' AND user NOT IN ('VDAD','VDCL')
-       GROUP BY user ORDER BY calls DESC LIMIT 12`, p, []); }), []),
-    // pause seconds by user today
-    safe(onReplica(() => { const p = []; const w = `${curW('event_time')} AND ${scopeWhere(scope, 'campaign_id', p)}`; return rows(
-      `SELECT user, COALESCE(SUM(pause_sec),0) AS pause_sec FROM vicidial_agent_log
-       WHERE ${w} AND user <> '' AND user NOT IN ('VDAD','VDCL') GROUP BY user`, p, []); }), []),
+    safe(onReplica(() => { const p = []; return useRollup
+      ? rows(
+        `SELECT user, COALESCE(SUM(calls),0) AS calls, COALESCE(SUM(sales),0) AS sales,
+                COALESCE(SUM(talk_sec),0) AS talk
+         FROM genx_daily_agent_stats WHERE ${curW('stat_date')} AND ${sc(p)} AND user <> ''
+         GROUP BY user ORDER BY calls DESC LIMIT 12`, p, [])
+      : rows(
+        `SELECT user, COUNT(*) AS calls, SUM(status='SALE') AS sales,
+                COALESCE(SUM(length_in_sec),0) AS talk
+         FROM vicidial_log WHERE ${curW('call_date')} AND ${sc(p)} AND user <> '' AND user NOT IN ('VDAD','VDCL')
+         GROUP BY user ORDER BY calls DESC LIMIT 12`, p, []); }), []),
+    // pause seconds by user
+    safe(onReplica(() => { const p = []; return useRollup
+      ? rows(
+        `SELECT user, COALESCE(SUM(pause_sec),0) AS pause_sec FROM genx_daily_agent_stats
+         WHERE ${curW('stat_date')} AND ${scopeWhere(scope, 'campaign_id', p)} AND user <> '' GROUP BY user`, p, [])
+      : rows(
+        `SELECT user, COALESCE(SUM(pause_sec),0) AS pause_sec FROM vicidial_agent_log
+         WHERE ${curW('event_time')} AND ${scopeWhere(scope, 'campaign_id', p)} AND user <> '' AND user NOT IN ('VDAD','VDCL') GROUP BY user`, p, []); }), []),
     // outcomes: status breakdown with names
-    safe(onReplica(() => { const p = []; const w = `${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}`; return rows(
-      `SELECT l.status, COUNT(*) AS n, COALESCE(s.status_name, l.status) AS name
-       FROM vicidial_log l LEFT JOIN vicidial_statuses s ON s.status = l.status
-       WHERE ${w} GROUP BY l.status ORDER BY n DESC LIMIT 8`, p, []); }), []),
+    safe(onReplica(() => { const p = []; return useRollup
+      ? rows(
+        `SELECT g.status, SUM(g.calls) AS n, COALESCE(s.status_name, g.status) AS name
+         FROM genx_daily_campaign_stats g LEFT JOIN vicidial_statuses s ON s.status = g.status
+         WHERE ${curW('g.stat_date')} AND ${scopeWhere(scope, 'g.campaign_id', p)}
+         GROUP BY g.status ORDER BY n DESC LIMIT 8`, p, [])
+      : rows(
+        `SELECT l.status, COUNT(*) AS n, COALESCE(s.status_name, l.status) AS name
+         FROM vicidial_log l LEFT JOIN vicidial_statuses s ON s.status = l.status
+         WHERE ${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}
+         GROUP BY l.status ORDER BY n DESC LIMIT 8`, p, []); }), []),
     // conversion by list
-    safe(onReplica(() => { const p = []; const w = `${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}`; return rows(
-      `SELECT l.list_id, COUNT(*) AS calls, SUM(l.status='SALE') AS sales,
-              COALESCE(vl.list_name, CONCAT('List ', l.list_id)) AS name
-       FROM vicidial_log l LEFT JOIN vicidial_lists vl ON vl.list_id = l.list_id
-       WHERE ${w} GROUP BY l.list_id ORDER BY calls DESC LIMIT 6`, p, []); }), []),
+    safe(onReplica(() => { const p = []; return useRollup
+      ? rows(
+        `SELECT g.list_id, SUM(g.calls) AS calls, SUM(g.sales) AS sales,
+                COALESCE(vl.list_name, CONCAT('List ', g.list_id)) AS name
+         FROM genx_daily_list_stats g LEFT JOIN vicidial_lists vl ON vl.list_id = g.list_id
+         WHERE ${curW('g.stat_date')} AND ${scopeWhere(scope, 'g.campaign_id', p)}
+         GROUP BY g.list_id ORDER BY calls DESC LIMIT 6`, p, [])
+      : rows(
+        `SELECT l.list_id, COUNT(*) AS calls, SUM(l.status='SALE') AS sales,
+                COALESCE(vl.list_name, CONCAT('List ', l.list_id)) AS name
+         FROM vicidial_log l LEFT JOIN vicidial_lists vl ON vl.list_id = l.list_id
+         WHERE ${curW('l.call_date')} AND ${scopeWhere(scope, 'l.campaign_id', p)}
+         GROUP BY l.list_id ORDER BY calls DESC LIMIT 6`, p, []); }), []),
     // callbacks due (soonest active)
     safe(rows(
       `SELECT c.lead_id, c.callback_time, c.user, c.recipient, c.campaign_id,
