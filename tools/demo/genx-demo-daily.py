@@ -75,7 +75,7 @@ LEAD_STATUSES = (['NEW'] * 200 + ['NA'] * 300 + ['AA'] * 160 + ['NI'] * 90 + ['P
 CAMPAIGNS = [
     {'id': 'DEMOAUTO',  'name': 'Demo - Auto Warranty', 'group': 'DEMO_AUTO',  'group_name': 'Tenant - Auto Warranty',
      'lists': [(201, 'Auto Warranty Fresh'), (202, 'Auto Warranty Aged')],   'agents': (3101, 12), 'vol': 10_000, 'active_from': None},
-    {'id': 'DEMOSOLAR', 'name': 'Demo - Solar',          'group': 'DEMO_SOLAR', 'group_name': 'Tenant - Solar',
+    {'id': 'DEMOSOLA', 'name': 'Demo - Solar',           'group': 'DEMO_SOLAR', 'group_name': 'Tenant - Solar',
      'lists': [(211, 'Solar West'), (212, 'Solar East')],                     'agents': (3201, 10), 'vol': 7_000,  'active_from': None},
     {'id': 'DEMOMEDI',  'name': 'Demo - Medicare',       'group': 'DEMO_MEDI',  'group_name': 'Tenant - Medicare',
      'lists': [(221, 'Medicare T1'), (222, 'Medicare T2')],                   'agents': (3301, 15), 'vol': 12_000, 'active_from': None},
