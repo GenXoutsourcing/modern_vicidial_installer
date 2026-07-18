@@ -20265,6 +20265,8 @@ function AdminShell({ token, user, onLogout }) {
     || NAV_ITEMS.find((item) => item.key === navView)
     || NAV_ITEMS[0];
   const system = dashboardState.data?.system || {};
+  const dbHealth = system.dbHealth || {};
+  const dbAlertCount = (dbHealth.crashedTables || []).length + (dbHealth.staleServers || []).length;
   const updatedAt = activeView === 'command' ? dashboardState.data?.generatedAt : adminState.data?.generatedAt;
   const isLoading = dashboardState.loading || adminState.loading;
   const error = dashboardState.error || adminState.error;
@@ -20292,9 +20294,9 @@ function AdminShell({ token, user, onLogout }) {
               {user.fullName || user.user} | L{user.userLevel}
             </span>
           )}
-          <StatusPill ok={system.dbOnline}>
+          <StatusPill ok={system.dbOnline && !dbAlertCount}>
             <Server size={14} aria-hidden="true" />
-            {system.dbOnline ? 'DB Online' : 'DB Offline'}
+            {dbAlertCount ? `DB ALERT (${dbAlertCount})` : system.dbOnline ? 'DB Online' : 'DB Offline'}
           </StatusPill>
           {(system.slaves || []).map((slave, index) => (
             <StatusPill key={slave.host || index} ok={slave.online}>
@@ -20362,6 +20364,27 @@ function AdminShell({ token, user, onLogout }) {
           </section>
 
           {error && <div className="alert">{error}</div>}
+          {/* DB health alert (Vici crashed_tables + our own scan + keepalive
+              heartbeats). Shown on the Command center; the topbar pill goes
+              red everywhere. */}
+          {activeView === 'command' && dbAlertCount > 0 && (
+            <div className="alert alert-crit" role="alert">
+              <b>Database health alert</b>
+              <ul>
+                {(dbHealth.crashedTables || []).map((t) => (
+                  <li key={`${t.source}-${t.table}`}>
+                    Table <code>{t.table}</code> is marked crashed on the {t.source === 'replica' ? 'slave (db2)' : t.source === 'primary' ? 'master (db1)' : 'cluster'}
+                    {t.since ? ` since ${String(t.since).replace('T', ' ').slice(0, 19)}` : ''} — run <code>REPAIR TABLE {t.table};</code> on that server.
+                  </li>
+                ))}
+                {(dbHealth.staleServers || []).map((s) => (
+                  <li key={s.server}>
+                    Server <code>{s.server}</code> keepalive heartbeat is {Math.round(s.seconds / 60)} min stale — check that its cron/screen processes are running.
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {isLoading && <div className="loading-band">Loading live dialer data</div>}
 
           <AdminPage

@@ -1290,12 +1290,61 @@ function secondsLabel(seconds) {
   return `${minutes}m`;
 }
 
+// DB-health cache: the direct crashed-table scan (SHOW TABLE STATUS) opens
+// every table's metadata, so it runs at most every 10 minutes; the tiny
+// state/heartbeat tables are read on every poll.
+const dbHealthCache = { checkedAt: 0, direct: [] };
+const DB_HEALTH_DIRECT_MS = 10 * 60 * 1000;
+
 async function systemStatus() {
   const [identity] = await rows(
     "SELECT @@hostname AS hostname, @@version AS version, DATABASE() AS database_name, NOW() AS db_time",
     [],
     [{}],
   );
+
+  // --- DB health: crashed tables + dialer heartbeats ---------------------
+  // 1) crashed_tables is VICIdial's own state table (AST_table_status.pl,
+  //    launched by ADMIN_keepalive_ALL.pl per system_settings.
+  //    db_crashed_tables_check). Non-empty = crashed table.
+  // 2) We ALSO run Vici's exact detection SQL ourselves (cached 10 min) on
+  //    BOTH the primary and the report replica — the native script only
+  //    covers its own DB and may be scheduled as seldom as once a day.
+  // 3) server_updater.last_update is the per-server keepalive heartbeat;
+  //    stale >120s = that dialer's keepalive is dead.
+  const dbHealth = { crashedTables: [], staleServers: [] };
+  try {
+    const crashed = await rows('SELECT table_name, crashed_datetime FROM crashed_tables', [], []);
+    for (const row of crashed) {
+      dbHealth.crashedTables.push({ table: String(row.table_name), since: row.crashed_datetime, source: 'vicidial' });
+    }
+  } catch { /* pre-crashed_tables schema — direct scan below still covers us */ }
+  if (Date.now() - dbHealthCache.checkedAt > DB_HEALTH_DIRECT_MS) {
+    dbHealthCache.checkedAt = Date.now();
+    const detectSql = "SHOW TABLE STATUS WHERE Comment LIKE '%crash%'";
+    const direct = [];
+    try {
+      for (const t of await rows(detectSql, [], [])) direct.push({ table: String(t.Name || t.name), since: null, source: 'primary' });
+    } catch { /* ignore */ }
+    if (config.dbSlave.host) {
+      try {
+        for (const t of await dbContext.run(reportPool, () => rows(detectSql, [], []))) {
+          direct.push({ table: String(t.Name || t.name), since: null, source: 'replica' });
+        }
+      } catch { /* replica unreachable shows via the slave pill instead */ }
+    }
+    dbHealthCache.direct = direct;
+  }
+  for (const t of dbHealthCache.direct) {
+    if (!dbHealth.crashedTables.some((x) => x.table === t.table && x.source === t.source)) dbHealth.crashedTables.push(t);
+  }
+  try {
+    const beats = await rows(
+      'SELECT server_ip, GREATEST(0, UNIX_TIMESTAMP() - UNIX_TIMESTAMP(last_update)) AS age FROM server_updater', [], []);
+    for (const beat of beats) {
+      if (Number(beat.age) > 120) dbHealth.staleServers.push({ server: String(beat.server_ip), seconds: Number(beat.age) });
+    }
+  } catch { /* table absent */ }
 
   // Replica health. SHOW SLAVE HOSTS on the primary lists every replica
   // currently REGISTERED AND CONNECTED (being listed = online) — that's how
@@ -1328,6 +1377,7 @@ async function systemStatus() {
     database: identity?.database_name || config.db.database,
     dbTime: identity?.db_time || null,
     slaves,
+    dbHealth,
   };
 }
 
