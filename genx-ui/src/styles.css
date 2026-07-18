@@ -1276,6 +1276,18 @@ body {
   font-size: 0.95rem;
 }
 
+/* URL editor embedded in the rail panel (vs its stacked-modal variant). */
+.url-editor-embedded {
+  display: grid;
+  gap: 12px;
+}
+
+.url-editor-embedded .modal-actions {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
 .rail-form > .modal-actions {
   flex: none;
   margin-top: 0;

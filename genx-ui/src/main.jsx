@@ -4709,10 +4709,15 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
   );
 }
 
-function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, onClose }) {
+// The URL editor body, usable two ways: inside CampaignUrlModal (stacked
+// modal, basic edit page) or EMBEDDED directly in the Detail rail panel.
+// These fields save through their own endpoint (not the campaign form), so
+// the embedded variant keeps its own Save URLs button + Saved note.
+function CampaignUrlEditor({ kind, campaignId, urls, token, onLogout, onSaved, onClose, embedded = false }) {
   const config = CAMPAIGN_URL_MODALS[kind];
   const [values, setValues] = useState(() => Object.fromEntries(config.fields.map(([key]) => [key, urls?.[key] || ''])));
   const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState(false);
   const [error, setError] = useState('');
 
   async function save() {
@@ -4724,7 +4729,12 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
         body: JSON.stringify(values),
       });
       onSaved(payload.urls || values);
-      onClose();
+      if (embedded) {
+        setSavedNote(true);
+        setTimeout(() => setSavedNote(false), 2500);
+      } else {
+        onClose();
+      }
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout();
@@ -4737,18 +4747,8 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
-      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={config.title}>
-        <div className="modal-head">
-          <div>
-            <p className="eyebrow">Campaign {campaignId}</p>
-            <h2>{config.title}</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="entity-form">
+        <div className={embedded ? 'url-editor-embedded' : 'entity-form'}>
+          {embedded && <div className="field-grid"><div className="form-section">{config.title}</div></div>}
           <div className="field-grid">
             {config.fields.map(([key, label, urlType, inputType]) => {
               // In ALT mode the single-URL box disappears entirely — only the
@@ -4808,13 +4808,40 @@ function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, on
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
             <span className="modal-actions-spacer" />
-            <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+            {savedNote && <span className="connection-status">Saved</span>}
+            {!embedded && <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>}
             <button type="button" className="primary-action" disabled={saving} onClick={save}>
               <Save size={18} aria-hidden="true" />
-              {saving ? 'Saving' : 'Save'}
+              {saving ? 'Saving' : embedded ? 'Save URLs' : 'Save'}
             </button>
           </div>
         </div>
+  );
+}
+
+function CampaignUrlModal({ kind, campaignId, urls, token, onLogout, onSaved, onClose }) {
+  const config = CAMPAIGN_URL_MODALS[kind];
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label={config.title}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Campaign {campaignId}</p>
+            <h2>{config.title}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <CampaignUrlEditor
+          kind={kind}
+          campaignId={campaignId}
+          urls={urls}
+          token={token}
+          onLogout={onLogout}
+          onSaved={onSaved}
+          onClose={onClose}
+        />
       </section>
     </div>
   );
@@ -6377,9 +6404,8 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [deleting, setDeleting] = useState(false);
   const [dialStatusModal, setDialStatusModal] = useState(false);
   const [autoAltModal, setAutoAltModal] = useState(false);
-  // Option 4 rail: selected section + the Webform/Call URL editor modal.
+  // Option 4 rail: which section the left nav has selected.
   const [railSection, setRailSection] = useState('__overview');
-  const [railUrlModal, setRailUrlModal] = useState('');
   const [savedNote, setSavedNote] = useState(false);
   const savedNoteTimer = useRef(null);
   const [sectionModal, setSectionModal] = useState('');
@@ -6806,15 +6832,20 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
                   </div>
                 )}
                 {(railSection === '__webform' || railSection === '__callurls') && (
-                  <div className="rail-launcher">
-                    <h4>{railSection === '__webform' ? 'Webform URLs' : 'Call URLs'}</h4>
-                    <p className="action-copy">
-                      {railSection === '__webform'
-                        ? 'Web form 1 / 2 / 3 targets opened from the agent screen.'
-                        : 'URLs fired on call start, dispo, and add-lead.'}
-                    </p>
-                    <button type="button" className="secondary-action" onClick={() => setRailUrlModal(railSection === '__webform' ? 'webform' : 'callurls')}>Edit URLs</button>
-                  </div>
+                  /* Inline URL editor. key forces a remount when hopping
+                     between the two URL pages so values re-seed from form.
+                     Own Save URLs button — these save via /campaigns/:id/urls,
+                     not the campaign form. */
+                  <CampaignUrlEditor
+                    key={railSection}
+                    kind={railSection === '__webform' ? 'webform' : 'callurls'}
+                    campaignId={form.campaign_id}
+                    urls={form}
+                    token={token}
+                    onLogout={onLogout}
+                    onSaved={(next) => setForm((current) => ({ ...current, ...next }))}
+                    embedded
+                  />
                 )}
                 {railSection === '__lists' && (
                   <CampaignListsPanel
@@ -6878,17 +6909,6 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onSwitchAction={stackAction}
             onLogout={onLogout}
-          />
-        )}
-        {railUrlModal && (
-          <CampaignUrlModal
-            kind={railUrlModal}
-            campaignId={form.campaign_id}
-            urls={form}
-            token={token}
-            onLogout={onLogout}
-            onSaved={(next) => setForm((current) => ({ ...current, ...next }))}
-            onClose={() => setRailUrlModal('')}
           />
         )}
         {sectionModal && (
