@@ -848,6 +848,7 @@ function userCan(user, entity) {
   if (entity === 'campaignHotkeys') return Boolean(user?.modifyCampaigns);
   if (entity === 'leadRecycle') return Boolean(user?.modifyCampaigns);
   if (entity === 'listMixes') return Boolean(user?.modifyCampaigns);
+  if (entity === 'guides') return Boolean(user?.modifyGuides);
   if (entity === 'users') return Boolean(user?.modifyUsers);
   if (entity === 'userGroups') return Boolean(user?.modifyUsergroups);
   if (entity === 'lists') return Boolean(user?.modifyLists);
@@ -10189,6 +10190,12 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                 )}
                 <div className="go-btns">
                   <button type="button" className="primary-action compact-action" onClick={saveNode}>Save Node</button>
+                  {root && selected.node_id !== root.node_id && (
+                    <>
+                      <button type="button" className="secondary-action compact-action" title="Move up among siblings" onClick={() => api(`/admin/guides/${guideId}/nodes/${selected.node_id}/move`, 'POST', { direction: 'up' })}>↑</button>
+                      <button type="button" className="secondary-action compact-action" title="Move down among siblings" onClick={() => api(`/admin/guides/${guideId}/nodes/${selected.node_id}/move`, 'POST', { direction: 'down' })}>↓</button>
+                    </>
+                  )}
                   {selected.type === 'step' && (
                     <button type="button" className="secondary-action compact-action" onClick={() => api(`/admin/guides/${guideId}/nodes`, 'POST', { parent_node_id: selected.node_id, type: 'response' })}>+ Response</button>
                   )}
@@ -10218,10 +10225,10 @@ function GuidesPanel({ admin, user, token }) {
   const [guides, setGuides] = useState([]);
   const [editing, setEditing] = useState(null);
   const [bump, setBump] = useState(0);
-  const canManage = userCan(user, 'scripts');
+  const canManage = userCan(user, 'guides');
   useEffect(() => {
-    apiFetch('/admin/guides', token).then((p) => setGuides(p.guides || [])).catch(() => {});
-  }, [token, bump]);
+    if (canManage) apiFetch('/admin/guides', token).then((p) => setGuides(p.guides || [])).catch(() => {});
+  }, [token, bump, canManage]);
   if (!canManage) return null;
 
   async function createGuide() {

@@ -318,6 +318,8 @@ function publicUser(row) {
     deleteFilters: row.delete_filters === '1',
     modifyUsergroups: row.modify_usergroups === '1',
     modifyScripts: row.modify_scripts === '1',
+    // Dedicated guide-authoring flag (genx column; defaults granted).
+    modifyGuides: row.genx_modify_guides !== '0',
     modifyFilters: row.modify_filters === '1',
     modifyServers: row.modify_servers === '1',
     modifyCarriers: row.modify_carriers === '1',
@@ -702,6 +704,7 @@ async function authenticateVicidialUser(username, password) {
             u.delete_filters,
             u.modify_usergroups,
             u.modify_scripts,
+            u.genx_modify_guides,
             u.modify_filters,
             u.modify_servers,
             u.modify_carriers,
@@ -18678,7 +18681,7 @@ async function guideDraftVersion(guideId) {
 }
 
 app.get('/api/admin/guides', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   const guides = await rows(
     `SELECT g.*, pv.version_no AS published_no,
        (SELECT COUNT(*) FROM genx_guide_version dv WHERE dv.guide_id = g.guide_id AND dv.published_at IS NULL) AS has_draft
@@ -18688,7 +18691,7 @@ app.get('/api/admin/guides', requireAccess, async (req, res) => {
 });
 
 app.post('/api/admin/guides', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const name = cleanText(req.body?.name, 80) || 'New Guide';
     const campaign = cleanId(req.body?.campaign_id, 8) || null;
@@ -18702,7 +18705,7 @@ app.post('/api/admin/guides', requireAccess, async (req, res) => {
 });
 
 app.get('/api/admin/guides/:id/tree', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const guideId = Number(req.params.id);
     const [guide] = await rows('SELECT * FROM genx_guide WHERE guide_id = ? LIMIT 1', [guideId], []);
@@ -18715,7 +18718,7 @@ app.get('/api/admin/guides/:id/tree', requireAccess, async (req, res) => {
 });
 
 app.post('/api/admin/guides/:id/nodes', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const versionId = await guideDraftVersion(Number(req.params.id));
     const parentId = Number(req.body?.parent_node_id) || 0;
@@ -18739,7 +18742,7 @@ app.post('/api/admin/guides/:id/nodes', requireAccess, async (req, res) => {
 });
 
 app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const versionId = await guideDraftVersion(Number(req.params.id));
     const dispo = cleanId(req.body?.disposition, 6);
@@ -18751,7 +18754,7 @@ app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) =
 });
 
 app.delete('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const versionId = await guideDraftVersion(Number(req.params.id));
     const target = Number(req.params.nodeId);
@@ -18772,8 +18775,28 @@ app.delete('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res
   } catch { res.status(500).json({ ok: false, error: 'node_delete_failed' }); }
 });
 
+app.post('/api/admin/guides/:id/nodes/:nodeId/move', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyGuides')) return;
+  try {
+    const versionId = await guideDraftVersion(Number(req.params.id));
+    const nodeId = Number(req.params.nodeId);
+    const direction = req.body?.direction === 'up' ? -1 : 1;
+    const [edge] = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ? AND child_node_id = ? LIMIT 1', [versionId, nodeId], []);
+    if (!edge) return res.status(400).json({ ok: false, error: 'no_edge' });
+    const siblings = await rows(
+      'SELECT edge_id, sort_order FROM genx_guide_edge WHERE version_id = ? AND parent_node_id = ? ORDER BY sort_order',
+      [versionId, edge.parent_node_id], []);
+    const index = siblings.findIndex((s) => s.edge_id === edge.edge_id);
+    const swap = siblings[index + direction];
+    if (!swap) return res.json({ ok: true, moved: false }); // already at the end
+    await execute('UPDATE genx_guide_edge SET sort_order = ? WHERE edge_id = ?', [swap.sort_order, edge.edge_id]);
+    await execute('UPDATE genx_guide_edge SET sort_order = ? WHERE edge_id = ?', [siblings[index].sort_order, swap.edge_id]);
+    res.json({ ok: true, moved: true });
+  } catch { res.status(500).json({ ok: false, error: 'node_move_failed' }); }
+});
+
 app.post('/api/admin/guides/:id/publish', requireAccess, async (req, res) => {
-  if (!requireModify(req, res, 'modifyScripts')) return;
+  if (!requireModify(req, res, 'modifyGuides')) return;
   try {
     const guideId = Number(req.params.id);
     const draftId = await guideDraftVersion(guideId);
