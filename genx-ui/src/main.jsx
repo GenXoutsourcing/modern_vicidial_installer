@@ -4993,6 +4993,46 @@ const DETAIL_REPORT_KINDS = Object.keys(REPORT_MODALS);
 // into a scannable menu. Each row still opens the exact same section modal —
 // labels here must match the extraActions labels (PILL_SECTIONS after the
 // ' and ' -> ' & ' replace) plus the two URL modals handled locally.
+// Option 4 rail (campaign Detail): left nav of every section, right panel
+// renders the selected section's fields INLINE (same renderField/form state;
+// one global Save). Field-section keys are the RAW section names (pillFields
+// keys); __-prefixed keys are special panels.
+const CAMPAIGN_RAIL = [
+  { title: 'Campaign', items: [
+    { key: '__overview', label: 'Overview' },
+    { key: 'Basic Campaign', label: 'Basic' },
+  ] },
+  { title: 'Dialing', items: [
+    { key: 'Dialing and Hopper', label: 'Dialing & Hopper' },
+    { key: 'Manual Dial', label: 'Manual Dial' },
+    { key: 'AMD', label: 'AMD' },
+    { key: 'Dead Call Handling', label: 'Dead Call Handling' },
+    { key: '__autoalt', label: 'Auto Alt Statuses' },
+  ] },
+  { title: 'Routing & Audio', items: [
+    { key: 'Routing and Inbound', label: 'Routing & Inbound' },
+    { key: 'Voicemail', label: 'Voicemail' },
+  ] },
+  { title: 'Agents', items: [
+    { key: 'Agent Limits', label: 'Agent Limits' },
+    { key: 'Agent Screen', label: 'Agent Screen' },
+    { key: 'Agent Controls', label: 'Agent Controls' },
+    { key: 'Transfers and 3-Way Calls', label: 'Transfers & 3-Way' },
+    { key: 'Callbacks', label: 'Callbacks' },
+  ] },
+  { title: 'Data', items: [
+    { key: '__webform', label: 'Webform URLs' },
+    { key: '__callurls', label: 'Call URLs' },
+    { key: 'CRM', label: 'CRM' },
+    { key: 'List Controls', label: 'List Controls' },
+  ] },
+  { title: 'Ops', items: [
+    { key: 'Compliance', label: 'Compliance' },
+    { key: '__lists', label: 'Lists & Lead Statuses' },
+    { key: '__reports', label: 'Reports & Activity' },
+  ] },
+];
+
 const CAMPAIGN_SETTINGS_GROUPS = [
   { title: 'Identity & Status', items: ['Basic Campaign'] },
   { title: 'Dialing & Pacing', items: ['Dialing & Hopper', 'Manual Dial', 'AMD', 'Dead Call Handling', 'Auto Alt Statuses'] },
@@ -5022,7 +5062,7 @@ const CAMPAIGN_SETTINGS_META = {
   Compliance: [ShieldCheck, 'DNC scrubbing, call-time rules, drop limits'],
 };
 
-function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
+function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, reportsOnly = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [logoutReason, setLogoutReason] = useState('');
@@ -5079,7 +5119,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
       <div className="campaign-tool-head">
         <div>
           <p className="eyebrow">Connections</p>
-          <h3>{basic ? 'Hopper, reports and live activity' : 'Reports, live activity and campaign settings'}</h3>
+          <h3>{reportsOnly ? 'Reports and live activity' : basic ? 'Hopper, reports and live activity' : 'Reports, live activity and campaign settings'}</h3>
         </div>
         <Compass size={20} aria-hidden="true" />
       </div>
@@ -5134,7 +5174,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
         )}
         {basic && logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
-      {!basic && (() => {
+      {!basic && !reportsOnly && (() => {
         // Row click handlers: the two URL modals are local; everything else
         // comes from extraActions (the Detail modal's section-modal openers).
         const openSection = {
@@ -5240,7 +5280,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
 // Bottom section of the Manage Campaign modal: the campaign's lists with
 // per-list activate/deactivate toggles, plus a per-status lead breakdown
 // that counts ACTIVE lists only (server enforces the active filter).
-function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, onLogout }) {
+function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, onLogout, defaultExpanded = false }) {
   const campaign = String(campaignId || '');
   // Local overrides so a toggle reflects immediately; admin.lists refreshes
   // on its own 30s cycle and will agree by then.
@@ -5255,8 +5295,9 @@ function CampaignListsPanel({ admin, campaignId, user, token, onSwitchAction, on
   const activeLists = lists.filter((row) => row.active === 'Y').length;
   const [breakdown, setBreakdown] = useState(null);
   // Collapsed by default: the Detail page shows just the summary bar; the
-  // full list/breakdown grid expands on click.
-  const [expanded, setExpanded] = useState(false);
+  // full list/breakdown grid expands on click. The rail's Lists panel opens
+  // it expanded (it IS the page there).
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const canToggle = userCan(user, 'lists');
   const totalLeads = lists.reduce((sum, row) => sum + (Number(row.lead_count) || 0), 0);
 
@@ -6336,6 +6377,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
   const [deleting, setDeleting] = useState(false);
   const [dialStatusModal, setDialStatusModal] = useState(false);
   const [autoAltModal, setAutoAltModal] = useState(false);
+  // Option 4 rail: selected section + the Webform/Call URL editor modal.
+  const [railSection, setRailSection] = useState('__overview');
+  const [railUrlModal, setRailUrlModal] = useState('');
   const [savedNote, setSavedNote] = useState(false);
   const savedNoteTimer = useRef(null);
   const [sectionModal, setSectionModal] = useState('');
@@ -6568,7 +6612,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
 
   return (
     <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
-      <section className={`modal-panel ${isDetail ? 'detail-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`${isEdit ? 'Manage' : 'Add'} ${label}`}>
+      <section className={`modal-panel ${isDetail ? 'detail-modal' : ''}${isDetail && action.entity === 'campaigns' ? ' rail-modal' : ''}`} role="dialog" aria-modal="true" aria-label={`${isEdit ? 'Manage' : 'Add'} ${label}`}>
         <div className="modal-head">
           <div>
             <p className="eyebrow">{isDetail ? 'Detail' : isEdit ? 'Basic' : isCopy ? 'Copy' : 'Create'}</p>
@@ -6579,19 +6623,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           </button>
         </div>
 
-        {isDetail && action.entity === 'campaigns' && (
-          <CampaignScopedTools
-            admin={admin}
-            campaignId={form.campaign_id}
-            user={user}
-            token={token}
-            onLogout={onLogout}
-            onAction={stackAction}
-            dialStatusCount={campaignDialStatuses(form).length}
-            onManageDialStatuses={() => setDialStatusModal(true)}
-            campaignForm={form}
-          />
-        )}
+        {/* Campaign Detail: Campaign Tools moved into the rail's Overview panel */}
 
         {isEdit && action.entity === 'dids' && (
           <DidConnections didId={form.did_id} token={token} onLogout={onLogout} onNavigate={onNavigate} />
@@ -6702,7 +6734,9 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           />
         )}
 
-        {isEdit && action.entity === 'campaigns' && (
+        {/* Basic edit keeps the reports strip below the head; on Detail the
+            rail's Reports & Activity panel renders it instead. */}
+        {isEdit && !isDetail && action.entity === 'campaigns' && (
           <CampaignConnections
             admin={admin}
             campaignId={form.campaign_id}
@@ -6710,32 +6744,109 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onNavigate={onNavigate}
             onLogout={onLogout}
-            basic={!isDetail}
+            basic
             urls={form}
             onUrlsSaved={(next) => setForm((current) => ({ ...current, ...next }))}
-            extraActions={[
-              ...PILL_SECTIONS.map((title) => ({
-                label: title.replace(' and ', ' & '),
-                onClick: () => openSectionModal(title),
-              })),
-              // Not a field section — this pill opens the status toggle
-              // picker (CampaignStatusPickerModal) directly. Only reachable
-              // on Detail (PILL_SECTIONS gates the same way).
-              { label: 'Auto Alt Statuses', onClick: () => setAutoAltModal(true) },
-            ]}
           />
         )}
 
-        <form className="entity-form" onSubmit={submit}>
-          <div className="field-grid">
-            {isDetail && action.entity === 'campaigns' && (
-              <>
-                <div className="form-section">Essentials</div>
-                {fields.filter((field) => field.key && ESSENTIAL_CAMPAIGN_KEYS.includes(field.key)).map(renderField)}
-              </>
-            )}
-            {mainFields.map(renderField)}
-          </div>
+        <form className={isDetail && action.entity === 'campaigns' ? 'entity-form rail-form' : 'entity-form'} onSubmit={submit}>
+          {isDetail && action.entity === 'campaigns' ? (
+            <div className="rail-layout">
+              <nav className="rail-nav" aria-label="Campaign sections">
+                {CAMPAIGN_RAIL.map((group) => (
+                  <div key={group.title} className="rail-group">
+                    <h5>{group.title}</h5>
+                    {group.items.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={railSection === item.key ? 'rail-item active' : 'rail-item'}
+                        onClick={() => setRailSection(item.key)}
+                      >
+                        {item.label}
+                        {item.key === 'AMD' && String(form?.amd_type || '').trim() && form.amd_type !== 'N' && form.amd_type !== 'DISABLED' && <span className="rail-dot amber" />}
+                        {item.key === 'Compliance' && (String(form?.use_internal_dnc || 'N') !== 'N' || String(form?.use_campaign_dnc || 'N') !== 'N') && <span className="rail-dot green" />}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </nav>
+              <div className="rail-panel">
+                {railSection === '__overview' && (
+                  <>
+                    <CampaignScopedTools
+                      admin={admin}
+                      campaignId={form.campaign_id}
+                      user={user}
+                      token={token}
+                      onLogout={onLogout}
+                      onAction={stackAction}
+                      dialStatusCount={campaignDialStatuses(form).length}
+                      onManageDialStatuses={() => setDialStatusModal(true)}
+                      campaignForm={form}
+                    />
+                    <div className="field-grid">
+                      <div className="form-section">Essentials</div>
+                      {fields.filter((field) => field.key && ESSENTIAL_CAMPAIGN_KEYS.includes(field.key)).map(renderField)}
+                    </div>
+                  </>
+                )}
+                {pillFields[railSection] && (
+                  <div className="field-grid">
+                    <div className="form-section">{railSection.replace(' and ', ' & ')}</div>
+                    {pillFields[railSection].map(renderField)}
+                  </div>
+                )}
+                {railSection === '__autoalt' && (
+                  <div className="rail-launcher">
+                    <h4>Auto Alt Statuses</h4>
+                    <p className="action-copy">Statuses that trigger automatic alt-number dialing. The picker applies immediately on its own save.</p>
+                    <button type="button" className="secondary-action" onClick={() => setAutoAltModal(true)}>Choose Statuses</button>
+                  </div>
+                )}
+                {(railSection === '__webform' || railSection === '__callurls') && (
+                  <div className="rail-launcher">
+                    <h4>{railSection === '__webform' ? 'Webform URLs' : 'Call URLs'}</h4>
+                    <p className="action-copy">
+                      {railSection === '__webform'
+                        ? 'Web form 1 / 2 / 3 targets opened from the agent screen.'
+                        : 'URLs fired on call start, dispo, and add-lead.'}
+                    </p>
+                    <button type="button" className="secondary-action" onClick={() => setRailUrlModal(railSection === '__webform' ? 'webform' : 'callurls')}>Edit URLs</button>
+                  </div>
+                )}
+                {railSection === '__lists' && (
+                  <CampaignListsPanel
+                    admin={admin}
+                    campaignId={form.campaign_id}
+                    user={user}
+                    token={token}
+                    onSwitchAction={stackAction}
+                    onLogout={onLogout}
+                    defaultExpanded
+                  />
+                )}
+                {railSection === '__reports' && (
+                  <CampaignConnections
+                    admin={admin}
+                    campaignId={form.campaign_id}
+                    user={user}
+                    token={token}
+                    onNavigate={onNavigate}
+                    onLogout={onLogout}
+                    reportsOnly
+                    urls={form}
+                    onUrlsSaved={(next) => setForm((current) => ({ ...current, ...next }))}
+                  />
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="field-grid">
+              {mainFields.map(renderField)}
+            </div>
+          )}
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
             {canDelete && (
@@ -6759,7 +6870,7 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
           </div>
         </form>
 
-        {isEdit && action.entity === 'campaigns' && (
+        {isEdit && !isDetail && action.entity === 'campaigns' && (
           <CampaignListsPanel
             admin={admin}
             campaignId={form.campaign_id}
@@ -6767,6 +6878,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
             token={token}
             onSwitchAction={stackAction}
             onLogout={onLogout}
+          />
+        )}
+        {railUrlModal && (
+          <CampaignUrlModal
+            kind={railUrlModal}
+            campaignId={form.campaign_id}
+            urls={form}
+            token={token}
+            onLogout={onLogout}
+            onSaved={(next) => setForm((current) => ({ ...current, ...next }))}
+            onClose={() => setRailUrlModal('')}
           />
         )}
         {sectionModal && (
