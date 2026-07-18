@@ -7513,9 +7513,12 @@ function ServersPanel({ admin, user, onAction }) {
               // 15s stale means the box is unreachable/unusable.
               const age = Number(row.heartbeat_age_sec);
               const down = !Number.isFinite(age) || age > 15;
+              // DOWN keeps the staleness age (tells you WHEN it died);
+              // healthy is just "Online" — showing heartbeat seconds here
+              // read as replication lag next to the topbar Slave pill.
               return down
                 ? <StatusPill ok={false}>{Number.isFinite(age) ? `DOWN ${age > 3600 ? `${Math.round(age / 3600)}h` : age > 90 ? `${Math.round(age / 60)}m` : `${age}s`}` : 'DOWN'}</StatusPill>
-                : <StatusPill ok>Online {age}s</StatusPill>;
+                : <StatusPill ok>Online</StatusPill>;
             },
           },
           ...(canManage ? [{ key: 'actions', label: 'Action', render: (row) => <ManageButton onClick={() => onAction?.('servers', 'edit', row)} /> }] : []),
