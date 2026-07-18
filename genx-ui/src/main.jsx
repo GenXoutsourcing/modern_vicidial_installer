@@ -7588,23 +7588,338 @@ function ServersPanel({ admin, user, onAction }) {
   );
 }
 
-function CampaignsView({ admin, user, onAction }) {
+// Guided campaign creation: five steps to a ready-to-dial campaign. Runs
+// entirely through the EXISTING endpoints (campaign create, list create,
+// bulk list-reassign, user-group update), so every permission guard and
+// validator applies unchanged. Dial-method jargon gets plain-English hints.
+const WIZARD_DIAL_METHODS = [
+  ['RATIO', 'Auto-dial — dials N lines per available agent (most outbound campaigns)'],
+  ['ADAPT_AVERAGE', 'Adaptive — the dialer adjusts pacing from drop/answer history'],
+  ['MANUAL', 'Manual — agents click to dial each lead (preview/compliance work)'],
+  ['INBOUND_MAN', 'Inbound + manual — blended agents take calls, dial manually between'],
+];
+
+function CampaignWizard({ admin, user, token, onClose, onCreated }) {
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [results, setResults] = useState(null); // per-phase outcome list on finish
+  const defaultCallTime = admin?.lookups?.callTimes?.find((item) => item.call_time_id === '24hours')?.call_time_id
+    || admin?.lookups?.callTimes?.[0]?.call_time_id || '24hours';
+  const [w, setW] = useState({
+    campaign_id: '', campaign_name: '', campaign_description: '',
+    dial_method: 'RATIO', auto_dial_level: '1.0', local_call_time: defaultCallTime,
+    leadsMode: 'new', list_id: '', list_name: '', existingLists: new Set(),
+    groups: new Set(),
+    hopper_level: '50', dial_timeout: '28', drop_call_seconds: '5',
+    campaign_recording: 'ALLFORCE', campaign_cid: '', use_internal_dnc: 'Y', use_campaign_dnc: 'N',
+  });
+  const set = (key, value) => setW((current) => ({ ...current, [key]: value }));
+  const toggleSet = (key, value) => setW((current) => {
+    const next = new Set(current[key]);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    return { ...current, [key]: next };
+  });
+
+  const STEPS = ['Basics', 'Leads', 'Agents', 'Dialing & Compliance', 'Review'];
+  const idOk = /^[A-Za-z0-9_-]{2,8}$/.test(w.campaign_id);
+  const idTaken = (admin?.campaigns || []).some((c) => String(c.campaign_id).toUpperCase() === w.campaign_id.toUpperCase());
+  const stepValid = step === 0
+    ? (idOk && !idTaken && w.campaign_name.trim())
+    : step === 1
+      ? (w.leadsMode === 'skip' || (w.leadsMode === 'new' ? /^\d{2,10}$/.test(w.list_id) : w.existingLists.size > 0))
+      : true;
+
+  async function create() {
+    setBusy(true);
+    setError('');
+    const outcome = [];
+    const cid = w.campaign_id.toUpperCase();
+    try {
+      await apiFetch('/admin/campaigns', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          campaign_id: cid, campaign_name: w.campaign_name.trim(), campaign_description: w.campaign_description.trim(),
+          active: 'Y', dial_method: w.dial_method, auto_dial_level: w.auto_dial_level,
+          hopper_level: w.hopper_level, lead_order: 'DOWN', local_call_time: w.local_call_time,
+          campaign_recording: w.campaign_recording, campaign_allow_inbound: w.dial_method === 'INBOUND_MAN' ? 'Y' : 'N',
+          dial_timeout: w.dial_timeout, drop_call_seconds: w.drop_call_seconds,
+          campaign_cid: w.campaign_cid.trim(), use_internal_dnc: w.use_internal_dnc, use_campaign_dnc: w.use_campaign_dnc,
+        }),
+      });
+      outcome.push({ ok: true, text: `Campaign ${cid} created` });
+    } catch (requestError) {
+      setBusy(false);
+      setError(requestError.status === 403 ? 'Not permitted to create campaigns' : `Campaign create failed (${requestError.message || 'error'})`);
+      return; // nothing else makes sense without the campaign
+    }
+    if (w.leadsMode === 'new') {
+      try {
+        await apiFetch('/admin/lists', token, {
+          method: 'POST',
+          body: JSON.stringify({ list_id: w.list_id, list_name: w.list_name.trim() || `${cid} leads`, campaign_id: cid, active: 'Y' }),
+        });
+        outcome.push({ ok: true, text: `List ${w.list_id} created and attached` });
+      } catch { outcome.push({ ok: false, text: `List ${w.list_id} could not be created` }); }
+    } else if (w.leadsMode === 'existing' && w.existingLists.size) {
+      try {
+        const payload = await apiFetch('/admin/bulk/lists', token, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'campaign_id', value: cid, ids: [...w.existingLists] }),
+        });
+        outcome.push({ ok: true, text: `${payload.updated} list(s) moved to ${cid}` });
+      } catch { outcome.push({ ok: false, text: 'List reassign failed' }); }
+    }
+    for (const groupId of w.groups) {
+      const row = (admin?.userGroups || []).find((g) => g.user_group === groupId);
+      if (!row) continue;
+      const current = String(row.allowed_campaigns || '');
+      if (current.includes('-ALL-CAMPAIGNS-') || current.split(/\s+/).includes(cid)) {
+        outcome.push({ ok: true, text: `Group ${groupId} already covers ${cid}` });
+        continue;
+      }
+      try {
+        await apiFetch(`/admin/user-groups/${encodeURIComponent(groupId)}`, token, {
+          method: 'PUT',
+          body: JSON.stringify({ ...row, allowed_campaigns: `${current.trim()} ${cid}`.trim() }),
+        });
+        outcome.push({ ok: true, text: `Group ${groupId} granted ${cid}` });
+      } catch { outcome.push({ ok: false, text: `Group ${groupId} grant failed` }); }
+    }
+    setResults(outcome);
+    setBusy(false);
+    onCreated?.();
+  }
+
+  const activeLists = (admin?.lists || []).filter((row) => true);
+  const groups = (admin?.userGroups || []).filter((g) => g.user_group !== 'ADMIN');
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal wizard-modal" role="dialog" aria-modal="true" aria-label="Campaign Wizard">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Guided Setup</p>
+            <h2>New Campaign Wizard</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        {!results && (
+          <div className="wizard-steps">
+            {STEPS.map((label, index) => (
+              <span key={label} className={index === step ? 'wstep on' : index < step ? 'wstep done' : 'wstep'}>
+                <i>{index + 1}</i>{label}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="entity-form">
+          {results ? (
+            <div className="wizard-done">
+              <h3>Done</h3>
+              <ul>
+                {results.map((r, i) => <li key={i} className={r.ok ? 'ok' : 'fail'}>{r.text}</li>)}
+              </ul>
+              <p className="action-copy">Fine-tune anything (AMD, compliance, agent screen) from the campaign's Detail page.</p>
+              <div className="modal-actions">
+                <span className="modal-actions-spacer" />
+                <button type="button" className="primary-action" onClick={onClose}>Close</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {step === 0 && (
+                <div className="field-grid">
+                  <label><span>Campaign ID (2-8 chars, permanent)</span>
+                    <input type="text" maxLength={8} value={w.campaign_id} onChange={(e) => set('campaign_id', e.target.value.toUpperCase().replace(/[^A-Za-z0-9_-]/g, ''))} />
+                  </label>
+                  <label><span>Campaign Name</span>
+                    <input type="text" maxLength={40} value={w.campaign_name} onChange={(e) => set('campaign_name', e.target.value)} />
+                  </label>
+                  <label className="wide-field"><span>Description</span>
+                    <input type="text" maxLength={255} value={w.campaign_description} onChange={(e) => set('campaign_description', e.target.value)} />
+                  </label>
+                  <div className="wide-field">
+                    <span className="wizard-label">Dial Method</span>
+                    {WIZARD_DIAL_METHODS.map(([value, hint]) => (
+                      <label key={value} className="wizard-radio">
+                        <input type="radio" name="wdm" checked={w.dial_method === value} onChange={() => set('dial_method', value)} />
+                        <b>{value}</b><span>{hint}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <label><span>Auto Dial Level (lines per agent)</span>
+                    <select value={w.auto_dial_level} onChange={(e) => set('auto_dial_level', e.target.value)} disabled={w.dial_method === 'MANUAL'}>
+                      {['1.0', '1.5', '2.0', '2.5', '3.0', '4.0', '5.0'].map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </label>
+                  <label><span>Call Time (legal dialing window)</span>
+                    <select value={w.local_call_time} onChange={(e) => set('local_call_time', e.target.value)}>
+                      {(admin?.lookups?.callTimes || [{ call_time_id: defaultCallTime }]).map((ct) => (
+                        <option key={ct.call_time_id} value={ct.call_time_id}>{ct.call_time_id}{ct.call_time_name ? ` — ${ct.call_time_name}` : ''}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {idTaken && <p className="form-error wide-field">Campaign ID {w.campaign_id} already exists.</p>}
+                </div>
+              )}
+              {step === 1 && (
+                <div className="field-grid">
+                  <div className="wide-field">
+                    <span className="wizard-label">Where do the leads come from?</span>
+                    {[['new', 'Create a new empty list (load leads later via Lead Loader)'],
+                      ['existing', 'Point existing list(s) at this campaign'],
+                      ['skip', 'Skip for now']].map(([value, hint]) => (
+                      <label key={value} className="wizard-radio">
+                        <input type="radio" name="wlm" checked={w.leadsMode === value} onChange={() => set('leadsMode', value)} />
+                        <b>{value === 'new' ? 'New list' : value === 'existing' ? 'Existing lists' : 'Skip'}</b><span>{hint}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {w.leadsMode === 'new' && (
+                    <>
+                      <label><span>List ID (numeric)</span>
+                        <input type="text" maxLength={10} value={w.list_id} onChange={(e) => set('list_id', e.target.value.replace(/\D/g, ''))} />
+                      </label>
+                      <label><span>List Name</span>
+                        <input type="text" maxLength={30} value={w.list_name} onChange={(e) => set('list_name', e.target.value)} />
+                      </label>
+                    </>
+                  )}
+                  {w.leadsMode === 'existing' && (
+                    <div className="wide-field wizard-checklist">
+                      {activeLists.slice(0, 60).map((row) => (
+                        <label key={row.list_id}>
+                          <input type="checkbox" checked={w.existingLists.has(String(row.list_id))} onChange={() => toggleSet('existingLists', String(row.list_id))} />
+                          {row.list_id} — {row.list_name || 'Unnamed'} ({row.campaign_id || 'unassigned'})
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {step === 2 && (
+                <div className="field-grid">
+                  <div className="wide-field">
+                    <span className="wizard-label">Which agent groups can work this campaign?</span>
+                    <p className="action-copy">Groups already set to ALL campaigns need nothing. Your own group is granted automatically on create.</p>
+                    <div className="wizard-checklist">
+                      {groups.map((g) => {
+                        const all = String(g.allowed_campaigns || '').includes('-ALL-CAMPAIGNS-');
+                        return (
+                          <label key={g.user_group} className={all ? 'muted' : ''}>
+                            <input type="checkbox" disabled={all} checked={all || w.groups.has(g.user_group)} onChange={() => toggleSet('groups', g.user_group)} />
+                            {g.user_group} — {g.group_name || ''}{all ? ' (all campaigns)' : ''}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {step === 3 && (
+                <div className="field-grid">
+                  <label><span>Minimum Hopper Level</span>
+                    <select value={w.hopper_level} onChange={(e) => set('hopper_level', e.target.value)}>
+                      {['1', '5', '20', '50', '100', '200', '500', '1000'].map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </label>
+                  <label><span>Dial Timeout (ring seconds)</span>
+                    <input type="text" maxLength={3} value={w.dial_timeout} onChange={(e) => set('dial_timeout', e.target.value.replace(/\D/g, ''))} />
+                  </label>
+                  <label><span>Drop Call Seconds</span>
+                    <input type="text" maxLength={3} value={w.drop_call_seconds} onChange={(e) => set('drop_call_seconds', e.target.value.replace(/\D/g, ''))} />
+                  </label>
+                  <label><span>Recording</span>
+                    <select value={w.campaign_recording} onChange={(e) => set('campaign_recording', e.target.value)}>
+                      {['ALLFORCE', 'ALLCALLS', 'ONDEMAND', 'NEVER'].map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </label>
+                  <label><span>Caller ID Number</span>
+                    <input type="text" maxLength={20} value={w.campaign_cid} onChange={(e) => set('campaign_cid', e.target.value.replace(/[^\d+]/g, ''))} />
+                  </label>
+                  <label><span>Scrub System DNC</span>
+                    <select value={w.use_internal_dnc} onChange={(e) => set('use_internal_dnc', e.target.value)}>
+                      <option value="Y">Y — block numbers on the system DNC</option>
+                      <option value="N">N</option>
+                    </select>
+                  </label>
+                  <label><span>Campaign-Level DNC</span>
+                    <select value={w.use_campaign_dnc} onChange={(e) => set('use_campaign_dnc', e.target.value)}>
+                      <option value="N">N</option>
+                      <option value="Y">Y — keep a separate DNC just for this campaign</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              {step === 4 && (
+                <div className="wizard-review">
+                  <ul>
+                    <li><b>{w.campaign_id.toUpperCase()}</b> — {w.campaign_name} · {w.dial_method}{w.dial_method !== 'MANUAL' ? ` @ ${w.auto_dial_level}` : ''} · call time {w.local_call_time}</li>
+                    <li>Leads: {w.leadsMode === 'new' ? `new list ${w.list_id} "${w.list_name || `${w.campaign_id.toUpperCase()} leads`}"` : w.leadsMode === 'existing' ? `${w.existingLists.size} existing list(s) reassigned` : 'skipped'}</li>
+                    <li>Agent groups: {w.groups.size ? [...w.groups].join(', ') : 'creator group only'}</li>
+                    <li>Hopper {w.hopper_level} · timeout {w.dial_timeout}s · drop {w.drop_call_seconds}s · recording {w.campaign_recording}</li>
+                    <li>CID {w.campaign_cid || '(none set)'} · system DNC {w.use_internal_dnc} · campaign DNC {w.use_campaign_dnc}</li>
+                  </ul>
+                  <p className="action-copy">Creates the campaign ACTIVE with sane defaults for everything else — fine-tune on the Detail page afterwards.</p>
+                </div>
+              )}
+              {error && <p className="form-error">{error}</p>}
+              <div className="modal-actions">
+                {step > 0 && <button type="button" className="secondary-action" disabled={busy} onClick={() => setStep(step - 1)}>Back</button>}
+                <span className="modal-actions-spacer" />
+                <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+                {step < 4 && <button type="button" className="primary-action" disabled={!stepValid} onClick={() => setStep(step + 1)}>Next</button>}
+                {step === 4 && (
+                  <button type="button" className="primary-action" disabled={busy} onClick={create}>
+                    <Sparkles size={16} aria-hidden="true" />
+                    {busy ? 'Creating' : 'Create Campaign'}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CampaignsView({ admin, user, token, onSaved, onAction }) {
   const campaigns = admin?.campaigns || [];
   const canManage = userCan(user, 'campaigns');
   const canDetail = Number(user?.userLevel || 0) >= 9 || Boolean(user?.campaignDetail);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   return (
     <>
+      {wizardOpen && (
+        <CampaignWizard
+          admin={admin}
+          user={user}
+          token={token}
+          onClose={() => setWizardOpen(false)}
+          onCreated={onSaved}
+        />
+      )}
       <ActionBar
         entity="campaigns"
         label="Campaign"
         user={user}
         onAction={onAction}
         extraActions={canManage ? (
-          <button type="button" className="secondary-action compact-action" onClick={() => onAction('campaignCopy', 'copy')}>
-            <Copy size={17} aria-hidden="true" />
-            Copy Campaign
-          </button>
+          <>
+            <button type="button" className="primary-action compact-action" onClick={() => setWizardOpen(true)}>
+              <Sparkles size={17} aria-hidden="true" />
+              Campaign Wizard
+            </button>
+            <button type="button" className="secondary-action compact-action" onClick={() => onAction('campaignCopy', 'copy')}>
+              <Copy size={17} aria-hidden="true" />
+              Copy Campaign
+            </button>
+          </>
         ) : null}
       >
         <p className="action-copy">Create campaigns or manage the dialing fields most admins touch every day.</p>
@@ -20388,7 +20703,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
     return <AccessDenied onBack={() => onNavigate('command')} />;
   }
   if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} token={token} onAction={onAction} onNavigate={onNavigate} />;
-  if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} onAction={onAction} />;
+  if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} token={token} onSaved={onSaved} onAction={onAction} />;
   if (activeView === 'users') return <UsersView admin={admin} user={user} token={token} onAction={onAction} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
