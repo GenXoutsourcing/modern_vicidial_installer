@@ -9696,24 +9696,28 @@ function MDeltaChip({ cur, prev, invert, suffix }) {
 function mHours(sec) { const h = Number(sec || 0) / 3600; return h >= 10 ? `${Math.round(h)}h` : `${h.toFixed(1)}h`; }
 function mPauseSev(sec) { const s = Number(sec || 0); if (s >= 45 * 60) return 'crit'; if (s >= 20 * 60) return 'warn'; return 'good'; }
 
-const MDASH_RANGES = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7days', '7 days']];
+const MDASH_RANGES = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7days', '7 days'], ['30days', '30 days']];
 
 // Manager command dashboard — the operational landing view above the report
 // catalog. One call to /reports/manager-dashboard fills every panel.
 function ManagerDashboard({ token, user, onNavigate }) {
   const [range, setRange] = useState('today');
+  // A picked calendar date overrides the range buttons; picking a range
+  // button clears it back to relative windows.
+  const [customDate, setCustomDate] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    apiFetch(`/reports/manager-dashboard?range=${range}`, token)
+    const query = customDate ? `range=date&date=${customDate}` : `range=${range}`;
+    apiFetch(`/reports/manager-dashboard?${query}`, token)
       .then((d) => { if (alive) { setData(d); setError(''); } })
       .catch((e) => { if (alive) setError(e.status === 403 ? 'Reports not permitted for your role.' : 'Could not load the dashboard.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [range, token]);
+  }, [range, customDate, token]);
 
   const k = data?.kpis || { current: {}, previous: {} };
   const cur = k.current || {}; const prev = k.previous || {};
@@ -9740,8 +9744,15 @@ function ManagerDashboard({ token, user, onNavigate }) {
         <div><p className="eyebrow">Reporting Center</p><h2>Manager Dashboard</h2></div>
         <div className="mseg" role="tablist" aria-label="Date range">
           {MDASH_RANGES.map(([key, label]) => (
-            <button key={key} type="button" className={range === key ? 'on' : ''} onClick={() => setRange(key)}>{label}</button>
+            <button key={key} type="button" className={!customDate && range === key ? 'on' : ''} onClick={() => { setCustomDate(''); setRange(key); }}>{label}</button>
           ))}
+          <input
+            type="date"
+            className={customDate ? 'mdate on' : 'mdate'}
+            aria-label="Specific date"
+            value={customDate}
+            onChange={(event) => setCustomDate(event.target.value)}
+          />
         </div>
       </div>
 
@@ -20318,7 +20329,8 @@ function AdminShell({ token, user, onLogout }) {
               <h2>{activeMeta.title}</h2>
             </div>
             <div className="strip-items">
-              {activeView === 'command' && <RangeControl value={range} onChange={setRange} />}
+              {/* Range control removed (Steve 2026-07-18): the Manager
+                  Dashboard's own range picker is the one that matters. */}
               {activeView === 'command' && <RefreshCountdown updatedAt={updatedAt} />}
               {activeView === 'command' && (
                 <a href="/genxapi/" target="_blank" rel="noreferrer">

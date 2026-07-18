@@ -7648,14 +7648,24 @@ async function agentStatusDetailReport(req, res) {
 // a failed sub-query yields an empty panel, never a 500 for the whole page.
 async function managerDashboard(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
-  const rangeKey = ['today', 'yesterday', '7days'].includes(String(req.query?.range)) ? String(req.query.range) : 'today';
+  const rangeKey = ['today', 'yesterday', '7days', '30days'].includes(String(req.query?.range)) ? String(req.query.range) : 'today';
   // Windows use the DB server clock (cluster TZ). Date SQL carries no user
-  // input — rangeKey is enum-validated — so it's safe to inline.
-  const WIN = {
-    today: { cur: 'CURDATE()', curEnd: '', prev: 'CURDATE() - INTERVAL 1 DAY', prevEnd: 'CURDATE()' },
-    yesterday: { cur: 'CURDATE() - INTERVAL 1 DAY', curEnd: 'CURDATE()', prev: 'CURDATE() - INTERVAL 2 DAY', prevEnd: 'CURDATE() - INTERVAL 1 DAY' },
-    '7days': { cur: 'CURDATE() - INTERVAL 6 DAY', curEnd: '', prev: 'CURDATE() - INTERVAL 13 DAY', prevEnd: 'CURDATE() - INTERVAL 6 DAY' },
-  }[rangeKey];
+  // input — rangeKey is enum-validated, and the specific-date variant only
+  // inlines after a strict YYYY-MM-DD regex — so it's safe to inline.
+  const pickedDate = String(req.query?.date || '');
+  let WIN;
+  if (String(req.query?.range) === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(pickedDate)) {
+    // One specific calendar day; the comparison window is the day before.
+    const d = `'${pickedDate}'`;
+    WIN = { cur: d, curEnd: `DATE_ADD(${d}, INTERVAL 1 DAY)`, prev: `DATE_SUB(${d}, INTERVAL 1 DAY)`, prevEnd: d };
+  } else {
+    WIN = {
+      today: { cur: 'CURDATE()', curEnd: '', prev: 'CURDATE() - INTERVAL 1 DAY', prevEnd: 'CURDATE()' },
+      yesterday: { cur: 'CURDATE() - INTERVAL 1 DAY', curEnd: 'CURDATE()', prev: 'CURDATE() - INTERVAL 2 DAY', prevEnd: 'CURDATE() - INTERVAL 1 DAY' },
+      '7days': { cur: 'CURDATE() - INTERVAL 6 DAY', curEnd: '', prev: 'CURDATE() - INTERVAL 13 DAY', prevEnd: 'CURDATE() - INTERVAL 6 DAY' },
+      '30days': { cur: 'CURDATE() - INTERVAL 29 DAY', curEnd: '', prev: 'CURDATE() - INTERVAL 59 DAY', prevEnd: 'CURDATE() - INTERVAL 29 DAY' },
+    }[rangeKey];
+  }
   const win = (col, w, end) => end ? `${col} >= ${w} AND ${col} < ${end}` : `${col} >= ${w}`;
   const curW = (col) => win(col, WIN.cur, WIN.curEnd);
   const prevW = (col) => win(col, WIN.prev, WIN.prevEnd);
