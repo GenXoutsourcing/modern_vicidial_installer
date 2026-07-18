@@ -928,6 +928,154 @@ body {
   font-weight: 750;
 }
 
+/* Campaign Detail cleanup (Option A): quiet report strip + grouped settings
+   index. Replaces the old equal-weight pill wall; every control opens the
+   same modal it did before. */
+.creport-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  padding: 2px 0 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.creport-label {
+  margin-right: 10px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.t-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--blue);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.t-action:hover {
+  border-color: rgba(0, 217, 255, 0.22);
+  background: rgba(0, 217, 255, 0.08);
+}
+
+.t-action.danger {
+  margin-left: auto;
+  color: var(--danger);
+}
+
+.t-action.danger:hover {
+  border-color: rgba(255, 124, 155, 0.28);
+  background: rgba(255, 124, 155, 0.08);
+}
+
+.cfg-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2px 26px;
+}
+
+.cfg-group {
+  padding: 2px 0 8px;
+}
+
+.cfg-group h4 {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.cfg-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px 7px 6px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cfg-row:hover {
+  border-color: rgba(0, 217, 255, 0.2);
+  background: rgba(0, 217, 255, 0.06);
+}
+
+.cfg-ic {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(0, 217, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(0, 217, 255, 0.08);
+  color: var(--blue);
+}
+
+.cfg-copy {
+  min-width: 0;
+}
+
+.cfg-copy b {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.cfg-copy span {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(138, 167, 187, 0.6);
+}
+
+.cfg-row:hover .cfg-end {
+  color: var(--blue);
+}
+
+.cfg-badge {
+  padding: 2px 8px;
+  border: 1px solid rgba(115, 251, 211, 0.3);
+  border-radius: 999px;
+  background: rgba(115, 251, 211, 0.1);
+  color: var(--green);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
 .rank-grids {
   display: grid;
   gap: 12px;

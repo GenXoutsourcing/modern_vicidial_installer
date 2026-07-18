@@ -30,6 +30,7 @@ import {
   BarChart3,
   BookOpen,
   CalendarDays,
+  ChevronRight,
   CircleDot,
   Clock3,
   Compass,
@@ -4913,6 +4914,32 @@ const REPORT_MODALS = {
 };
 const BASIC_REPORT_KINDS = ['hopper', 'realtime'];
 const DETAIL_REPORT_KINDS = Object.keys(REPORT_MODALS);
+// Campaign Detail settings index (Option A): the 13 section pills grouped
+// into a scannable menu. Each row still opens the exact same section modal —
+// labels here must match the extraActions labels (PILL_SECTIONS after the
+// ' and ' -> ' & ' replace) plus the two URL modals handled locally.
+const CAMPAIGN_SETTINGS_GROUPS = [
+  { title: 'Dialing & Pacing', items: ['Manual Dial', 'AMD', 'Dead Call Handling', 'Auto Alt Statuses'] },
+  { title: 'Agent Experience', items: ['Agent Screen', 'Agent Controls', 'Transfers & 3-Way Calls', 'Callbacks'] },
+  { title: 'Data & Integrations', items: ['Webform URLs', 'Call URLs', 'CRM', 'List Controls'] },
+  { title: 'Compliance', items: ['Compliance'] },
+];
+const CAMPAIGN_SETTINGS_META = {
+  'Manual Dial': [Phone, 'Prefix, permissions, dial overrides'],
+  AMD: [Radio, 'Answering machine detection & routing'],
+  'Dead Call Handling': [PhoneOff, 'Max dead time, action, audio'],
+  'Auto Alt Statuses': [Hash, 'Statuses that trigger alt-number dialing'],
+  'Agent Screen': [LayoutDashboard, 'Labels, time display, layout'],
+  'Agent Controls': [SlidersHorizontal, 'Pause codes, dispo requirements'],
+  'Transfers & 3-Way Calls': [PhoneForwarded, 'Xfer groups, presets, consultative'],
+  Callbacks: [Clock3, 'Agent-only, days limit, list handling'],
+  'Webform URLs': [ExternalLink, 'Web form 1 / 2 / 3 targets'],
+  'Call URLs': [PhoneCall, 'Start / dispo / add-lead webhooks'],
+  CRM: [Database, 'Popup, screen-pop, external CRM link'],
+  'List Controls': [FileText, 'List order, mix, reset rules'],
+  Compliance: [ShieldCheck, 'DNC scrubbing, call-time rules, drop limits'],
+};
+
 function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLogout, basic = false, urls, onUrlsSaved, extraActions }) {
   const campaign = String(campaignId || '');
   const [confirmingLogout, setConfirmingLogout] = useState(false);
@@ -4930,7 +4957,7 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
   // hash route so right/ctrl/middle-click still opens the full page.
   const reportPill = (kind, hash) => ({
     href: `#/${hash}`,
-    className: 'row-action',
+    className: 't-action',
     onClick: (event) => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
@@ -4974,8 +5001,8 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
         </div>
         <Compass size={20} aria-hidden="true" />
       </div>
-      {!basic && <p className="connection-group-label">Reports and Activity</p>}
-      <div className="connection-actions">
+      <div className="creport-strip">
+        <span className="creport-label">Reports</span>
         {(basic ? BASIC_REPORT_KINDS : DETAIL_REPORT_KINDS).map((kind) => {
           const config = REPORT_MODALS[kind];
           const Icon = config.icon;
@@ -4983,22 +5010,22 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
           // head's campaign picker, seeded from this campaign on open.
           if (!config.hash) {
             return (
-              <button key={kind} type="button" className="row-action" onClick={() => { setHopperCampaign(campaign); setReportModal(kind); }}>
-                <Icon size={15} aria-hidden="true" />
+              <button key={kind} type="button" className="t-action" onClick={() => { setHopperCampaign(campaign); setReportModal(kind); }}>
+                <Icon size={14} aria-hidden="true" />
                 {config.title}
               </button>
             );
           }
           return (
             <a key={kind} {...reportPill(kind, config.hash)}>
-              <Icon size={15} aria-hidden="true" />
+              <Icon size={14} aria-hidden="true" />
               {config.title}
             </a>
           );
         })}
         {userCan(user, 'campaigns') && !confirmingLogout && (
-          <button type="button" className="row-action" disabled={logoutState === 'working'} onClick={logoutAgents}>
-            <LogOut size={15} aria-hidden="true" />
+          <button type="button" className="t-action danger" disabled={logoutState === 'working'} onClick={logoutAgents}>
+            <LogOut size={14} aria-hidden="true" />
             Log All Agents Out
           </button>
         )}
@@ -5018,32 +5045,69 @@ function CampaignConnections({ admin, campaignId, user, token, onNavigate, onLog
               <LogOut size={15} aria-hidden="true" />
               {logoutState === 'working' ? 'Logging out' : 'Confirm — log out all'}
             </button>
-            <button type="button" className="row-action" onClick={() => { setConfirmingLogout(false); setLogoutReason(''); }}>Cancel</button>
+            <button type="button" className="t-action" onClick={() => { setConfirmingLogout(false); setLogoutReason(''); }}>Cancel</button>
           </span>
         )}
         {logoutState && logoutState !== 'working' && <span className="connection-status">{logoutState}</span>}
       </div>
-      {!basic && (
-        <>
-          <p className="connection-group-label">Campaign Settings</p>
-          <div className="connection-actions">
-            <button type="button" className="row-action" onClick={() => setUrlModal('webform')}>
-              <ExternalLink size={15} aria-hidden="true" />
-              Webform URLs
-            </button>
-            <button type="button" className="row-action" onClick={() => setUrlModal('callurls')}>
-              <PhoneCall size={15} aria-hidden="true" />
-              Call URLs
-            </button>
-            {(extraActions || []).map((item) => (
-              <button key={item.label} type="button" className="row-action" onClick={item.onClick}>
-                <ArrowRightLeft size={15} aria-hidden="true" />
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      {!basic && (() => {
+        // Row click handlers: the two URL modals are local; everything else
+        // comes from extraActions (the Detail modal's section-modal openers).
+        const openSection = {
+          'Webform URLs': () => setUrlModal('webform'),
+          'Call URLs': () => setUrlModal('callurls'),
+          ...Object.fromEntries((extraActions || []).map((item) => [item.label, item.onClick])),
+        };
+        // Live status badges read from the campaign form (urls). Only shown
+        // when the field is present and meaningfully "on".
+        const badgeFor = (label) => {
+          if (label === 'AMD') {
+            const amd = String(urls?.amd_type || '').trim();
+            return amd && amd !== 'N' && amd !== 'DISABLED' ? amd : '';
+          }
+          if (label === 'Compliance') {
+            const internal = String(urls?.use_internal_dnc || 'N');
+            const campaignDnc = String(urls?.use_campaign_dnc || 'N');
+            return internal !== 'N' || campaignDnc !== 'N' ? 'DNC On' : '';
+          }
+          return '';
+        };
+        // Any handler whose label isn't in a group (future sections) still
+        // gets a row, in a trailing Other group, instead of vanishing.
+        const grouped = new Set(CAMPAIGN_SETTINGS_GROUPS.flatMap((group) => group.items));
+        const leftovers = Object.keys(openSection).filter((label) => !grouped.has(label));
+        const groups = [...CAMPAIGN_SETTINGS_GROUPS, ...(leftovers.length ? [{ title: 'Other', items: leftovers }] : [])];
+        return (
+          <>
+            <p className="connection-group-label">Campaign Settings</p>
+            <div className="cfg-index">
+              {groups.map((group) => {
+                const rows = group.items.filter((label) => openSection[label]);
+                if (!rows.length) return null;
+                return (
+                  <div className="cfg-group" key={group.title}>
+                    <h4>{group.title}</h4>
+                    {rows.map((label) => {
+                      const [Icon, hint] = CAMPAIGN_SETTINGS_META[label] || [SlidersHorizontal, ''];
+                      const badge = badgeFor(label);
+                      return (
+                        <button type="button" className="cfg-row" key={label} onClick={openSection[label]}>
+                          <span className="cfg-ic"><Icon size={14} aria-hidden="true" /></span>
+                          <span className="cfg-copy"><b>{label}</b><span>{hint}</span></span>
+                          <span className="cfg-end">
+                            {badge && <span className="cfg-badge">{badge}</span>}
+                            <ChevronRight size={14} aria-hidden="true" />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        );
+      })()}
       {reportModal && (
         <div className="modal-backdrop" role="presentation" {...backdropCloseProps(() => setReportModal(''))}>
           <section className="modal-panel detail-modal report-modal" role="dialog" aria-modal="true" aria-label={REPORT_MODALS[reportModal].title}>
