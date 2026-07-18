@@ -18134,11 +18134,23 @@ app.delete('/api/admin/campaign-statuses/:id', requireAccess, (req, res) => dele
 
 app.use(express.static(distDir, {
   etag: true,
-  maxAge: '1h',
   index: false,
+  // Vite content-hashes everything under assets/, so those are immutable —
+  // cache hard. Anything else (favicons etc.) keeps a short window.
+  setHeaders: (res, filePath) => {
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=300');
+    }
+  },
 }));
 
 app.get('*', (_req, res) => {
+  // index.html must NEVER be cached: it is the pointer to the hashed
+  // bundles. Caching it (the old 1h window) left every browser on a stale
+  // app for up to an hour after each deploy.
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
