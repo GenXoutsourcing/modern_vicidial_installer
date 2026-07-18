@@ -1369,7 +1369,7 @@ async function refreshRollups() {
     }
     // DB-clock dates (cluster TZ), not the app server's.
     const dayList = await rows(
-      `SELECT DATE_FORMAT(CURDATE() - INTERVAL seq DAY, '%Y-%m-%d') AS d
+      `SELECT DISTINCT DATE_FORMAT(CURDATE() - INTERVAL (seq + s2) DAY, '%Y-%m-%d') AS d
        FROM (SELECT 0 seq UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6
              UNION SELECT 7 UNION SELECT 8 UNION SELECT 9) a,
             (SELECT 0 s2 UNION SELECT 10 UNION SELECT 20 UNION SELECT 30 UNION SELECT 40 UNION SELECT 50) b
