@@ -31,6 +31,7 @@ M "DELETE FROM vicidial_campaigns WHERE campaign_id='LOADTEST'"
 M "DELETE FROM vicidial_list WHERE list_id=601"
 M "DELETE FROM vicidial_lists WHERE list_id=601"
 M "DELETE FROM vicidial_user_groups WHERE user_group='LOADTEST'"
+M "DELETE FROM vicidial_server_carriers WHERE carrier_id='GENXLOOP'"
 M "DELETE FROM vicidial_callbacks WHERE campaign_id='LOADTEST'"
 
 if [ "$PURGE_LOGS" = "1" ]; then

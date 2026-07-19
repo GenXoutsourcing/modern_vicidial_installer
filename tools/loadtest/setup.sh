@@ -105,6 +105,13 @@ if [ -n "$BATCH" ]; then
   M "INSERT INTO vicidial_list (list_id, status, phone_code, phone_number, first_name, last_name, called_since_last_reset, entry_date, gmt_offset_now) VALUES ${BATCH:1}"
 fi
 
+echo "== GENXLOOP SIP loopback carrier (all telephony boxes) =="
+M "INSERT INTO vicidial_server_carriers (carrier_id, carrier_name, registration_string, template_id, account_entry, protocol, globals_string, dialplan_entry, server_ip, active, carrier_description, user_group)
+   SELECT 'GENXLOOP', 'Load Test Loopback', '', '',
+     '[GENXLOOP]\ndisallow=all\nallow=ulaw\ntype=friend\nhost=127.0.0.1\ndirectmedia=no\ninsecure=port,invite\ncontext=genx-loadtest-behave\nqualify=no',
+     'SIP', '', '', '0.0.0.0', 'Y', 'TEMPORARY load-test loopback peer - removed by tools/loadtest/teardown.sh', '---ALL---'
+   FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_server_carriers WHERE carrier_id='GENXLOOP')"
+
 echo "== sink.php + log dir =="
 mkdir -p /var/log/genx-loadtest
 chown apache:apache /var/log/genx-loadtest
