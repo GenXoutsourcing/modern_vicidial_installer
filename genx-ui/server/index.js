@@ -4539,6 +4539,9 @@ function userPayload(body, currentUser) {
     agent_choose_blended: boolFlag(body.agent_choose_blended),
     realtime_block_user_info: boolFlag(body.realtime_block_user_info),
     custom_fields_modify: boolFlag(body.custom_fields_modify),
+    // GenX-only permission: author/publish Agent Guidance decision-tree
+    // guides. enum('0','1') → bind as string (boolFlag is string-safe).
+    genx_modify_guides: boolFlag(body.genx_modify_guides),
     force_change_password: ynFlag(body.force_change_password, 'N'),
     agent_lead_search_override: cleanExactChoice(body.agent_lead_search_override, ['NOT_ACTIVE', 'ENABLED', 'LIVE_CALL_INBOUND', 'LIVE_CALL_INBOUND_AND_MANUAL', 'DISABLED'], 'NOT_ACTIVE'),
     preset_contact_search: cleanExactChoice(body.preset_contact_search, ['NOT_ACTIVE', 'ENABLED', 'DISABLED'], 'NOT_ACTIVE'),
@@ -18614,11 +18617,16 @@ const GUIDE_FORM_FIELDS = [
   'source_id', 'rank', 'owner',
 ];
 
+// A data-capture field may target a per-list custom column, addressed as
+// 'cf:<field_label>'. The label matches a vicidial_lists_fields column; the
+// runtime re-validates it against the live lead's list before writing.
+const GUIDE_CUSTOM_FIELD_RE = /^cf:[A-Za-z0-9_]{1,64}$/;
+
 function guideParseForm(formJson) {
   try {
     const parsed = JSON.parse(String(formJson || 'null'));
     if (!Array.isArray(parsed)) return null;
-    return parsed.slice(0, 20).filter((f) => f && GUIDE_FORM_FIELDS.includes(String(f.field)))
+    return parsed.slice(0, 20).filter((f) => f && (GUIDE_FORM_FIELDS.includes(String(f.field)) || GUIDE_CUSTOM_FIELD_RE.test(String(f.field))))
       .map((f) => ({
         field: String(f.field),
         label: String(f.label || f.field).slice(0, 60),
@@ -18960,6 +18968,28 @@ app.post('/api/admin/guides/:id/nodes/:nodeId/move', requireAccess, async (req, 
   } catch { res.status(500).json({ ok: false, error: 'node_move_failed' }); }
 });
 
+// Custom fields available to a guide's data-capture forms: the distinct
+// editable custom columns across the guide's campaign's active lists. The
+// authoring picker offers these as cf:<field_label> options.
+app.get('/api/admin/guides/:id/custom-fields', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyGuides')) return;
+  try {
+    const guideId = Number(req.params.id);
+    const [guide] = await rows('SELECT campaign_id FROM genx_guide WHERE guide_id = ? LIMIT 1', [guideId], []);
+    if (!guide || !guide.campaign_id) return res.json({ ok: true, fields: [] });
+    const lists = await rows("SELECT list_id FROM vicidial_lists WHERE campaign_id = ? AND active = 'Y' LIMIT 200", [guide.campaign_id], []);
+    const seen = new Map();
+    for (const l of lists) {
+      const defs = await agentCustomFieldDefs(Number(l.list_id));
+      for (const d of defs) {
+        if (!customColOk(d.field_label) || !CUSTOM_EDITABLE_TYPES.includes(d.field_type)) continue;
+        if (!seen.has(d.field_label)) seen.set(d.field_label, { field: `cf:${d.field_label}`, label: d.field_name || d.field_label, name: d.field_label, ctype: d.field_type });
+      }
+    }
+    res.json({ ok: true, fields: [...seen.values()] });
+  } catch { res.status(500).json({ ok: false, error: 'guide_custom_fields_failed' }); }
+});
+
 app.post('/api/admin/guides/:id/publish', requireAccess, async (req, res) => {
   if (!requireModify(req, res, 'modifyGuides')) return;
   try {
@@ -19072,6 +19102,36 @@ app.post('/api/agent/guide/respond', requireAgentAccess, async (req, res) => {
       }
       if (sets.length) {
         await execute(`UPDATE vicidial_list SET ${sets.join(', ')} WHERE lead_id = ? LIMIT 1`, [...params, context.lead_id]).catch(() => {});
+      }
+      // Custom-field capture (cf:<field_label>): re-resolve against the LIVE
+      // lead's list and only write columns that are real editable custom
+      // fields for that list — never trust the authored name blindly.
+      const customEntries = Object.entries(req.body.form).slice(0, 20)
+        .filter(([field]) => GUIDE_CUSTOM_FIELD_RE.test(field));
+      if (customEntries.length) {
+        const [lead] = await rows('SELECT list_id FROM vicidial_list WHERE lead_id = ? LIMIT 1', [context.lead_id], []);
+        const listId = Number(lead?.list_id || 0);
+        if (listId) {
+          const defs = await agentCustomFieldDefs(listId);
+          const editable = new Map(defs
+            .filter((d) => CUSTOM_EDITABLE_TYPES.includes(d.field_type) && customColOk(d.field_label))
+            .map((d) => [d.field_label, d]));
+          const cols = [];
+          const cparams = [];
+          for (const [field, raw] of customEntries) {
+            const col = field.slice(3);
+            if (!editable.has(col)) continue;
+            cols.push(col);
+            cparams.push(cleanText(String(raw ?? ''), Number(editable.get(col).field_max) || 255));
+          }
+          if (cols.length) {
+            await execute(
+              `INSERT INTO \`custom_${listId}\` (lead_id, ${cols.map((c) => `\`${c}\``).join(', ')})
+               VALUES (?, ${cols.map(() => '?').join(', ')})
+               ON DUPLICATE KEY UPDATE ${cols.map((c) => `\`${c}\` = VALUES(\`${c}\`)`).join(', ')}`,
+              [context.lead_id, ...cparams]).catch(() => {});
+          }
+        }
       }
     }
     const base = { session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id, campaign_id: context.campaign_id, user: context.user, version_id: context.version_id };

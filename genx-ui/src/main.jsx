@@ -1627,6 +1627,7 @@ function actionDefaults(entity, admin) {
       agent_choose_blended: '1',
       realtime_block_user_info: '0',
       custom_fields_modify: '0',
+      genx_modify_guides: '1',
       agent_lead_search_override: 'NOT_ACTIVE',
       preset_contact_search: 'NOT_ACTIVE',
       admin_hide_lead_data: '0',
@@ -2975,6 +2976,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'vicidial_transfers', label: 'Agent Transfers', type: 'select', options: flagOptions() },
       { key: 'alter_agent_interface_options', label: 'Agent UI Options', type: 'select', options: flagOptions() },
       { key: 'custom_fields_modify', label: 'Custom Fields Modify', type: 'select', options: flagOptions() },
+      { key: 'genx_modify_guides', label: 'Modify Agent Guidance', type: 'select', options: flagOptions() },
       { key: 'force_change_password', label: 'Force Password Change', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'realtime_block_user_info', label: 'Realtime Block User Info', type: 'select', options: flagOptions() },
       { section: 'Recording and Data Overrides' },
@@ -10125,8 +10127,12 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   const [aiBusy, setAiBusy] = useState(false);
   // Other guides, for the response "call subguide" picker.
   const [allGuides, setAllGuides] = useState([]);
+  // Custom fields (cf:<label>) available to data-capture, across the guide's
+  // campaign's active lists.
+  const [customFields, setCustomFields] = useState([]);
   useEffect(() => {
     apiFetch('/admin/guides', token).then((p) => setAllGuides((p.guides || []).filter((g) => g.guide_id !== Number(guideId)))).catch(() => {});
+    apiFetch(`/admin/guides/${guideId}/custom-fields`, token).then((p) => setCustomFields(p.fields || [])).catch(() => {});
   }, [guideId, token]);
   useEffect(() => {
     apiFetch(`/admin/guides/${guideId}/tree`, token)
@@ -10328,6 +10334,15 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                           <input type="text" placeholder="Label" value={field.label || ''} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, label: e.target.value } : f)) }))} />
                           <select value={field.field} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, field: e.target.value } : f)) }))}>
                             {GUIDE_FORM_FIELD_CHOICES.map((f) => <option key={f} value={f}>{f}</option>)}
+                            {/* Saved custom field the picker didn't load (e.g. its list is inactive) — keep it selectable so a Save doesn't silently drop it. */}
+                            {String(field.field || '').startsWith('cf:') && !customFields.some((cf) => cf.field === field.field) && (
+                              <option value={field.field}>{field.field.slice(3)} (custom)</option>
+                            )}
+                            {customFields.length > 0 && (
+                              <optgroup label="Custom fields">
+                                {customFields.map((cf) => <option key={cf.field} value={cf.field}>{cf.name}{cf.label && cf.label !== cf.name ? ` — ${cf.label}` : ''}</option>)}
+                              </optgroup>
+                            )}
                           </select>
                           <select value={field.type || 'text'} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, type: e.target.value } : f)) }))}>
                             {['text', 'date', 'checkbox'].map((t) => <option key={t} value={t}>{t}</option>)}
