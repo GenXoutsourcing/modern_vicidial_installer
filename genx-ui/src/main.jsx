@@ -7486,6 +7486,25 @@ function RefreshCountdown({ updatedAt, intervalMs = DASHBOARD_POLL_MS }) {
   );
 }
 
+// Connection-lost banner for the admin polling views — same look and behavior
+// as the agent console's inline banner: spinning icon, elapsed outage timer,
+// and a per-view note about what the stale data means. Ticks its own 1s clock
+// so host views don't need one.
+function OfflineBanner({ since, note }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="agent-offline-banner" role="alert">
+      <RefreshCcw size={15} aria-hidden="true" className="aob-spin" />
+      <strong>Connection lost</strong>
+      <span>— retrying automatically ({Math.max(0, Math.round((Date.now() - since) / 1000))}s). {note}</span>
+    </div>
+  );
+}
+
 function CommandView({ dashboard, admin, user, token, onAction, onNavigate }) {
   const metrics = dashboard?.metrics || {};
   const counts = admin?.counts || {};
@@ -11116,6 +11135,9 @@ function mHours(sec) { const h = Number(sec || 0) / 3600; return h >= 10 ? `${Ma
 function mPauseSev(sec) { const s = Number(sec || 0); if (s >= 45 * 60) return 'crit'; if (s >= 20 * 60) return 'warn'; return 'good'; }
 
 const MDASH_RANGES = [['today', 'Today'], ['yesterday', 'Yesterday'], ['7days', '7 days'], ['30days', '30 days']];
+// Managers leave this view open all shift; the aggregate query is heavier
+// than the Mission Control tiles, so it refreshes on the slower 30s cycle.
+const MDASH_POLL_MS = 30000;
 
 // Manager command dashboard — the operational landing view above the report
 // catalog. One call to /reports/manager-dashboard fills every panel.
@@ -11130,17 +11152,53 @@ function ManagerDashboard({ token, user, onNavigate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Reconnect hardening (same pattern as the agent console): the poll keeps
+  // the numbers live, and after 2 consecutive failed fetches the view flags
+  // the data as stale instead of silently freezing at an old count — during
+  // vicidial_list lock storms these fetches stall or fail for 10-30s while
+  // the tab sits open all shift. The next successful poll clears the flag.
+  const [staleSince, setStaleSince] = useState(null);
+  const pollFailsRef = useRef(0);
+  const hasDataRef = useRef(false);
   useEffect(() => {
     let alive = true;
     setLoading(true);
     const query = (dateFrom
       ? `range=custom&from=${dateFrom}&to=${dateTo || dateFrom}`
       : `range=${range}`) + (campaign ? `&campaign=${encodeURIComponent(campaign)}` : '');
-    apiFetch(`/reports/manager-dashboard?${query}`, token)
-      .then((d) => { if (alive) { setData(d); setError(''); } })
-      .catch((e) => { if (alive) setError(e.status === 403 ? 'Reports not permitted for your role.' : 'Could not load the dashboard.'); })
+    const load = () => apiFetch(`/reports/manager-dashboard?${query}`, token)
+      .then((d) => {
+        if (!alive) return;
+        pollFailsRef.current = 0;
+        hasDataRef.current = true;
+        setStaleSince(null);
+        setData(d);
+        setError('');
+      })
+      .catch((e) => {
+        if (!alive) return;
+        if (e.status === 403) { setError('Reports not permitted for your role.'); return; }
+        pollFailsRef.current += 1;
+        if (pollFailsRef.current >= 2) setStaleSince((since) => since || Date.now());
+        // With data on screen the banner covers the outage; the error line is
+        // for the nothing-loaded-yet case only.
+        if (!hasDataRef.current) setError('Could not load the dashboard.');
+      })
       .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+    load();
+    const timer = window.setInterval(load, MDASH_POLL_MS);
+    // Browser connectivity signals: flag the outage immediately and refetch
+    // the moment the network is back instead of waiting out the 30s tick.
+    const onOffline = () => { pollFailsRef.current = 2; setStaleSince((since) => since || Date.now()); };
+    const onOnline = () => load();
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
   }, [range, dateFrom, dateTo, campaign, token]);
 
   const k = data?.kpis || { current: {}, previous: {} };
@@ -11200,6 +11258,9 @@ function ManagerDashboard({ token, user, onNavigate }) {
         </div>
       </div>
 
+      {staleSince && data && (
+        <OfflineBanner since={staleSince} note="Showing the last numbers received — the dashboard will refresh itself when the connection returns." />
+      )}
       {error && <p className="form-error">{error}</p>}
 
       {/* KPI strip */}
@@ -22119,37 +22180,94 @@ function AdminShell({ token, user, onLogout }) {
   const [dashboardState, setDashboardState] = useState({ loading: true, error: '', data: null });
   const [adminState, setAdminState] = useState({ loading: true, error: '', data: null });
   const [action, setAction] = useState(null);
-
-  const loadDashboard = useCallback(async () => {
-    try {
-      const payload = await apiFetch(`/dashboard?range=${encodeURIComponent(range)}`, token);
-      setDashboardState({ loading: false, error: '', data: payload.data });
-    } catch (error) {
-      if (error.status === 401) {
-        onLogout();
-        return;
-      }
-      setDashboardState((current) => ({ ...current, loading: false, error: 'Dashboard data is temporarily unavailable' }));
-    }
-  }, [onLogout, range, token]);
+  // Reconnect hardening (ported from the agent console): after 2 consecutive
+  // failures on either poll, show the connection-lost banner instead of
+  // silently freezing at a stale number — during vicidial_list lock storms
+  // these fetches stall or fail for 10-30s while the tab stays open all
+  // shift. The intervals keep re-firing, so recovery needs no user action;
+  // the banner clears once both feeds have a current payload again.
+  const [offlineSince, setOfflineSince] = useState(null);
+  const dashFailsRef = useRef(0);
+  const adminFailsRef = useRef(0);
+  const connLostRef = useRef(false);
 
   const loadAdmin = useCallback(async () => {
     try {
       const payload = await apiFetch('/admin', token);
+      adminFailsRef.current = 0;
+      if (connLostRef.current && dashFailsRef.current === 0) {
+        connLostRef.current = false;
+        setOfflineSince(null);
+      }
       setAdminState({ loading: false, error: '', data: payload.data });
     } catch (error) {
       if (error.status === 401) {
         onLogout();
         return;
       }
-      setAdminState((current) => ({ ...current, loading: false, error: 'Admin data is temporarily unavailable' }));
+      adminFailsRef.current += 1;
+      if (adminFailsRef.current >= 2 && !connLostRef.current) {
+        connLostRef.current = true;
+        setOfflineSince(Date.now());
+      }
+      // Keep showing the last catalog rather than blanking; the alert text is
+      // for the nothing-loaded-yet case — the banner covers stale-data outages.
+      setAdminState((current) => ({ ...current, loading: false, error: current.data ? '' : 'Admin data is temporarily unavailable' }));
     }
   }, [onLogout, token]);
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const payload = await apiFetch(`/dashboard?range=${encodeURIComponent(range)}`, token);
+      dashFailsRef.current = 0;
+      if (connLostRef.current && adminFailsRef.current === 0) {
+        connLostRef.current = false;
+        setOfflineSince(null);
+      }
+      setDashboardState({ loading: false, error: '', data: payload.data });
+      // The catalog rides the 30s cycle — refetch it now instead of serving
+      // stale counts for up to another half minute after the outage ends.
+      if (adminFailsRef.current >= 2) loadAdmin();
+    } catch (error) {
+      if (error.status === 401) {
+        onLogout();
+        return;
+      }
+      dashFailsRef.current += 1;
+      if (dashFailsRef.current >= 2 && !connLostRef.current) {
+        connLostRef.current = true;
+        setOfflineSince(Date.now());
+      }
+      setDashboardState((current) => ({ ...current, loading: false, error: current.data ? '' : 'Dashboard data is temporarily unavailable' }));
+    }
+  }, [loadAdmin, onLogout, range, token]);
 
   const refreshAll = useCallback(() => {
     loadDashboard();
     loadAdmin();
   }, [loadAdmin, loadDashboard]);
+
+  // React to the browser's own connectivity signal (same as the agent
+  // console): flag the outage without waiting out two poll cycles, and
+  // refetch immediately when the network returns instead of waiting for
+  // the next tick.
+  useEffect(() => {
+    const onOffline = () => {
+      dashFailsRef.current = Math.max(dashFailsRef.current, 2);
+      adminFailsRef.current = Math.max(adminFailsRef.current, 2);
+      if (!connLostRef.current) {
+        connLostRef.current = true;
+        setOfflineSince(Date.now());
+      }
+    };
+    const onOnline = () => { refreshAll(); };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [refreshAll]);
 
   const openAction = useCallback((entity, mode, row = null) => {
     setAction({ entity, mode, row });
@@ -22311,6 +22429,9 @@ function AdminShell({ token, user, onLogout }) {
         </nav>
 
         <div className="shell-main">
+          {offlineSince && (dashboardState.data || adminState.data) && (
+            <OfflineBanner since={offlineSince} note="Showing the last data received — Mission Control will refresh itself when the connection returns." />
+          )}
           <section className="workspace-strip">
             <div>
               <p className="eyebrow">{activeMeta.eyebrow}</p>
