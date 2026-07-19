@@ -9397,21 +9397,21 @@ const REPORT_EXPORT_LIMIT = 100000;
 function reportEntriesLimit(req) {
   return req.query?.format === 'csv' ? REPORT_EXPORT_LIMIT : REPORT_VIEW_LIMIT;
 }
-function csvCell(value) {
+// Like csvCell() but formats mysql2 Date objects to the DB-local
+// 'YYYY-MM-DD HH:MM:SS' the columns actually store (raw String(Date) would be
+// the JS locale/timezone form). Delegates escaping to the shared csvCell.
+function csvCellDated(value) {
   if (value instanceof Date) {
     const p = (n) => String(n).padStart(2, '0');
-    value = `${value.getFullYear()}-${p(value.getMonth() + 1)}-${p(value.getDate())} `
-      + `${p(value.getHours())}:${p(value.getMinutes())}:${p(value.getSeconds())}`;
+    return csvCell(`${value.getFullYear()}-${p(value.getMonth() + 1)}-${p(value.getDate())} `
+      + `${p(value.getHours())}:${p(value.getMinutes())}:${p(value.getSeconds())}`);
   }
-  let text = value == null ? '' : String(value);
-  // Spreadsheet formula-injection guard (mirrors the client downloadCsv).
-  if (/^[=+@-]/.test(text) && !/^-?\d*\.?\d+$/.test(text)) text = `'${text}`;
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return csvCell(value);
 }
 function sendEntriesCsv(res, filename, entries) {
   const cols = entries.length ? Object.keys(entries[0]) : [];
   const header = cols.map(csvCell).join(',');
-  const lines = entries.map((row) => cols.map((c) => csvCell(row[c])).join(','));
+  const lines = entries.map((row) => cols.map((c) => csvCellDated(row[c])).join(','));
   const safeName = String(filename).replace(/[^a-z0-9._-]/gi, '_');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
