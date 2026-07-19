@@ -171,6 +171,12 @@ class Agent {
             }
             api('/agent/script', this.token).catch(() => {});
           }
+          // Dispo screen reached without our own hangup (customer hung up and
+          // the dialer moved us out of INCALL): go straight to wrap-up.
+          if (live.status !== 'INCALL' && !this.hungUp) {
+            this.hungUp = true;
+            this.wrapUntil = Date.now() + rand(2000, 6000);
+          }
           // dead-call detection, same 2-poll rule as the client
           if (payload.customerChannels === 0) this.custGone += 1; else this.custGone = 0;
           if (!this.hungUp
