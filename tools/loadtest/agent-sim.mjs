@@ -26,10 +26,12 @@ const POLL_MS = 2000;
 
 function parseRange(spec) {
   if (!spec) return [];
-  const m = String(spec).match(/^([A-Za-z]+)(\d+)-[A-Za-z]+(\d+)$/);
-  if (!m) return spec.split(',').filter(Boolean);
   const out = [];
-  for (let i = Number(m[2]); i <= Number(m[3]); i += 1) out.push(`${m[1]}${i}`);
+  for (const token of String(spec).split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = token.match(/^([A-Za-z]+)(\d+)-[A-Za-z]+(\d+)$/);
+    if (!m) { out.push(token); continue; }
+    for (let i = Number(m[2]); i <= Number(m[3]); i += 1) out.push(`${m[1]}${i}`);
+  }
   return out;
 }
 const PROTOCOL_AGENTS = parseRange(process.env.PROTOCOL ?? 'LT201-LT215');
