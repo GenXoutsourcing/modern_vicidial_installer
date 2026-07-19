@@ -36,7 +36,7 @@ async function api(path, token, body) {
 
 async function runSupervisor({ user, pass }) {
   try {
-    const login = await api('/login', '', { user, pass });
+    const login = await api('/login', '', { username: user, password: pass });
     const token = login.token;
     console.log(`[${user}] supervisor logged in`);
     setInterval(() => { api('/dashboard', token).then(() => { stats.dash += 1; }).catch(() => { stats.errors += 1; }); }, 5000);
