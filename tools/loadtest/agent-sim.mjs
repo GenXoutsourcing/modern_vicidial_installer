@@ -151,12 +151,17 @@ class Agent {
         if (!live) { this.st.state = 'logged-out'; return; }
         const leadId = Number(live.lead_id || 0);
 
-        if (live.status === 'INCALL' && leadId > 0) {
-          this.st.state = 'incall';
+        if (leadId > 0) {
+          // On a call (INCALL) or holding a dead/hung-up call awaiting dispo —
+          // the live row stays INCALL after Hangup, exactly like the real
+          // client, which dispositions from that state.
+          this.st.state = live.status === 'INCALL' ? 'incall' : 'dispo';
           if (this.uniqueid !== String(live.uniqueid || '')) {
             // new call: mirror the client's on-call fetches
             this.uniqueid = String(live.uniqueid || '');
             this.custGone = 0;
+            this.hungUp = false;
+            this.wrapUntil = 0;
             stats.calls += 1; this.st.calls += 1;
             this.plannedHangAt = Math.random() < 0.45 ? Date.now() + rand(15000, 60000) : 0;
             api('/agent/dispo-statuses', this.token).then((r) => { this.dispoStatuses = r.payload.statuses || []; }).catch(() => {});
@@ -168,25 +173,31 @@ class Agent {
           }
           // dead-call detection, same 2-poll rule as the client
           if (payload.customerChannels === 0) this.custGone += 1; else this.custGone = 0;
-          if (this.custGone >= 2 || (this.plannedHangAt && Date.now() >= this.plannedHangAt)) {
+          if (!this.hungUp
+            && (this.custGone >= 2 || (this.plannedHangAt && Date.now() >= this.plannedHangAt))) {
+            this.hungUp = true;
             stats.hangups += 1;
             await api('/agent/hangup', this.token, {}).catch(() => {});
-            this.plannedHangAt = 0;
+            this.wrapUntil = Date.now() + rand(2000, 6000); // human wrap-up pause
           }
-        } else if (live.status !== 'INCALL' && leadId > 0) {
-          // dispo screen: wrap-up delay then disposition + resume, like a human
-          this.st.state = 'dispo';
-          await sleep(rand(2000, 6000));
-          const dispo = pickDispo(this.dispoStatuses);
-          const comments = Math.random() < 0.25 ? `loadtest note ${Date.now()}` : '';
-          await api('/agent/dispo', this.token, { status: dispo, comments }).catch((e) => {
-            this.st.errors += 1; stats.errors += 1; this.log(`dispo failed: ${e.message}`);
-          });
-          stats.dispos += 1; this.st.dispos += 1;
-          this.uniqueid = '';
-          await sleep(rand(1000, 3000));
-          await api('/agent/ready', this.token, {}).catch(() => {});
-          this.st.state = 'ready';
+          if (this.hungUp && Date.now() >= this.wrapUntil) {
+            const dispo = pickDispo(this.dispoStatuses);
+            const comments = Math.random() < 0.25 ? `loadtest note ${Date.now()}` : '';
+            const ok = await api('/agent/dispo', this.token, { status: dispo, lead_id: leadId, comments })
+              .then(() => true)
+              .catch((e) => {
+                this.st.errors += 1; stats.errors += 1; this.log(`dispo failed: ${e.message}`);
+                return false;
+              });
+            if (ok) {
+              stats.dispos += 1; this.st.dispos += 1;
+              this.uniqueid = '';
+              this.hungUp = false;
+              await sleep(rand(1000, 3000));
+              await api('/agent/ready', this.token, {}).catch(() => {});
+              this.st.state = 'ready';
+            }
+          }
         } else {
           this.st.state = live.status === 'READY' ? 'ready' : `idle:${live.status}`;
           if (live.status === 'PAUSED') await api('/agent/ready', this.token, {}).catch(() => {});

@@ -76,6 +76,7 @@ M "CREATE TEMPORARY TABLE _ltcamp AS SELECT * FROM vicidial_campaigns WHERE camp
    UPDATE _ltcamp SET campaign_id='LOADTEST', campaign_name='Load Test (simulated)', active='Y',
      dial_method='RATIO', auto_dial_level='2.0', dial_timeout=25, dial_prefix='77', omit_phone_code='Y',
      local_call_time='24hours', dial_statuses=' NEW -', hopper_level=200, campaign_cid='8125551000',
+     campaign_vdad_exten='8365',
      campaign_recording='ALLCALLS', campaign_allow_inbound='N', use_internal_dnc='N', use_campaign_dnc='N',
      campaign_calldate=NOW(),
      start_call_url='${SINK_BASE}?type=start&lead_id=--A--lead_id--B--&uniqueid=--A--uniqueid--B--&campaign=--A--campaign--B--&phone=--A--phone_number--B--',
