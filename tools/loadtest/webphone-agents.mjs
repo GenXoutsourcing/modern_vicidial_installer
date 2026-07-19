@@ -14,6 +14,10 @@ import { chromium } from 'playwright';
 
 const BASE_UI = process.env.BASE_UI || 'https://admin.viciboxclone.genxcontactcenter.com/genx/agent';
 const CAMPAIGN = process.env.CAMPAIGN || 'LOADTEST';
+// Renderer main-thread throttle (CDP). The page only needs to keep ViciPhone
+// registered and auto-answer; WebRTC media runs on unthrottled native threads.
+// Cuts per-browser CPU so one 12-core box can host the whole 100-phone fleet.
+const CPU_THROTTLE = Number(process.env.CPU_THROTTLE || 3);
 
 function parseRange(spec) {
   const m = String(spec).match(/^([A-Za-z]+)(\d+)-[A-Za-z]+(\d+)$/);
@@ -45,6 +49,10 @@ async function loginAgent(browser, user) {
   // it is never "visible"); ViciPhone then registers over WSS and the client's
   // own webphone-call trigger rings it into the conference (auto-answer).
   await page.waitForSelector('iframe', { state: 'attached', timeout: 30000 });
+  if (CPU_THROTTLE > 1) {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_THROTTLE });
+  }
   log(user, 'agent console up, webphone iframe loaded');
   return { context, page, user };
 }
