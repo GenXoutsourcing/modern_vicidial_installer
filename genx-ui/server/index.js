@@ -18718,8 +18718,8 @@ async function guideCopyVersion(guideId, fromVersionId, publishedBy) {
   const idMap = new Map();
   for (const node of nodes) {
     const r = await execute(
-      'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [newVersion, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id]);
+      'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id, cond_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [newVersion, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id, node.cond_json]);
     idMap.set(node.node_id, r.insertId);
   }
   const edges = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ?', [fromVersionId], []);
@@ -18749,8 +18749,8 @@ async function guideDraftVersion(guideId) {
     const idMap = new Map();
     for (const node of nodes) {
       const r = await execute(
-        'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [draftId, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id]);
+        'INSERT INTO genx_guide_node (version_id, type, title, script_html, form_json, disposition, subguide_id, cond_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [draftId, node.type, node.title, node.script_html, node.form_json, node.disposition, node.subguide_id, node.cond_json]);
       idMap.set(node.node_id, r.insertId);
     }
     const edges = await rows('SELECT * FROM genx_guide_edge WHERE version_id = ?', [guide.published_version], []);
