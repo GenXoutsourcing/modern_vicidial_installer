@@ -1405,6 +1405,8 @@ function actionDefaults(entity, admin) {
       call_limit_24hour_scope: 'SYSTEM_WIDE',
       call_limit_24hour: '0',
       call_limit_24hour_override: 'DISABLED',
+      daily_call_count_limit: '0',
+      daily_limit_manual: 'DISABLED',
       three_way_volume_buttons: 'ENABLED',
       customer_3way_hangup_logging: 'ENABLED',
       customer_3way_hangup_seconds: '5',
@@ -2616,11 +2618,29 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
       { key: 'use_internal_dnc', label: 'Internal DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_campaign_dnc', label: 'Campaign DNC', type: 'select', options: enumOptions(['Y', 'N', 'AREACODE']) },
       { key: 'use_other_campaign_dnc', label: 'Other Campaign DNC' },
-      { key: 'call_limit_24hour_method', label: '24h Limit Method', type: 'select', options: enumOptions(['DISABLED', 'PHONE_NUMBER', 'LEAD']) },
-      { key: 'call_limit_24hour_scope', label: '24h Limit Scope', type: 'select', options: enumOptions(['SYSTEM_WIDE', 'CAMPAIGN_LISTS']) },
-      { key: 'call_limit_24hour', label: '24h Limit', type: 'number' },
-      { key: 'call_limit_24hour_override', label: '24h Limit Override', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'ENABLED'], form?.call_limit_24hour_override)) },
-      { key: 'daily_phone_number_call_limit', label: 'Daily Phone Limit', type: 'number' },
+      // Frequency caps (CALL_COUNT_LIMITS): 24-hour caps satisfy per-24h
+      // contact laws (e.g. Florida's 3-per-24h). Method PHONE_NUMBER counts
+      // attempts to the number across leads; LEAD counts the lead only. The
+      // override names a CALL_LIMITS_OVERRIDE settings container with
+      // per-state limits by area code. The 24h and daily caps only fire at
+      // dial time once their system_settings toggles are on.
+      { key: 'call_limit_24hour_method', label: '24-Hour Limit Method', type: 'select', options: enumOptions(['DISABLED', 'PHONE_NUMBER', 'LEAD']) },
+      { key: 'call_limit_24hour_scope', label: '24-Hour Limit Scope', type: 'select', options: enumOptions(['SYSTEM_WIDE', 'CAMPAIGN_LISTS']) },
+      { key: 'call_limit_24hour', label: '24-Hour Call Limit (0 = off)', type: 'number' },
+      {
+        key: 'call_limit_24hour_override',
+        label: '24-Hour Per-State Override',
+        type: 'select',
+        options: withCurrentOption([
+          { value: 'DISABLED', label: 'DISABLED' },
+          ...(admin?.settingsContainers || [])
+            .filter((c) => String(c.container_type) === 'CALL_LIMITS_OVERRIDE')
+            .map((c) => ({ value: c.container_id, label: `${c.container_id}${c.container_notes ? ` — ${c.container_notes}` : ''}` })),
+        ], form?.call_limit_24hour_override),
+      },
+      { key: 'daily_call_count_limit', label: 'Daily Lead Call Limit (0 = off)', type: 'number' },
+      { key: 'daily_limit_manual', label: 'Daily Limit Manual Dial', type: 'select', options: enumOptions(ensureOption(['DISABLED', 'COUNT_ONLY', 'COUNT_AND_RESTRICT', 'RESTRICT_ONLY'], form?.daily_limit_manual)) },
+      { key: 'daily_phone_number_call_limit', label: 'Daily Phone Number Limit (system-wide, 0 = off)', type: 'number' },
       { key: 'call_log_days', label: 'Call Log Days', type: 'number' },
       { section: 'CRM' },
       { key: 'crm_popup_login', label: 'CRM Popup Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
@@ -3570,10 +3590,19 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
   }
 
   if (entity === 'settingsContainers') {
+    // Stock admin.php container types (free-form varchar in the DB, but the
+    // type drives which features can reference the container — e.g.
+    // CALL_LIMITS_OVERRIDE feeds the campaign 24-hour per-state cap).
+    const CONTAINER_TYPES = ['OTHER', '2FA_SETTINGS', 'AGI', 'AMD_AGENT_OPTIONS', 'AMD_STATUS_MAP',
+      'CALL_LIMITS_OVERRIDE', 'CALL_QUOTA', 'CALLS_IN_QUEUE_COUNT', 'CAMPAIGN_LIST', 'CM_VIDPROMPT_SPECIAL',
+      'DEMOGRAPHIC_QUOTAS', 'DIAL_TIMEOUTS', 'DID_RECENT_CALL', 'DISPO_FILTER', 'EMAIL_TEMPLATE',
+      'INGROUP_LIST', 'KHOMP_SETTINGS', 'LIST_WEEKDAY_RESETS', 'PAUSE_CODES_LIST', 'PERL_CLI',
+      'PHONE_DEFAULTS', 'PHONE_NUMBERS', 'QC_TEMPLATE', 'READ_ONLY', 'SIP_EVENT_ACTIONS',
+      'STATE_DESCRIPTIONS', 'TIMEZONE_LIST', 'WEBPHONE_SETTINGS', 'WEEKDAY_TIMERANGE_SECONDS', 'XFER_TALK_MIN_MESSAGE'];
     return [
       { key: 'container_id', label: 'Container ID', disabled: mode === 'edit' },
       { key: 'container_notes', label: 'Notes' },
-      { key: 'container_type', label: 'Type' },
+      { key: 'container_type', label: 'Type', type: 'select', options: enumOptions(ensureOption(CONTAINER_TYPES, form?.container_type)) },
       { key: 'user_group', label: 'User Group', type: userGroupAllOptions.length ? 'select' : 'text', options: userGroupAllOptions },
       { key: 'container_entry', label: 'Container Entry', type: 'textarea', wide: true },
     ];
@@ -6829,6 +6858,12 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
                         {item.label}
                         {item.key === 'AMD' && String(form?.amd_type || '').trim() && form.amd_type !== 'N' && form.amd_type !== 'DISABLED' && <span className="rail-dot amber" />}
                         {item.key === 'Compliance' && (String(form?.use_internal_dnc || 'N') !== 'N' || String(form?.use_campaign_dnc || 'N') !== 'N') && <span className="rail-dot green" />}
+                        {/* Frequency caps live on this campaign (24h / daily lead / daily phone) */}
+                        {item.key === 'Compliance'
+                          && (String(form?.call_limit_24hour_method || 'DISABLED') !== 'DISABLED'
+                            || Number(form?.daily_call_count_limit || 0) > 0
+                            || Number(form?.daily_phone_number_call_limit || 0) > 0)
+                          && <span className="rail-dot blue" title="Frequency caps configured" />}
                       </button>
                     ))}
                   </div>

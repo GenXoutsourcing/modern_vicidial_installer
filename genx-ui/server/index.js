@@ -2304,6 +2304,8 @@ async function adminData(user) {
               c.call_limit_24hour_scope,
               c.call_limit_24hour,
               c.call_limit_24hour_override,
+              c.daily_call_count_limit,
+              c.daily_limit_manual,
               c.agent_hide_hangup,
               c.max_logged_in_agents,
               c.show_confetti,
@@ -3849,6 +3851,10 @@ function campaignPayload(body, currentUser) {
     call_limit_24hour_scope: cleanChoice(body.call_limit_24hour_scope, ['SYSTEM_WIDE', 'CAMPAIGN_LISTS'], 'SYSTEM_WIDE'),
     call_limit_24hour: cleanInt(body.call_limit_24hour, 0, 0, 255),
     call_limit_24hour_override: codeText(body.call_limit_24hour_override, 40, 'DISABLED'),
+    // Daily per-lead frequency cap (needs system_settings.daily_call_count_limit
+    // = '1' to take effect at dial time; stored regardless, like stock).
+    daily_call_count_limit: cleanInt(body.daily_call_count_limit, 0, 0, 255),
+    daily_limit_manual: cleanChoice(body.daily_limit_manual, ['DISABLED', 'COUNT_ONLY', 'COUNT_AND_RESTRICT', 'RESTRICT_ONLY'], 'DISABLED'),
     agent_hide_hangup: ynFlag(body.agent_hide_hangup, 'N'),
     max_logged_in_agents: cleanInt(body.max_logged_in_agents, 0, 0, 99999),
     show_confetti: cleanChoice(body.show_confetti, ['DISABLED', 'SALES', 'CALLBACKS', 'SALES_AND_CALLBACKS'], 'DISABLED'),

@@ -1252,6 +1252,17 @@ body {
   box-shadow: 0 0 8px rgba(115, 251, 211, 0.6);
 }
 
+.rail-dot.blue {
+  background: var(--blue);
+  box-shadow: 0 0 8px rgba(64, 156, 255, 0.6);
+}
+
+/* Two badges on one rail row (e.g. DNC + frequency caps): only the first
+   takes the auto-margin push; siblings sit beside it with a small gap. */
+.rail-dot + .rail-dot {
+  margin-left: 4px;
+}
+
 .rail-panel {
   display: grid;
   align-content: start;
