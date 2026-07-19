@@ -163,9 +163,18 @@ if command -v mysql >/dev/null 2>&1; then
 fi
 
 min_user_level="$DEFAULT_MIN_USER_LEVEL"
+# AI authoring assist stays dark until a key is set. Preserve a manually-set
+# key/model across deploys (the env file is fully rewritten below); empty by
+# default so the feature is off and the var is documented for discovery.
+ai_assist_key=""
+ai_assist_model="claude-opus-4-8"
 if [ -f "$ENV_FILE" ]; then
   existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_MIN_USER_LEVEL=//; s/^"//; s/"$//' || true)"
   [ -n "$existing_min_level" ] && min_user_level="$existing_min_level"
+  existing_ai_key="$(grep -E '^GENX_UI_AI_ASSIST_KEY=' "$ENV_FILE" | sed -E 's/^GENX_UI_AI_ASSIST_KEY=//; s/^"//; s/"$//' || true)"
+  [ -n "$existing_ai_key" ] && ai_assist_key="$existing_ai_key"
+  existing_ai_model="$(grep -E '^GENX_UI_AI_ASSIST_MODEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_AI_ASSIST_MODEL=//; s/^"//; s/"$//' || true)"
+  [ -n "$existing_ai_model" ] && ai_assist_model="$existing_ai_model"
 fi
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -220,6 +229,8 @@ GENX_UI_DB_NAME=$(quote_env "$db_name")
 GENX_UI_DB_USER=$(quote_env "$db_user")
 GENX_UI_DB_PASS=$(quote_env "$db_pass")
 GENX_UI_DB_SLAVE_HOST=$(quote_env "$db_slave_host")
+GENX_UI_AI_ASSIST_KEY=$(quote_env "$ai_assist_key")
+GENX_UI_AI_ASSIST_MODEL=$(quote_env "$ai_assist_model")
 EOF
 
 cat > "$SERVICE_FILE" <<EOF
