@@ -3373,6 +3373,14 @@ input:-webkit-autofill:focus {
 .st-meter-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--amber)); border-radius: 999px; transition: width 0.06s linear; }
 .selftest-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; background: none; border: none; color: var(--blue); cursor: pointer; font: inherit; font-size: 0.82rem; padding: 4px; }
 .selftest-link:hover { text-decoration: underline; }
+
+/* Agent connection-lost banner (reconnect hardening) */
+.agent-offline-banner { display: flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 10px; margin-bottom: 10px; background: rgba(231, 76, 60, 0.14); border: 1px solid rgba(231, 76, 60, 0.55); color: var(--danger); font-size: 0.85rem; }
+.agent-offline-banner strong { font-weight: 700; }
+.agent-offline-banner span { color: var(--text); opacity: 0.85; }
+.aob-spin { animation: aob-rotate 1.4s linear infinite; flex: none; }
+@keyframes aob-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .aob-spin { animation: none; } }
 .go-ai { float: right; display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; padding: 2px 8px; }
 .go-ai:disabled { opacity: 0.6; cursor: progress; }
 

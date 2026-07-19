@@ -19798,6 +19798,13 @@ function AgentConsole({ token, authInfo, onExit }) {
   // Legacy webphone_call_seconds: after the webphone iframe loads and
   // registers, ring it into the conference once (auto-answer picks up).
   const webphoneCalledRef = useRef(false);
+  // Reconnect hardening for home-agent internet blips: after 2 consecutive
+  // failed status polls (~4s) show a connection-lost banner instead of the
+  // console silently going stale; browser offline/online events flip it
+  // immediately. A 401 still exits — that's a dead session, not a blip.
+  const [offlineSince, setOfflineSince] = useState(null);
+  const pollFailsRef = useRef(0);
+  const connLostRef = useRef(false);
 
   const callWebphone = useCallback(() => {
     apiFetch('/agent/webphone-call', token, { method: 'POST', body: '{}' }).catch(() => {});
@@ -19806,6 +19813,12 @@ function AgentConsole({ token, authInfo, onExit }) {
   const refresh = useCallback(async () => {
     try {
       const payload = await apiFetch('/agent/status', token);
+      pollFailsRef.current = 0;
+      if (connLostRef.current) {
+        connLostRef.current = false;
+        setOfflineSince(null);
+        setMessage('Reconnected — live data is current again');
+      }
       setLive(payload.live);
       setLead(payload.lead || null);
       setLastNote(payload.lastNote || null);
@@ -19839,9 +19852,37 @@ function AgentConsole({ token, authInfo, onExit }) {
         threewayHungupRef.current = false;
       }
     } catch (requestError) {
-      if (requestError.status === 401) onExit();
+      if (requestError.status === 401) { onExit(); return; }
+      // Network blip or server restart: surface the outage after two straight
+      // failures instead of polling into the void. The 2s interval keeps
+      // retrying, so recovery needs no user action.
+      pollFailsRef.current += 1;
+      if (pollFailsRef.current >= 2 && !connLostRef.current) {
+        connLostRef.current = true;
+        setOfflineSince(Date.now());
+      }
     }
   }, [token, onExit]);
+
+  // React to the browser's own connectivity signal: flag the outage without
+  // waiting out two poll cycles, and poll immediately when the network is
+  // back rather than waiting for the next 2s tick.
+  useEffect(() => {
+    const onOffline = () => {
+      pollFailsRef.current = 2;
+      if (!connLostRef.current) {
+        connLostRef.current = true;
+        setOfflineSince(Date.now());
+      }
+    };
+    const onOnline = () => { refresh(); };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [refresh]);
 
   // Load the dispo grid + web forms once the agent is on (or has just had) a lead.
   useEffect(() => {
@@ -19927,6 +19968,13 @@ function AgentConsole({ token, authInfo, onExit }) {
     } catch (requestError) {
       if (requestError.status === 401) {
         onExit();
+        return null;
+      }
+      // No HTTP status = the request never reached the server (network down,
+      // wifi blip). Distinguish from a real action failure so the agent knows
+      // to retry once the connection banner clears.
+      if (!requestError.status) {
+        setMessage('No connection — that action was not sent. Retry when the connection banner clears.');
         return null;
       }
       const map = {
@@ -20232,6 +20280,13 @@ function AgentConsole({ token, authInfo, onExit }) {
 
   return (
     <main className="app-shell agent-shell">
+      {offlineSince && (
+        <div className="agent-offline-banner" role="alert">
+          <RefreshCcw size={15} aria-hidden="true" className="aob-spin" />
+          <strong>Connection lost</strong>
+          <span>— retrying automatically ({Math.max(0, Math.round((clock.getTime() - offlineSince) / 1000))}s). Your call audio runs on the phone, not this page — stay on the line.</span>
+        </div>
+      )}
       {/* Legacy agc top line: logged-in summary + LOGOUT */}
       {/* Agent status bar: identity + registered/status + session info + logout */}
       <header className={`agb-topbar state-${live ? (live.status === 'INCALL' ? 'incall' : live.status === 'READY' ? 'ready' : 'paused') : 'off'}`}>
