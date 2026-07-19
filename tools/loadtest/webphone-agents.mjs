@@ -41,9 +41,10 @@ async function loginAgent(browser, user) {
   );
   await page.getByLabel('Campaign').selectOption(CAMPAIGN);
   await page.getByRole('button', { name: 'Submit' }).click();
-  // Console up = webphone iframe present; ViciPhone then registers over WSS
-  // and the server's webphone-call originate auto-answers it into the conf.
-  await page.waitForSelector('iframe', { timeout: 30000 });
+  // Console up = webphone iframe present (attached — it renders collapsed, so
+  // it is never "visible"); ViciPhone then registers over WSS and the client's
+  // own webphone-call trigger rings it into the conference (auto-answer).
+  await page.waitForSelector('iframe', { state: 'attached', timeout: 30000 });
   log(user, 'agent console up, webphone iframe loaded');
   return { context, page, user };
 }
