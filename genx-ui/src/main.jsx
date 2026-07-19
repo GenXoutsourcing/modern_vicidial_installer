@@ -12114,6 +12114,7 @@ function AgentMonitorLogReportView({ token }) {
   const [beginDate, setBeginDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [entries, setEntries] = useState(null);
+  const [lastQuery, setLastQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -12122,7 +12123,9 @@ function AgentMonitorLogReportView({ token }) {
     setLoading(true);
     setError('');
     try {
-      const payload = await apiFetch(`/reports/agent-monitor-log?begin_date=${beginDate}&end_date=${endDate}`, token);
+      const query = `begin_date=${beginDate}&end_date=${endDate}`;
+      setLastQuery(query);
+      const payload = await apiFetch(`/reports/agent-monitor-log?${query}`, token);
       setEntries(payload.entries || []);
     } catch (requestError) {
       setError(requestError.status === 403 ? 'Your user is not allowed to view reports' : 'The report failed to load');
@@ -12163,14 +12166,27 @@ function AgentMonitorLogReportView({ token }) {
           icon={FileText}
           className="admin-wide-panel"
           headerActions={(
-            <button
-              type="button"
-              className="secondary-action compact-action"
-              disabled={!entries.length}
-              onClick={() => downloadCsv(`agent-monitor-log-${beginDate}-to-${endDate}.csv`, columns, entries)}
-            >
-              <FileText size={14} aria-hidden="true" /> Export CSV
-            </button>
+            <div className="report-dl-actions">
+              <button
+                type="button"
+                className="secondary-action compact-action"
+                disabled={!entries.length}
+                onClick={() => downloadCsv(`agent-monitor-log-${beginDate}-to-${endDate}.csv`, columns, entries)}
+              >
+                <FileText size={14} aria-hidden="true" /> Export CSV
+              </button>
+              {entries.length === 2000 && (
+                <button
+                  type="button"
+                  className="secondary-action compact-action"
+                  onClick={() => downloadServerCsv(`/reports/agent-monitor-log?${lastQuery}&format=csv`, token, `agent-monitor-log-${beginDate}-to-${endDate}.csv`)
+                    .catch(() => setError('Full export failed — try a narrower range'))}
+                  title="Download every matching row (not just the first 2,000 shown)"
+                >
+                  <Database size={15} aria-hidden="true" /> Download all rows
+                </button>
+              )}
+            </div>
           )}
         >
           <DataTable
@@ -17500,6 +17516,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
   const [section, setSection] = useState(initialSection || '');
   const [record, setRecord] = useState(initialRecord || '');
   const [data, setData] = useState(null);
+  const [lastQuery, setLastQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -17510,6 +17527,7 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
       const params = new URLSearchParams({ begin_date: begin, end_date: end });
       if (sectionFilter) params.set('section', sectionFilter);
       if (recordFilter) params.set('record', recordFilter);
+      setLastQuery(params.toString());
       const payload = await apiFetch(`/reports/admin-log?${params.toString()}`, token);
       setData(payload);
     } catch (requestError) {
@@ -17585,19 +17603,32 @@ function AdminChangeLogReportView({ token, onLogout, initialSection, initialReco
         icon={ShieldCheck}
         className="admin-wide-panel"
         headerActions={(
-          <CsvButton
-            filename={`admin-change-log-${beginDate}_to_${endDate}.csv`}
-            columns={[
-              { key: 'event_date', label: 'Date' },
-              { key: 'user', label: 'User' },
-              { key: 'ip_address', label: 'IP' },
-              { key: 'event_section', label: 'Section' },
-              { key: 'event_type', label: 'Type' },
-              { key: 'record_id', label: 'Record' },
-              { key: 'event_code', label: 'Event' },
-            ]}
-            rows={data?.entries || []}
-          />
+          <div className="report-dl-actions">
+            <CsvButton
+              filename={`admin-change-log-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'event_date', label: 'Date' },
+                { key: 'user', label: 'User' },
+                { key: 'ip_address', label: 'IP' },
+                { key: 'event_section', label: 'Section' },
+                { key: 'event_type', label: 'Type' },
+                { key: 'record_id', label: 'Record' },
+                { key: 'event_code', label: 'Event' },
+              ]}
+              rows={data?.entries || []}
+            />
+            {(data?.entries || []).length === 2000 && (
+              <button
+                type="button"
+                className="secondary-action compact-action"
+                onClick={() => downloadServerCsv(`/reports/admin-log?${lastQuery}&format=csv`, token, `admin-change-log-${beginDate}_to_${endDate}.csv`)
+                  .catch(() => setError('Full export failed — try a narrower range'))}
+                title="Download every matching row (not just the first 2,000 shown)"
+              >
+                <Database size={15} aria-hidden="true" /> Download all rows
+              </button>
+            )}
+          </div>
         )}
       >
         <DataTable
