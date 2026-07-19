@@ -436,6 +436,27 @@ function downloadCsv(filename, columns, dataRows) {
   URL.revokeObjectURL(url);
 }
 
+// Server-side full-dataset CSV export: hits the report's own endpoint with
+// ?format=csv (no 2,000-row view cap) and saves the streamed file. Used when
+// the on-screen result hit the row cap; otherwise the instant client-side
+// downloadCsv of loaded rows is enough. Fetches with the bearer token since a
+// plain <a href> can't carry the Authorization header.
+async function downloadServerCsv(path, token, fallbackName) {
+  const response = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error('export_failed');
+  const blob = await response.blob();
+  const disp = response.headers.get('Content-Disposition') || '';
+  const match = /filename="?([^"]+)"?/.exec(disp);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = (match && match[1]) || fallbackName || 'report.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Reusable Download CSV button for report result tables. Takes the same
 // {key,label,render} column config the on-screen DataTable uses and exports
 // the raw underlying values (row[key], or a per-column csv(row) override) —
@@ -17801,6 +17822,7 @@ function DialLogReportView({ token, onLogout }) {
   const [endDate, setEndDate] = useState(today);
   const [serverIp, setServerIp] = useState('');
   const [data, setData] = useState(null);
+  const [lastQuery, setLastQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -17810,6 +17832,7 @@ function DialLogReportView({ token, onLogout }) {
     try {
       const params = new URLSearchParams({ begin_date: begin, end_date: end });
       if (server) params.set('server_ip', server);
+      setLastQuery(params.toString());
       const payload = await apiFetch(`/reports/dial-log?${params.toString()}`, token);
       setData(payload);
     } catch (requestError) {
@@ -17878,20 +17901,33 @@ function DialLogReportView({ token, onLogout }) {
         icon={Activity}
         className="admin-wide-panel"
         headerActions={(
-          <CsvButton
-            filename={`dial-log-${beginDate}_to_${endDate}.csv`}
-            columns={[
-              { key: 'call_date', label: 'Date' },
-              { key: 'caller_code', label: 'Caller Code' },
-              { key: 'lead_id', label: 'Lead' },
-              { key: 'server_ip', label: 'Server' },
-              { key: 'extension', label: 'Extension' },
-              { key: 'outbound_cid', label: 'Outbound CID' },
-              { key: 'sip_hangup_cause', label: 'SIP Cause' },
-              { key: 'sip_hangup_reason', label: 'SIP Reason' },
-            ]}
-            rows={data?.entries || []}
-          />
+          <div className="report-dl-actions">
+            <CsvButton
+              filename={`dial-log-${beginDate}_to_${endDate}.csv`}
+              columns={[
+                { key: 'call_date', label: 'Date' },
+                { key: 'caller_code', label: 'Caller Code' },
+                { key: 'lead_id', label: 'Lead' },
+                { key: 'server_ip', label: 'Server' },
+                { key: 'extension', label: 'Extension' },
+                { key: 'outbound_cid', label: 'Outbound CID' },
+                { key: 'sip_hangup_cause', label: 'SIP Cause' },
+                { key: 'sip_hangup_reason', label: 'SIP Reason' },
+              ]}
+              rows={data?.entries || []}
+            />
+            {(data?.entries || []).length === 2000 && (
+              <button
+                type="button"
+                className="secondary-action compact-action"
+                onClick={() => downloadServerCsv(`/reports/dial-log?${lastQuery}&format=csv`, token, `dial-log-${beginDate}_to_${endDate}.csv`)
+                  .catch(() => setError('Full export failed — try a narrower range'))}
+                title="Download every matching row (not just the first 2,000 shown)"
+              >
+                <Database size={15} aria-hidden="true" /> Download all rows
+              </button>
+            )}
+          </div>
         )}
       >
         {(data?.entries || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
@@ -18134,6 +18170,7 @@ function LogReportView({ token, onLogout, config }) {
   const [endTime, setEndTime] = useState('23:59');
   const [filterValue, setFilterValue] = useState('');
   const [data, setData] = useState(null);
+  const [lastQuery, setLastQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -18145,6 +18182,7 @@ function LogReportView({ token, onLogout, config }) {
       if (config.datetime && bTime) params.set('begin_time', bTime);
       if (config.datetime && eTime) params.set('end_time', eTime);
       if (config.filter && filter) params.set(config.filter.param, filter);
+      setLastQuery(params.toString());
       const payload = await apiFetch(`${config.endpoint}?${params.toString()}`, token);
       setData(payload);
     } catch (requestError) {
@@ -18234,19 +18272,35 @@ function LogReportView({ token, onLogout, config }) {
           icon={Database}
           className="admin-wide-panel"
           headerActions={(data[config.entriesKey] || []).length ? (
-            <button
-              type="button"
-              className="secondary-action compact-action"
-              onClick={() => downloadCsv(
-                `${config.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${beginDate}_to_${endDate}.csv`,
-                // Export raw underlying values (row[key]) with the column labels
-                // as headers — the render fns are for on-screen formatting only.
-                config.columns.map((column) => ({ label: column.label, value: (row) => row[column.key] })),
-                data[config.entriesKey] || [],
+            <div className="report-dl-actions">
+              <button
+                type="button"
+                className="secondary-action compact-action"
+                onClick={() => downloadCsv(
+                  `${config.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${beginDate}_to_${endDate}.csv`,
+                  // Export raw underlying values (row[key]) with the column labels
+                  // as headers — the render fns are for on-screen formatting only.
+                  config.columns.map((column) => ({ label: column.label, value: (row) => row[column.key] })),
+                  data[config.entriesKey] || [],
+                )}
+              >
+                <FileText size={15} aria-hidden="true" /> Download CSV
+              </button>
+              {(data[config.entriesKey] || []).length === 2000 && (
+                // Capped view — offer the full dataset straight from the server.
+                <button
+                  type="button"
+                  className="secondary-action compact-action"
+                  onClick={() => downloadServerCsv(
+                    `${config.endpoint}?${lastQuery}&format=csv`, token,
+                    `${config.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${beginDate}_to_${endDate}.csv`,
+                  ).catch(() => setError('Full export failed — try a narrower range'))}
+                  title="Download every matching row (not just the first 2,000 shown)"
+                >
+                  <Database size={15} aria-hidden="true" /> Download all rows
+                </button>
               )}
-            >
-              <FileText size={15} aria-hidden="true" /> Download CSV
-            </button>
+            </div>
           ) : null}
         >
           {(data[config.entriesKey] || []).length === 2000 && <p className="action-copy">Showing the first 2,000 rows — narrow the date range for the rest.</p>}
@@ -21398,6 +21452,14 @@ function RecordingsView({ admin, token, onAction, onNavigate }) {
             },
             { key: 'user', label: 'User', render: (row) => (row.user ? <button type="button" className="cell-link" onClick={() => openUser(row.user)}>{row.user}</button> : 'System') },
             { key: 'lead_id', label: 'Lead', render: (row) => (row.lead_id ? <button type="button" className="cell-link" onClick={() => onNavigate?.('leadSearch', { leadId: row.lead_id })}>{row.lead_id}</button> : 'None') },
+            {
+              key: 'status',
+              label: 'Disposition',
+              csv: (row) => row.status_name || row.status || '',
+              render: (row) => (row.status
+                ? <span className="status-pill pill-muted nowrap" title={`Status code: ${row.status}`}>{row.status_name || row.status}</span>
+                : <span className="muted-note">—</span>),
+            },
             {
               key: 'location',
               label: 'Listen',

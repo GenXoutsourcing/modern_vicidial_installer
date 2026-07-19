@@ -3345,6 +3345,7 @@ input:-webkit-autofill:focus {
 .go-edit label { display: grid; gap: 4px; color: var(--muted); font-size: 0.7rem; font-weight: 700; }
 .go-edit input, .go-edit textarea { padding: 8px 11px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(5, 15, 27, 0.72); color: var(--text); font: inherit; font-size: 0.82rem; resize: vertical; }
 .go-btns { display: flex; flex-wrap: wrap; gap: 7px; }
+.report-dl-actions { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .go-ai { float: right; display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; padding: 2px 8px; }
 .go-ai:disabled { opacity: 0.6; cursor: progress; }
 

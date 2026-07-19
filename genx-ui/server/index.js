@@ -6393,11 +6393,11 @@ async function agentMonitorLogReport(req, res) {
      WHERE monitor_start_time BETWEEN ? AND ?
        AND ${campaignWhere}
      ORDER BY monitor_start_time DESC
-     LIMIT 2000`,
+     LIMIT ${reportEntriesLimit(req)}`,
     params,
     [],
   );
-  return res.json({ ok: true, entries, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, range: { beginDate, endDate } }, 'agent-monitor-log');
 }
 
 async function realtimeMainReport(req, res) {
@@ -9324,13 +9324,13 @@ async function adminChangeLogReport(req, res) {
               event_code, SUBSTRING(event_sql, 1, 500) AS event_sql, user_group
        FROM vicidial_admin_log
        WHERE event_date >= ? AND event_date <= ?${filterSql}
-       ORDER BY event_date DESC LIMIT 2000`,
+       ORDER BY event_date DESC LIMIT ${reportEntriesLimit(req)}`,
       params,
       [],
     ),
     rows('SELECT DISTINCT event_section FROM vicidial_admin_log ORDER BY event_section LIMIT 100', [], []),
   ]);
-  return res.json({ ok: true, entries, sections: sections.map((row) => row.event_section), range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, sections: sections.map((row) => row.event_section), range: { beginDate, endDate } }, 'admin-change-log');
 }
 
 // Legacy admin.php callbacks-on-hold pages (ADD=8 user / 81 campaign /
@@ -9387,6 +9387,48 @@ async function callbackHoldsDeactivate(req, res) {
   }
 }
 
+// --- Server-side full CSV export for the raw-log report family ------------
+// On screen these reports cap at 2,000 rows; a `?format=csv` request lifts the
+// cap and streams the whole filtered result set instead. Column headers are
+// the SQL select aliases (the raw underlying values), matching the on-screen
+// "Download CSV" of loaded rows but without the 2,000-row ceiling.
+const REPORT_VIEW_LIMIT = 2000;
+const REPORT_EXPORT_LIMIT = 100000;
+function reportEntriesLimit(req) {
+  return req.query?.format === 'csv' ? REPORT_EXPORT_LIMIT : REPORT_VIEW_LIMIT;
+}
+function csvCell(value) {
+  if (value instanceof Date) {
+    const p = (n) => String(n).padStart(2, '0');
+    value = `${value.getFullYear()}-${p(value.getMonth() + 1)}-${p(value.getDate())} `
+      + `${p(value.getHours())}:${p(value.getMinutes())}:${p(value.getSeconds())}`;
+  }
+  let text = value == null ? '' : String(value);
+  // Spreadsheet formula-injection guard (mirrors the client downloadCsv).
+  if (/^[=+@-]/.test(text) && !/^-?\d*\.?\d+$/.test(text)) text = `'${text}`;
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+function sendEntriesCsv(res, filename, entries) {
+  const cols = entries.length ? Object.keys(entries[0]) : [];
+  const header = cols.map(csvCell).join(',');
+  const lines = entries.map((row) => cols.map((c) => csvCell(row[c])).join(','));
+  const safeName = String(filename).replace(/[^a-z0-9._-]/gi, '_');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+  res.send([header, ...lines].join('\r\n'));
+  return true;
+}
+// Either stream the entries as CSV (?format=csv) or return the full JSON
+// payload. baseName + the payload's {range} name the download file.
+function reportRespond(req, res, entriesKey, payload, baseName) {
+  if (req.query?.format === 'csv') {
+    const r = payload.range || {};
+    const span = r.beginDate ? `-${r.beginDate}_to_${r.endDate}` : '';
+    return sendEntriesCsv(res, `${baseName || 'report'}${span}.csv`, payload[entriesKey] || []);
+  }
+  return res.json(payload);
+}
+
 // Native port of AST_dial_log_report.php: raw dial-log rows for one day range.
 async function dialLogReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
@@ -9414,13 +9456,13 @@ async function dialLogReport(req, res) {
               outbound_cid, sip_hangup_cause, sip_hangup_reason, uniqueid
        FROM ${vdlSrc.fromSql}
        WHERE ${vdlSrc.dateWhere}
-       ORDER BY call_date ASC LIMIT 2000`,
+       ORDER BY call_date ASC LIMIT ${reportEntriesLimit(req)}`,
       vdlSrc.params,
       [],
     ),
     rows("SELECT server_ip, server_description FROM servers WHERE active_asterisk_server = 'Y' ORDER BY server_ip ASC LIMIT 100", [], []),
   ]);
-  return res.json({ ok: true, entries, servers, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, servers, range: { beginDate, endDate } }, 'dial-log');
 }
 
 // --- Logs & QA raw-log viewers (native ports of the AST_*_log_report.php
@@ -9440,7 +9482,7 @@ async function carrierLogReport(req, res) {
       `SELECT uniqueid, call_date, server_ip, lead_id, hangup_cause, dialstatus, channel,
               dial_time, answered_time, sip_hangup_cause, sip_hangup_reason, caller_code
        FROM ${src.fromSql} WHERE ${src.dateWhere}${filterSql}
-       ORDER BY call_date ASC LIMIT 2000`,
+       ORDER BY call_date ASC LIMIT ${reportEntriesLimit(req)}`,
       p(),
       [],
     ),
@@ -9465,7 +9507,7 @@ async function carrierLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, sipCauses, statuses, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, sipCauses, statuses, range: { beginDate, endDate } }, 'carrier-log');
 }
 
 async function timeclockReport(req, res) {
@@ -9622,6 +9664,23 @@ async function recordingsSearchReport(req, res) {
       [],
     ).catch(() => []);
   }
+  // Attach each call's final disposition. recording_log.vicidial_id is the
+  // VICIdial call id, which equals vicidial_log.uniqueid — one lookup keyed on
+  // the collected ids beats joining every branch above. Replica-routed with
+  // the rest of the report (under /api/reports).
+  const ids = [...new Set(list.map((r) => r.vicidial_id).filter((v) => v))];
+  if (ids.length) {
+    const dispRows = await rows(
+      `SELECT vl.uniqueid, vl.status, COALESCE(s.status_name, vl.status) AS status_name
+       FROM vicidial_log vl LEFT JOIN vicidial_statuses s ON s.status = vl.status
+       WHERE vl.uniqueid IN (${ids.map(() => '?').join(',')})`, ids, []).catch(() => []);
+    const dmap = new Map(dispRows.map((d) => [String(d.uniqueid), d]));
+    for (const r of list) {
+      const d = dmap.get(String(r.vicidial_id));
+      r.status = d ? d.status : null;
+      r.status_name = d ? d.status_name : null;
+    }
+  }
   return res.json({ ok: true, recordings: list, type, query: q });
 }
 
@@ -9669,7 +9728,7 @@ async function sipEventReport(req, res) {
     rows(
       `SELECT sip_event_id, event_date, sip_event, uniqueid, server_ip, channel, caller_code, sip_call_id
        FROM ${src.fromSql} WHERE ${src.dateWhere}
-       ORDER BY event_date ASC LIMIT 2000`,
+       ORDER BY event_date ASC LIMIT ${reportEntriesLimit(req)}`,
       src.params,
       [],
     ),
@@ -9680,7 +9739,7 @@ async function sipEventReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, range: { beginDate, endDate } }, 'sip-event-log');
 }
 
 async function amdLogReport(req, res) {
@@ -9692,7 +9751,7 @@ async function amdLogReport(req, res) {
       `SELECT call_date, lead_id, caller_code, server_ip, channel, uniqueid,
               AMDSTATUS AS amd_status, AMDCAUSE AS amd_cause, AMDRESPONSE AS amd_response, AMDSTATS AS amd_stats
        FROM vicidial_amd_log WHERE call_date >= ? AND call_date <= ?
-       ORDER BY call_date ASC LIMIT 2000`,
+       ORDER BY call_date ASC LIMIT ${reportEntriesLimit(req)}`,
       params,
       [],
     ),
@@ -9709,7 +9768,7 @@ async function amdLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, statusSummary, causeSummary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, statusSummary, causeSummary, range: { beginDate, endDate } }, 'amd-log');
 }
 
 async function recordingAccessReport(req, res) {
@@ -9729,11 +9788,11 @@ async function recordingAccessReport(req, res) {
      LEFT JOIN vicidial_users vu ON vu.user = vra.user
      LEFT JOIN recording_log r ON r.recording_id = vra.recording_id
      WHERE vra.access_datetime >= ? AND vra.access_datetime <= ?${filterSql}
-     ORDER BY vra.access_datetime ASC LIMIT 2000`,
+     ORDER BY vra.access_datetime ASC LIMIT ${reportEntriesLimit(req)}`,
     params,
     [],
   );
-  return res.json({ ok: true, entries, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, range: { beginDate, endDate } }, 'recording-access-log');
 }
 
 async function apiLogReport(req, res) {
@@ -9750,7 +9809,7 @@ async function apiLogReport(req, res) {
       `SELECT api_id, api_date, user, agent_user, \`function\` AS api_function, value, result, result_reason,
               source, SUBSTRING(data, 1, 200) AS data, api_script, run_time
        FROM ${src.fromSql} WHERE ${src.dateWhere}
-       ORDER BY api_date DESC LIMIT 2000`,
+       ORDER BY api_date DESC LIMIT ${reportEntriesLimit(req)}`,
       src.params,
       [],
     ),
@@ -9762,7 +9821,7 @@ async function apiLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, range: { beginDate, endDate } }, 'api-log');
 }
 
 // Native port of AST_agent_debug_log_report.php: agent-screen AJAX log rows.
@@ -9780,7 +9839,7 @@ async function agentDebugLogReport(req, res) {
     rows(
       `SELECT user, start_time, db_time, run_time, php_script, action, lead_id, stage
        FROM vicidial_ajax_log WHERE db_time >= ? AND db_time <= ?${filterSql}
-       ORDER BY db_time DESC LIMIT 2000`,
+       ORDER BY db_time DESC LIMIT ${reportEntriesLimit(req)}`,
       params,
       [],
     ),
@@ -9792,7 +9851,7 @@ async function agentDebugLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, range: { beginDate, endDate } }, 'agent-debug-log');
 }
 
 // Native port of AST_3way_press_log_report.php: 3-way press events.
@@ -9811,7 +9870,7 @@ async function threewayPressLogReport(req, res) {
       `SELECT call_date, user, lead_id, phone_number, dialstring, outbound_cid, result,
               call_transfer, server_ip, caller_code
        FROM vicidial_3way_press_log WHERE call_date >= ? AND call_date <= ?${filterSql}
-       ORDER BY call_date DESC LIMIT 2000`,
+       ORDER BY call_date DESC LIMIT ${reportEntriesLimit(req)}`,
       params,
       [],
     ),
@@ -9822,7 +9881,7 @@ async function threewayPressLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, range: { beginDate, endDate } }, 'threeway-press-log');
 }
 
 // --- System reports ---
@@ -10003,7 +10062,7 @@ async function urlLogReport(req, res) {
       `SELECT url_log_id, url_date, url_type, uniqueid, response_sec,
               SUBSTRING(url, 1, 200) AS url, SUBSTRING(url_response, 1, 100) AS url_response
        FROM vicidial_url_log WHERE url_date >= ? AND url_date <= ?${filterSql}
-       ORDER BY url_date ASC LIMIT 2000`,
+       ORDER BY url_date ASC LIMIT ${reportEntriesLimit(req)}`,
       params,
       [],
     ),
@@ -10015,7 +10074,7 @@ async function urlLogReport(req, res) {
       [],
     ),
   ]);
-  return res.json({ ok: true, entries, summary, range: { beginDate, endDate } });
+  return reportRespond(req, res, 'entries', { ok: true, entries, summary, range: { beginDate, endDate } }, 'url-log');
 }
 
 // ============================================================================
