@@ -168,6 +168,12 @@ min_user_level="$DEFAULT_MIN_USER_LEVEL"
 # default so the feature is off and the var is documented for discovery.
 ai_assist_key=""
 ai_assist_model="claude-opus-4-8"
+# DB pool sizing: the code default (6) starves under a real agent floor — one
+# lock-stalled query family exhausts the pool and every request (dashboards,
+# even /api/health) queues behind it. 100-agent load test froze exactly this
+# way. 50/20 is sized for ~100 concurrent agents; preserve manual overrides.
+db_pool="50"
+db_slave_pool="20"
 if [ -f "$ENV_FILE" ]; then
   existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_MIN_USER_LEVEL=//; s/^"//; s/"$//' || true)"
   [ -n "$existing_min_level" ] && min_user_level="$existing_min_level"
@@ -175,6 +181,10 @@ if [ -f "$ENV_FILE" ]; then
   [ -n "$existing_ai_key" ] && ai_assist_key="$existing_ai_key"
   existing_ai_model="$(grep -E '^GENX_UI_AI_ASSIST_MODEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_AI_ASSIST_MODEL=//; s/^"//; s/"$//' || true)"
   [ -n "$existing_ai_model" ] && ai_assist_model="$existing_ai_model"
+  existing_db_pool="$(grep -E '^GENX_UI_DB_POOL=' "$ENV_FILE" | sed -E 's/^GENX_UI_DB_POOL=//; s/^"//; s/"$//' || true)"
+  [ -n "$existing_db_pool" ] && db_pool="$existing_db_pool"
+  existing_db_slave_pool="$(grep -E '^GENX_UI_DB_SLAVE_POOL=' "$ENV_FILE" | sed -E 's/^GENX_UI_DB_SLAVE_POOL=//; s/^"//; s/"$//' || true)"
+  [ -n "$existing_db_slave_pool" ] && db_slave_pool="$existing_db_slave_pool"
 fi
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -229,6 +239,8 @@ GENX_UI_DB_NAME=$(quote_env "$db_name")
 GENX_UI_DB_USER=$(quote_env "$db_user")
 GENX_UI_DB_PASS=$(quote_env "$db_pass")
 GENX_UI_DB_SLAVE_HOST=$(quote_env "$db_slave_host")
+GENX_UI_DB_POOL=$db_pool
+GENX_UI_DB_SLAVE_POOL=$db_slave_pool
 GENX_UI_AI_ASSIST_KEY=$(quote_env "$ai_assist_key")
 GENX_UI_AI_ASSIST_MODEL=$(quote_env "$ai_assist_model")
 EOF
