@@ -1046,7 +1046,7 @@ icesupport=yes
 rtcp_mux=yes
 directmedia=no
 disallow=all
-allow=ulaw,opus,vp8,h264
+allow=opus,ulaw,vp8,h264
 nat=force_rport,comedia
 directmedia=no
 dtlsenable=yes
@@ -2532,6 +2532,20 @@ cd /usr/lib64/asterisk/modules
 copy_asset codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so
 cp -f codec_g729-ast160-gcc4-glibc-x86_64-core2-sse4.so codec_g729.so
 chmod 777 codec_g729.so
+
+# Opus transcoder (official Sangoma binary, for Asterisk 18 x86_64). The
+# source build only ships the format-attribute module (res_format_attr_opus);
+# without codec_opus.so Asterisk cannot transcode opus<->slin, so the WEBRTC
+# template's opus-first codec order would leave webphone legs with no audio
+# path into the MeetMe/ConfBridge mixes. The XML doc MUST land in
+# documentation/thirdparty or the module declines to load ("failed to
+# register sorcery object type 'opus'"); it loads cleanly at Asterisk startup.
+cd /usr/src
+copy_asset codec_opus-18.0_current-x86_64.tar.gz
+tar -xzf codec_opus-18.0_current-x86_64.tar.gz
+cp -p codec_opus-18.0_*-x86_64/codec_opus.so codec_opus-18.0_*-x86_64/format_ogg_opus.so /usr/lib64/asterisk/modules/
+mkdir -p /var/lib/asterisk/documentation/thirdparty
+cp -p codec_opus-18.0_*-x86_64/codec_opus_config-en_US.xml /var/lib/asterisk/documentation/thirdparty/
 
 fi # ROLE_TELEPHONY ip_relay/g729
 
