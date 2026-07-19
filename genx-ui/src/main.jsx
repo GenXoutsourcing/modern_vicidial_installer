@@ -10109,6 +10109,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '', form: [], subguide_id: '' });
   const [note, setNote] = useState('');
   const [bump, setBump] = useState(0);
+  const [showMap, setShowMap] = useState(false);
   // Other guides, for the response "call subguide" picker.
   const [allGuides, setAllGuides] = useState([]);
   useEffect(() => {
@@ -10149,7 +10150,6 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   }).then(() => { setNote('Saved'); setBump((n) => n + 1); onChanged?.(); }).catch(() => setNote('Save failed'));
   const publish = () => api(`/admin/guides/${guideId}/publish`, 'POST').then(() => { setNote('Published'); onChanged?.(); });
 
-  const [showMap, setShowMap] = useState(false);
   // Visual map: BFS layering from the root (first visit wins a node's
   // column, so rejoining branches draw once with extra edges back in).
   const mapLayout = () => {
