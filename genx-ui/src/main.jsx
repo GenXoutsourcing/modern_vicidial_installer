@@ -559,6 +559,7 @@ function Login({ onLogin }) {
         method: 'POST',
         body: JSON.stringify({ username, password: pass }),
       });
+      setServerFeatures(payload.features);
       if (payload.user?.uiAccess === 'both') {
         setAdminAuth({ token: payload.token || '', user: payload.user });
         setStep('choice');
@@ -891,6 +892,15 @@ function userCan(user, entity) {
   if (entity === 'confTemplates') return Boolean(user?.modifyServers);
   if (entity === 'settingsContainers') return Boolean(user?.modifySettingsContainers);
   return false;
+}
+
+// Server-wide capability flags (not per-user), delivered on the login/session
+// payload. The app has no context provider and deep components like the guide
+// outline editor don't receive `user`, so we stash them here and read them
+// where needed. AI authoring assist stays dark until the server reports it on.
+const SERVER_FEATURES = { aiAssist: false };
+function setServerFeatures(features) {
+  SERVER_FEATURES.aiAssist = Boolean(features?.aiAssist);
 }
 
 const DELETABLE_ENTITIES = new Set(['inbound', 'dids', 'callMenus', 'callMenuOptions', 'filterPhoneGroups', 'campaigns', 'users', 'lists', 'scripts', 'leadFilters', 'userGroups', 'carriers', 'remoteAgents', 'dropLists', 'phoneAliases', 'groupAliases', 'ipLists', 'cidGroups', 'queueGroups', 'contacts', 'languages', 'voicemailBoxes', 'vmMessageGroups', 'automatedReports', 'moh', 'tts', 'stateCallTimes', 'holidays', 'statusGroups', 'settingsContainers', 'statusCategories', 'extensionGroups', 'confTemplates', 'emailAccounts', 'campaignStatuses', 'campaignHotkeys', 'leadRecycle', 'pauseCodes', 'listMixes']);
@@ -10110,6 +10120,9 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   const [note, setNote] = useState('');
   const [bump, setBump] = useState(0);
   const [showMap, setShowMap] = useState(false);
+  // AI authoring assist (stub, gated on SERVER_FEATURES.aiAssist). Both hooks
+  // must stay above the `if (!tree) return null` early return (React #310).
+  const [aiBusy, setAiBusy] = useState(false);
   // Other guides, for the response "call subguide" picker.
   const [allGuides, setAllGuides] = useState([]);
   useEffect(() => {
@@ -10149,6 +10162,26 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
     method: 'PUT', body: JSON.stringify({ ...draft, form_json: JSON.stringify(draft.form || []), cond_json: draft.cond ? JSON.stringify(draft.cond) : null }),
   }).then(() => { setNote('Saved'); setBump((n) => n + 1); onChanged?.(); }).catch(() => setNote('Save failed'));
   const publish = () => api(`/admin/guides/${guideId}/publish`, 'POST').then(() => { setNote('Published'); onChanged?.(); });
+
+  // AI rephrase: send the current step's script to the server-side assist
+  // route and drop the suggestion back into the editor for review. The route
+  // returns ai_disabled when no key is configured (it never fires here because
+  // the button is hidden in that case, but we handle it defensively).
+  const aiRephrase = () => {
+    if (!selected || selected.type !== 'step' || aiBusy) return;
+    const source = (draft.script_html || '').trim();
+    if (!source) { setNote('Add some script text first'); return; }
+    setAiBusy(true);
+    setNote('Asking AI…');
+    apiFetch(`/admin/guides/${guideId}/ai-draft`, token, {
+      method: 'POST', body: JSON.stringify({ action: 'rephrase', source }),
+    }).then((p) => {
+      if (p.ok && p.text) { setDraft((c) => ({ ...c, script_html: p.text })); setNote('AI suggestion applied — review, then Save Node'); }
+      else if (p.error === 'ai_disabled') setNote('AI assist is not configured');
+      else if (p.error === 'ai_refused') setNote('AI declined this request');
+      else setNote('AI draft failed');
+    }).catch(() => setNote('AI draft failed')).finally(() => setAiBusy(false));
+  };
 
   // Visual map: BFS layering from the root (first visit wins a node's
   // column, so rejoining branches draw once with extra edges back in).
@@ -10276,7 +10309,13 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                 )}
                 {selected.type === 'step' && (
                   <>
-                    <label><span>Script (HTML, --A--field--B-- merge fields)</span>
+                    <label><span>Script (HTML, --A--field--B-- merge fields)
+                      {SERVER_FEATURES.aiAssist && (
+                        <button type="button" className="t-action go-ai" disabled={aiBusy} onClick={aiRephrase} title="Rewrite this script with AI (review before saving)">
+                          <Sparkles size={13} aria-hidden="true" /> {aiBusy ? 'Working…' : 'AI rephrase'}
+                        </button>
+                      )}
+                    </span>
                       <textarea rows={7} value={draft.script_html} onChange={(e) => setDraft((c) => ({ ...c, script_html: e.target.value }))} />
                     </label>
                     <label><span>Exit disposition (blank = not an exit)</span>
@@ -21918,7 +21957,7 @@ function App() {
     }
 
     apiFetch('/session', storedToken)
-      .then((payload) => setAuth({ checking: false, token: storedToken, user: payload.user }))
+      .then((payload) => { setServerFeatures(payload.features); setAuth({ checking: false, token: storedToken, user: payload.user }); })
       .catch(() => {
         window.localStorage.removeItem(TOKEN_KEY);
         setAuth({ checking: false, token: '', user: null });

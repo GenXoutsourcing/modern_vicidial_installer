@@ -83,7 +83,22 @@ const config = {
   // GENX_UI_ALERT_EMAIL: comma-separated recipients, sent via local sendmail.
   alertWebhook: process.env.GENX_UI_ALERT_WEBHOOK || '',
   alertEmail: process.env.GENX_UI_ALERT_EMAIL || '',
+  // AI authoring assist for the guide outline editor. Dark by default: the
+  // feature only lights up when an Anthropic API key is present in the env.
+  // With no key the /ai-draft route returns {ok:false,error:'ai_disabled'} and
+  // makes NO external (billable) call, and the client hides the affordance.
+  // GENX_UI_AI_ASSIST_KEY: Anthropic API key (sk-ant-...). Set to enable.
+  // GENX_UI_AI_ASSIST_MODEL: optional model override (default claude-opus-4-8).
+  aiAssistKey: process.env.GENX_UI_AI_ASSIST_KEY || '',
+  aiAssistModel: process.env.GENX_UI_AI_ASSIST_MODEL || 'claude-opus-4-8',
 };
+
+// Server-wide capability flags exposed to the client so the UI can hide
+// affordances that aren't configured. Never leaks the key itself — only
+// whether the feature is on.
+function serverFeatures() {
+  return { aiAssist: Boolean(config.aiAssistKey) };
+}
 
 const app = express();
 
@@ -18063,7 +18078,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.get('/api/session', requireAccess, (req, res) => {
-  res.json({ ok: true, user: req.genxUser, minUserLevel: config.minUserLevel });
+  res.json({ ok: true, user: req.genxUser, minUserLevel: config.minUserLevel, features: serverFeatures() });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -18086,7 +18101,7 @@ app.post('/api/login', async (req, res) => {
     loginFailures.delete(throttleKey);
 
     const token = createSession(user);
-    return res.json({ ok: true, token, user, minUserLevel: config.minUserLevel });
+    return res.json({ ok: true, token, user, minUserLevel: config.minUserLevel, features: serverFeatures() });
   } catch (error) {
     return res.status(500).json({ ok: false, error: 'login_unavailable' });
   }
@@ -18955,6 +18970,52 @@ app.post('/api/admin/guides/:id/publish', requireAccess, async (req, res) => {
     await adminLog(req, 'guides', 'PUBLISH', String(guideId), 'publish', '', `guide ${guideId} published version ${newVersion}`).catch(() => {});
     res.json({ ok: true, published_version: newVersion });
   } catch { res.status(500).json({ ok: false, error: 'guide_publish_failed' }); }
+});
+
+// AI authoring assist (stub behind a feature flag). Stays dark until an
+// Anthropic API key exists in GENX_UI_AI_ASSIST_KEY: with no key it returns
+// immediately and makes NO external (billable) call. When a key is present it
+// asks Claude to draft a rebuttal outline or rephrase a step, and returns the
+// suggestion as text for the author to review — it never writes nodes itself.
+app.post('/api/admin/guides/:id/ai-draft', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyGuides')) return;
+  if (!config.aiAssistKey) return res.json({ ok: false, error: 'ai_disabled' });
+  try {
+    const action = req.body?.action === 'rephrase' ? 'rephrase' : 'draft_tree';
+    const source = cleanText(req.body?.source, 8000) || '';
+    if (!source) return res.status(400).json({ ok: false, error: 'no_source' });
+    const system = action === 'rephrase'
+      ? 'You are a call-center script editor. Rewrite the agent script text the user provides to be clearer, warmer, and easier to read aloud on a live call. Keep any --A--field--B-- merge-field tokens exactly as written. Return only the rewritten script text, no preamble.'
+      : 'You are a call-center guidance designer. From the campaign script the user provides, draft a short branching rebuttal outline an agent could follow on a live call. Return a compact plain-text outline: each step on its own line, its response options indented beneath with a dash, and a suggested disposition in [brackets] on any option that ends the call. Keep it concise and practical. No preamble.';
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': config.aiAssistKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: config.aiAssistModel,
+        max_tokens: 2048,
+        system,
+        messages: [{ role: 'user', content: source }],
+      }),
+    });
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => '');
+      console.error('[genx-ui] ai-draft upstream error:', upstream.status, detail.slice(0, 300));
+      return res.status(502).json({ ok: false, error: 'ai_upstream_error' });
+    }
+    const data = await upstream.json();
+    if (data.stop_reason === 'refusal') return res.json({ ok: false, error: 'ai_refused' });
+    const text = Array.isArray(data.content)
+      ? data.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim()
+      : '';
+    return res.json({ ok: true, action, text });
+  } catch (err) {
+    console.error('[genx-ui] ai-draft failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'ai_draft_failed' });
+  }
 });
 
 app.post('/api/agent/guide/start', requireAgentAccess, async (req, res) => {
