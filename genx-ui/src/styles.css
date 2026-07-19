@@ -3317,6 +3317,15 @@ input:-webkit-autofill:focus {
   cursor: default;
 }
 
+/* Guide data-capture (agent panel + authoring rows). */
+.guide-form { display: grid; gap: 7px; padding: 4px 0; }
+.guide-form-field { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: center; gap: 10px; font-size: 0.78rem; color: var(--muted); }
+.guide-form-field input[type="text"], .guide-form-field input[type="date"] { padding: 7px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(5, 15, 27, 0.72); color: var(--text); font: inherit; font-size: 0.8rem; }
+.guide-form-field input[type="checkbox"] { justify-self: start; accent-color: var(--blue); }
+.go-form-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 6px; margin: 5px 0; }
+.go-form-row select { padding: 6px 9px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(5, 15, 27, 0.72); color: var(--text); font: inherit; font-size: 0.76rem; }
+.go-form-row button { border: 1px solid transparent; background: none; color: var(--muted); cursor: pointer; }
+
 /* Guide dispo pre-select on the agent dispo card. */
 .agr-guide-suggest { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 8px; padding: 8px 11px; border: 1px solid rgba(115, 251, 211, 0.4); border-radius: 9px; background: rgba(115, 251, 211, 0.08); font-size: 0.78rem; }
 .agr-guide-suggest b { color: var(--green); }

@@ -10097,10 +10097,16 @@ function ScriptBuilder({ script, token, onClose, onSaved }) {
 // Plain indented outline: steps with responses nested under them, click to
 // edit, up/down reorder, draft/publish. Edits hit the guide's mutable DRAFT
 // version; Publish freezes a snapshot agents traverse.
+const GUIDE_FORM_FIELD_CHOICES = [
+  'first_name', 'last_name', 'title', 'address1', 'address2', 'address3', 'city', 'state', 'postal_code',
+  'email', 'alt_phone', 'gender', 'date_of_birth', 'security_phrase', 'comments', 'vendor_lead_code',
+  'source_id', 'rank', 'owner',
+];
+
 function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   const [tree, setTree] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '' });
+  const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '', form: [] });
   const [note, setNote] = useState('');
   const [bump, setBump] = useState(0);
   useEffect(() => {
@@ -10110,7 +10116,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
         if (selected) {
           const still = payload.nodes.find((n) => n.node_id === selected.node_id);
           setSelected(still || null);
-          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || '' });
+          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || "", form: (()=>{ try { const f = JSON.parse(still.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
         }
       })
       .catch(() => setNote('Could not load guide'));
@@ -10128,13 +10134,13 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
 
   const pick = (node) => {
     setSelected(node);
-    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || '' });
+    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || "", form: (()=>{ try { const f = JSON.parse(node.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
     setNote('');
   };
   const api = (path, method, body) => apiFetch(path, token, { method, body: body ? JSON.stringify(body) : undefined })
     .then(() => setBump((n) => n + 1)).catch((e) => setNote(e.status === 400 ? 'Not allowed there' : 'Failed'));
   const saveNode = () => selected && apiFetch(`/admin/guides/${guideId}/nodes/${selected.node_id}`, token, {
-    method: 'PUT', body: JSON.stringify(draft),
+    method: 'PUT', body: JSON.stringify({ ...draft, form_json: JSON.stringify(draft.form || []) }),
   }).then(() => { setNote('Saved'); setBump((n) => n + 1); onChanged?.(); }).catch(() => setNote('Save failed'));
   const publish = () => api(`/admin/guides/${guideId}/publish`, 'POST').then(() => { setNote('Published'); onChanged?.(); });
 
@@ -10188,6 +10194,22 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                     <label><span>Exit disposition (blank = not an exit)</span>
                       <input type="text" maxLength={6} value={draft.disposition} onChange={(e) => setDraft((c) => ({ ...c, disposition: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))} />
                     </label>
+                    <div>
+                      <span className="sb-preview-label">Data capture (writes back to the lead)</span>
+                      {(draft.form || []).map((field, fieldIndex) => (
+                        <div key={fieldIndex} className="go-form-row">
+                          <input type="text" placeholder="Label" value={field.label || ''} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, label: e.target.value } : f)) }))} />
+                          <select value={field.field} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, field: e.target.value } : f)) }))}>
+                            {GUIDE_FORM_FIELD_CHOICES.map((f) => <option key={f} value={f}>{f}</option>)}
+                          </select>
+                          <select value={field.type || 'text'} onChange={(e) => setDraft((c) => ({ ...c, form: c.form.map((f, i) => (i === fieldIndex ? { ...f, type: e.target.value } : f)) }))}>
+                            {['text', 'date', 'checkbox'].map((t) => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                          <button type="button" onClick={() => setDraft((c) => ({ ...c, form: c.form.filter((_, i) => i !== fieldIndex) }))}>✕</button>
+                        </div>
+                      ))}
+                      <button type="button" className="t-action" onClick={() => setDraft((c) => ({ ...c, form: [...(c.form || []), { label: '', field: 'email', type: 'text' }] }))}>+ capture field</button>
+                    </div>
                   </>
                 )}
                 <div className="go-btns">
@@ -10223,9 +10245,72 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   );
 }
 
+function GuideAnalyticsModal({ guide, token, onClose }) {
+  const [data, setData] = useState(null);
+  const [days, setDays] = useState(30);
+  useEffect(() => {
+    apiFetch(`/admin/guides/${guide.guide_id}/analytics?days=${days}`, token).then(setData).catch(() => {});
+  }, [guide.guide_id, days, token]);
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel detail-modal" role="dialog" aria-modal="true" aria-label="Guide analytics">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Guide Analytics — last {days} days</p>
+            <h2>{guide.name}</h2>
+          </div>
+          <div className="mseg" role="tablist" aria-label="Window">
+            {[7, 30, 90].map((d) => (
+              <button key={d} type="button" className={days === d ? 'on' : ''} onClick={() => setDays(d)}>{d}d</button>
+            ))}
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close"><X size={18} aria-hidden="true" /></button>
+        </div>
+        <div className="entity-form">
+          {!data && <p className="connection-summary">Loading…</p>}
+          {data && (
+            <>
+              <p className="connection-summary">
+                <b>{formatNumber(data.sessions)}</b> guided sessions ·
+                outcomes: {data.outcomes.length ? data.outcomes.map((o) => `${o.status} ${formatNumber(o.n)}`).join(' · ') : 'none joined yet'}
+              </p>
+              <div className="admin-grid">
+                <Panel eyebrow="Traffic" title="Entries per node" icon={Activity}>
+                  <DataTable
+                    emptyLabel="No traversals in this window"
+                    searchable={false}
+                    rows={data.nodes.map((n) => ({ ...n, id: n.node_id }))}
+                    columns={[
+                      { key: 'title', label: 'Node', render: (r) => (<><strong>{r.title}</strong><span>{r.type}{r.disposition ? ` · exit ${r.disposition}` : ''}</span></>) },
+                      { key: 'entries', label: 'Entries', render: (r) => formatNumber(r.entries) },
+                      { key: 'sessions', label: 'Sessions', render: (r) => formatNumber(r.sessions) },
+                    ]}
+                  />
+                </Panel>
+                <Panel eyebrow="Attention" title="Where sessions ended" icon={Gauge}>
+                  <DataTable
+                    emptyLabel="No sessions"
+                    searchable={false}
+                    rows={data.dropoffs.map((d, i) => ({ ...d, id: i }))}
+                    columns={[
+                      { key: 'title', label: 'Final node', render: (r) => (<><strong>{r.title}</strong><span>{r.disposition ? `exit ${r.disposition}` : r.type === 'step' ? 'DROP-OFF (non-exit step)' : r.type}</span></>) },
+                      { key: 'n', label: 'Sessions', render: (r) => formatNumber(r.n) },
+                    ]}
+                  />
+                </Panel>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function GuidesPanel({ admin, user, token }) {
   const [guides, setGuides] = useState([]);
   const [editing, setEditing] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [bump, setBump] = useState(0);
   const canManage = userCan(user, 'guides');
   useEffect(() => {
@@ -10253,6 +10338,7 @@ function GuidesPanel({ admin, user, token }) {
       headerActions={<button type="button" className="primary-action compact-action" onClick={createGuide}><Plus size={15} aria-hidden="true" /> New Guide</button>}
     >
       {editing && <GuideOutlineEditor guideId={editing} token={token} onClose={() => setEditing(null)} onChanged={() => setBump((n) => n + 1)} />}
+      {analytics && <GuideAnalyticsModal guide={analytics} token={token} onClose={() => setAnalytics(null)} />}
       <DataTable
         emptyLabel="No guides yet — create one and bind it to a campaign"
         searchable={false}
@@ -10263,7 +10349,16 @@ function GuidesPanel({ admin, user, token }) {
           { key: 'published_no', label: 'Published', render: (row) => (row.published_no ? <StatusPill ok>v{row.published_no}</StatusPill> : <StatusPill ok={false}>never</StatusPill>) },
           { key: 'dispo_mode', label: 'Dispo', render: (row) => row.dispo_mode },
           { key: 'active', label: 'Status', render: (row) => <StatusPill ok={row.active === 'Y'}>{row.active === 'Y' ? 'Active' : 'Off'}</StatusPill> },
-          { key: 'actions', label: 'Action', render: (row) => <button type="button" className="secondary-action compact-action" onClick={() => setEditing(row.guide_id)}>Edit Outline</button> },
+          {
+            key: 'actions',
+            label: 'Action',
+            render: (row) => (
+              <span className="row-action-group">
+                <button type="button" className="secondary-action compact-action" onClick={() => setEditing(row.guide_id)}>Edit Outline</button>
+                <button type="button" className="secondary-action compact-action" onClick={() => setAnalytics(row)}>Analytics</button>
+              </span>
+            ),
+          },
         ]}
       />
     </Panel>
@@ -19170,12 +19265,20 @@ function AgentConsole({ token, authInfo, onExit }) {
     }).catch(() => setGuideRun(null));
   }, [lead ? lead.lead_id : 0, live ? live.campaign_id : '', token]);
 
+  const [guideForm, setGuideForm] = useState({});
   async function guideRespond(responseNodeId) {
     if (!guideRun) return;
     try {
       const payload = await apiFetch('/agent/guide/respond', token, {
-        method: 'POST', body: JSON.stringify({ session_key: guideRun.session_key, response_node_id: responseNodeId }),
+        method: 'POST',
+        body: JSON.stringify({
+          session_key: guideRun.session_key,
+          response_node_id: responseNodeId,
+          // data-capture values from the current step, written back to the lead
+          form: Object.keys(guideForm).length ? guideForm : undefined,
+        }),
       });
+      setGuideForm({});
       setGuideRun((current) => ({ ...current, ...payload, crumbs: [...(current?.crumbs || []), payload.step.title] }));
     } catch { /* keep current step */ }
   }
@@ -20326,6 +20429,21 @@ function AgentConsole({ token, authInfo, onExit }) {
                 {/* Server-side merged + escaped lead values; node HTML is
                     admin-authored, same trust level as scripts. */}
                 <div className="guide-step" dangerouslySetInnerHTML={{ __html: guideRun.step.html || '' }} />
+                {Array.isArray(guideRun.step.form) && guideRun.step.form.length > 0 && (
+                  <div className="guide-form">
+                    <p className="guide-ask">Capture:</p>
+                    {guideRun.step.form.map((field) => (
+                      <label key={field.field} className="guide-form-field">
+                        <span>{field.label || field.field}</span>
+                        {field.type === 'checkbox' ? (
+                          <input type="checkbox" checked={guideForm[field.field] === 'Y'} onChange={(e) => setGuideForm((c) => ({ ...c, [field.field]: e.target.checked ? 'Y' : 'N' }))} />
+                        ) : (
+                          <input type={field.type === 'date' ? 'date' : 'text'} value={guideForm[field.field] || ''} onChange={(e) => setGuideForm((c) => ({ ...c, [field.field]: e.target.value }))} />
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
                 {!guideRun.exit && (
                   <div className="guide-responses">
                     <p className="guide-ask">Customer response:</p>

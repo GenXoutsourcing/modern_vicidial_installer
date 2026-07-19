@@ -18590,6 +18590,29 @@ async function guideMergeHtml(html, leadId) {
   });
 }
 
+// Lead columns a guide data-capture form may write back to (phase 2).
+// Standard vicidial_list fields only; custom-field write-back is a later
+// increment. Never phone_number (dial integrity) or lead_id/list_id.
+const GUIDE_FORM_FIELDS = [
+  'first_name', 'last_name', 'title', 'address1', 'address2', 'address3', 'city', 'state', 'postal_code',
+  'email', 'alt_phone', 'gender', 'date_of_birth', 'security_phrase', 'comments', 'vendor_lead_code',
+  'source_id', 'rank', 'owner',
+];
+
+function guideParseForm(formJson) {
+  try {
+    const parsed = JSON.parse(String(formJson || 'null'));
+    if (!Array.isArray(parsed)) return null;
+    return parsed.slice(0, 20).filter((f) => f && GUIDE_FORM_FIELDS.includes(String(f.field)))
+      .map((f) => ({
+        field: String(f.field),
+        label: String(f.label || f.field).slice(0, 60),
+        type: ['select', 'checkbox', 'date'].includes(f.type) ? f.type : 'text',
+        options: Array.isArray(f.options) ? f.options.slice(0, 20).map((o) => String(o).slice(0, 60)) : undefined,
+      }));
+  } catch { return null; }
+}
+
 // A step + its response options (steps with no responses are exits).
 async function guideStepPayload(versionId, stepNode, leadId, guide) {
   const responses = await rows(
@@ -18602,6 +18625,7 @@ async function guideStepPayload(versionId, stepNode, leadId, guide) {
       title: stepNode.title,
       html: await guideMergeHtml(stepNode.script_html, leadId),
       disposition: stepNode.disposition || null,
+      form: guideParseForm(stepNode.form_json),
     },
     responses,
     exit: !responses.length,
@@ -18750,9 +18774,16 @@ app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) =
   try {
     const versionId = await guideDraftVersion(Number(req.params.id));
     const dispo = cleanId(req.body?.disposition, 6);
+    // form_json validated through the same parser the runtime uses; invalid
+    // input stores NULL rather than junk.
+    const formJson = req.body?.form_json !== undefined
+      ? (guideParseForm(req.body.form_json)?.length ? JSON.stringify(guideParseForm(req.body.form_json)) : null)
+      : undefined;
     await execute(
-      'UPDATE genx_guide_node SET title = ?, script_html = ?, disposition = ? WHERE node_id = ? AND version_id = ?',
-      [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, Number(req.params.nodeId), versionId]);
+      `UPDATE genx_guide_node SET title = ?, script_html = ?, disposition = ?${formJson !== undefined ? ', form_json = ?' : ''} WHERE node_id = ? AND version_id = ?`,
+      formJson !== undefined
+        ? [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, formJson, Number(req.params.nodeId), versionId]
+        : [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, Number(req.params.nodeId), versionId]);
     res.json({ ok: true });
   } catch { res.status(500).json({ ok: false, error: 'node_update_failed' }); }
 });
@@ -18777,6 +18808,49 @@ app.delete('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res
     await execute(`DELETE FROM genx_guide_node WHERE version_id = ? AND node_id IN (${marks})`, [versionId, ...doomed]);
     res.json({ ok: true, removed: doomed.length });
   } catch { res.status(500).json({ ok: false, error: 'node_delete_failed' }); }
+});
+
+// Phase-2 analytics: traversal rows joined to nodes and to vicidial_log
+// (uniqueid) for call outcomes. All replica-routed.
+app.get('/api/admin/guides/:id/analytics', requireAccess, async (req, res) => {
+  if (!requireModify(req, res, 'modifyGuides')) return;
+  try {
+    const guideId = Number(req.params.id);
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+    const versions = await rows('SELECT version_id FROM genx_guide_version WHERE guide_id = ?', [guideId], []);
+    if (!versions.length) return res.json({ ok: true, sessions: 0, nodes: [], outcomes: [], dropoffs: [] });
+    const vIds = versions.map((v) => v.version_id);
+    const marks = vIds.map(() => '?').join(',');
+    const onReplica = (fn) => dbContext.run(reportPool, fn);
+    const [sessions, nodes, outcomes, lastNodes] = await Promise.all([
+      onReplica(() => scalar(
+        `SELECT COUNT(DISTINCT session_key) AS value FROM genx_guide_traversal
+         WHERE version_id IN (${marks}) AND entered_at >= CURDATE() - INTERVAL ? DAY`, [...vIds, days], 0)),
+      onReplica(() => rows(
+        `SELECT n.node_id, n.type, n.title, n.disposition, COUNT(*) AS entries, COUNT(DISTINCT t.session_key) AS sessions
+         FROM genx_guide_traversal t JOIN genx_guide_node n ON n.node_id = t.node_id
+         WHERE t.version_id IN (${marks}) AND t.entered_at >= CURDATE() - INTERVAL ? DAY
+         GROUP BY n.node_id, n.type, n.title, n.disposition ORDER BY entries DESC LIMIT 100`, [...vIds, days], [])),
+      onReplica(() => rows(
+        `SELECT vl.status, COUNT(DISTINCT t.session_key) AS n
+         FROM genx_guide_traversal t JOIN vicidial_log vl ON vl.uniqueid = t.uniqueid
+         WHERE t.version_id IN (${marks}) AND t.entered_at >= CURDATE() - INTERVAL ? DAY AND t.uniqueid <> ''
+         GROUP BY vl.status ORDER BY n DESC LIMIT 12`, [...vIds, days], [])),
+      // Where sessions STOPPED: each session's final node; non-exit steps
+      // there are the drop-off candidates.
+      onReplica(() => rows(
+        `SELECT n.title, n.type, n.disposition, COUNT(*) AS n
+         FROM (SELECT session_key, MAX(traversal_id) AS lastId FROM genx_guide_traversal
+               WHERE version_id IN (${marks}) AND entered_at >= CURDATE() - INTERVAL ? DAY GROUP BY session_key) f
+         JOIN genx_guide_traversal t ON t.traversal_id = f.lastId
+         JOIN genx_guide_node n ON n.node_id = t.node_id
+         GROUP BY n.title, n.type, n.disposition ORDER BY n DESC LIMIT 20`, [...vIds, days], [])),
+    ]);
+    res.json({ ok: true, days, sessions: Number(sessions || 0), nodes, outcomes, dropoffs: lastNodes });
+  } catch (err) {
+    console.error('guide analytics failed:', err.message);
+    res.status(500).json({ ok: false, error: 'guide_analytics_failed' });
+  }
 });
 
 app.post('/api/admin/guides/:id/nodes/:nodeId/move', requireAccess, async (req, res) => {
@@ -18848,6 +18922,25 @@ app.post('/api/agent/guide/respond', requireAgentAccess, async (req, res) => {
       "SELECT * FROM genx_guide_node WHERE node_id = ? AND version_id = ? AND type = 'response' LIMIT 1",
       [responseId, context.version_id], []);
     if (!response) return res.status(400).json({ ok: false, error: 'bad_response' });
+    // Data-capture write-back: values collected on the step being answered.
+    // Whitelisted lead columns only; comments append rather than overwrite.
+    if (req.body?.form && typeof req.body.form === 'object' && context.lead_id) {
+      const sets = [];
+      const params = [];
+      for (const [field, raw] of Object.entries(req.body.form).slice(0, 20)) {
+        if (!GUIDE_FORM_FIELDS.includes(field)) continue;
+        const value = String(raw ?? '').slice(0, 255);
+        if (field === 'comments') {
+          sets.push('comments = TRIM(CONCAT(COALESCE(comments,""), " ", ?))');
+        } else {
+          sets.push(`${field} = ?`);
+        }
+        params.push(value);
+      }
+      if (sets.length) {
+        await execute(`UPDATE vicidial_list SET ${sets.join(', ')} WHERE lead_id = ? LIMIT 1`, [...params, context.lead_id]).catch(() => {});
+      }
+    }
     const [next] = await rows(
       `SELECT n.* FROM genx_guide_edge e JOIN genx_guide_node n ON n.node_id = e.child_node_id
        WHERE e.version_id = ? AND e.parent_node_id = ? AND n.type = 'step' ORDER BY e.sort_order LIMIT 1`,
