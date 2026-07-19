@@ -3865,3 +3865,6 @@ input:-webkit-autofill:focus {
 .mchip.c-muted { background: rgba(138, 167, 187, 0.14); color: var(--muted); }
 .mempty { padding: 16px; color: var(--muted); font-size: 0.8rem; text-align: center; }
 .mnote-inline { padding: 10px 16px; margin: 0; color: var(--muted); font-size: 0.72rem; border-top: 1px solid var(--line-soft); }
+
+/* Subguide chips in the outline. */
+.go-node .go-sub { border-color: rgba(0, 217, 255, 0.35); background: rgba(0, 217, 255, 0.08); color: var(--blue); }

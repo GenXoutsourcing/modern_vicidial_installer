@@ -18646,6 +18646,24 @@ async function guideSessionContext(sessionKey) {
   return last || null;
 }
 
+// Pending subguide return (single-level nesting): the most recent
+// subguide-calling response NOT yet followed by a row back in the caller's
+// version. Returns { responseNodeId, versionId } or null.
+async function guideFindReturn(sessionKey) {
+  const trail = await rows(
+    `SELECT t.node_id, t.version_id, n.subguide_id, n.type
+     FROM genx_guide_traversal t JOIN genx_guide_node n ON n.node_id = t.node_id
+     WHERE t.session_key = ? ORDER BY t.traversal_id DESC LIMIT 80`, [sessionKey], []);
+  for (let i = 0; i < trail.length; i += 1) {
+    const row = trail[i];
+    if (row.type === 'response' && row.subguide_id) {
+      const returned = trail.slice(0, i).some((newer) => newer.version_id === row.version_id);
+      return returned ? null : { responseNodeId: row.node_id, versionId: row.version_id };
+    }
+  }
+  return null;
+}
+
 // ===== Guide authoring (admin lane) =========================================
 // Draft/publish per spec: every guide keeps ONE mutable draft version
 // (published_at NULL); publishing deep-copies the draft into a frozen
@@ -18779,6 +18797,16 @@ app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) =
     const formJson = req.body?.form_json !== undefined
       ? (guideParseForm(req.body.form_json)?.length ? JSON.stringify(guideParseForm(req.body.form_json)) : null)
       : undefined;
+    // Subguide binding (responses): must be another existing guide.
+    if (req.body?.subguide_id !== undefined) {
+      const subId = Number(req.body.subguide_id) || null;
+      if (subId && subId !== Number(req.params.id)) {
+        const [exists] = await rows('SELECT guide_id FROM genx_guide WHERE guide_id = ? LIMIT 1', [subId], []);
+        if (exists) await execute('UPDATE genx_guide_node SET subguide_id = ? WHERE node_id = ? AND version_id = ?', [subId, Number(req.params.nodeId), versionId]);
+      } else if (!subId) {
+        await execute('UPDATE genx_guide_node SET subguide_id = NULL WHERE node_id = ? AND version_id = ?', [Number(req.params.nodeId), versionId]);
+      }
+    }
     await execute(
       `UPDATE genx_guide_node SET title = ?, script_html = ?, disposition = ?${formJson !== undefined ? ', form_json = ?' : ''} WHERE node_id = ? AND version_id = ?`,
       formJson !== undefined
@@ -18941,16 +18969,38 @@ app.post('/api/agent/guide/respond', requireAgentAccess, async (req, res) => {
         await execute(`UPDATE vicidial_list SET ${sets.join(', ')} WHERE lead_id = ? LIMIT 1`, [...params, context.lead_id]).catch(() => {});
       }
     }
+    const base = { session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id, campaign_id: context.campaign_id, user: context.user, version_id: context.version_id };
+    // Subguide call: enter the other guide's published root; the response's
+    // own child step (if any) becomes the return point.
+    if (response.subguide_id) {
+      const [sub] = await rows(
+        "SELECT guide_id, name, published_version FROM genx_guide WHERE guide_id = ? AND active = 'Y' AND published_version IS NOT NULL LIMIT 1",
+        [response.subguide_id], []);
+      const [subRoot] = sub ? await rows(
+        `SELECT n.* FROM genx_guide_node n WHERE n.version_id = ? AND n.type = 'step'
+           AND n.node_id NOT IN (SELECT child_node_id FROM genx_guide_edge WHERE version_id = ?)
+         ORDER BY n.node_id LIMIT 1`, [sub.published_version, sub.published_version], []) : [];
+      if (subRoot) {
+        await guideLog({ ...base, node_id: responseId });
+        await guideLog({ ...base, version_id: sub.published_version, node_id: subRoot.node_id });
+        const [subGuideRow] = await rows('SELECT * FROM genx_guide WHERE guide_id = ? LIMIT 1', [sub.guide_id], []);
+        const payload = await guideStepPayload(sub.published_version, subRoot, context.lead_id, subGuideRow);
+        payload.subguide = sub.name;
+        payload.canReturn = payload.exit; // root-is-exit edge case
+        return res.json({ ok: true, session_key: sessionKey, ...payload });
+      }
+      // unpublished/missing subguide: fall through to normal routing
+    }
     const [next] = await rows(
       `SELECT n.* FROM genx_guide_edge e JOIN genx_guide_node n ON n.node_id = e.child_node_id
        WHERE e.version_id = ? AND e.parent_node_id = ? AND n.type = 'step' ORDER BY e.sort_order LIMIT 1`,
       [context.version_id, responseId], []);
     if (!next) return res.status(400).json({ ok: false, error: 'dead_end' });
-    const base = { session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id, campaign_id: context.campaign_id, user: context.user, version_id: context.version_id };
     await guideLog({ ...base, node_id: responseId });
     await guideLog({ ...base, node_id: next.node_id });
     const [guide] = await rows('SELECT * FROM genx_guide WHERE published_version = ? LIMIT 1', [context.version_id], []);
     const payload = await guideStepPayload(context.version_id, next, context.lead_id, guide);
+    if (payload.exit) payload.canReturn = Boolean(await guideFindReturn(sessionKey));
     return res.json({ ok: true, session_key: sessionKey, ...payload });
   } catch (err) {
     console.error('guide respond failed:', err.message);
@@ -18978,6 +19028,33 @@ app.post('/api/agent/guide/back', requireAgentAccess, async (req, res) => {
   } catch (err) {
     console.error('guide back failed:', err.message);
     return res.status(500).json({ ok: false, error: 'guide_back_failed' });
+  }
+});
+
+// Return from a finished subguide to the calling response's child step.
+app.post('/api/agent/guide/return', requireAgentAccess, async (req, res) => {
+  try {
+    const sessionKey = cleanText(req.body?.session_key, 40);
+    const context = await guideSessionContext(sessionKey);
+    if (!context) return res.status(404).json({ ok: false, error: 'session_not_found' });
+    const caller = await guideFindReturn(sessionKey);
+    if (!caller) return res.status(400).json({ ok: false, error: 'no_return' });
+    const [next] = await rows(
+      `SELECT n.* FROM genx_guide_edge e JOIN genx_guide_node n ON n.node_id = e.child_node_id
+       WHERE e.version_id = ? AND e.parent_node_id = ? AND n.type = 'step' ORDER BY e.sort_order LIMIT 1`,
+      [caller.versionId, caller.responseNodeId], []);
+    if (!next) return res.status(400).json({ ok: false, error: 'no_return_step' });
+    await guideLog({
+      session_key: sessionKey, uniqueid: context.uniqueid, lead_id: context.lead_id,
+      campaign_id: context.campaign_id, user: context.user, version_id: caller.versionId, node_id: next.node_id,
+    });
+    const [guide] = await rows('SELECT * FROM genx_guide WHERE published_version = ? LIMIT 1', [caller.versionId], []);
+    const payload = await guideStepPayload(caller.versionId, next, context.lead_id, guide);
+    if (payload.exit) payload.canReturn = Boolean(await guideFindReturn(sessionKey));
+    return res.json({ ok: true, session_key: sessionKey, ...payload });
+  } catch (err) {
+    console.error('guide return failed:', err.message);
+    return res.status(500).json({ ok: false, error: 'guide_return_failed' });
   }
 });
 

@@ -10106,9 +10106,14 @@ const GUIDE_FORM_FIELD_CHOICES = [
 function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
   const [tree, setTree] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '', form: [] });
+  const [draft, setDraft] = useState({ title: '', script_html: '', disposition: '', form: [], subguide_id: '' });
   const [note, setNote] = useState('');
   const [bump, setBump] = useState(0);
+  // Other guides, for the response "call subguide" picker.
+  const [allGuides, setAllGuides] = useState([]);
+  useEffect(() => {
+    apiFetch('/admin/guides', token).then((p) => setAllGuides((p.guides || []).filter((g) => g.guide_id !== Number(guideId)))).catch(() => {});
+  }, [guideId, token]);
   useEffect(() => {
     apiFetch(`/admin/guides/${guideId}/tree`, token)
       .then((payload) => {
@@ -10116,7 +10121,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
         if (selected) {
           const still = payload.nodes.find((n) => n.node_id === selected.node_id);
           setSelected(still || null);
-          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || "", form: (()=>{ try { const f = JSON.parse(still.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
+          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || "", subguide_id: still.subguide_id || "", form: (()=>{ try { const f = JSON.parse(still.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
         }
       })
       .catch(() => setNote('Could not load guide'));
@@ -10134,7 +10139,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
 
   const pick = (node) => {
     setSelected(node);
-    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || "", form: (()=>{ try { const f = JSON.parse(node.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
+    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || "", subguide_id: node.subguide_id || "", form: (()=>{ try { const f = JSON.parse(node.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
     setNote('');
   };
   const api = (path, method, body) => apiFetch(path, token, { method, body: body ? JSON.stringify(body) : undefined })
@@ -10158,6 +10163,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
           <i>{node.type === 'step' ? (kids.get(nodeId)?.length ? '■' : '◆') : '↳'}</i>
           {node.title || '(untitled)'}
           {node.disposition && <em>{node.disposition}</em>}
+          {node.subguide_id ? <em className="go-sub">⇄ {allGuides.find((g) => g.guide_id === node.subguide_id)?.name || `guide ${node.subguide_id}`}</em> : null}
         </button>
         {(kids.get(nodeId) || []).map((childId) => renderNode(childId, depth + 1))}
       </div>
@@ -10186,6 +10192,14 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                 <label><span>Title</span>
                   <input type="text" maxLength={120} value={draft.title} onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))} />
                 </label>
+                {selected.type === 'response' && (
+                  <label><span>Call subguide first (its exits return here, then continue to this response's next step)</span>
+                    <select value={draft.subguide_id || ''} onChange={(e) => setDraft((c) => ({ ...c, subguide_id: e.target.value }))}>
+                      <option value="">— none —</option>
+                      {allGuides.map((g) => <option key={g.guide_id} value={g.guide_id}>{g.name} {g.published_no ? `(v${g.published_no})` : '(never published!)'}</option>)}
+                    </select>
+                  </label>
+                )}
                 {selected.type === 'step' && (
                   <>
                     <label><span>Script (HTML, --A--field--B-- merge fields)</span>
@@ -19283,6 +19297,16 @@ function AgentConsole({ token, authInfo, onExit }) {
     } catch { /* keep current step */ }
   }
 
+  async function guideReturn() {
+    if (!guideRun) return;
+    try {
+      const payload = await apiFetch('/agent/guide/return', token, {
+        method: 'POST', body: JSON.stringify({ session_key: guideRun.session_key }),
+      });
+      setGuideRun((current) => ({ ...current, ...payload, crumbs: [...(current?.crumbs || []), `⇄ ${payload.step.title}`] }));
+    } catch { /* no return pending */ }
+  }
+
   async function guideBack() {
     if (!guideRun) return;
     try {
@@ -20456,7 +20480,14 @@ function AgentConsole({ token, authInfo, onExit }) {
                 )}
                 {guideRun.exit && (
                   <div className="guide-exit">
-                    <p>End of guide{guideRun.step.disposition ? <> — suggested disposition: <b>{guideRun.step.disposition}</b></> : null}</p>
+                    {guideRun.canReturn ? (
+                      <>
+                        <p>Side path complete{guideRun.step.disposition ? <> (suggested: <b>{guideRun.step.disposition}</b>)</> : null}.</p>
+                        <button type="button" className="guide-resp" onClick={guideReturn}>⇄ Continue main guide</button>
+                      </>
+                    ) : (
+                      <p>End of guide{guideRun.step.disposition ? <> — suggested disposition: <b>{guideRun.step.disposition}</b></> : null}</p>
+                    )}
                   </div>
                 )}
                 <div className="guide-nav">
