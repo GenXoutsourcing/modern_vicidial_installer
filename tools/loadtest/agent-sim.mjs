@@ -89,6 +89,29 @@ function pickDispo(statuses) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+const BASE_UI = BASE.replace(/\/api$/, '');
+const SIDE_PANELS = ['agents', 'queue', 'callbacks', 'calllog'];
+const PANEL_PATHS = {
+  agents: '/agent/agents-view',
+  queue: '/agent/calls-in-queue',
+  callbacks: '/agent/callbacks',
+  calllog: '/agent/call-log?date=',
+};
+
+// Initial page load, like a browser opening the agent console: the app HTML
+// plus every asset it references (JS bundle, CSS).
+async function loadAppShell() {
+  try {
+    const res = await fetch(`${BASE_UI}/agent`);
+    const html = await res.text();
+    const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css)[^"]*)"/g)].map((m) => m[1]);
+    await Promise.allSettled(assets.slice(0, 6).map((a) => {
+      const url = a.startsWith('http') ? a : `${BASE_UI}${a.startsWith('/') ? '' : '/'}${a.replace(/^\.\//, '')}`;
+      return fetch(url).then((r) => r.arrayBuffer());
+    }));
+  } catch { /* asset load failures don't block the sim */ }
+}
+
 class Agent {
   constructor(user, mode) {
     this.user = user;
@@ -100,13 +123,49 @@ class Agent {
     this.custGone = 0;
     this.plannedHangAt = 0;
     this.fetchedSession = false;
+    this.tick = 0;
+    this.wasIdle = false;
+    this.lastDayStats = 0;
+    this.panel = null;       // open side panel {name, until}
     this.st = stats.perAgent[user] = { calls: 0, dispos: 0, errors: 0, state: 'init' };
   }
 
   log(msg) { console.log(`${new Date().toISOString().slice(11, 19)} [${this.user}] ${msg}`); }
 
+  // The web actions the real console performs alongside the status poll:
+  // idle team-chat poll (4s), day-stats (30s + after dispo), callbacks
+  // snapshot when going idle, and occasional side-panel sessions (4s polls
+  // while open) — all fire-and-forget like the client's.
+  ambientWeb(leadId) {
+    this.tick += 1;
+    const idle = leadId === 0;
+    if (idle && this.tick % 2 === 0 && !this.panel) {
+      api('/agent/chat', this.token).catch(() => {});
+    }
+    if (idle && !this.wasIdle) {
+      api('/agent/callbacks', this.token).catch(() => {});
+    }
+    this.wasIdle = idle;
+    if (Date.now() - this.lastDayStats > 30000) {
+      this.lastDayStats = Date.now();
+      api('/agent/day-stats', this.token).catch(() => {});
+    }
+    if (this.panel && Date.now() > this.panel.until) this.panel = null;
+    if (!this.panel && Math.random() < 0.005) {
+      const name = SIDE_PANELS[Math.floor(Math.random() * SIDE_PANELS.length)];
+      this.panel = { name, until: Date.now() + rand(30000, 120000) };
+    }
+    if (this.panel && this.tick % 2 === 0) {
+      const p = this.panel.name === 'calllog'
+        ? `${PANEL_PATHS.calllog}${new Date().toISOString().slice(0, 10)}`
+        : PANEL_PATHS[this.panel.name];
+      api(p, this.token).catch(() => {});
+    }
+  }
+
   async start() {
     try {
+      await loadAppShell();
       const { payload } = await api('/agent/auth', '', { user: this.user, pass: this.pass });
       this.token = payload.token;
       let live = payload.live;
@@ -150,6 +209,7 @@ class Agent {
         const live = payload.live;
         if (!live) { this.st.state = 'logged-out'; return; }
         const leadId = Number(live.lead_id || 0);
+        this.ambientWeb(leadId);
 
         if (leadId > 0) {
           // On a call (INCALL) or holding a dead/hung-up call awaiting dispo —
@@ -199,6 +259,7 @@ class Agent {
               stats.dispos += 1; this.st.dispos += 1;
               this.uniqueid = '';
               this.hungUp = false;
+              this.lastDayStats = 0; // client re-pulls day stats after a dispo
               await sleep(rand(1000, 3000));
               await api('/agent/ready', this.token, {}).catch(() => {});
               this.st.state = 'ready';
