@@ -18613,21 +18613,59 @@ function guideParseForm(formJson) {
   } catch { return null; }
 }
 
+// Branch-on-call-data (phase 3): a response can carry a condition against
+// the live lead row (state, list_id, last status, any vicidial_list col) —
+// non-matching responses are filtered out of the step's options.
+function guideParseCond(json) {
+  try {
+    const cond = JSON.parse(String(json || 'null'));
+    if (!cond || !/^[a-z0-9_]{1,30}$/i.test(String(cond.field || ''))) return null;
+    return {
+      field: String(cond.field),
+      op: ['ne', 'contains', 'notempty', 'empty'].includes(cond.op) ? cond.op : 'eq',
+      value: String(cond.value ?? '').slice(0, 80),
+    };
+  } catch { return null; }
+}
+
+function guideEvalCond(cond, lead) {
+  if (!cond) return true;
+  const value = String(lead?.[cond.field] ?? '').trim().toLowerCase();
+  const target = String(cond.value ?? '').trim().toLowerCase();
+  if (cond.op === 'ne') return value !== target;
+  if (cond.op === 'contains') return value.includes(target);
+  if (cond.op === 'notempty') return value !== '';
+  if (cond.op === 'empty') return value === '';
+  return value === target;
+}
+
 // A step + its response options (steps with no responses are exits).
 async function guideStepPayload(versionId, stepNode, leadId, guide) {
-  const responses = await rows(
-    `SELECT n.node_id, n.title FROM genx_guide_edge e
+  const [lead] = leadId
+    ? await dbContext.run(reportPool, () => rows('SELECT * FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []))
+    : [null];
+  const allResponses = await rows(
+    `SELECT n.node_id, n.title, n.cond_json FROM genx_guide_edge e
      JOIN genx_guide_node n ON n.node_id = e.child_node_id AND n.type = 'response'
      WHERE e.version_id = ? AND e.parent_node_id = ? ORDER BY e.sort_order`, [versionId, stepNode.node_id], []);
+  const responses = allResponses
+    .filter((r) => guideEvalCond(guideParseCond(r.cond_json), lead))
+    .map((r) => ({ node_id: r.node_id, title: r.title }));
+  const merged = String(stepNode.script_html || '').replace(/--A--(\w+)--B--/g, (m, field) => {
+    if (field === 'pass') return '';
+    return guideEscapeHtml(lead?.[field] != null ? String(lead[field]) : '');
+  });
   return {
     step: {
       node_id: stepNode.node_id,
       title: stepNode.title,
-      html: await guideMergeHtml(stepNode.script_html, leadId),
+      html: merged,
       disposition: stepNode.disposition || null,
       form: guideParseForm(stepNode.form_json),
     },
     responses,
+    // Exit if nothing remains (all-conditional steps degrade to exits
+    // rather than dead-ending an agent mid-call).
     exit: !responses.length,
     dispo_mode: guide?.dispo_mode || 'SUGGEST',
   };
@@ -18797,6 +18835,12 @@ app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) =
     const formJson = req.body?.form_json !== undefined
       ? (guideParseForm(req.body.form_json)?.length ? JSON.stringify(guideParseForm(req.body.form_json)) : null)
       : undefined;
+    // Branch condition (responses): validated through the runtime parser.
+    if (req.body?.cond_json !== undefined) {
+      const cond = guideParseCond(req.body.cond_json);
+      await execute('UPDATE genx_guide_node SET cond_json = ? WHERE node_id = ? AND version_id = ?',
+        [cond ? JSON.stringify(cond) : null, Number(req.params.nodeId), versionId]);
+    }
     // Subguide binding (responses): must be another existing guide.
     if (req.body?.subguide_id !== undefined) {
       const subId = Number(req.body.subguide_id) || null;

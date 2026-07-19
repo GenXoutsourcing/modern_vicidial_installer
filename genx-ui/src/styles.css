@@ -3868,3 +3868,9 @@ input:-webkit-autofill:focus {
 
 /* Subguide chips in the outline. */
 .go-node .go-sub { border-color: rgba(0, 217, 255, 0.35); background: rgba(0, 217, 255, 0.08); color: var(--blue); }
+
+/* Guide map view + condition chips. */
+.go-viewtoggle { display: flex; gap: 4px; padding-bottom: 6px; }
+.go-viewtoggle .t-action.on { border-color: var(--line); background: rgba(0, 217, 255, 0.1); }
+.go-map { overflow: auto; border: 1px solid var(--line-soft); border-radius: 10px; background: rgba(5, 12, 22, 0.5); padding: 8px; }
+.go-node .go-cond { border-color: rgba(255, 209, 102, 0.4); background: rgba(255, 209, 102, 0.08); color: var(--amber); }

@@ -10121,7 +10121,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
         if (selected) {
           const still = payload.nodes.find((n) => n.node_id === selected.node_id);
           setSelected(still || null);
-          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || "", subguide_id: still.subguide_id || "", form: (()=>{ try { const f = JSON.parse(still.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
+          if (still) setDraft({ title: still.title || '', script_html: still.script_html || '', disposition: still.disposition || "", subguide_id: still.subguide_id || "", cond: (()=>{ try { const c = JSON.parse(still.cond_json || "null"); return c && c.field ? c : null; } catch { return null; } })(), form: (()=>{ try { const f = JSON.parse(still.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
         }
       })
       .catch(() => setNote('Could not load guide'));
@@ -10139,15 +10139,44 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
 
   const pick = (node) => {
     setSelected(node);
-    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || "", subguide_id: node.subguide_id || "", form: (()=>{ try { const f = JSON.parse(node.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
+    setDraft({ title: node.title || '', script_html: node.script_html || '', disposition: node.disposition || "", subguide_id: node.subguide_id || "", cond: (()=>{ try { const c = JSON.parse(node.cond_json || "null"); return c && c.field ? c : null; } catch { return null; } })(), form: (()=>{ try { const f = JSON.parse(node.form_json || "null"); return Array.isArray(f) ? f : []; } catch { return []; } })() });
     setNote('');
   };
   const api = (path, method, body) => apiFetch(path, token, { method, body: body ? JSON.stringify(body) : undefined })
     .then(() => setBump((n) => n + 1)).catch((e) => setNote(e.status === 400 ? 'Not allowed there' : 'Failed'));
   const saveNode = () => selected && apiFetch(`/admin/guides/${guideId}/nodes/${selected.node_id}`, token, {
-    method: 'PUT', body: JSON.stringify({ ...draft, form_json: JSON.stringify(draft.form || []) }),
+    method: 'PUT', body: JSON.stringify({ ...draft, form_json: JSON.stringify(draft.form || []), cond_json: draft.cond ? JSON.stringify(draft.cond) : null }),
   }).then(() => { setNote('Saved'); setBump((n) => n + 1); onChanged?.(); }).catch(() => setNote('Save failed'));
   const publish = () => api(`/admin/guides/${guideId}/publish`, 'POST').then(() => { setNote('Published'); onChanged?.(); });
+
+  const [showMap, setShowMap] = useState(false);
+  // Visual map: BFS layering from the root (first visit wins a node's
+  // column, so rejoining branches draw once with extra edges back in).
+  const mapLayout = () => {
+    if (!root) return { nodes: [], links: [], w: 300, h: 120 };
+    const depth = new Map([[root.node_id, 0]]);
+    const queue = [root.node_id];
+    while (queue.length) {
+      const id = queue.shift();
+      for (const child of kids.get(id) || []) {
+        if (!depth.has(child)) { depth.set(child, depth.get(id) + 1); queue.push(child); }
+      }
+    }
+    const cols = new Map();
+    for (const [id, d] of depth) { if (!cols.has(d)) cols.set(d, []); cols.get(d).push(id); }
+    const COLW = 190; const ROWH = 58;
+    const pos = new Map();
+    let maxRows = 1;
+    for (const [d, ids] of cols) {
+      ids.forEach((id, i) => pos.set(id, { x: d * COLW + 20, y: i * ROWH + 24 }));
+      maxRows = Math.max(maxRows, ids.length);
+    }
+    const nodes = [...depth.keys()].map((id) => ({ id, node: byId.get(id), ...pos.get(id) }));
+    const links = tree.edges
+      .filter((e) => pos.has(e.parent_node_id) && pos.has(e.child_node_id))
+      .map((e) => ({ a: pos.get(e.parent_node_id), b: pos.get(e.child_node_id) }));
+    return { nodes, links, w: (cols.size) * COLW + 60, h: maxRows * ROWH + 50 };
+  };
 
   const renderNode = (nodeId, depth) => {
     const node = byId.get(nodeId);
@@ -10164,6 +10193,7 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
           {node.title || '(untitled)'}
           {node.disposition && <em>{node.disposition}</em>}
           {node.subguide_id ? <em className="go-sub">⇄ {allGuides.find((g) => g.guide_id === node.subguide_id)?.name || `guide ${node.subguide_id}`}</em> : null}
+          {node.cond_json ? <em className="go-cond">⚡</em> : null}
         </button>
         {(kids.get(nodeId) || []).map((childId) => renderNode(childId, depth + 1))}
       </div>
@@ -10182,7 +10212,33 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
         </div>
         <div className="sb-layout">
           <div className="sb-editor">
-            {root ? renderNode(root.node_id, 0) : <p className="connection-summary">Empty guide</p>}
+            <div className="go-viewtoggle">
+              <button type="button" className={showMap ? 't-action' : 't-action on'} onClick={() => setShowMap(false)}>Outline</button>
+              <button type="button" className={showMap ? 't-action on' : 't-action'} onClick={() => setShowMap(true)}>Map</button>
+            </div>
+            {!showMap && (root ? renderNode(root.node_id, 0) : <p className="connection-summary">Empty guide</p>)}
+            {showMap && (() => {
+              const layout = mapLayout();
+              return (
+                <div className="go-map">
+                  <svg width={layout.w} height={layout.h} role="img" aria-label="Guide map">
+                    {layout.links.map((l, i) => (
+                      <path key={i} d={`M ${l.a.x + 150} ${l.a.y + 14} C ${l.a.x + 175} ${l.a.y + 14}, ${l.b.x - 25} ${l.b.y + 14}, ${l.b.x} ${l.b.y + 14}`} fill="none" stroke="rgba(0,217,255,0.35)" strokeWidth="1.5" />
+                    ))}
+                    {layout.nodes.map(({ id, node, x, y }) => (
+                      <g key={id} style={{ cursor: 'pointer' }} onClick={() => { pick(node); setShowMap(false); }}>
+                        <rect x={x} y={y} width={150} height={28} rx={node.type === 'response' ? 14 : 6}
+                          fill={node.disposition ? 'rgba(115,251,211,0.14)' : node.type === 'response' ? 'rgba(138,167,187,0.12)' : 'rgba(0,217,255,0.12)'}
+                          stroke={selected?.node_id === id ? '#00d9ff' : node.disposition ? 'rgba(115,251,211,0.5)' : 'rgba(0,217,255,0.3)'} />
+                        <text x={x + 8} y={y + 18} fill={node.disposition ? '#73fbd3' : '#e8f7ff'} fontSize="10.5" fontFamily="Inter, sans-serif">
+                          {(node.subguide_id ? '⇄ ' : '') + (node.cond_json ? '⚡ ' : '') + (node.title || '').slice(0, 22)}{node.disposition ? ` [${node.disposition}]` : ''}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+              );
+            })()}
           </div>
           <div className="go-edit">
             {!selected && <p className="connection-summary">Select a node to edit. ■ step · ◆ exit step · ↳ customer response.</p>}
@@ -10192,6 +10248,24 @@ function GuideOutlineEditor({ guideId, token, onClose, onChanged }) {
                 <label><span>Title</span>
                   <input type="text" maxLength={120} value={draft.title} onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))} />
                 </label>
+                {selected.type === 'response' && (
+                  <div>
+                    <span className="sb-preview-label">Show only when (branch on call data)</span>
+                    {!draft.cond && <button type="button" className="t-action" onClick={() => setDraft((c) => ({ ...c, cond: { field: 'state', op: 'eq', value: '' } }))}>+ add condition</button>}
+                    {draft.cond && (
+                      <div className="go-form-row">
+                        <input type="text" placeholder="lead field (state, list_id, status...)" value={draft.cond.field} onChange={(e) => setDraft((c) => ({ ...c, cond: { ...c.cond, field: e.target.value.replace(/[^a-z0-9_]/gi, '') } }))} />
+                        <select value={draft.cond.op} onChange={(e) => setDraft((c) => ({ ...c, cond: { ...c.cond, op: e.target.value } }))}>
+                          {[['eq', 'equals'], ['ne', 'not equal'], ['contains', 'contains'], ['notempty', 'not empty'], ['empty', 'empty']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        {!['empty', 'notempty'].includes(draft.cond.op) && (
+                          <input type="text" placeholder="value" value={draft.cond.value || ''} onChange={(e) => setDraft((c) => ({ ...c, cond: { ...c.cond, value: e.target.value } }))} />
+                        )}
+                        <button type="button" onClick={() => setDraft((c) => ({ ...c, cond: null }))}>✕</button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {selected.type === 'response' && (
                   <label><span>Call subguide first (its exits return here, then continue to this response's next step)</span>
                     <select value={draft.subguide_id || ''} onChange={(e) => setDraft((c) => ({ ...c, subguide_id: e.target.value }))}>
