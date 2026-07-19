@@ -3346,6 +3346,33 @@ input:-webkit-autofill:focus {
 .go-edit input, .go-edit textarea { padding: 8px 11px; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(5, 15, 27, 0.72); color: var(--text); font: inherit; font-size: 0.82rem; resize: vertical; }
 .go-btns { display: flex; flex-wrap: wrap; gap: 7px; }
 .report-dl-actions { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* Agent pre-login setup check */
+.selftest-panel { max-width: 560px; }
+.selftest-intro { color: var(--muted); font-size: 0.9rem; margin: 4px 0 16px; }
+.selftest-summary { border-radius: 10px; padding: 11px 14px; font-weight: 600; font-size: 0.9rem; margin-bottom: 14px; border: 1px solid transparent; }
+.selftest-summary.st-pass { background: rgba(46, 204, 113, 0.1); border-color: rgba(46, 204, 113, 0.4); color: var(--green); }
+.selftest-summary.st-warn { background: rgba(255, 209, 102, 0.1); border-color: rgba(255, 209, 102, 0.4); color: var(--amber); }
+.selftest-summary.st-fail { background: rgba(231, 76, 60, 0.1); border-color: rgba(231, 76, 60, 0.4); color: var(--danger); }
+.selftest-list { display: grid; gap: 9px; margin-bottom: 18px; }
+.st-row { display: flex; gap: 11px; padding: 11px 13px; border: 1px solid var(--line-soft); border-radius: 11px; background: rgba(255, 255, 255, 0.02); }
+.st-row.st-fail { border-color: rgba(231, 76, 60, 0.45); }
+.st-row.st-warn { border-color: rgba(255, 209, 102, 0.4); }
+.st-icon { color: var(--muted); flex: none; margin-top: 1px; }
+.st-body { flex: 1; min-width: 0; }
+.st-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.st-label { font-weight: 600; font-size: 0.9rem; }
+.st-detail { color: var(--muted); font-size: 0.8rem; margin: 3px 0 0; line-height: 1.45; }
+.st-pill { flex: none; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: rgba(255, 255, 255, 0.06); color: var(--muted); }
+.st-pill.st-pass { background: rgba(46, 204, 113, 0.16); color: var(--green); }
+.st-pill.st-warn { background: rgba(255, 209, 102, 0.16); color: var(--amber); }
+.st-pill.st-fail { background: rgba(231, 76, 60, 0.16); color: var(--danger); }
+.st-pill.st-running { background: rgba(64, 156, 255, 0.16); color: var(--blue); }
+.st-mic { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.st-meter { flex: 1; height: 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.st-meter-fill { height: 100%; background: linear-gradient(90deg, var(--green), var(--amber)); border-radius: 999px; transition: width 0.06s linear; }
+.selftest-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; background: none; border: none; color: var(--blue); cursor: pointer; font: inherit; font-size: 0.82rem; padding: 4px; }
+.selftest-link:hover { text-decoration: underline; }
 .go-ai { float: right; display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; padding: 2px 8px; }
 .go-ai:disabled { opacity: 0.6; cursor: progress; }
 

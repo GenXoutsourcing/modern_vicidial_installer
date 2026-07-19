@@ -19192,7 +19192,245 @@ function MaxStatsReportView({ token, onLogout }) {
 // ============================================================================
 const AGENT_TOKEN_KEY = 'genx-agent-token';
 
+// Pre-login setup check for home/remote agents: verifies the browser, mic,
+// voice-network (WebRTC/UDP + NAT traversal), and server reachability BEFORE a
+// live call — catches the "no mic = WebRTC error" and one-way-audio failures
+// that otherwise surface mid-call. Runs entirely client-side; /api/health is
+// the only network call (public).
+const SELFTEST_CHECKS = [
+  { id: 'secure', label: 'Secure connection (HTTPS)', icon: ShieldCheck },
+  { id: 'browser', label: 'Browser support', icon: Compass },
+  { id: 'backend', label: 'Connection to GenX', icon: Server },
+  { id: 'webrtc', label: 'Voice network (WebRTC / UDP)', icon: Radio },
+  { id: 'mic', label: 'Microphone', icon: Mic },
+];
+
+function AgentSelfTest({ onBack }) {
+  const [checks, setChecks] = useState(() => SELFTEST_CHECKS.map((c) => ({ ...c, status: 'pending', detail: 'Not tested yet' })));
+  const [running, setRunning] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [micActive, setMicActive] = useState(false);
+  const media = useRef({ stream: null, ctx: null, raf: 0 });
+
+  const setCheck = (id, patch) => setChecks((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  const stopMic = useCallback(() => {
+    const m = media.current;
+    if (m.raf) cancelAnimationFrame(m.raf);
+    m.raf = 0;
+    if (m.ctx) { m.ctx.close().catch(() => {}); m.ctx = null; }
+    if (m.stream) { m.stream.getTracks().forEach((t) => t.stop()); m.stream = null; }
+    setMicActive(false);
+    setMicLevel(0);
+  }, []);
+
+  useEffect(() => () => stopMic(), [stopMic]);
+
+  function startMeter(stream) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    media.current.ctx = ctx;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i += 1) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      setMicLevel(Math.min(1, Math.sqrt(sum / buf.length) * 3));
+      media.current.raf = requestAnimationFrame(tick);
+    };
+    setMicActive(true);
+    tick();
+  }
+
+  function playTone() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 440;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1);
+      osc.start();
+      osc.stop(ctx.currentTime + 1.05);
+      setTimeout(() => ctx.close().catch(() => {}), 1300);
+    } catch { /* audio unavailable */ }
+  }
+
+  function checkSecure() {
+    setCheck('secure', window.isSecureContext
+      ? { status: 'pass', detail: 'Loaded over HTTPS' }
+      : { status: 'fail', detail: 'Not secure — the agent screen must be opened over https://. Microphone and calling will not work otherwise.' });
+  }
+
+  function checkBrowser() {
+    const ua = navigator.userAgent;
+    const isEdge = /Edg\//.test(ua);
+    const isChrome = /Chrome\//.test(ua) && !isEdge && !/OPR\//.test(ua);
+    const isFirefox = /Firefox\//.test(ua);
+    const hasApis = Boolean(navigator.mediaDevices?.getUserMedia && window.RTCPeerConnection && window.WebSocket);
+    if (!hasApis) { setCheck('browser', { status: 'fail', detail: 'This browser is missing the audio/WebRTC features agents need. Use an up-to-date Chrome, Edge, or Firefox.' }); return; }
+    setCheck('browser', (isChrome || isEdge || isFirefox)
+      ? { status: 'pass', detail: `${isChrome ? 'Chrome' : isEdge ? 'Edge' : 'Firefox'} — supported` }
+      : { status: 'warn', detail: 'Unrecognized browser. Chrome or Edge give the most reliable call audio.' });
+  }
+
+  async function checkBackend() {
+    setCheck('backend', { status: 'running', detail: 'Contacting the server…' });
+    const t0 = performance.now();
+    try {
+      const r = await fetch(`${API_BASE}/health`, { cache: 'no-store' });
+      const ms = Math.round(performance.now() - t0);
+      if (!r.ok) { setCheck('backend', { status: 'fail', detail: `Server responded ${r.status}. Check your internet connection or VPN.` }); return; }
+      setCheck('backend', ms > 400
+        ? { status: 'warn', detail: `Reachable, but slow (${ms} ms round-trip). Overseas agents may hear a slight delay.` }
+        : { status: 'pass', detail: `Reachable — ${ms} ms round-trip` });
+    } catch {
+      setCheck('backend', { status: 'fail', detail: 'Could not reach GenX. Check your internet connection or that your IP is allowed.' });
+    }
+  }
+
+  function checkWebRtc() {
+    setCheck('webrtc', { status: 'running', detail: 'Testing outbound voice path…' });
+    if (!window.RTCPeerConnection) { setCheck('webrtc', { status: 'fail', detail: 'WebRTC is not available in this browser.' }); return Promise.resolve(); }
+    return new Promise((resolve) => {
+      let done = false;
+      let sawSrflx = false;
+      let sawHost = false;
+      let pc;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try { pc.close(); } catch { /* ignore */ }
+        setCheck('webrtc', sawSrflx
+          ? { status: 'pass', detail: 'Outbound UDP works and NAT was traversed — call audio should flow both ways.' }
+          : sawHost
+            ? { status: 'warn', detail: 'Only local network candidates were found. UDP may be blocked (some hotel/office/overseas networks) — you may get one-way or no audio without a TURN relay. Try another network or a hotspot.' }
+            : { status: 'fail', detail: 'No network candidates gathered. A firewall is likely blocking WebRTC.' });
+        resolve();
+      };
+      try {
+        pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.onicecandidate = (e) => {
+          if (!e.candidate) { finish(); return; }
+          const c = e.candidate.candidate || '';
+          if (/ typ srflx /.test(c)) sawSrflx = true;
+          if (/ typ host /.test(c)) sawHost = true;
+        };
+        pc.createDataChannel('probe');
+        pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(finish);
+        setTimeout(finish, 6000);
+      } catch { setCheck('webrtc', { status: 'fail', detail: 'WebRTC could not start.' }); resolve(); }
+    });
+  }
+
+  async function checkMic() {
+    setCheck('mic', { status: 'running', detail: 'Requesting microphone…' });
+    stopMic();
+    if (!navigator.mediaDevices?.getUserMedia) { setCheck('mic', { status: 'fail', detail: 'Microphone access needs HTTPS and a modern browser.' }); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      media.current.stream = stream;
+      const label = stream.getAudioTracks()[0]?.label || 'default microphone';
+      startMeter(stream);
+      setCheck('mic', { status: 'pass', detail: `Using ${label} — speak and watch the level bar move.` });
+    } catch (e) {
+      const detail = e.name === 'NotAllowedError'
+        ? 'Permission denied. Click the camera/mic icon in your browser address bar, choose Allow, then run the check again.'
+        : e.name === 'NotFoundError'
+          ? 'No microphone found. Plug in your headset and run the check again.'
+          : `Microphone error (${e.name || 'unknown'}). Try a different headset.`;
+      setCheck('mic', { status: 'fail', detail });
+    }
+  }
+
+  async function runAll() {
+    if (running) return;
+    setRunning(true);
+    setChecks((cs) => cs.map((c) => ({ ...c, status: 'pending', detail: 'Waiting…' })));
+    checkSecure();
+    checkBrowser();
+    await checkBackend();
+    await checkWebRtc();
+    await checkMic();
+    setRunning(false);
+  }
+
+  const tested = checks.some((c) => c.status !== 'pending');
+  const anyFail = checks.some((c) => c.status === 'fail');
+  const anyWarn = checks.some((c) => c.status === 'warn');
+  const overall = !tested ? null : anyFail ? 'fail' : anyWarn ? 'warn' : 'pass';
+  const STATUS_GLYPH = { pass: '✓', warn: '!', fail: '✕', running: '⋯', pending: '·' };
+
+  return (
+    <main className="login-shell">
+      <section className="login-panel selftest-panel" aria-label="Agent setup check">
+        <div className="brand-lock">
+          <div className="brand-mark">GX</div>
+          <div>
+            <p className="eyebrow">GenX</p>
+            <h1>Setup Check</h1>
+          </div>
+        </div>
+        <p className="selftest-intro">Run this before your first login to confirm your headset, browser and connection are ready for live calls.</p>
+
+        {overall && (
+          <div className={`selftest-summary st-${overall}`}>
+            {overall === 'pass' && 'All good — you’re ready to take calls.'}
+            {overall === 'warn' && 'Mostly ready — review the warnings below before going live.'}
+            {overall === 'fail' && 'Something needs fixing before you can take calls — see below.'}
+          </div>
+        )}
+
+        <div className="selftest-list">
+          {checks.map((c) => {
+            const Icon = c.icon;
+            return (
+              <div key={c.id} className={`st-row st-${c.status}`}>
+                <span className="st-icon"><Icon size={18} aria-hidden="true" /></span>
+                <div className="st-body">
+                  <div className="st-head">
+                    <span className="st-label">{c.label}</span>
+                    <span className={`st-pill st-${c.status}`}>{STATUS_GLYPH[c.status]} {c.status === 'running' ? 'testing' : c.status}</span>
+                  </div>
+                  <p className="st-detail">{c.detail}</p>
+                  {c.id === 'mic' && micActive && (
+                    <div className="st-mic">
+                      <div className="st-meter"><div className="st-meter-fill" style={{ width: `${Math.round(micLevel * 100)}%` }} /></div>
+                      <button type="button" className="secondary-action compact-action" onClick={playTone}>
+                        <Volume2 size={15} aria-hidden="true" /> Play test sound
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="primary-action" disabled={running} onClick={runAll}>
+            <RefreshCcw size={16} aria-hidden="true" /> {running ? 'Checking…' : tested ? 'Run again' : 'Run setup check'}
+          </button>
+          {onBack && (
+            <button type="button" className="secondary-action" onClick={() => { stopMic(); onBack(); }}>Back to login</button>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function AgentLoginPage({ onAuthed }) {
+  // A direct link (…/agent#selftest) opens the setup check straight away.
+  const [showSetupCheck, setShowSetupCheck] = useState(() => /selftest/i.test(window.location.hash));
   const [form, setForm] = useState({ phone_login: '', phone_pass: '', user: '', pass: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -19293,6 +19531,10 @@ function AgentLoginPage({ onAuthed }) {
     }
   }
 
+  if (showSetupCheck) {
+    return <AgentSelfTest onBack={() => { if (/selftest/i.test(window.location.hash)) window.location.hash = ''; setShowSetupCheck(false); }} />;
+  }
+
   return (
     <main className="login-shell">
       <section className="login-panel" aria-label="Agent login">
@@ -19354,6 +19596,9 @@ function AgentLoginPage({ onAuthed }) {
             )}
           </div>
         </form>
+        <button type="button" className="link-action selftest-link" onClick={() => setShowSetupCheck(true)}>
+          <Headphones size={14} aria-hidden="true" /> Check my headset &amp; connection
+        </button>
       </section>
     </main>
   );
