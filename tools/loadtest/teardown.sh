@@ -32,6 +32,11 @@ M "DELETE FROM vicidial_list WHERE list_id=601"
 M "DELETE FROM vicidial_lists WHERE list_id=601"
 # demo lists borrowed for hopper-scan load go back to their home campaign
 M "UPDATE vicidial_lists SET campaign_id='TESTCAMP', active='N' WHERE list_id BETWEEN 111 AND 122"
+# 10M bulk inactive leads (lists 611-630) — chunked delete to bound lock time
+for L in $(seq 611 630); do
+  M "DELETE FROM vicidial_list WHERE list_id=$L"
+done
+M "DELETE FROM vicidial_lists WHERE list_id BETWEEN 611 AND 630"
 M "DELETE FROM vicidial_user_groups WHERE user_group='LOADTEST'"
 M "DELETE FROM vicidial_server_carriers WHERE carrier_id='GENXLOOP'"
 M "DELETE FROM vicidial_callbacks WHERE campaign_id='LOADTEST'"
