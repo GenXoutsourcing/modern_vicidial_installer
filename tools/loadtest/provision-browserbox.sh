@@ -16,11 +16,16 @@ if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" -lt 20 ]; then
 fi
 node -v
 
-echo "== chromium runtime deps + playwright =="
+echo "== chromium runtime deps (dnf — playwright's --with-deps assumes apt) =="
+dnf install -y -q nss nspr atk at-spi2-atk at-spi2-core cups-libs libdrm mesa-libgbm \
+  libX11 libXcomposite libXdamage libXext libXfixes libXrandr libxcb libxkbcommon \
+  pango cairo alsa-lib dbus-libs expat glib2
+
+echo "== playwright + browsers =="
 mkdir -p /root/loadtest && cd /root/loadtest
 [ -f package.json ] || npm init -y >/dev/null
 npm i playwright >/dev/null
-npx playwright install --with-deps chromium chromium-headless-shell
+npx playwright install chromium chromium-headless-shell
 
 echo "== sanity: launch/close a headless browser =="
 node -e "const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({headless:true});await b.close();console.log('playwright OK');})()"
