@@ -802,6 +802,15 @@ async function authenticateVicidialUser(username, password) {
 // Like rows(), scalar() must honor the AsyncLocalStorage report-pool context:
 // dashboard aggregates are wrapped in onReplica(() => scalar(...)) precisely
 // to keep full-table COUNT/SUM scans off the primary's MyISAM read locks.
+// A DB failure here returns the fallback so one bad query can't blank a whole
+// dashboard — but it MUST be logged, or an outage masquerades as healthy zeros
+// (and, via authenticateVicidialUser, as a wrong-password 401). Log the error code
+// and a compact SQL snippet; never log params (they can carry credentials/PII).
+function logDbError(where, sql, error) {
+  const snippet = String(sql).replace(/\s+/g, ' ').trim().slice(0, 160);
+  console.error(`[db] ${where}() failed: ${error && (error.code || error.message)} :: ${snippet}`);
+}
+
 async function scalar(sql, params = [], fallback = 0) {
   try {
     const [rows] = await activePool().query(sql, params);
@@ -809,6 +818,7 @@ async function scalar(sql, params = [], fallback = 0) {
     const value = row.value ?? Object.values(row)[0];
     return value ?? fallback;
   } catch (error) {
+    logDbError('scalar', sql, error);
     return fallback;
   }
 }
@@ -818,6 +828,7 @@ async function rows(sql, params = [], fallback = []) {
     const [result] = await activePool().query(sql, params);
     return result;
   } catch (error) {
+    logDbError('rows', sql, error);
     return fallback;
   }
 }
