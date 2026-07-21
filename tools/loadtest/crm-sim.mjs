@@ -37,9 +37,12 @@ async function call(fn, extra = {}) {
     if (stats.lat.length > 4000) stats.lat.splice(0, 1000);
     stats.total += 1;
     stats.byFn[fn] = (stats.byFn[fn] || 0) + 1;
-    if (!text.startsWith('SUCCESS') && !text.startsWith('ERROR: no')) {
-      if (text.startsWith('ERROR')) { stats.errors += 1; }
-    }
+    // HTTP-level failure (5xx, gateway timeout, empty body) is the failure the CRM
+    // tier exists to surface — count it regardless of what the body says.
+    if (!res.ok) { stats.errors += 1; return; }
+    // App-level error in the body. "ERROR: no ..." (e.g. no matching lead on a
+    // lead_info/dnc_check) is a normal negative result, not a failure.
+    if (text.startsWith('ERROR') && !text.startsWith('ERROR: no')) { stats.errors += 1; }
   } catch {
     stats.errors += 1;
   }

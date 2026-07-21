@@ -34,7 +34,11 @@ function parseRange(spec) {
   }
   return out;
 }
-const PROTOCOL_AGENTS = parseRange(process.env.PROTOCOL ?? 'LT201-LT215');
+// PROTOCOL defaults to EMPTY on purpose: a browser-drive run (DRIVERS=... with no
+// PROTOCOL) must NEVER silently spawn protocol-tier agents that place their own
+// autodial calls and fight the browser sessions. Set PROTOCOL explicitly to use the
+// protocol tier. The empty-agents guard in main() exits if neither tier is set.
+const PROTOCOL_AGENTS = parseRange(process.env.PROTOCOL ?? '');
 const DRIVER_AGENTS = parseRange(process.env.DRIVERS ?? '');
 
 const DISPO_WEIGHTS = { NI: 28, N: 18, NP: 12, DC: 8, SALE: 5, DNC: 3, DEC: 8, A: 6, AA: 4 };

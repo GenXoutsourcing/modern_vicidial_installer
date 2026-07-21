@@ -38,7 +38,7 @@ for L in $(seq 611 630); do
 done
 M "DELETE FROM vicidial_lists WHERE list_id BETWEEN 611 AND 630"
 M "DELETE FROM vicidial_user_groups WHERE user_group='LOADTEST'"
-M "DELETE FROM vicidial_server_carriers WHERE carrier_id='GENXLOOP'"
+M "DELETE FROM vicidial_server_carriers WHERE carrier_id IN ('GENXLOOP','GENXSINK2')"
 M "DELETE FROM vicidial_callbacks WHERE campaign_id='LOADTEST'"
 
 if [ "$PURGE_LOGS" = "1" ]; then

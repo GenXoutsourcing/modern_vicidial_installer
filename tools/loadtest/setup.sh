@@ -106,12 +106,28 @@ if [ -n "$BATCH" ]; then
   M "INSERT INTO vicidial_list (list_id, status, phone_code, phone_number, first_name, last_name, called_since_last_reset, entry_date, gmt_offset_now) VALUES ${BATCH:1}"
 fi
 
-echo "== GENXLOOP SIP loopback carrier (all telephony boxes) =="
+# The dialplan splits "customer" legs 50/50 across GENXLOOP and GENXSINK2, so BOTH
+# carriers must exist or half the dials fail CHANUNAVAIL. Hosts are env-configurable:
+# default 127.0.0.1 makes the harness self-contained (both peers loop back to this
+# box's genx-loadtest-behave). Point them at external "customer" boxes to take the
+# far-end media/answer load off the telephony servers (production-realistic single-leg):
+#   SINK1_HOST=<sandbox-ip> SINK2_HOST=<dialer-ip> ./setup.sh
+SINK1_HOST="${SINK1_HOST:-127.0.0.1}"
+SINK2_HOST="${SINK2_HOST:-127.0.0.1}"
+
+echo "== GENXLOOP sink carrier -> ${SINK1_HOST} (all telephony boxes) =="
 M "INSERT INTO vicidial_server_carriers (carrier_id, carrier_name, registration_string, template_id, account_entry, protocol, globals_string, dialplan_entry, server_ip, active, carrier_description, user_group)
-   SELECT 'GENXLOOP', 'Load Test Loopback', '', '',
-     '[GENXLOOP]\ndisallow=all\nallow=ulaw\ntype=friend\nhost=127.0.0.1\ndirectmedia=no\ninsecure=port,invite\ncontext=genx-loadtest-behave\nqualify=no',
-     'SIP', '', '', '0.0.0.0', 'Y', 'TEMPORARY load-test loopback peer - removed by tools/loadtest/teardown.sh', '---ALL---'
+   SELECT 'GENXLOOP', 'Load Test Sink 1', '', '',
+     '[GENXLOOP]\ndisallow=all\nallow=ulaw\ntype=friend\nhost=${SINK1_HOST}\ndirectmedia=no\ninsecure=port,invite\ncontext=genx-loadtest-behave\nqualify=no',
+     'SIP', '', '', '0.0.0.0', 'Y', 'TEMPORARY load-test sink 1 - removed by tools/loadtest/teardown.sh', '---ALL---'
    FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_server_carriers WHERE carrier_id='GENXLOOP')"
+
+echo "== GENXSINK2 sink carrier -> ${SINK2_HOST} (all telephony boxes) =="
+M "INSERT INTO vicidial_server_carriers (carrier_id, carrier_name, registration_string, template_id, account_entry, protocol, globals_string, dialplan_entry, server_ip, active, carrier_description, user_group)
+   SELECT 'GENXSINK2', 'Load Test Sink 2', '', '',
+     '[GENXSINK2]\ndisallow=all\nallow=ulaw\ntype=friend\nhost=${SINK2_HOST}\ndirectmedia=no\ninsecure=port,invite\ncontext=genx-loadtest-behave\nqualify=no',
+     'SIP', '', '', '0.0.0.0', 'Y', 'TEMPORARY load-test sink 2 - removed by tools/loadtest/teardown.sh', '---ALL---'
+   FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM vicidial_server_carriers WHERE carrier_id='GENXSINK2')"
 
 echo "== sink.php + log dir =="
 mkdir -p /var/log/genx-loadtest
