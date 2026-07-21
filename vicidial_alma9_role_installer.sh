@@ -611,7 +611,10 @@ join_update_cluster_settings() {
             # cluster rebuild). Generate it set-if-unset; the every-minute
             # vicidial-audio-store-dir cron then creates and permissions it.
             local store_dir
-            store_dir=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 30)
+            # openssl, not `tr </dev/urandom | head`: under pipefail the ERR
+            # trap can kill the install when head SIGPIPEs the infinite
+            # urandom stream (race — hit on the first BDA audio-store join).
+            store_dir=$(openssl rand -hex 15)
             "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET sounds_web_directory='${store_dir}' WHERE sounds_web_directory IS NULL OR sounds_web_directory='';"
         fi
         "${MYSQL[@]}" "$VICIDIAL_DB_NAME" -e "UPDATE system_settings SET webphone_url='https://phone.viciphone.com/viciphone.php' WHERE webphone_url IS NULL OR webphone_url IN ('', 'X');"
@@ -2198,6 +2201,16 @@ cat <<CRONTAB > /root/crontab-file
 29 0 * * * /usr/bin/find /var/log/asterisk -maxdepth 3 -type f -mtime +2 -print | xargs rm -f
 30 0 * * * /usr/bin/find / -maxdepth 1 -name "screenlog.0*" -mtime +4 -print | xargs rm -f
 CRONTAB
+
+# Daily reboot for every role EXCEPT database primary/slave (GenX policy):
+# dialers/web boxes get a fresh start each morning; DB boxes must stay up.
+if [ "$ROLE_DB_PRIMARY" != "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
+cat <<CRONTAB >> /root/crontab-file
+
+### GenX daily reboot (all roles except database primary/slave)
+45 6 * * * /usr/sbin/shutdown -r now >/dev/null 2>&1
+CRONTAB
+fi
 
 if [ "$ROLE_DB_PRIMARY" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
 # The 3way conference checker (--cu3way) is only useful where Asterisk runs.
