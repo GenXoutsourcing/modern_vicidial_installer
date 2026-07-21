@@ -811,24 +811,28 @@ function logDbError(where, sql, error) {
   console.error(`[db] ${where}() failed: ${error && (error.code || error.message)} :: ${snippet}`);
 }
 
-async function scalar(sql, params = [], fallback = 0) {
+// opts.optional = true for queries that are EXPECTED to fail on some builds/grants
+// and have a designed fallback (e.g. SHOW SLAVE HOSTS when the DB user lacks the
+// replication grant). Those must NOT log — logging a handled, expected condition is
+// noise that hides the real failures this logging exists to surface.
+async function scalar(sql, params = [], fallback = 0, opts = {}) {
   try {
     const [rows] = await activePool().query(sql, params);
     const row = rows?.[0] || {};
     const value = row.value ?? Object.values(row)[0];
     return value ?? fallback;
   } catch (error) {
-    logDbError('scalar', sql, error);
+    if (!opts.optional) logDbError('scalar', sql, error);
     return fallback;
   }
 }
 
-async function rows(sql, params = [], fallback = []) {
+async function rows(sql, params = [], fallback = [], opts = {}) {
   try {
     const [result] = await activePool().query(sql, params);
     return result;
   } catch (error) {
-    logDbError('rows', sql, error);
+    if (!opts.optional) logDbError('rows', sql, error);
     return fallback;
   }
 }
@@ -836,6 +840,23 @@ async function rows(sql, params = [], fallback = []) {
 async function requiredRows(sql, params = []) {
   const [result] = await activePool().query(sql, params);
   return result;
+}
+
+// Cached schema-presence check so optional/legacy tables (absent on some builds)
+// can be skipped instead of throwing a "no such table" every poll. Cached for the
+// process lifetime — a table appearing at runtime is picked up on next restart.
+const tableExistsCache = new Map();
+async function tableExists(name) {
+  if (tableExistsCache.has(name)) return tableExistsCache.get(name);
+  const found = await rows('SHOW TABLES LIKE ?', [name], []);
+  const exists = Array.isArray(found) && found.length > 0;
+  tableExistsCache.set(name, exists);
+  return exists;
+}
+// Run a query only if its table exists; otherwise return the fallback silently.
+async function rowsIfTable(table, sql, params = [], fallback = []) {
+  if (!(await tableExists(table))) return fallback;
+  return rows(sql, params, fallback);
 }
 
 // Writes always go to the primary regardless of the active report-pool context.
@@ -1569,7 +1590,7 @@ async function systemStatus() {
   // registered, or the grant is missing), fall back to pinging its pool.
   const slaves = [];
   try {
-    const hosts = await rows('SHOW SLAVE HOSTS', [], []);
+    const hosts = await rows('SHOW SLAVE HOSTS', [], [], { optional: true });
     for (const row of hosts) {
       slaves.push({
         id: String(row.Server_id ?? row.server_id ?? ''),
@@ -1592,7 +1613,7 @@ async function systemStatus() {
   // this silently stays at reachability-only.
   if (config.dbSlave.host) {
     try {
-      const [st] = await dbContext.run(reportPool, () => rows('SHOW SLAVE STATUS', [], []));
+      const [st] = await dbContext.run(reportPool, () => rows('SHOW SLAVE STATUS', [], [], { optional: true }));
       if (st) {
         const entry = slaves.find((s) => s.host === config.dbSlave.host) || slaves[slaves.length - 1];
         if (entry) {
@@ -3331,7 +3352,8 @@ async function adminData(user) {
       [],
       [],
     ),
-    rows(
+    rowsIfTable(
+      'vicidial_audio_store',
       `SELECT filename,
               description,
               active,
