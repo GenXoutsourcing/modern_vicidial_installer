@@ -1,0 +1,36 @@
+; ============================================================================
+; GenX load-test: SIP peers on an EXTERNAL sink box that ACCEPT "customer" calls
+; from the cluster's telephony (sip) boxes. One peer per telephony box, each
+; pointing its context at [genx-loadtest-behave] (see sink-box-extensions.conf).
+;
+; This is an EXAMPLE — replace the host= IPs with your telephony boxes' IPs, or
+; just run tools/loadtest/setup-sink-box.sh which generates this file for you
+; from SIP_BOX_IPS and installs it. The peer names are cosmetic; what matters is
+; host= (so inbound INVITEs from that IP match) and context=genx-loadtest-behave.
+; ============================================================================
+[genx-lt-sip1]
+type=peer
+host=203.0.113.11        ; <-- telephony box 1 IP
+context=genx-loadtest-behave
+insecure=port,invite
+disallow=all
+allow=ulaw
+qualify=no
+
+[genx-lt-sip2]
+type=peer
+host=203.0.113.12        ; <-- telephony box 2 IP
+context=genx-loadtest-behave
+insecure=port,invite
+disallow=all
+allow=ulaw
+qualify=no
+
+[genx-lt-sip3]
+type=peer
+host=203.0.113.13        ; <-- telephony box 3 IP
+context=genx-loadtest-behave
+insecure=port,invite
+disallow=all
+allow=ulaw
+qualify=no

@@ -18,7 +18,24 @@ logging sink). Zero PSTN traffic: a temporary dialplan context answers
 | `webphone-agents.mjs` | admin box | Real headless-Chromium agent consoles with ViciPhone over WSS (needs `npm i playwright`) |
 | `monitor.sh` | admin box | 10s metrics: agents, calls/box, hopper, DB, sysload, genx-ui health, drops |
 | `sink.php` | admin box | Logs every DISPO/START/NA URL hit to `/var/log/genx-loadtest/sink.log` |
+| `setup-sink-box.sh` | external sink box(es) | Installs the behave far-end + SIP peers so calls answer OFF-cluster |
+| `dialplan/sink-box-extensions.conf` | external sink box(es) | `[genx-loadtest-behave]` far-end (busy/RNA/human/machine mix) |
+| `dialplan/sink-box-sip.conf.example` | external sink box(es) | SIP-peer format (setup-sink-box.sh generates the real one from `SIP_BOX_IPS`) |
 | `teardown.sh` | admin box | Removes all fixtures (keeps run logs unless `--purge-logs`) |
+
+### Optional: external sink boxes (production-shaped load)
+
+By default `setup.sh` seeds the `GENXLOOP`/`GENXSINK2` carriers at `127.0.0.1`, so
+answered calls loop back on the telephony box itself. That's self-contained but
+inflates telephony-box load (the box carries the customer leg + far-end media
+too). To measure realistic single-leg trunk load, move the "customer" far end to
+one or two spare Asterisk hosts:
+
+1. On each spare box: `SIP_BOX_IPS="<sip1-ip> <sip2-ip> <sip3-ip>" bash setup-sink-box.sh`
+2. Seed the carriers at those IPs instead of loopback:
+   `SINK1_HOST=<sinkA-ip> SINK2_HOST=<sinkB-ip> ./setup.sh`
+   (the sip-box dialplan splits customer legs 50/50 across `GENXLOOP`/`GENXSINK2`).
+Removal notes are in the footer of `setup-sink-box.sh`.
 
 ## Run order
 
