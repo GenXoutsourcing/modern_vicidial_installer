@@ -51,6 +51,11 @@ WEB_IS_SOUND_SERVER="${WEB_IS_SOUND_SERVER:-yes}"
 INSTALL_GENX_UI="${INSTALL_GENX_UI:-yes}"
 ARCHIVE_RETENTION_DAYS="${ARCHIVE_RETENTION_DAYS:-0}"
 EXTRA_WHITELIST_IPS="${EXTRA_WHITELIST_IPS:-}"
+# MariaDB series to install from the official mariadb.org repo (e.g. 10.6, 10.11).
+# Set MARIADB_SERIES=distro to keep the old behavior (Alma 9 appstream 10.5).
+# Cluster note: a slave/replica must be >= the master's version, and a physical
+# datadir seed must match the source's major series — pick to match the cluster.
+MARIADB_SERIES="${MARIADB_SERIES:-10.6}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -350,6 +355,51 @@ replace_managed_block() {
     cat >> "$file"
 }
 
+# Point dnf at the official mariadb.org repo for $MARIADB_SERIES and take the
+# appstream module out of the way. Idempotent; no-op when MARIADB_SERIES=distro.
+# module_hotfixes is required on EL9 — without it, appstream module filtering
+# hides every package in the third-party repo.
+setup_mariadb_repo() {
+    if [ "$MARIADB_SERIES" = "distro" ]; then
+        return 0
+    fi
+    cat > /etc/yum.repos.d/mariadb.repo <<EOF
+[mariadb]
+name = MariaDB ${MARIADB_SERIES}
+baseurl = https://rpm.mariadb.org/${MARIADB_SERIES}/rhel/\$releasever/\$basearch
+gpgkey = https://rpm.mariadb.org/RPM-GPG-KEY-MariaDB
+gpgcheck = 1
+enabled = 1
+module_hotfixes = 1
+EOF
+    dnf -qy module disable mariadb 2>/dev/null || true
+}
+
+# Official-repo packages are capitalized (MariaDB-server); appstream ones are not.
+mariadb_server_pkgs() {
+    if [ "$MARIADB_SERIES" = "distro" ]; then
+        echo "mariadb-server mariadb"
+    else
+        echo "MariaDB-server MariaDB-client"
+    fi
+}
+
+mariadb_client_pkg() {
+    if [ "$MARIADB_SERIES" = "distro" ]; then
+        echo "mariadb"
+    else
+        echo "MariaDB-client"
+    fi
+}
+
+mariadb_devel_pkg() {
+    if [ "$MARIADB_SERIES" = "distro" ]; then
+        echo "mariadb-devel"
+    else
+        echo "MariaDB-devel"
+    fi
+}
+
 validate_fqdn() {
     local name=$1
     if [[ ! "$name" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]; then
@@ -394,9 +444,12 @@ cluster_mysql_available() {
 
 connect_cluster_db() {
     # The connection check runs before the main package phase; make sure the
-    # MariaDB client exists on a fresh minimal install.
+    # MariaDB client exists on a fresh minimal install. Set up the official
+    # repo first so we don't install the appstream client only to swap it out
+    # for the MariaDB-* packages later in the package phase.
     if ! command -v mysql >/dev/null 2>&1; then
-        dnf install -y mariadb
+        setup_mariadb_repo
+        dnf install -y $(mariadb_client_pkg)
     fi
     prompt VICIDIAL_DB_HOST "Existing cluster database IP/host" "$VICIDIAL_DB_HOST"
     prompt VICIDIAL_DB_PORT "Cluster database port" "$VICIDIAL_DB_PORT"
@@ -1527,12 +1580,18 @@ else
     echo "WARNING: php:remi-8.2 module stream was not listed. Continuing with enabled EL9/Remi PHP packages."
 fi
 
-# MariaDB 10.5 appstream module when available; otherwise use Alma/Rocky 9 defaults.
-if dnf -q module list mariadb 2>/dev/null | grep -q '10.5'; then
-    dnf module reset mariadb -y
-    dnf module enable mariadb:10.5 -y
+# MariaDB from the official mariadb.org repo (series $MARIADB_SERIES), or the
+# Alma/Rocky appstream 10.5 module when MARIADB_SERIES=distro.
+if [ "$MARIADB_SERIES" = "distro" ]; then
+    if dnf -q module list mariadb 2>/dev/null | grep -q '10.5'; then
+        dnf module reset mariadb -y
+        dnf module enable mariadb:10.5 -y
+    else
+        echo "INFO: MariaDB 10.5 module stream was not listed; using AlmaLinux 9 default MariaDB packages."
+    fi
 else
-    echo "INFO: MariaDB 10.5 module stream was not listed; using AlmaLinux 9 default MariaDB packages."
+    echo "INFO: Installing MariaDB ${MARIADB_SERIES} from the official mariadb.org repo."
+    setup_mariadb_repo
 fi
 
 dnf -y install dnf-plugins-core
@@ -1546,7 +1605,7 @@ dnf install -y \
 dnf install -y php-pecl-mcrypt || true
 
 dnf install -y newt-devel libxml2-devel sqlite-devel libuuid-devel sox sendmail lame-devel htop iftop perl-File-Which
-dnf install -y php-opcache mariadb-devel
+dnf install -y php-opcache $(mariadb_devel_pkg)
 dnf install -y libss7 'libss7*' 'libopen*' || true
 dnf install -y initscripts pv python3-pip
 python3 -c 'import mysql.connector' 2>/dev/null || python3 -m pip install mysql-connector-python
@@ -1571,9 +1630,9 @@ dnf install -y chrony
 systemctl enable chronyd
 systemctl start chronyd || true
 if [ "$ROLE_DATABASE" = "yes" ] || [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
-    dnf install -y mariadb-server mariadb
+    dnf install -y $(mariadb_server_pkgs)
 else
-    dnf install -y mariadb
+    dnf install -y $(mariadb_client_pkg)
 fi
 
 replace_managed_block /etc/php.ini GENX_VICIDIAL_PHP <<EOF
@@ -1607,7 +1666,7 @@ if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
     MYSQL_SERVER_ID_VALUE=$MYSQL_SLAVE_SERVER_ID
 fi
 
-[ -f /etc/my.cnf.original ] || cp /etc/my.cnf /etc/my.cnf.original
+[ -f /etc/my.cnf.original ] || cp /etc/my.cnf /etc/my.cnf.original 2>/dev/null || true
 echo "" > /etc/my.cnf
 
 # Size the MyISAM key buffer from actual RAM: ~50% on a dedicated DB box,
