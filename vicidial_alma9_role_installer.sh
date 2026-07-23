@@ -272,16 +272,13 @@ print_role_summary() {
 }
 
 choose_firewall_policy() {
-    if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_WEB" != "yes" ] && [ "$ROLE_TELEPHONY" != "yes" ] && [ "$ROLE_ARCHIVE" != "yes" ]; then
+    # GenX policy (Steve, 2026-07-23): EVERY role gets the built-in firewall,
+    # including dedicated DB boxes — a DB role otherwise exposes MariaDB on a
+    # public IP with only grant-level protection. The disable prompt remains
+    # as an escape hatch only.
+    ROLE_FIREWALL_ENABLED="yes"
+    if yes_no "Disable the built-in firewall?" "no"; then
         ROLE_FIREWALL_ENABLED="no"
-        if yes_no "Dedicated database role detected. Enable built-in firewall anyway?" "no"; then
-            ROLE_FIREWALL_ENABLED="yes"
-        fi
-    else
-        ROLE_FIREWALL_ENABLED="yes"
-        if yes_no "Disable the built-in firewall?" "no"; then
-            ROLE_FIREWALL_ENABLED="no"
-        fi
     fi
 }
 
