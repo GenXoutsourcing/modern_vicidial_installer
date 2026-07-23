@@ -1825,7 +1825,17 @@ systemctl restart httpd.service
 
 echo "Install Perl"
 
-dnf install -y perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-DBI perl-DBD-MySQL perl-GD perl-Env perl-Term-ReadLine-Gnu perl-SelfLoader perl-open.noarch perl-Tk perl-Tk-TableMatrix
+# EL9's perl-DBD-MySQL is linked against Oracle's libmysqlclient (mysql-libs),
+# whose mysql-common file-conflicts with the official MariaDB-common package —
+# the dnf transaction test fails on /usr/share/mysql/charsets/*. With the
+# official repo we skip the distro package and build DBD::mysql 4.052 (the
+# last MariaDB-compatible release; 5.x requires MySQL 8 libs) from CPAN
+# against MariaDB-devel right after the cpm phase below.
+PERL_DNF_PKGS="perl-CPAN perl-YAML perl-CPAN-DistnameInfo perl-libwww-perl perl-DBI perl-GD perl-Env perl-Term-ReadLine-Gnu perl-SelfLoader perl-open.noarch perl-Tk perl-Tk-TableMatrix"
+if [ "$MARIADB_SERIES" = "distro" ]; then
+    PERL_DNF_PKGS="$PERL_DNF_PKGS perl-DBD-MySQL"
+fi
+dnf install -y $PERL_DNF_PKGS
 
 #CPM install
 cd "$SCRIPT_DIR"
@@ -1836,6 +1846,9 @@ fi
 copy_asset cpm /usr/local/bin/cpm
 chmod +x /usr/local/bin/cpm
 /usr/local/bin/cpm install -g
+if [ "$MARIADB_SERIES" != "distro" ]; then
+    /usr/local/bin/cpm install -g DBD::mysql@4.052
+fi
 verify_required_perl_modules
 
 # Asterisk is built on EVERY role (ViciBox parity): non-telephony servers run an
