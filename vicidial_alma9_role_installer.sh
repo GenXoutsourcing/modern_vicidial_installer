@@ -624,16 +624,19 @@ CREATE TEMPORARY TABLE _c3 AS SELECT * FROM vicidial_confbridges WHERE server_ip
 UPDATE _c3 SET server_ip='${ip_address}', extension='', leave_3way='0', leave_3way_datetime=NULL;
 INSERT IGNORE INTO vicidial_confbridges SELECT * FROM _c3;
 CREATE TEMPORARY TABLE _p AS SELECT * FROM phones WHERE is_webphone='Y' LIMIT 1;
-UPDATE _p SET server_ip='${ip_address}';
+-- use_external_server_ip='N' pinned: 'Y' breaks webphone WSS connections
+-- (browser is sent the raw external IP, cert CN mismatch) and the clone
+-- would inherit it from a bad template phone (hit on BDA 2026-08-05).
+UPDATE _p SET server_ip='${ip_address}', use_external_server_ip='N';
 INSERT IGNORE INTO phones SELECT * FROM _p;
 INSERT INTO phones
     (extension, dialplan_number, voicemail_id, server_ip,
      login, pass, active, protocol, template_id,
-     conf_secret, is_webphone, user_group)
+     conf_secret, is_webphone, use_external_server_ip, user_group)
 SELECT
     '9176', '9176', '9176', '${ip_address}',
     '9176', default_phone_login_password, 'Y', 'SIP', 'WEBRTC',
-    default_phone_registration_password, 'Y', '---ALL---'
+    default_phone_registration_password, 'Y', 'N', '---ALL---'
 FROM system_settings
 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE server_ip='${ip_address}' AND is_webphone='Y')
 LIMIT 1;
@@ -1115,11 +1118,11 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO phones
     (extension, dialplan_number, voicemail_id, phone_ip, computer_ip, server_ip,
      login, pass, active, protocol, login_user, login_pass, template_id,
-     conf_secret, is_webphone, user_group)
+     conf_secret, is_webphone, use_external_server_ip, user_group)
 SELECT
     '9176', '9176', '9176', NULL, NULL, '${server_ip}',
     '9176', default_phone_login_password, 'Y', 'SIP', NULL, NULL, 'WEBRTC',
-    default_phone_registration_password, 'Y', '---ALL---'
+    default_phone_registration_password, 'Y', 'N', '---ALL---'
 FROM system_settings
 WHERE '${ast_active}' = 'Y'
 LIMIT 1
