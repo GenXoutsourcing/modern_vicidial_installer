@@ -45,13 +45,17 @@ Full agent console (login, webphone, dialing, dispositions, transfers, chat) tha
 
 ## Installing on an Existing VICIdial Server
 
-`install-genx-ui.sh` is self-sufficient on an already-running VICIdial web server (RHEL-family OS with `dnf`; the Apache drop-in targets `/etc/httpd/conf.d`). It installs Node 18+, deploys the app, writes the systemd service and Apache proxy, installs the audio-store directory helper + sync crons if missing, and ends with a **settings preflight report** listing anything below that still needs attention.
+`install-genx-ui.sh` is self-sufficient on an already-running VICIdial web server (RHEL-family OS with `dnf`; the Apache drop-in targets `/etc/httpd/conf.d`). It installs Node 18+, deploys the app, writes the systemd service and Apache proxy/security gate, installs the audio-store directory helper + sync crons if missing, and ends with a **settings preflight report** listing anything below that still needs attention.
 
 Run it on the web server that hosts the VICIdial admin pages:
 
 ```bash
 sudo ./install-genx-ui.sh
 ```
+
+The installer preserves an existing `GENX_UI_PUBLIC_HOST` in `/etc/genx-ui.env`;
+otherwise it derives one from `hostname -f`. Apache and the Node backend use
+that value to reject unknown Host headers for `/genx` and `/genxapi`.
 
 ### VICIdial settings checklist (vanilla system)
 

@@ -184,7 +184,7 @@ $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'your-host', ENT_QUOTES);
         <span class="mono">https://<?php echo $host; ?>/genxapi/api.php</span>
       </div>
 
-      <p>Send parameters by <code>GET</code> or <code>POST</code>. Every response is <code>text/plain</code>: success replies begin with <code>SUCCESS: &lt;function&gt;</code> followed by pipe-delimited (<code>|</code>) data lines; failures return a single <code>ERROR: &lt;reason&gt;</code> line with a non-2xx status. Every call is recorded in the API log.</p>
+      <p>Send write requests by <code>POST</code>. Read requests may use <code>GET</code> only when the API key is sent in an HTTP header; do not put <code>api_key</code> or <code>pass</code> in the URL. Every response is <code>text/plain</code>: success replies begin with <code>SUCCESS: &lt;function&gt;</code> followed by pipe-delimited (<code>|</code>) data lines; failures return a single <code>ERROR: &lt;reason&gt;</code> line with a non-2xx status. Every call is recorded in the API log.</p>
 
       <section class="fn" id="auth">
         <h2>Authentication</h2>
@@ -193,8 +193,8 @@ $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'your-host', ENT_QUOTES);
           <table>
             <thead><tr><th>Mode</th><th>Parameters</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><strong>API key</strong><br><span style="color:var(--muted);font-size:12px">preferred</span></td><td><span class="mono">api_key=&lt;key&gt;</span></td><td>No password on the wire; revocable per key. Generated in the GenX admin UI: open the API-group user → <strong>API Keys</strong> → Generate. The raw key is shown once.</td></tr>
-              <tr><td><strong>User + password</strong></td><td><span class="mono">user=&lt;user&gt;</span><br><span class="mono">pass=&lt;pass&gt;</span></td><td>The dialer user login and password.</td></tr>
+              <tr><td><strong>API key</strong><br><span style="color:var(--muted);font-size:12px">preferred</span></td><td><span class="mono">X-GenX-API-Key: &lt;key&gt;</span><br><span class="mono">Authorization: Bearer &lt;key&gt;</span><br><span class="mono">api_key=&lt;key&gt;</span> in POST body</td><td>No password on the wire; revocable per key. Generated in the GenX admin UI: open the API-group user → <strong>API Keys</strong> → Generate. The raw key is shown once.</td></tr>
+              <tr><td><strong>User + password</strong></td><td><span class="mono">user=&lt;user&gt;</span><br><span class="mono">pass=&lt;pass&gt;</span> in POST body</td><td>The dialer user login and password. Passwords are rejected in GET query strings.</td></tr>
             </tbody>
           </table>
         </div>
@@ -204,7 +204,7 @@ $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'your-host', ENT_QUOTES);
             <thead><tr><th>Param</th><th>Required</th><th>Description</th></tr></thead>
             <tbody>
               <tr><td><span class="mono">function</span></td><td class="req">yes</td><td>The operation to run.</td></tr>
-              <tr><td><span class="mono">api_key</span> or <span class="mono">user</span>+<span class="mono">pass</span></td><td class="req">yes</td><td>Authentication.</td></tr>
+              <tr><td><span class="mono">X-GenX-API-Key</span>, <span class="mono">Authorization</span>, <span class="mono">api_key</span>, or <span class="mono">user</span>+<span class="mono">pass</span></td><td class="req">yes</td><td>Authentication. Secrets must be sent by header or POST body, not GET query string.</td></tr>
               <tr><td><span class="mono">source</span></td><td>no</td><td>Free-text tag recorded in the API log (e.g. your app name).</td></tr>
             </tbody>
           </table>
@@ -232,8 +232,9 @@ $host = htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'your-host', ENT_QUOTES);
         <div class="fn-head"><span class="chip get">GET</span><h2>version</h2></div>
         <p>Returns the API version. Useful as a connectivity and auth check.</p>
         <div class="grid split">
-          <div><p class="codelabel">Request</p><pre><span class="c"># GET</span>
-/genxapi/api.php?<span class="k">api_key</span>=<span class="s">KEY</span>&<span class="k">function</span>=<span class="s">version</span></pre></div>
+          <div><p class="codelabel">Request</p><pre><span class="c"># GET with header</span>
+X-GenX-API-Key: <span class="s">KEY</span>
+/genxapi/api.php?<span class="k">function</span>=<span class="s">version</span></pre></div>
           <div><p class="codelabel">Response</p><pre>SUCCESS: version
 genx_api_version|1.0.0</pre></div>
         </div>

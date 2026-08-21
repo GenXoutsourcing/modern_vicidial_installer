@@ -5,9 +5,10 @@
 #   1. copies genx-ui/ into a timestamped /opt/genx-ui/releases/<ts> dir,
 #      npm ci + vite build there, then re-points the 'current' symlink
 #      (old releases pruned to the newest 3);
-#   2. writes /etc/genx-ui.env (DB creds read from /etc/astguiclient.conf;
-#      GENX_UI_DB_SLAVE_HOST auto-synced by the genx-ui-slave-sync cron);
-#   3. installs the systemd unit + Apache /genx/ proxy conf and restarts;
+#   2. writes /etc/genx-ui.env (DB creds read from /etc/astguiclient.conf,
+#      GENX_UI_PUBLIC_HOST for Host validation, and GENX_UI_DB_SLAVE_HOST
+#      auto-synced by the genx-ui-slave-sync cron);
+#   3. installs the systemd unit + Apache /genx/ proxy/security conf and restarts;
 #   4. health-checks /api/health (with retries — this script runs under
 #      set -e inside the role installer) and prints a settings preflight.
 # Debugging a failed deploy: journalctl -u genx-ui -n 50.
@@ -52,6 +53,32 @@ quote_env() {
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   printf '"%s"' "$value"
+}
+
+unquote_env_value() {
+  sed -E 's/^[^=]+=//; s/^"//; s/"$//'
+}
+
+regex_escape() {
+  sed -E 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
+detect_public_host() {
+  local host
+  host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  case "$host" in
+    ""|"localhost"|"localhost.localdomain") host="" ;;
+  esac
+  printf '%s' "$host"
+}
+
+detect_primary_ip() {
+  local ip_addr
+  ip_addr="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1; i<=NF; i++) if ($i=="src") {print $(i+1); exit}}' || true)"
+  if [ -z "$ip_addr" ]; then
+    ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  printf '%s' "$ip_addr"
 }
 
 ensure_node() {
@@ -174,17 +201,20 @@ ai_assist_model="claude-opus-4-8"
 # way. 50/20 is sized for ~100 concurrent agents; preserve manual overrides.
 db_pool="50"
 db_slave_pool="20"
+public_host="$(detect_public_host)"
 if [ -f "$ENV_FILE" ]; then
-  existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_MIN_USER_LEVEL=//; s/^"//; s/"$//' || true)"
+  existing_min_level="$(grep -E '^GENX_UI_MIN_USER_LEVEL=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_min_level" ] && min_user_level="$existing_min_level"
-  existing_ai_key="$(grep -E '^GENX_UI_AI_ASSIST_KEY=' "$ENV_FILE" | sed -E 's/^GENX_UI_AI_ASSIST_KEY=//; s/^"//; s/"$//' || true)"
+  existing_ai_key="$(grep -E '^GENX_UI_AI_ASSIST_KEY=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_ai_key" ] && ai_assist_key="$existing_ai_key"
-  existing_ai_model="$(grep -E '^GENX_UI_AI_ASSIST_MODEL=' "$ENV_FILE" | sed -E 's/^GENX_UI_AI_ASSIST_MODEL=//; s/^"//; s/"$//' || true)"
+  existing_ai_model="$(grep -E '^GENX_UI_AI_ASSIST_MODEL=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_ai_model" ] && ai_assist_model="$existing_ai_model"
-  existing_db_pool="$(grep -E '^GENX_UI_DB_POOL=' "$ENV_FILE" | sed -E 's/^GENX_UI_DB_POOL=//; s/^"//; s/"$//' || true)"
+  existing_db_pool="$(grep -E '^GENX_UI_DB_POOL=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_db_pool" ] && db_pool="$existing_db_pool"
-  existing_db_slave_pool="$(grep -E '^GENX_UI_DB_SLAVE_POOL=' "$ENV_FILE" | sed -E 's/^GENX_UI_DB_SLAVE_POOL=//; s/^"//; s/"$//' || true)"
+  existing_db_slave_pool="$(grep -E '^GENX_UI_DB_SLAVE_POOL=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_db_slave_pool" ] && db_slave_pool="$existing_db_slave_pool"
+  existing_public_host="$(grep -E '^GENX_UI_PUBLIC_HOST=' "$ENV_FILE" | unquote_env_value || true)"
+  [ -n "$existing_public_host" ] && public_host="$existing_public_host"
 fi
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -243,6 +273,7 @@ GENX_UI_DB_POOL=$db_pool
 GENX_UI_DB_SLAVE_POOL=$db_slave_pool
 GENX_UI_AI_ASSIST_KEY=$(quote_env "$ai_assist_key")
 GENX_UI_AI_ASSIST_MODEL=$(quote_env "$ai_assist_model")
+GENX_UI_PUBLIC_HOST=$(quote_env "$public_host")
 EOF
 
 cat > "$SERVICE_FILE" <<EOF
@@ -266,9 +297,47 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
+primary_ip="$(detect_primary_ip)"
+allowed_host_regex="^(localhost|127\\.0\\.0\\.1"
+rewrite_host_regex="^(localhost|127\\.0\\.0\\.1"
+if [ -n "$public_host" ]; then
+  escaped_public_host="$(printf '%s' "$public_host" | regex_escape)"
+  allowed_host_regex="${allowed_host_regex}|${escaped_public_host}"
+  rewrite_host_regex="${rewrite_host_regex}|${escaped_public_host}"
+fi
+if [ -n "$primary_ip" ]; then
+  escaped_primary_ip="$(printf '%s' "$primary_ip" | regex_escape)"
+  allowed_host_regex="${allowed_host_regex}|${escaped_primary_ip}"
+  rewrite_host_regex="${rewrite_host_regex}|${escaped_primary_ip}"
+fi
+allowed_host_regex="${allowed_host_regex})(:[0-9]+)?$"
+rewrite_host_regex="${rewrite_host_regex})(:[0-9]+)?$"
+
 cat > "$APACHE_FILE" <<EOF
 # Managed by modern_vicidial_installer/install-genx-ui.sh
 ProxyPreserveHost On
+ProxyAddHeaders On
+
+SetEnvIfNoCase Host "$allowed_host_regex" genx_allowed_host=1
+
+<LocationMatch "^/(genx|genxapi)(/|$)">
+    Require env genx_allowed_host
+</LocationMatch>
+
+RewriteEngine On
+RewriteCond %{HTTP_HOST} !${rewrite_host_regex} [NC]
+RewriteRule ^/(genx|genxapi)(/|$) - [R=421,L]
+
+RequestHeader set X-Forwarded-Proto "https" "expr=%{HTTPS} == 'on'"
+RequestHeader set X-Forwarded-Proto "http" "expr=%{HTTPS} != 'on'"
+
+<LocationMatch "^/genxapi(/|$)">
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+</LocationMatch>
+
 ProxyPass /genxapi/ !
 ProxyPass /genxguide/ !
 # timeout raised from 30: multi-month archive-spanning report queries on

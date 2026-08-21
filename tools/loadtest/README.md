@@ -8,6 +8,12 @@ hopper/`AST_VDauto_dial` engine, real dispositions, and real
 logging sink). Zero PSTN traffic: a temporary dialplan context answers
 "customer" calls locally with a realistic ANSWER/BUSY/NOANSWER mix.
 
+This harness is not part of a normal GenX UI reinstall. It writes live
+VICIdial runtime/config rows and publishes a temporary `/genxapi/sink.php`
+endpoint, so `setup.sh` refuses to run unless `ALLOW_GENX_LOADTEST=YES` is
+set for an approved test window. Always run `teardown.sh` before returning the
+cluster to normal service.
+
 ## Components
 
 | File | Runs on | Purpose |
@@ -39,7 +45,7 @@ Removal notes are in the footer of `setup-sink-box.sh`.
 
 ## Run order
 
-1. `bash setup.sh` on the admin box (env: `LEADS`, `SINK_BASE`).
+1. `ALLOW_GENX_LOADTEST=YES bash setup.sh` on the admin box (env: `LEADS`, `SINK_BASE`).
 2. Install dialplan on each sip box, then `asterisk -rx "dialplan reload"`:
    - copy `dialplan/extensions-genx-loadtest.conf` to `/etc/asterisk/`
    - in `/etc/asterisk/extensions.conf`: add `include => genx-loadtest` inside

@@ -5,7 +5,8 @@ the legacy VICIdial API files (`/agc/api.php`, `/vicidial/non_agent_api.php`,
 `/vicidial/qc_api.php`), which are blocked at the web server and return `403`.
 
 - **Endpoint:** `https://<your-host>/genxapi/api.php`
-- **Methods:** `GET` or `POST` (parameters read from either)
+- **Methods:** `GET` for read-only calls and `POST` for writes. Secrets must be
+  sent in an HTTP header or POST body, never in the GET query string.
 - **Response:** `text/plain`. Success responses start with `SUCCESS: <function>`
   followed by pipe-delimited (`|`) data lines. Errors are a single line
   `ERROR: <reason>` with a non-2xx HTTP status.
@@ -23,8 +24,8 @@ Two modes, pick one:
 
 | Mode | Parameters | Notes |
 |------|-----------|-------|
-| **API key** (preferred) | `api_key=<key>` | No password on the wire; revocable per key. Generate in the GenX admin UI: open the API-group user → **API Keys** → Generate. The raw key is shown once. |
-| **User + password** | `user=<user>&pass=<pass>` | The VICIdial user login and password. |
+| **API key** (preferred) | `X-GenX-API-Key: <key>`<br>`Authorization: Bearer <key>`<br>`api_key=<key>` in POST body | No password on the wire; revocable per key. Generate in the GenX admin UI: open the API-group user → **API Keys** → Generate. The raw key is shown once. |
+| **User + password** | `user=<user>&pass=<pass>` in POST body | The VICIdial user login and password. Passwords are rejected in GET query strings. |
 
 An account may also be restricted to specific functions via its
 `api_allowed_functions` (default `ALL_FUNCTIONS`).
@@ -34,7 +35,7 @@ An account may also be restricted to specific functions via its
 | Param | Required | Description |
 |-------|----------|-------------|
 | `function` | yes | The operation to run (see below). |
-| `api_key` *or* `user`+`pass` | yes | Authentication (above). |
+| `X-GenX-API-Key`, `Authorization`, `api_key`, or `user`+`pass` | yes | Authentication (above). Secrets must be sent by header or POST body, not GET query string. |
 | `source` | no | Free-text tag recorded in the API log (e.g. your app name). |
 
 ### HTTP status codes
@@ -56,7 +57,9 @@ An account may also be restricted to specific functions via its
 Returns the API version. Useful as a connectivity/auth check.
 
 ```
-GET /genxapi/api.php?api_key=KEY&function=version
+# GET with header
+X-GenX-API-Key: KEY
+/genxapi/api.php?function=version
 ```
 ```
 SUCCESS: version

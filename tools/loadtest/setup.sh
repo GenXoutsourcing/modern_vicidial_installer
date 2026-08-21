@@ -1,6 +1,8 @@
 #!/bin/bash
 # ============================================================================
 # GenX load-test fixture setup. Run ON the admin web box (has cron DB creds).
+# TEST-ONLY: this writes live VICIdial DB rows and publishes a temporary URL
+# sink. It refuses to run unless ALLOW_GENX_LOADTEST=YES is set.
 # Creates (all removable by teardown.sh):
 #   - user group LOADTEST (scoped to the LOADTEST campaign, no forced timeclock)
 #   - users   LT101-LT110 (webphone tier)  pass GxLoad<user>
@@ -16,6 +18,12 @@
 # Dialplan on the sip boxes is installed separately (see README).
 # ============================================================================
 set -euo pipefail
+
+if [ "${ALLOW_GENX_LOADTEST:-}" != "YES" ]; then
+  echo "ERROR: refusing to install live load-test fixtures." >&2
+  echo "Set ALLOW_GENX_LOADTEST=YES only in an approved test window, then run tools/loadtest/teardown.sh afterwards." >&2
+  exit 2
+fi
 
 LEADS="${LEADS:-5000}"
 SINK_BASE="${SINK_BASE:-https://admin.viciboxclone.genxcontactcenter.com/genxapi/sink.php}"

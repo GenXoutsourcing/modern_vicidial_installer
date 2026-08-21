@@ -91,6 +91,7 @@ const config = {
   // GENX_UI_AI_ASSIST_MODEL: optional model override (default claude-opus-4-8).
   aiAssistKey: process.env.GENX_UI_AI_ASSIST_KEY || '',
   aiAssistModel: process.env.GENX_UI_AI_ASSIST_MODEL || 'claude-opus-4-8',
+  publicHost: process.env.GENX_UI_PUBLIC_HOST || '',
 };
 
 // Server-wide capability flags exposed to the client so the UI can hide
@@ -101,6 +102,7 @@ function serverFeatures() {
 }
 
 const app = express();
+app.set('trust proxy', 'loopback');
 
 // --- Async-handler safety net -----------------------------------------------
 // Express 4 does NOT route a rejected promise from an async handler to any
@@ -262,6 +264,39 @@ const AUTO_HOPPER_MULTI_OPTIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '10mb' }));
+app.use((req, res, next) => {
+  if (config.publicHost) {
+    const configuredHost = String(config.publicHost).toLowerCase().replace(/:\d+$/, '');
+    const requestHost = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+    const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+    if (requestHost && requestHost !== configuredHost && !loopbackHosts.has(requestHost)) {
+      return res.status(421).json({ ok: false, error: 'host_not_allowed' });
+    }
+  }
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: wss:",
+    "media-src 'self' blob:",
+    "frame-src 'self' https: http:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join('; ');
+  res.setHeader('Content-Security-Policy', csp);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=()');
+  if ((req.secure || req.get('x-forwarded-proto') === 'https')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
 
 function safeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ''));
@@ -5129,7 +5164,15 @@ const LEAD_IMPORT_ALIASES = new Map([
 // grid, and emit CSV so the rest of the loader (preview + parseCsvRows) is
 // unchanged. Covers shared strings, inline strings, and plain numeric cells —
 // enough for lead lists. Throws on anything that isn't a readable .xlsx.
+const XLSX_MAX_BYTES = 5 * 1024 * 1024;
+const XLSX_MAX_ZIP_ENTRIES = 300;
+const XLSX_MAX_COMPRESSED_ENTRY_BYTES = 5 * 1024 * 1024;
+const XLSX_MAX_XML_ENTRY_BYTES = 20 * 1024 * 1024;
+const XLSX_MAX_ROWS = 10001; // header + 10,000 import rows
+const XLSX_MAX_COLS = 200;
+
 function unzipCentralDir(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length > XLSX_MAX_BYTES) throw new Error('xlsx_too_large');
   // End Of Central Directory: signature PK\x05\x06, scanned from the tail.
   let eocd = -1;
   const floor = Math.max(0, buffer.length - 22 - 65536);
@@ -5138,6 +5181,7 @@ function unzipCentralDir(buffer) {
   }
   if (eocd < 0) throw new Error('not_a_zip');
   const count = buffer.readUInt16LE(eocd + 10);
+  if (count > XLSX_MAX_ZIP_ENTRIES) throw new Error('xlsx_too_many_parts');
   let ptr = buffer.readUInt32LE(eocd + 16);
   const entries = new Map();
   for (let n = 0; n < count; n += 1) {
@@ -5158,14 +5202,18 @@ function unzipCentralDir(buffer) {
 function readZipEntry(zip, name) {
   const e = zip.entries.get(name);
   if (!e) return null;
+  if (e.compSize > XLSX_MAX_COMPRESSED_ENTRY_BYTES) throw new Error('xlsx_entry_too_large');
   const { buffer } = zip;
   const nameLen = buffer.readUInt16LE(e.localOff + 26);
   const extraLen = buffer.readUInt16LE(e.localOff + 28);
   const start = e.localOff + 30 + nameLen + extraLen;
   const data = buffer.subarray(start, start + e.compSize);
-  if (e.method === 0) return data; // stored
-  if (e.method === 8) return zlib.inflateRawSync(data); // deflate
-  throw new Error('unsupported_zip_method');
+  let out;
+  if (e.method === 0) out = data; // stored
+  else if (e.method === 8) out = zlib.inflateRawSync(data, { maxOutputLength: XLSX_MAX_XML_ENTRY_BYTES }); // deflate
+  else throw new Error('unsupported_zip_method');
+  if (out.length > XLSX_MAX_XML_ENTRY_BYTES) throw new Error('xlsx_xml_too_large');
+  return out;
 }
 
 function decodeXmlText(value) {
@@ -5211,10 +5259,12 @@ function xlsxToCsv(buffer) {
   const sheet = sheetBuf.toString('utf8');
   const grid = [];
   for (const rowXml of sheet.match(/<row\b[^>]*>[\s\S]*?<\/row>/g) || []) {
+    if (grid.length >= XLSX_MAX_ROWS) break;
     const cells = [];
     for (const cXml of rowXml.match(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g) || []) {
       const refM = /\br="([A-Z]+\d+)"/.exec(cXml);
       const idx = colRefToIndex(refM ? refM[1] : '');
+      if (idx >= XLSX_MAX_COLS) continue;
       const typeM = /\bt="([^"]+)"/.exec(cXml);
       const type = typeM ? typeM[1] : '';
       let value = '';
@@ -18695,15 +18745,61 @@ function guideEscapeHtml(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+const GUIDE_ALLOWED_TAGS = new Set([
+  'a', 'b', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4',
+  'h5', 'h6', 'hr', 'i', 'li', 'ol', 'p', 'pre', 's', 'span', 'strong',
+  'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul',
+]);
+const GUIDE_VOID_TAGS = new Set(['br', 'hr']);
+
+function guideSafeUrl(raw) {
+  const url = String(raw || '').trim();
+  if (/^(https?:|mailto:|tel:)/i.test(url)) return url.replace(/"/g, '&quot;');
+  if (/^[#/][^\s"'<>]*$/.test(url)) return url.replace(/"/g, '&quot;');
+  return '';
+}
+
+function sanitizeGuideHtml(raw) {
+  let html = String(raw || '').slice(0, 12000).replace(/\0/g, '');
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  html = html.replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math|video|audio|source|track|canvas|frame|frameset|applet)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  html = html.replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form|input|button|textarea|select|option|svg|math|video|audio|source|track|canvas|frame|frameset|applet)\b[^>]*\/?\s*>/gi, '');
+  return html.replace(/<\/?\s*([a-zA-Z0-9:-]+)([^>]*)>/g, (match, rawTag, rawAttrs) => {
+    const tag = String(rawTag || '').toLowerCase();
+    if (!GUIDE_ALLOWED_TAGS.has(tag)) return '';
+    if (match.startsWith('</')) return GUIDE_VOID_TAGS.has(tag) ? '' : `</${tag}>`;
+    const attrs = [];
+    const attrText = String(rawAttrs || '');
+    attrText.replace(/([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g, (_m, name, _raw, dq, sq, bare) => {
+      const attr = String(name || '').toLowerCase();
+      const value = String(dq ?? sq ?? bare ?? '');
+      if (attr.startsWith('on') || attr === 'style') return '';
+      if (tag === 'a' && attr === 'href') {
+        const href = guideSafeUrl(value);
+        if (href) attrs.push(`href="${href}"`, 'target="_blank"', 'rel="noopener noreferrer"');
+        return '';
+      }
+      if (['title', 'aria-label'].includes(attr)) attrs.push(`${attr}="${guideEscapeHtml(value)}"`);
+      if (['td', 'th'].includes(tag) && ['colspan', 'rowspan'].includes(attr)) {
+        const n = Math.min(Math.max(Number(value) || 1, 1), 12);
+        attrs.push(`${attr}="${n}"`);
+      }
+      return '';
+    });
+    return `<${tag}${attrs.length ? ` ${[...new Set(attrs)].join(' ')}` : ''}${GUIDE_VOID_TAGS.has(tag) ? ' />' : '>'}`;
+  });
+}
+
 async function guideMergeHtml(html, leadId) {
-  if (!/--A--\w+--B--/.test(String(html || ''))) return String(html || '');
+  if (!/--A--\w+--B--/.test(String(html || ''))) return sanitizeGuideHtml(html);
   const [lead] = leadId
     ? await dbContext.run(reportPool, () => rows('SELECT * FROM vicidial_list WHERE lead_id = ? LIMIT 1', [leadId], []))
     : [null];
-  return String(html).replace(/--A--(\w+)--B--/g, (m, field) => {
+  const merged = String(html).replace(/--A--(\w+)--B--/g, (m, field) => {
     if (field === 'pass') return '';
     return guideEscapeHtml(lead?.[field] != null ? String(lead[field]) : '');
   });
+  return sanitizeGuideHtml(merged);
 }
 
 // Lead columns a guide data-capture form may write back to (phase 2).
@@ -18780,7 +18876,7 @@ async function guideStepPayload(versionId, stepNode, leadId, guide) {
     step: {
       node_id: stepNode.node_id,
       title: stepNode.title,
-      html: merged,
+      html: sanitizeGuideHtml(merged),
       disposition: stepNode.disposition || null,
       form: guideParseForm(stepNode.form_json),
     },
@@ -18975,8 +19071,8 @@ app.put('/api/admin/guides/:id/nodes/:nodeId', requireAccess, async (req, res) =
     await execute(
       `UPDATE genx_guide_node SET title = ?, script_html = ?, disposition = ?${formJson !== undefined ? ', form_json = ?' : ''} WHERE node_id = ? AND version_id = ?`,
       formJson !== undefined
-        ? [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, formJson, Number(req.params.nodeId), versionId]
-        : [cleanText(req.body?.title, 120), String(req.body?.script_html || '').slice(0, 12000), dispo || null, Number(req.params.nodeId), versionId]);
+        ? [cleanText(req.body?.title, 120), sanitizeGuideHtml(req.body?.script_html), dispo || null, formJson, Number(req.params.nodeId), versionId]
+        : [cleanText(req.body?.title, 120), sanitizeGuideHtml(req.body?.script_html), dispo || null, Number(req.params.nodeId), versionId]);
     res.json({ ok: true });
   } catch { res.status(500).json({ ok: false, error: 'node_update_failed' }); }
 });

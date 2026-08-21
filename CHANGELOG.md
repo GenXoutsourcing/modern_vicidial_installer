@@ -9,6 +9,17 @@ the sign-in page). Tag releases as `v<version>` on this repo.
   scripts, native): design spec in
   `genx-ui/docs/future/agent-guidance-decision-trees.md`. No code yet.
 
+## Unreleased
+
+- **Overlay remediation sync**: installer now writes `GENX_UI_PUBLIC_HOST`,
+  emits Apache Host/header/security gates for `/genx` and `/genxapi`, and
+  deploys the hardened app/API source from the ViciBox clone remediation.
+- **API secret handling**: `/genxapi/api.php` rejects `pass`/`api_key` in GET
+  query strings and supports `X-GenX-API-Key` / `Authorization: Bearer`.
+- **Load-test safety**: `tools/loadtest/setup.sh` now requires
+  `ALLOW_GENX_LOADTEST=YES` before writing live fixtures or publishing
+  `sink.php`.
+
 ## v1.0.0-rc.1 — 2026-07-13
 
 First release candidate. Validated by a full from-scratch five-server

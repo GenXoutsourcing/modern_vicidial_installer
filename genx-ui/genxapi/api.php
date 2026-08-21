@@ -45,11 +45,25 @@ function param($key, $default = '') {
     return $default;
 }
 
+function request_header($key) {
+    $name = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
+    return isset($_SERVER[$name]) ? trim($_SERVER[$name]) : '';
+}
+
 $user     = param('user');
 $pass     = param('pass');
 $api_key  = param('api_key');
 $function = param('function');
 $source   = substr(param('source', 'genxapi'), 0, 20);
+$pass_from_get = isset($_GET['pass']);
+$api_key_from_get = isset($_GET['api_key']);
+if ($api_key === '') {
+    $api_key = request_header('X-GenX-API-Key');
+}
+if ($api_key === '') {
+    $auth = request_header('Authorization');
+    if (preg_match('/^Bearer\s+(.+)$/i', $auth, $m)) $api_key = trim($m[1]);
+}
 
 /* ---- DB connect ---------------------------------------------------------- */
 $db_host = conf_val('VARDB_server')   ?: 'localhost';
@@ -153,6 +167,10 @@ if ($function === '') {
 }
 
 $apiGroup = api_group($mysqli);
+
+if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'GET' && ($pass_from_get || $api_key_from_get)) {
+    fail($mysqli, $user, $function, 'send pass/api_key by POST body or Authorization header, not GET query', $source, 405);
+}
 
 if ($api_key !== '') {
     // Key auth: sha256(key) is stored, never the raw key. Resolve to a user.
