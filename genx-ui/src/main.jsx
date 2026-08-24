@@ -8181,7 +8181,167 @@ function LockedAccountsPanel({ token, user }) {
   );
 }
 
-function UsersView({ admin, user, token, onAction }) {
+function BulkUserCreateModal({ admin, token, onClose, onSaved, onLogout, refresh }) {
+  const groupOptions = lookupOptions(admin?.lookups?.userGroups, 'user_group', 'group_name');
+  const defaultGroup = groupOptions.find((option) => option.value === 'AGENTS')?.value
+    || groupOptions[0]?.value
+    || 'AGENTS';
+  const selectGroupOptions = groupOptions.length ? groupOptions : [{ value: defaultGroup, label: defaultGroup }];
+  const [form, setForm] = useState(() => ({
+    prefix: 'AGENT',
+    start: '1',
+    count: '10',
+    digits: '4',
+    user_ids: '',
+    pass: '123456',
+    phone_pass: '123456',
+    force_change_password: 'Y',
+    full_name_template: 'Agent {user}',
+    user_level: '1',
+    user_group: defaultGroup,
+    active: 'Y',
+  }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+  const setField = (key) => (event) => {
+    const value = event.target.value;
+    setForm((current) => {
+      const next = { ...current, [key]: value };
+      if (key === 'pass' && current.phone_pass === current.pass) next.phone_pass = value;
+      return next;
+    });
+  };
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const payload = await apiFetch('/admin/users/bulk', token, {
+        method: 'POST',
+        body: JSON.stringify(form),
+      });
+      setResult(payload);
+      if (payload.data) onSaved?.(payload.data);
+      refresh?.();
+    } catch (requestError) {
+      if (requestError.status === 401) {
+        onLogout?.();
+        return;
+      }
+      setError(requestError.status === 403 ? 'Your user does not have permission for this change' : 'Bulk user creation failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" {...backdropCloseProps(onClose)}>
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-label="Bulk Add Users">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Create</p>
+            <h2>Bulk Add Users</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close" title="Close">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        {error && <div className="alert">{error}</div>}
+        <form className="entity-form" onSubmit={submit}>
+          <div className="field-grid">
+            <div className="form-section">User Range</div>
+            <label>
+              <span>Prefix</span>
+              <input type="text" value={form.prefix} onChange={setField('prefix')} />
+            </label>
+            <label>
+              <span>Start Number</span>
+              <input type="number" min="0" value={form.start} onChange={setField('start')} />
+            </label>
+            <label>
+              <span>Count</span>
+              <input type="number" min="1" max="250" value={form.count} onChange={setField('count')} />
+            </label>
+            <label>
+              <span>Digits</span>
+              <input type="number" min="0" max="12" value={form.digits} onChange={setField('digits')} />
+            </label>
+            <label className="wide-field">
+              <span>User IDs</span>
+              <textarea rows="4" value={form.user_ids} onChange={setField('user_ids')} placeholder="1001 1002 1003" />
+            </label>
+            <div className="form-section">Defaults</div>
+            <label>
+              <span>Password</span>
+              <input type="password" value={form.pass} onChange={setField('pass')} />
+            </label>
+            <label>
+              <span>Phone Password</span>
+              <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} />
+            </label>
+            <label>
+              <span>Force Password Change</span>
+              <select value={form.force_change_password} onChange={setField('force_change_password')}>
+                {yesNoOptions('Y', 'N', 'Yes', 'No').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select value={form.active} onChange={setField('active')}>
+                {yesNoOptions().map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Level</span>
+              <select value={form.user_level} onChange={setField('user_level')}>
+                {enumOptions(USER_LEVEL_OPTIONS).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>User Group</span>
+              <select value={form.user_group} onChange={setField('user_group')}>
+                {selectGroupOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="wide-field">
+              <span>Full Name Pattern</span>
+              <input type="text" value={form.full_name_template} onChange={setField('full_name_template')} />
+            </label>
+          </div>
+          {result && (
+            <>
+              <div className="alert">{formatNumber(result.created)} created, {formatNumber(result.failed)} not created</div>
+              <DataTable
+                searchable={false}
+                emptyLabel="No batch results"
+                rows={(result.results || []).map((row) => ({ ...row, id: row.user }))}
+                columns={[
+                  { key: 'user', label: 'User' },
+                  { key: 'status', label: 'Status', render: (row) => <StatusPill ok={row.status === 'created'}>{row.status}</StatusPill> },
+                  { key: 'phone_alias', label: 'Phone Alias', render: (row) => row.phone_alias || 'None' },
+                  { key: 'phone_servers', label: 'Servers', render: (row) => row.phone_servers || 0 },
+                  { key: 'error', label: 'Error', render: (row) => row.error || '' },
+                ]}
+              />
+            </>
+          )}
+          <div className="modal-actions">
+            <button type="button" className="secondary-action" onClick={onClose}>Close</button>
+            <span className="modal-actions-spacer" />
+            <button type="submit" className="primary-action" disabled={saving}>
+              <Users size={16} aria-hidden="true" />
+              {saving ? 'Creating' : 'Create Users'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function UsersView({ admin, user, token, onAction, onSaved, onLogout }) {
   const canManage = userCan(user, 'users');
   // Inactive users are hidden by default; the header button reveals them.
   const [showInactive, setShowInactive] = useState(false);
@@ -8189,10 +8349,23 @@ function UsersView({ admin, user, token, onAction }) {
   const paged = useServerRows('users', token, admin, showInactive ? '' : 'activeOnly=1');
   const visibleUsers = paged.rows;
   const bulk = useBulkSelection();
+  const [bulkCreateOpen, setBulkCreateOpen] = useState(false);
 
   return (
     <>
-      <ActionBar entity="users" label="User" user={user} onAction={onAction} canAdd={hasAdminNav(user)}>
+      <ActionBar
+        entity="users"
+        label="User"
+        user={user}
+        onAction={onAction}
+        canAdd={hasAdminNav(user)}
+        extraActions={hasAdminNav(user) && canManage ? (
+          <button type="button" className="secondary-action compact-action" onClick={() => setBulkCreateOpen(true)}>
+            <Users size={16} aria-hidden="true" />
+            Bulk Add
+          </button>
+        ) : null}
+      >
         <p className="action-copy">
           {hasAdminNav(user)
             ? 'Add operators and control the common dialer permission flags from GenX.'
@@ -8250,6 +8423,16 @@ function UsersView({ admin, user, token, onAction }) {
           />
         </Panel>
       </section>
+      {bulkCreateOpen && (
+        <BulkUserCreateModal
+          admin={admin}
+          token={token}
+          onClose={() => setBulkCreateOpen(false)}
+          onSaved={onSaved}
+          onLogout={onLogout}
+          refresh={paged.refresh}
+        />
+      )}
     </>
   );
 }
@@ -22080,7 +22263,7 @@ function AccessDenied({ onBack }) {
   );
 }
 
-function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate }) {
+function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAction, onSaved, onNavigate, onLogout }) {
   // Route guard: a hidden nav link is not access control. If this user's group
   // can't see the section this view belongs to, don't render the page (or its
   // action buttons) — send them back to Command. Mirrors the server-side
@@ -22090,7 +22273,7 @@ function AdminPage({ activeView, viewParams, dashboard, admin, user, token, onAc
   }
   if (activeView === 'command') return <CommandView dashboard={dashboard} admin={admin} user={user} token={token} onAction={onAction} onNavigate={onNavigate} />;
   if (activeView === 'campaigns') return <CampaignsView admin={admin} user={user} token={token} onSaved={onSaved} onAction={onAction} />;
-  if (activeView === 'users') return <UsersView admin={admin} user={user} token={token} onAction={onAction} />;
+  if (activeView === 'users') return <UsersView admin={admin} user={user} token={token} onAction={onAction} onSaved={onSaved} onLogout={onLogout} />;
   if (activeView === 'userGroups') return <UserGroupsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'remoteAgents') return <RemoteAgentsView admin={admin} user={user} onAction={onAction} />;
   if (activeView === 'dropLists') return <DropListsView admin={admin} user={user} onAction={onAction} />;
@@ -22480,6 +22663,7 @@ function AdminShell({ token, user, onLogout }) {
             onAction={openAction}
             onSaved={handleSaved}
             onNavigate={navigateTo}
+            onLogout={onLogout}
           />
 
           <footer className="footer-line">

@@ -3875,6 +3875,7 @@ input:-webkit-autofill:focus {
 @media (max-width: 900px) { .mgrid, .mgrid.mgrid3 { grid-template-columns: 1fr; } }
 .mpanel { background: var(--surface); border: 1px solid rgba(0, 217, 255, 0.40); border-radius: 14px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0, 217, 255, 0.08), 0 0 28px rgba(0, 217, 255, 0.16), 0 14px 34px rgba(0, 0, 0, 0.30); }
 .mpanel-wide { margin-top: 0; }
+.mdash > .mpanel.mpanel-wide { display: none; }
 .mph { display: flex; justify-content: space-between; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); }
 .mph h3 { margin: 0; font-size: 0.92rem; font-weight: 800; letter-spacing: -0.01em; }
 .mmore { border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 0.74rem; font-weight: 800; cursor: pointer; }

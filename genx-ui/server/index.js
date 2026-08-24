@@ -3742,11 +3742,18 @@ async function adminData(user) {
           user_group: item.user_group,
           group_name: item.group_name || item.user_group,
         })),
-      phones: phones.map((item) => ({
-        extension: item.extension,
-        server_ip: item.server_ip,
-        label: `${item.extension} @ ${item.server_ip}`,
-      })),
+      phones: [
+        ...phoneAliases.map((item) => ({
+          extension: item.alias_id,
+          server_ip: '',
+          label: `${item.alias_id} (alias)`,
+        })),
+        ...phones.map((item) => ({
+          extension: item.extension,
+          server_ip: item.server_ip,
+          label: `${item.extension} @ ${item.server_ip}`,
+        })),
+      ],
       users: users.map((item) => ({
         user: item.user,
         full_name: item.full_name || item.user,
@@ -4707,30 +4714,89 @@ async function apiUserGroup() {
   }
 }
 
-// Auto-provision a WEBRTC agent phone for a new user on EVERY active
-// asterisk server (legacy parity with the webphone clone in ViciBox's
-// second_server_install.sql: one phones row per dialer, same creds) so
-// resolveAgentPhone can spread logins across all boxes. Each row is cloned
-// from that server's existing webphone (falls back to any webphone row when
-// a dialer has none yet) so codecs/template settings track the cluster's
-// working config. Returns the server IPs provisioned; never throws — a
-// phone failure must not roll back the user create.
+// Auto-provision a WEBRTC agent phone for a new user as a VICIdial phone
+// alias: the user-facing phone_login points to one real phone row per active
+// calling/Asterisk server. Each row is cloned from that server's existing
+// webphone (falls back to any webphone row when a server has none yet) so
+// codecs/template settings track the cluster's working config. Returns the
+// server IPs provisioned; never throws - a phone failure must not roll back
+// the user create.
+let serverColumnNamesCache = null;
+
+async function serverColumnNames() {
+  if (serverColumnNamesCache) return serverColumnNamesCache;
+  const columns = await rows('SHOW COLUMNS FROM servers', [], [], { optional: true });
+  serverColumnNamesCache = new Set(columns.map((column) => column.Field));
+  return serverColumnNamesCache;
+}
+
+async function autoPhoneServerRows() {
+  const names = await serverColumnNames();
+  const flags = [];
+  if (names.has('active_asterisk_server')) flags.push("active_asterisk_server = 'Y'");
+  if (names.has('vicidial_balance_active')) flags.push("vicidial_balance_active = 'Y'");
+  if (names.has('generate_vicidial_conf')) flags.push("generate_vicidial_conf = 'Y'");
+  if (!flags.length) return [];
+  const activeClause = names.has('active') ? "active = 'Y' AND " : '';
+  return rows(
+    `SELECT DISTINCT server_ip
+     FROM servers
+     WHERE ${activeClause}(${flags.join(' OR ')})
+     ORDER BY server_ip ASC`,
+    [],
+    [],
+  );
+}
+
+function autoPhoneMemberLogin(aliasId, index, serverIp) {
+  const suffix = `_S${index + 1}`;
+  const direct = `${aliasId}${suffix}`;
+  if (direct.length <= 20) return direct;
+  const hash = crypto.createHash('sha1').update(`${aliasId}|${serverIp}|${index}`).digest('hex').slice(0, 4);
+  const tail = `${suffix}_${hash}`;
+  return `${aliasId.slice(0, Math.max(1, 20 - tail.length))}${tail}`;
+}
+
+function autoPhoneAliasOffset(aliasId, count) {
+  if (count < 2) return 0;
+  if (/^[0-9]+$/.test(aliasId)) return Number(BigInt(aliasId) % BigInt(count));
+  const hash = crypto.createHash('sha1').update(aliasId).digest('hex').slice(0, 8);
+  return Number.parseInt(hash, 16) % count;
+}
+
+function rotateAutoPhoneMembers(members, aliasId) {
+  if (members.length < 2) return members;
+  const offset = autoPhoneAliasOffset(aliasId, members.length);
+  return [...members.slice(offset), ...members.slice(0, offset)];
+}
+
 async function autoProvisionAgentPhones(extension, fullName, phonePass) {
   const provisioned = [];
   try {
-    const dialers = await rows(
-      "SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y'",
-      [],
-      [],
-    );
-    for (const dialer of dialers) {
+    const dialers = await autoPhoneServerRows();
+    const aliasMembers = [];
+    for (const [index, dialer] of dialers.entries()) {
       const serverIp = dialer.server_ip;
+      const memberLogin = autoPhoneMemberLogin(extension, index, serverIp);
       const [existing] = await rows(
-        'SELECT extension FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1',
-        [extension, serverIp],
+        'SELECT extension FROM phones WHERE extension = ? AND login = ? AND server_ip = ? LIMIT 1',
+        [memberLogin, memberLogin, serverIp],
         [],
       );
-      if (existing) continue;
+      if (existing) {
+        aliasMembers.push({ login: memberLogin, serverIp });
+        continue;
+      }
+      const [collision] = await rows(
+        `SELECT extension
+         FROM phones
+         WHERE server_ip = ?
+           AND (extension = ? OR login = ? OR dialplan_number = ?)
+         LIMIT 1`,
+        [serverIp, memberLogin, memberLogin, memberLogin],
+        [],
+      );
+      if (collision) continue;
       let [template] = await rows(
         "SELECT * FROM phones WHERE server_ip = ? AND active = 'Y' AND is_webphone = 'Y' ORDER BY extension ASC LIMIT 1",
         [serverIp],
@@ -4746,10 +4812,10 @@ async function autoProvisionAgentPhones(extension, fullName, phonePass) {
       if (!template) continue; // no webphone anywhere to clone from
       const row = {
         ...template,
-        extension,
-        dialplan_number: extension,
-        voicemail_id: extension,
-        login: extension,
+        extension: memberLogin,
+        dialplan_number: memberLogin,
+        voicemail_id: memberLogin,
+        login: memberLogin,
         pass: phonePass,
         conf_secret: phonePass,
         fullname: String(fullName || extension).slice(0, 50),
@@ -4761,6 +4827,20 @@ async function autoProvisionAgentPhones(extension, fullName, phonePass) {
       const { assignments, values } = dynamicAssignments(row);
       await execute(`INSERT INTO phones SET ${assignments}`, values);
       provisioned.push(serverIp);
+      aliasMembers.push({ login: memberLogin, serverIp });
+    }
+    if (aliasMembers.length) {
+      const loginsList = rotateAutoPhoneMembers(aliasMembers, extension).map((member) => member.login).join(',');
+      await execute(
+        `INSERT INTO phones_alias
+           (alias_id, alias_name, logins_list, user_group)
+         VALUES (?, ?, ?, '---ALL---')
+         ON DUPLICATE KEY UPDATE
+           alias_name = VALUES(alias_name),
+           logins_list = VALUES(logins_list),
+           user_group = VALUES(user_group)`,
+        [extension, `${String(fullName || extension).slice(0, 36)} Phone Alias`.slice(0, 50), loginsList],
+      );
     }
     if (provisioned.length) {
       const placeholders = provisioned.map(() => '?').join(',');
@@ -4879,14 +4959,15 @@ async function saveUser(req, res, mode) {
   // on the form opts out (assign an existing phone instead).
   let provisionPhonePass = '';
   const wantsAutoPhone = mode === 'create'
-    && /^[0-9]+$/.test(id)
     && !String(payload.phone_login || '').trim()
     && (await uiAccessFor(effectiveGroup)) !== 'admin';
   if (wantsAutoPhone) {
     provisionPhonePass = String(payload.phone_pass || '').trim()
+      || String(payload.pass || '').trim()
       || crypto.randomBytes(6).toString('hex');
     payload.phone_login = id;
     payload.phone_pass = provisionPhonePass;
+    if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
   }
 
   const { assignments, values } = dynamicAssignments(payload);
@@ -4903,7 +4984,7 @@ async function saveUser(req, res, mode) {
       if (wantsAutoPhone) {
         const phoneServers = await autoProvisionAgentPhones(id, payload.full_name, provisionPhonePass);
         if (phoneServers.length) {
-          await adminLog(req, 'PHONES', 'ADD', id, 'GENX AUTO PHONE', 'INSERT INTO phones (auto-provision on user create)', phoneServers.join(', '));
+          await adminLog(req, 'PHONES', 'ADD', id, 'GENX AUTO PHONE', 'INSERT INTO phones + phones_alias (auto-provision on user create)', phoneServers.join(', '));
         }
       }
     } else {
@@ -4922,6 +5003,165 @@ async function saveUser(req, res, mode) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'user_exists' : 'user_write_failed' });
   }
+}
+
+function publicError(statusCode, publicError) {
+  const error = new Error(publicError);
+  error.statusCode = statusCode;
+  error.publicError = publicError;
+  return error;
+}
+
+function bulkUserIds(body) {
+  const rawList = cleanText(body.user_ids, 12000);
+  const ids = [];
+  const seen = new Set();
+  const pushId = (value) => {
+    const id = cleanId(value, 20);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  if (rawList) {
+    rawList.split(/[\s,;]+/).forEach(pushId);
+  } else {
+    const prefix = cleanId(body.prefix, 12);
+    const count = cleanInt(body.count, 0, 0, 250);
+    const start = cleanInt(body.start, 1, 0, 999999999);
+    const digits = cleanInt(body.digits, 4, 0, 12);
+    if (count < 1) throw publicError(400, 'bulk_count_required');
+    for (let offset = 0; offset < count; offset += 1) {
+      const number = start + offset;
+      pushId(`${prefix}${digits ? String(number).padStart(digits, '0') : String(number)}`);
+    }
+  }
+  if (!ids.length) throw publicError(400, 'bulk_users_required');
+  if (ids.length > 250) throw publicError(400, 'bulk_user_limit_exceeded');
+  return ids;
+}
+
+function bulkFullName(body, id, index) {
+  const template = cleanText(body.full_name_template, 80)
+    || `${cleanText(body.full_name_prefix, 40) || 'Agent'} {user}`;
+  return template
+    .replace(/\{user\}/g, id)
+    .replace(/\{n\}/g, String(index + 1))
+    .slice(0, 50);
+}
+
+async function createBulkUserRecord(req, id, body) {
+  const payload = userPayload(body || {}, req.genxUser);
+  if (!payload.pass) {
+    payload.pass = '123456';
+    payload.force_change_password = 'Y';
+  }
+  if (body?.force_change_password === undefined) payload.force_change_password = 'Y';
+  if (payload.pass) payload.pass_hash = '';
+
+  if (Number(req.genxUser?.userLevel || 0) < 9) {
+    const scope = req.genxUser?.permissions?.adminViewableGroups;
+    if (payload.user_group && !scopeAllows(scope, payload.user_group)) {
+      throw publicError(403, 'user_group_not_allowed');
+    }
+    if (payload.user_group && SYSTEM_ONLY_USER_GROUPS.has(String(payload.user_group).toUpperCase())) {
+      throw publicError(403, 'user_group_reserved');
+    }
+  }
+
+  const effectiveGroup = cleanId(payload.user_group, 20) || 'ADMIN';
+  const template = await flagTemplateFor(effectiveGroup);
+  if (template) Object.assign(payload, template);
+
+  const apiGroup = await apiUserGroup();
+  const isApiUser = Boolean(apiGroup) && effectiveGroup === apiGroup;
+  if (isApiUser) payload.vdc_agent_api_access = '1';
+  payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
+
+  let provisionPhonePass = '';
+  const wantsAutoPhone = !String(payload.phone_login || '').trim()
+    && (await uiAccessFor(effectiveGroup)) !== 'admin';
+  if (wantsAutoPhone) {
+    provisionPhonePass = String(payload.phone_pass || '').trim()
+      || String(payload.pass || '').trim()
+      || crypto.randomBytes(6).toString('hex');
+    payload.phone_login = id;
+    payload.phone_pass = provisionPhonePass;
+    if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
+  }
+
+  const { assignments, values } = dynamicAssignments(payload);
+  await execute(
+    `INSERT INTO vicidial_users
+     SET user = ?,
+         ${assignments}`,
+    [id, ...values],
+  );
+  await adminLog(req, 'USERS', 'ADD', id, 'GENX BULK ADD USER', 'INSERT INTO vicidial_users', payload.full_name);
+  const phoneServers = wantsAutoPhone
+    ? await autoProvisionAgentPhones(id, payload.full_name, provisionPhonePass)
+    : [];
+  if (phoneServers.length) {
+    await adminLog(req, 'PHONES', 'ADD', id, 'GENX BULK AUTO PHONE', 'INSERT INTO phones + phones_alias (bulk user create)', phoneServers.join(', '));
+  }
+  return { user: id, phoneServers, autoPhone: wantsAutoPhone };
+}
+
+async function bulkCreateUsers(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'user_create_not_allowed' });
+  }
+
+  let ids;
+  try {
+    ids = bulkUserIds(req.body || {});
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ ok: false, error: error.publicError || 'bulk_users_invalid' });
+  }
+
+  const password = cleanText(req.body?.pass, 100) || '123456';
+  const phonePass = cleanText(req.body?.phone_pass, 100) || password;
+  const baseBody = {
+    ...(req.body || {}),
+    pass: password,
+    phone_pass: phonePass,
+    phone_login: '',
+    user_group: cleanId(req.body?.user_group, 20) || 'AGENTS',
+    active: ynFlag(req.body?.active, 'Y'),
+    force_change_password: ynFlag(req.body?.force_change_password, 'Y'),
+  };
+  const results = [];
+
+  for (const [index, id] of ids.entries()) {
+    try {
+      const created = await createBulkUserRecord(req, id, {
+        ...baseBody,
+        user: id,
+        full_name: bulkFullName(req.body || {}, id, index),
+      });
+      results.push({
+        user: id,
+        status: 'created',
+        phone_alias: created.autoPhone ? id : '',
+        phone_servers: created.phoneServers.length,
+      });
+    } catch (error) {
+      results.push({
+        user: id,
+        status: error.code === 'ER_DUP_ENTRY' ? 'exists' : 'failed',
+        error: error.code === 'ER_DUP_ENTRY' ? 'user_exists' : error.publicError || 'user_write_failed',
+      });
+    }
+  }
+
+  const created = results.filter((row) => row.status === 'created').length;
+  return res.json({
+    ok: true,
+    created,
+    failed: results.length - created,
+    results,
+    data: await adminData(req.genxUser),
+  });
 }
 
 // API-key management. Keys belong to a user; that user must be in the API
@@ -10199,12 +10439,11 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
 
 // Legacy-parity phone resolution (vicidial.php alias handling): the login an
 // agent types may be a phones_alias (alias_id -> comma list of per-server
-// phone logins) and/or a login that exists on several telephony servers (the
-// join clones the webphone to every dialer; auto-provisioned agent phones get
-// a copy per dialer too). Pick the matching phone on the ACTIVE asterisk
-// server with the fewest live agents so logins spread across all dialers;
-// fall back to non-dialer copies only when no dialer hosts one. Pass
-// phonePass=null to skip the password check (session-carried phones).
+// phone logins) and/or a login that exists on several telephony servers. Pick
+// the matching phone on an active calling/Asterisk server with the fewest live
+// agents; use alias order as the tie-break, then fall back to non-calling
+// copies only when no calling host has one. Pass phonePass=null to skip the
+// password check (session-carried phones).
 async function resolveAgentPhone(phoneLogin, phonePass) {
   let logins = [phoneLogin];
   const [alias] = await rows(
@@ -10217,14 +10456,17 @@ async function resolveAgentPhone(phoneLogin, phonePass) {
     if (list.length) logins = list;
   }
   const placeholders = logins.map(() => '?').join(',');
+  const callingServerIps = new Set((await autoPhoneServerRows()).map((server) => String(server.server_ip)));
   const candidates = await rows(
-    `SELECT ${AGENT_PHONE_COLUMNS},
-            (server_ip IN (SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y')) AS on_dialer
+    `SELECT ${AGENT_PHONE_COLUMNS}
      FROM phones WHERE login IN (${placeholders}) AND active = 'Y'`,
     logins,
     [],
   );
-  let usable = candidates;
+  let usable = candidates.map((phone) => ({
+    ...phone,
+    on_dialer: callingServerIps.has(String(phone.server_ip)) ? 1 : 0,
+  }));
   if (phonePass !== null && phonePass !== undefined) {
     usable = usable.filter((p) => String(p.pass || '') === String(phonePass));
   }
@@ -10232,15 +10474,18 @@ async function resolveAgentPhone(phoneLogin, phonePass) {
   const dialerHosted = usable.filter((p) => Number(p.on_dialer));
   const pool = dialerHosted.length ? dialerHosted : usable;
   if (pool.length > 1) {
-    // Least-loaded pick; server_ip tiebreak keeps the choice deterministic.
+    // Least-loaded pick; alias order is the VICIdial-style tiebreak.
     const loads = await rows(
       'SELECT server_ip, COUNT(*) AS cnt FROM vicidial_live_agents GROUP BY server_ip',
       [],
       [],
     );
     const byIp = new Map(loads.map((r) => [String(r.server_ip), Number(r.cnt)]));
+    const byLoginOrder = new Map(logins.map((login, index) => [login, index]));
     pool.sort((a, b) =>
       (byIp.get(String(a.server_ip)) || 0) - (byIp.get(String(b.server_ip)) || 0)
+      || (byLoginOrder.get(String(a.login)) ?? Number.MAX_SAFE_INTEGER)
+        - (byLoginOrder.get(String(b.login)) ?? Number.MAX_SAFE_INTEGER)
       || String(a.server_ip).localeCompare(String(b.server_ip)));
   }
   const { on_dialer, ...phone } = pool[0];
@@ -13479,7 +13724,7 @@ async function deleteUser(req, res) {
   const id = cleanId(req.params.id, 20);
   if (!id || id.length < 2) return badRequest(res, 'invalid_user_id');
   if (id === req.genxUser.user) return res.status(403).json({ ok: false, error: 'cannot_delete_self' });
-  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  const [target] = await rows('SELECT user, user_group, phone_login FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
   if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
   if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, target.user_group)) {
     return res.status(403).json({ ok: false, error: 'user_not_allowed' });
@@ -13489,24 +13734,59 @@ async function deleteUser(req, res) {
     await execute('DELETE FROM vicidial_campaign_agents WHERE user = ?', [id]).catch(() => {});
     await execute('DELETE FROM vicidial_inbound_group_agents WHERE user = ?', [id]).catch(() => {});
     await execute("UPDATE vicidial_remote_agents SET status = 'INACTIVE' WHERE user_start = ?", [id]).catch(() => {});
-    // Remove the user's auto-provisioned phones (extension AND login = user
-    // id — the pattern autoProvisionAgentPhones creates, one row per dialer).
-    // A manually-assigned shared phone has a different extension/login and is
-    // deliberately left alone.
-    const ownPhones = await rows(
+    // Remove this user's auto-provisioned phones only. New auto phones are
+    // alias-backed; the old duplicate-login cleanup stays as a migration
+    // fallback. Manually assigned shared phones are deliberately left alone.
+    const phoneServers = [];
+    const [phoneAlias] = target.phone_login === id ? await rows(
+      'SELECT logins_list FROM phones_alias WHERE alias_id = ? LIMIT 1',
+      [id],
+      [],
+    ) : [];
+    const aliasLogins = String(phoneAlias?.logins_list || '')
+      .split(',')
+      .map((login) => cleanId(login, 20))
+      .filter((login) => login.startsWith(`${id}_S`) || login.startsWith(`${id.slice(0, 12)}_S`));
+    if (aliasLogins.length) {
+      const placeholders = aliasLogins.map(() => '?').join(',');
+      const ownAliasPhones = await rows(
+        `SELECT server_ip
+         FROM phones
+         WHERE login IN (${placeholders})
+           AND extension = login
+           AND dialplan_number = login`,
+        aliasLogins,
+        [],
+      );
+      if (ownAliasPhones.length) {
+        await execute(
+          `DELETE FROM phones
+           WHERE login IN (${placeholders})
+             AND extension = login
+             AND dialplan_number = login`,
+          aliasLogins,
+        ).catch(() => {});
+        phoneServers.push(...ownAliasPhones.map((p) => p.server_ip));
+      }
+      await execute('DELETE FROM phones_alias WHERE alias_id = ? LIMIT 1', [id]).catch(() => {});
+    }
+    const ownLegacyPhones = await rows(
       'SELECT server_ip FROM phones WHERE extension = ? AND login = ?',
       [id, id],
       [],
     );
-    if (ownPhones.length) {
+    if (ownLegacyPhones.length) {
       await execute('DELETE FROM phones WHERE extension = ? AND login = ?', [id, id]).catch(() => {});
-      const phoneServers = ownPhones.map((p) => p.server_ip);
-      const placeholders = phoneServers.map(() => '?').join(',');
+      phoneServers.push(...ownLegacyPhones.map((p) => p.server_ip));
+    }
+    if (phoneServers.length) {
+      const uniqueServers = [...new Set(phoneServers)];
+      const placeholders = uniqueServers.map(() => '?').join(',');
       await execute(
         `UPDATE servers SET rebuild_conf_files = 'Y' WHERE active_asterisk_server = 'Y' AND server_ip IN (${placeholders})`,
-        phoneServers,
+        uniqueServers,
       ).catch(() => {});
-      await adminLog(req, 'PHONES', 'DELETE', id, 'GENX AUTO PHONE DELETE', 'DELETE FROM phones (user delete)', phoneServers.join(', '));
+      await adminLog(req, 'PHONES', 'DELETE', id, 'GENX AUTO PHONE DELETE', 'DELETE FROM phones/phones_alias (user delete)', uniqueServers.join(', '));
     }
     await adminLog(req, 'USERS', 'DELETE', id, 'GENX DELETE USER', 'DELETE FROM vicidial_users + agent rank rows', id);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
@@ -18346,6 +18626,7 @@ app.get('/api/admin/campaigns/:id/url-multi', requireAccess, listUrlMulti);
 app.post('/api/admin/campaigns/:id/url-multi', requireAccess, (req, res) => saveUrlMulti(req, res, 'create'));
 app.put('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, (req, res) => saveUrlMulti(req, res, 'update'));
 app.delete('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, deleteUrlMulti);
+app.post('/api/admin/users/bulk', requireAccess, bulkCreateUsers);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
