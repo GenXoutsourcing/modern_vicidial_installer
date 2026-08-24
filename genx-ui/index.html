@@ -4,18 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GenX Contact Center - Mission Control</title>
-    <style>
-      /* Manager Dashboard: QA/Recording Review remains available in the
-         recordings/reporting tools, but is intentionally omitted from the
-         Mission Control landing view. The QA panel is the wide manager panel
-         containing the play-row control (.mplay). */
-      .mpanel.mpanel-wide:has(.mrows .mplay) {
-        display: none;
-      }
-    </style>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Manager Dashboard cleanup: remove the QA & Recording Review panel
+      // from Mission Control while leaving the QA/Recordings navigation intact.
+      (() => {
+        const removeManagerQaPanel = () => {
+          document.querySelectorAll('.mpanel').forEach((panel) => {
+            const heading = panel.querySelector('h3');
+            if (heading?.textContent?.trim() === 'QA & Recording Review') {
+              panel.remove();
+            }
+          });
+        };
+
+        const observer = new MutationObserver(removeManagerQaPanel);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        document.addEventListener('DOMContentLoaded', removeManagerQaPanel);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
