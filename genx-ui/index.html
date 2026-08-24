@@ -4,29 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GenX Contact Center - Mission Control</title>
+    <style>
+      /* Manager Dashboard cleanup: the QA & Recording Review panel is the
+         only wide panel directly under .mdash. Keep the Recordings/QA
+         navigation and dedicated recordings view intact. */
+      .mdash > .mpanel.mpanel-wide {
+        display: none !important;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      // Manager Dashboard cleanup: remove the QA & Recording Review panel
-      // from Mission Control while leaving the QA/Recordings navigation intact.
-      (() => {
-        const removeManagerQaPanel = () => {
-          if (!window.location.hash.startsWith('#/command')) return;
-          document.querySelectorAll('.mpanel').forEach((panel) => {
-            const heading = panel.querySelector('h3');
-            if (heading?.textContent?.trim() === 'QA & Recording Review') {
-              panel.remove();
-            }
-          });
-        };
-
-        const observer = new MutationObserver(removeManagerQaPanel);
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-        document.addEventListener('DOMContentLoaded', removeManagerQaPanel);
-        window.addEventListener('hashchange', removeManagerQaPanel);
-      })();
-    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
