@@ -8194,7 +8194,7 @@ function BulkUserCreateModal({ admin, token, onClose, onSaved, onLogout, refresh
     digits: '4',
     user_ids: '',
     pass: '123456',
-    phone_pass: '123456',
+    phone_pass: '',
     force_change_password: 'Y',
     full_name_template: 'Agent {user}',
     user_level: '1',
@@ -8208,7 +8208,6 @@ function BulkUserCreateModal({ admin, token, onClose, onSaved, onLogout, refresh
     const value = event.target.value;
     setForm((current) => {
       const next = { ...current, [key]: value };
-      if (key === 'pass' && current.phone_pass === current.pass) next.phone_pass = value;
       return next;
     });
   };
@@ -8279,7 +8278,7 @@ function BulkUserCreateModal({ admin, token, onClose, onSaved, onLogout, refresh
             </label>
             <label>
               <span>Phone Password</span>
-              <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} />
+              <input type="password" value={form.phone_pass} onChange={setField('phone_pass')} placeholder="Auto-generate" />
             </label>
             <label>
               <span>Force Password Change</span>

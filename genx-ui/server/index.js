@@ -4748,13 +4748,36 @@ async function autoPhoneServerRows() {
   );
 }
 
+function generatedPhoneSecret() {
+  return crypto.randomBytes(18).toString('hex');
+}
+
+function autoPhoneMemberSuffix(index) {
+  let n = Number(index) + 1;
+  let suffix = '';
+  while (n > 0) {
+    n -= 1;
+    suffix = String.fromCharCode(97 + (n % 26)) + suffix;
+    n = Math.floor(n / 26);
+  }
+  return suffix || 'a';
+}
+
 function autoPhoneMemberLogin(aliasId, index, serverIp) {
-  const suffix = `_S${index + 1}`;
+  const suffix = autoPhoneMemberSuffix(index);
   const direct = `${aliasId}${suffix}`;
-  if (direct.length <= 20) return direct;
-  const hash = crypto.createHash('sha1').update(`${aliasId}|${serverIp}|${index}`).digest('hex').slice(0, 4);
-  const tail = `${suffix}_${hash}`;
-  return `${aliasId.slice(0, Math.max(1, 20 - tail.length))}${tail}`;
+  if (direct.length <= 15) return direct;
+  const hash = crypto.createHash('sha1').update(`${aliasId}|${serverIp}|${index}`).digest('hex').slice(0, 3);
+  const tail = `${hash}${suffix}`;
+  return `${aliasId.slice(0, Math.max(1, 15 - tail.length))}${tail}`;
+}
+
+function isAutoPhoneMemberLoginForAlias(login, aliasId) {
+  const value = String(login || '');
+  const id = String(aliasId || '');
+  if (!value || !id) return false;
+  if (value.startsWith(`${id}_S`) || value.startsWith(`${id.slice(0, 12)}_S`)) return true;
+  return value.startsWith(id) && /^[a-z]+$/.test(value.slice(id.length));
 }
 
 function autoPhoneAliasOffset(aliasId, count) {
@@ -4814,7 +4837,7 @@ async function autoProvisionAgentPhones(extension, fullName, phonePass) {
         ...template,
         extension: memberLogin,
         dialplan_number: memberLogin,
-        voicemail_id: memberLogin,
+        voicemail_id: memberLogin.slice(0, 10),
         login: memberLogin,
         pass: phonePass,
         conf_secret: phonePass,
@@ -4963,8 +4986,7 @@ async function saveUser(req, res, mode) {
     && (await uiAccessFor(effectiveGroup)) !== 'admin';
   if (wantsAutoPhone) {
     provisionPhonePass = String(payload.phone_pass || '').trim()
-      || String(payload.pass || '').trim()
-      || crypto.randomBytes(6).toString('hex');
+      || generatedPhoneSecret();
     payload.phone_login = id;
     payload.phone_pass = provisionPhonePass;
     if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
@@ -5082,8 +5104,7 @@ async function createBulkUserRecord(req, id, body) {
     && (await uiAccessFor(effectiveGroup)) !== 'admin';
   if (wantsAutoPhone) {
     provisionPhonePass = String(payload.phone_pass || '').trim()
-      || String(payload.pass || '').trim()
-      || crypto.randomBytes(6).toString('hex');
+      || generatedPhoneSecret();
     payload.phone_login = id;
     payload.phone_pass = provisionPhonePass;
     if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
@@ -5120,7 +5141,7 @@ async function bulkCreateUsers(req, res) {
   }
 
   const password = cleanText(req.body?.pass, 100) || '123456';
-  const phonePass = cleanText(req.body?.phone_pass, 100) || password;
+  const phonePass = cleanText(req.body?.phone_pass, 100);
   const baseBody = {
     ...(req.body || {}),
     pass: password,
@@ -13746,7 +13767,7 @@ async function deleteUser(req, res) {
     const aliasLogins = String(phoneAlias?.logins_list || '')
       .split(',')
       .map((login) => cleanId(login, 20))
-      .filter((login) => login.startsWith(`${id}_S`) || login.startsWith(`${id.slice(0, 12)}_S`));
+      .filter((login) => isAutoPhoneMemberLoginForAlias(login, id));
     if (aliasLogins.length) {
       const placeholders = aliasLogins.map(() => '?').join(',');
       const ownAliasPhones = await rows(
