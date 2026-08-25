@@ -11,6 +11,13 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Firewall: webphone WSS port 8089 stays open**: all three installers were
+  removing `8089/tcp` from the public zone, while the whitelist rich rules in
+  the bundled `firewall.zip` `public.xml` grant whitelisted ipsets only the
+  firewalld `https` service (443/tcp). A client whitelisted via ViciWhite or
+  the DynPortal could load the agent screen but every webphone failed to
+  register; only the hardcoded management IPs (full accept) were unaffected.
+  The scripts now `--add-port=8089/tcp` instead.
 - **Overlay remediation sync**: installer now writes `GENX_UI_PUBLIC_HOST`,
   emits Apache Host/header/security gates for `/genx` and `/genxapi`, and
   deploys the hardened app/API source from the ViciBox clone remediation.

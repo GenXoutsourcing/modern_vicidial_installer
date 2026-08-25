@@ -1505,7 +1505,14 @@ firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='12.
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='74.208.129.213' accept"
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='45.3.191.82' accept"
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='167.99.6.117' accept"
-firewall-cmd --permanent --remove-port=8089/tcp
+# 8089/tcp is the Asterisk WSS endpoint the webphone connects to
+# (wss://FQDN:8089/ws), so it has to stay OPEN. The whitelist rich rules in
+# the bundled public.xml grant the whitelisted ipsets only the firewalld
+# 'https' service (443/tcp) - closing 8089 here left a whitelisted client
+# able to load the agent screen while every webphone failed to register.
+# Only the hardcoded management IPs above (full accept, all ports) were
+# unaffected, which is why it went unnoticed until 2026-08-24.
+firewall-cmd --permanent --add-port=8089/tcp
 firewall-cmd --permanent --remove-port=8089/udp
 firewall-cmd --permanent --remove-service=http
 firewall-cmd --permanent --remove-service=https
