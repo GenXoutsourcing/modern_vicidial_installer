@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GenX Contact Center - Mission Control</title>
+    <style>
+      /* Manager Dashboard cleanup: the QA & Recording Review panel is the
+         only wide panel directly under .mdash. Keep the Recordings/QA
+         navigation and dedicated recordings view intact. */
+      .mdash > .mpanel.mpanel-wide {
+        display: none !important;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

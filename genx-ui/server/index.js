@@ -53,6 +53,7 @@ const config = {
   port: Number(process.env.GENX_UI_PORT || 3200),
   minUserLevel: Number(process.env.GENX_UI_MIN_USER_LEVEL || 7),
   sessionTtlMs: Number(process.env.GENX_UI_SESSION_TTL_MS || 8 * 60 * 60 * 1000),
+  sessionRevalidateMs: Number(process.env.GENX_UI_SESSION_REVALIDATE_MS || 60 * 1000),
   db: {
     host: process.env.GENX_UI_DB_HOST || '127.0.0.1',
     port: Number(process.env.GENX_UI_DB_PORT || 3306),
@@ -104,6 +105,10 @@ function serverFeatures() {
 const app = express();
 app.set('trust proxy', 'loopback');
 
+function requestLogPath(req) {
+  return String(req.originalUrl || req.url || '/').split('?')[0] || '/';
+}
+
 // --- Async-handler safety net -----------------------------------------------
 // Express 4 does NOT route a rejected promise from an async handler to any
 // error middleware: the rejection escapes as an unhandledRejection, which on
@@ -121,12 +126,12 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch']) {
         const out = fn(req, res, next);
         if (out && typeof out.catch === 'function') {
           out.catch((error) => {
-            console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+            console.error(`[genx-ui] ${req.method} ${requestLogPath(req)} handler error:`, error);
             if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
           });
         }
       } catch (error) {
-        console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+        console.error(`[genx-ui] ${req.method} ${requestLogPath(req)} handler error:`, error);
         if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
       }
     };
@@ -671,11 +676,64 @@ function createSession(user) {
   const session = {
     user,
     expiresAt: Date.now() + config.sessionTtlMs,
+    validatedAt: Date.now(),
     persistedAt: Date.now(),
   };
   sessions.set(token, session);
   persistSession(token, session);
   return token;
+}
+
+async function refreshSessionAuthorization(session) {
+  const username = session?.user?.user;
+  if (!username) return null;
+
+  if (session.agentPhone) {
+    const [userRow] = await rows(
+      `SELECT u.user, u.full_name, u.user_level, u.user_group, u.active,
+              u.force_change_password, u.admin_hide_lead_data, u.admin_hide_phone_data,
+              ug.allowed_campaigns
+       FROM vicidial_users u
+       LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
+       WHERE u.user = ? LIMIT 1`,
+      [username],
+      [],
+    );
+    if (!userRow || userRow.active !== 'Y' || userRow.force_change_password === 'Y'
+      || Number(userRow.user_level || 0) < 1 || (await uiAccessFor(userRow.user_group)) === 'admin') {
+      return null;
+    }
+    const phone = session.agentPhone || {};
+    const [phoneRow] = await rows(
+      `SELECT login FROM phones
+       WHERE login = ? AND extension = ? AND server_ip = ? AND active = 'Y'
+       LIMIT 1`,
+      [phone.login || '', phone.extension || '', phone.server_ip || ''],
+      [],
+    );
+    if (!phoneRow) return null;
+    const allowed = accessScope(userRow.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---']);
+    session.user = {
+      user: userRow.user,
+      fullName: userRow.full_name || userRow.user,
+      userLevel: Number(userRow.user_level || 1),
+      userGroup: userRow.user_group || '',
+      adminHideLeadData: userRow.admin_hide_lead_data === '1',
+      adminHidePhoneData: userRow.admin_hide_phone_data || '0',
+      permissions: { allowedCampaigns: allowed },
+    };
+    return session;
+  }
+
+  const freshUser = await loadUserContextByName(username);
+  const uiAccess = freshUser ? await uiAccessFor(freshUser.userGroup) : 'agent';
+  if (!freshUser || Number(freshUser.userLevel || 0) < config.minUserLevel || uiAccess === 'agent') {
+    return null;
+  }
+  freshUser.navSections = await navSectionsFor(freshUser.userGroup);
+  freshUser.uiAccess = uiAccess;
+  session.user = freshUser;
+  return session;
 }
 
 async function sessionFromRequest(req) {
@@ -710,6 +768,14 @@ async function sessionFromRequest(req) {
   if (session.expiresAt <= Date.now()) {
     forgetSession(token);
     return null;
+  }
+  if (Date.now() - (session.validatedAt || 0) > config.sessionRevalidateMs) {
+    const refreshed = await refreshSessionAuthorization(session);
+    if (!refreshed) {
+      await forgetSession(token);
+      return null;
+    }
+    session.validatedAt = Date.now();
   }
   session.expiresAt = Date.now() + config.sessionTtlMs;
   // Refresh the persisted expiry at most every 5 minutes, not per request.
@@ -1183,6 +1249,12 @@ function canModify(user, permission) {
 function requireModify(req, res, permission) {
   if (canModify(req.genxUser, permission)) return true;
   res.status(403).json({ ok: false, error: 'permission_denied' });
+  return false;
+}
+
+function requireRecordingAccess(req, res) {
+  if (canModify(req.genxUser, 'accessRecordings')) return true;
+  res.status(403).json({ ok: false, error: 'recording_access_denied' });
   return false;
 }
 
@@ -3742,11 +3814,18 @@ async function adminData(user) {
           user_group: item.user_group,
           group_name: item.group_name || item.user_group,
         })),
-      phones: phones.map((item) => ({
-        extension: item.extension,
-        server_ip: item.server_ip,
-        label: `${item.extension} @ ${item.server_ip}`,
-      })),
+      phones: [
+        ...phoneAliases.map((item) => ({
+          extension: item.alias_id,
+          server_ip: '',
+          label: `${item.alias_id} (alias)`,
+        })),
+        ...phones.map((item) => ({
+          extension: item.extension,
+          server_ip: item.server_ip,
+          label: `${item.extension} @ ${item.server_ip}`,
+        })),
+      ],
       users: users.map((item) => ({
         user: item.user,
         full_name: item.full_name || item.user,
@@ -4707,30 +4786,112 @@ async function apiUserGroup() {
   }
 }
 
-// Auto-provision a WEBRTC agent phone for a new user on EVERY active
-// asterisk server (legacy parity with the webphone clone in ViciBox's
-// second_server_install.sql: one phones row per dialer, same creds) so
-// resolveAgentPhone can spread logins across all boxes. Each row is cloned
-// from that server's existing webphone (falls back to any webphone row when
-// a dialer has none yet) so codecs/template settings track the cluster's
-// working config. Returns the server IPs provisioned; never throws — a
-// phone failure must not roll back the user create.
+// Auto-provision a WEBRTC agent phone for a new user as a VICIdial phone
+// alias: the user-facing phone_login points to one real phone row per active
+// calling/Asterisk server. Each row is cloned from that server's existing
+// webphone (falls back to any webphone row when a server has none yet) so
+// codecs/template settings track the cluster's working config. Returns the
+// server IPs provisioned; never throws - a phone failure must not roll back
+// the user create.
+let serverColumnNamesCache = null;
+
+async function serverColumnNames() {
+  if (serverColumnNamesCache) return serverColumnNamesCache;
+  const columns = await rows('SHOW COLUMNS FROM servers', [], [], { optional: true });
+  serverColumnNamesCache = new Set(columns.map((column) => column.Field));
+  return serverColumnNamesCache;
+}
+
+async function autoPhoneServerRows() {
+  const names = await serverColumnNames();
+  const flags = [];
+  if (names.has('active_asterisk_server')) flags.push("active_asterisk_server = 'Y'");
+  if (names.has('vicidial_balance_active')) flags.push("vicidial_balance_active = 'Y'");
+  if (names.has('generate_vicidial_conf')) flags.push("generate_vicidial_conf = 'Y'");
+  if (!flags.length) return [];
+  const activeClause = names.has('active') ? "active = 'Y' AND " : '';
+  return rows(
+    `SELECT DISTINCT server_ip
+     FROM servers
+     WHERE ${activeClause}(${flags.join(' OR ')})
+     ORDER BY server_ip ASC`,
+    [],
+    [],
+  );
+}
+
+function generatedPhoneSecret() {
+  return crypto.randomBytes(18).toString('hex');
+}
+
+function autoPhoneMemberSuffix(index) {
+  let n = Number(index) + 1;
+  let suffix = '';
+  while (n > 0) {
+    n -= 1;
+    suffix = String.fromCharCode(97 + (n % 26)) + suffix;
+    n = Math.floor(n / 26);
+  }
+  return suffix || 'a';
+}
+
+function autoPhoneMemberLogin(aliasId, index, serverIp) {
+  const suffix = autoPhoneMemberSuffix(index);
+  const direct = `${aliasId}${suffix}`;
+  if (direct.length <= 15) return direct;
+  const hash = crypto.createHash('sha1').update(`${aliasId}|${serverIp}|${index}`).digest('hex').slice(0, 3);
+  const tail = `${hash}${suffix}`;
+  return `${aliasId.slice(0, Math.max(1, 15 - tail.length))}${tail}`;
+}
+
+function isAutoPhoneMemberLoginForAlias(login, aliasId) {
+  const value = String(login || '');
+  const id = String(aliasId || '');
+  if (!value || !id) return false;
+  if (value.startsWith(`${id}_S`) || value.startsWith(`${id.slice(0, 12)}_S`)) return true;
+  return value.startsWith(id) && /^[a-z]+$/.test(value.slice(id.length));
+}
+
+function autoPhoneAliasOffset(aliasId, count) {
+  if (count < 2) return 0;
+  if (/^[0-9]+$/.test(aliasId)) return Number(BigInt(aliasId) % BigInt(count));
+  const hash = crypto.createHash('sha1').update(aliasId).digest('hex').slice(0, 8);
+  return Number.parseInt(hash, 16) % count;
+}
+
+function rotateAutoPhoneMembers(members, aliasId) {
+  if (members.length < 2) return members;
+  const offset = autoPhoneAliasOffset(aliasId, members.length);
+  return [...members.slice(offset), ...members.slice(0, offset)];
+}
+
 async function autoProvisionAgentPhones(extension, fullName, phonePass) {
   const provisioned = [];
   try {
-    const dialers = await rows(
-      "SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y'",
-      [],
-      [],
-    );
-    for (const dialer of dialers) {
+    const dialers = await autoPhoneServerRows();
+    const aliasMembers = [];
+    for (const [index, dialer] of dialers.entries()) {
       const serverIp = dialer.server_ip;
+      const memberLogin = autoPhoneMemberLogin(extension, index, serverIp);
       const [existing] = await rows(
-        'SELECT extension FROM phones WHERE extension = ? AND server_ip = ? LIMIT 1',
-        [extension, serverIp],
+        'SELECT extension FROM phones WHERE extension = ? AND login = ? AND server_ip = ? LIMIT 1',
+        [memberLogin, memberLogin, serverIp],
         [],
       );
-      if (existing) continue;
+      if (existing) {
+        aliasMembers.push({ login: memberLogin, serverIp });
+        continue;
+      }
+      const [collision] = await rows(
+        `SELECT extension
+         FROM phones
+         WHERE server_ip = ?
+           AND (extension = ? OR login = ? OR dialplan_number = ?)
+         LIMIT 1`,
+        [serverIp, memberLogin, memberLogin, memberLogin],
+        [],
+      );
+      if (collision) continue;
       let [template] = await rows(
         "SELECT * FROM phones WHERE server_ip = ? AND active = 'Y' AND is_webphone = 'Y' ORDER BY extension ASC LIMIT 1",
         [serverIp],
@@ -4746,10 +4907,10 @@ async function autoProvisionAgentPhones(extension, fullName, phonePass) {
       if (!template) continue; // no webphone anywhere to clone from
       const row = {
         ...template,
-        extension,
-        dialplan_number: extension,
-        voicemail_id: extension,
-        login: extension,
+        extension: memberLogin,
+        dialplan_number: memberLogin,
+        voicemail_id: memberLogin.slice(0, 10),
+        login: memberLogin,
         pass: phonePass,
         conf_secret: phonePass,
         fullname: String(fullName || extension).slice(0, 50),
@@ -4761,6 +4922,20 @@ async function autoProvisionAgentPhones(extension, fullName, phonePass) {
       const { assignments, values } = dynamicAssignments(row);
       await execute(`INSERT INTO phones SET ${assignments}`, values);
       provisioned.push(serverIp);
+      aliasMembers.push({ login: memberLogin, serverIp });
+    }
+    if (aliasMembers.length) {
+      const loginsList = rotateAutoPhoneMembers(aliasMembers, extension).map((member) => member.login).join(',');
+      await execute(
+        `INSERT INTO phones_alias
+           (alias_id, alias_name, logins_list, user_group)
+         VALUES (?, ?, ?, '---ALL---')
+         ON DUPLICATE KEY UPDATE
+           alias_name = VALUES(alias_name),
+           logins_list = VALUES(logins_list),
+           user_group = VALUES(user_group)`,
+        [extension, `${String(fullName || extension).slice(0, 36)} Phone Alias`.slice(0, 50), loginsList],
+      );
     }
     if (provisioned.length) {
       const placeholders = provisioned.map(() => '?').join(',');
@@ -4777,12 +4952,12 @@ async function saveUser(req, res, mode) {
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user');
   const payload = userPayload(req.body || {}, req.genxUser);
-  // Blank password on create = the standing bootstrap: 1234 with a forced
+  // Blank password on create = the standing bootstrap: 123456 with a forced
   // change at first login (mirrors stock VICIdial's 6666 behavior). An
   // explicit password still defaults the force flag on unless the form
   // says otherwise.
   if (mode === 'create' && !payload.pass) {
-    payload.pass = '1234';
+    payload.pass = '123456';
     payload.force_change_password = 'Y';
   }
   if (mode === 'create' && req.body?.force_change_password === undefined) {
@@ -4879,14 +5054,14 @@ async function saveUser(req, res, mode) {
   // on the form opts out (assign an existing phone instead).
   let provisionPhonePass = '';
   const wantsAutoPhone = mode === 'create'
-    && /^[0-9]+$/.test(id)
     && !String(payload.phone_login || '').trim()
     && (await uiAccessFor(effectiveGroup)) !== 'admin';
   if (wantsAutoPhone) {
     provisionPhonePass = String(payload.phone_pass || '').trim()
-      || crypto.randomBytes(6).toString('hex');
+      || generatedPhoneSecret();
     payload.phone_login = id;
     payload.phone_pass = provisionPhonePass;
+    if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
   }
 
   const { assignments, values } = dynamicAssignments(payload);
@@ -4903,7 +5078,7 @@ async function saveUser(req, res, mode) {
       if (wantsAutoPhone) {
         const phoneServers = await autoProvisionAgentPhones(id, payload.full_name, provisionPhonePass);
         if (phoneServers.length) {
-          await adminLog(req, 'PHONES', 'ADD', id, 'GENX AUTO PHONE', 'INSERT INTO phones (auto-provision on user create)', phoneServers.join(', '));
+          await adminLog(req, 'PHONES', 'ADD', id, 'GENX AUTO PHONE', 'INSERT INTO phones + phones_alias (auto-provision on user create)', phoneServers.join(', '));
         }
       }
     } else {
@@ -4922,6 +5097,164 @@ async function saveUser(req, res, mode) {
     const status = error.code === 'ER_DUP_ENTRY' ? 409 : 500;
     return res.status(status).json({ ok: false, error: status === 409 ? 'user_exists' : 'user_write_failed' });
   }
+}
+
+function publicError(statusCode, publicError) {
+  const error = new Error(publicError);
+  error.statusCode = statusCode;
+  error.publicError = publicError;
+  return error;
+}
+
+function bulkUserIds(body) {
+  const rawList = cleanText(body.user_ids, 12000);
+  const ids = [];
+  const seen = new Set();
+  const pushId = (value) => {
+    const id = cleanId(value, 20);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  if (rawList) {
+    rawList.split(/[\s,;]+/).forEach(pushId);
+  } else {
+    const prefix = cleanId(body.prefix, 12);
+    const count = cleanInt(body.count, 0, 0, 250);
+    const start = cleanInt(body.start, 1, 0, 999999999);
+    const digits = cleanInt(body.digits, 4, 0, 12);
+    if (count < 1) throw publicError(400, 'bulk_count_required');
+    for (let offset = 0; offset < count; offset += 1) {
+      const number = start + offset;
+      pushId(`${prefix}${digits ? String(number).padStart(digits, '0') : String(number)}`);
+    }
+  }
+  if (!ids.length) throw publicError(400, 'bulk_users_required');
+  if (ids.length > 250) throw publicError(400, 'bulk_user_limit_exceeded');
+  return ids;
+}
+
+function bulkFullName(body, id, index) {
+  const template = cleanText(body.full_name_template, 80)
+    || `${cleanText(body.full_name_prefix, 40) || 'Agent'} {user}`;
+  return template
+    .replace(/\{user\}/g, id)
+    .replace(/\{n\}/g, String(index + 1))
+    .slice(0, 50);
+}
+
+async function createBulkUserRecord(req, id, body) {
+  const payload = userPayload(body || {}, req.genxUser);
+  if (!payload.pass) {
+    payload.pass = '123456';
+    payload.force_change_password = 'Y';
+  }
+  if (body?.force_change_password === undefined) payload.force_change_password = 'Y';
+  if (payload.pass) payload.pass_hash = '';
+
+  if (Number(req.genxUser?.userLevel || 0) < 9) {
+    const scope = req.genxUser?.permissions?.adminViewableGroups;
+    if (payload.user_group && !scopeAllows(scope, payload.user_group)) {
+      throw publicError(403, 'user_group_not_allowed');
+    }
+    if (payload.user_group && SYSTEM_ONLY_USER_GROUPS.has(String(payload.user_group).toUpperCase())) {
+      throw publicError(403, 'user_group_reserved');
+    }
+  }
+
+  const effectiveGroup = cleanId(payload.user_group, 20) || 'ADMIN';
+  const template = await flagTemplateFor(effectiveGroup);
+  if (template) Object.assign(payload, template);
+
+  const apiGroup = await apiUserGroup();
+  const isApiUser = Boolean(apiGroup) && effectiveGroup === apiGroup;
+  if (isApiUser) payload.vdc_agent_api_access = '1';
+  payload.api_allowed_functions = isApiUser ? 'ALL_FUNCTIONS' : '';
+
+  let provisionPhonePass = '';
+  const wantsAutoPhone = !String(payload.phone_login || '').trim()
+    && (await uiAccessFor(effectiveGroup)) !== 'admin';
+  if (wantsAutoPhone) {
+    provisionPhonePass = String(payload.phone_pass || '').trim()
+      || generatedPhoneSecret();
+    payload.phone_login = id;
+    payload.phone_pass = provisionPhonePass;
+    if (!payload.voicemail_id) payload.voicemail_id = id.slice(0, 10);
+  }
+
+  const { assignments, values } = dynamicAssignments(payload);
+  await execute(
+    `INSERT INTO vicidial_users
+     SET user = ?,
+         ${assignments}`,
+    [id, ...values],
+  );
+  await adminLog(req, 'USERS', 'ADD', id, 'GENX BULK ADD USER', 'INSERT INTO vicidial_users', payload.full_name);
+  const phoneServers = wantsAutoPhone
+    ? await autoProvisionAgentPhones(id, payload.full_name, provisionPhonePass)
+    : [];
+  if (phoneServers.length) {
+    await adminLog(req, 'PHONES', 'ADD', id, 'GENX BULK AUTO PHONE', 'INSERT INTO phones + phones_alias (bulk user create)', phoneServers.join(', '));
+  }
+  return { user: id, phoneServers, autoPhone: wantsAutoPhone };
+}
+
+async function bulkCreateUsers(req, res) {
+  if (!requireModify(req, res, 'modifyUsers')) return;
+  if (restrictedUserEditor(req.genxUser)) {
+    return res.status(403).json({ ok: false, error: 'user_create_not_allowed' });
+  }
+
+  let ids;
+  try {
+    ids = bulkUserIds(req.body || {});
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ ok: false, error: error.publicError || 'bulk_users_invalid' });
+  }
+
+  const password = cleanText(req.body?.pass, 100) || '123456';
+  const phonePass = cleanText(req.body?.phone_pass, 100);
+  const baseBody = {
+    ...(req.body || {}),
+    pass: password,
+    phone_pass: phonePass,
+    phone_login: '',
+    user_group: cleanId(req.body?.user_group, 20) || 'AGENTS',
+    active: ynFlag(req.body?.active, 'Y'),
+    force_change_password: ynFlag(req.body?.force_change_password, 'Y'),
+  };
+  const results = [];
+
+  for (const [index, id] of ids.entries()) {
+    try {
+      const created = await createBulkUserRecord(req, id, {
+        ...baseBody,
+        user: id,
+        full_name: bulkFullName(req.body || {}, id, index),
+      });
+      results.push({
+        user: id,
+        status: 'created',
+        phone_alias: created.autoPhone ? id : '',
+        phone_servers: created.phoneServers.length,
+      });
+    } catch (error) {
+      results.push({
+        user: id,
+        status: error.code === 'ER_DUP_ENTRY' ? 'exists' : 'failed',
+        error: error.code === 'ER_DUP_ENTRY' ? 'user_exists' : error.publicError || 'user_write_failed',
+      });
+    }
+  }
+
+  const created = results.filter((row) => row.status === 'created').length;
+  return res.json({
+    ok: true,
+    created,
+    failed: results.length - created,
+    results,
+    data: await adminData(req.genxUser),
+  });
 }
 
 // API-key management. Keys belong to a user; that user must be in the API
@@ -6242,7 +6575,7 @@ async function loadUserContextByName(username) {
             ug.admin_viewable_call_times, ug.allowed_queue_groups
      FROM vicidial_users u
      LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
-     WHERE u.user = ? AND u.active = 'Y'
+     WHERE u.user = ? AND u.active = 'Y' AND COALESCE(u.force_change_password, 'N') <> 'Y'
      LIMIT 1`,
     [String(username || '')],
     [],
@@ -9660,6 +9993,7 @@ async function timeclockStatusReport(req, res) {
 
 async function transcriptsReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const id = Number(req.query?.id || 0);
   if (id > 0) {
     const [row] = await rows(
@@ -9677,7 +10011,7 @@ async function transcriptsReport(req, res) {
     } catch (error) {
       segments = [];
     }
-    return res.json({ ok: true, transcript: { ...row, segments } });
+    return res.json({ ok: true, transcript: { ...maskRecordingRow(req, row), segments } });
   }
   const q = String(req.query?.q || '').trim().slice(0, 200);
   const params = [];
@@ -9698,7 +10032,7 @@ async function transcriptsReport(req, res) {
     params,
     [],
   ).catch(() => []);
-  return res.json({ ok: true, transcripts: list, query: q });
+  return res.json({ ok: true, transcripts: list.map((row) => maskRecordingRow(req, row)), query: q });
 }
 
 // Search the recording log by lead id, agent user, or customer phone number.
@@ -9706,6 +10040,7 @@ async function transcriptsReport(req, res) {
 // at multi-million-lead scale rather than scanning recording_log by filename.
 async function recordingsSearchReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const type = String(req.query?.type || 'lead').toLowerCase();
   const q = String(req.query?.q || '').trim().slice(0, 60);
   if (!q) return res.json({ ok: true, recordings: [], type, query: '' });
@@ -9770,7 +10105,7 @@ async function recordingsSearchReport(req, res) {
       r.status_name = d ? d.status_name : null;
     }
   }
-  return res.json({ ok: true, recordings: list, type, query: q });
+  return res.json({ ok: true, recordings: list.map((row) => maskRecordingRow(req, row)), type, query: q });
 }
 
 async function hangupCauseReport(req, res) {
@@ -9862,6 +10197,7 @@ async function amdLogReport(req, res) {
 
 async function recordingAccessReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const { beginDate, endDate } = parseReportDateRange(req);
   const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const userId = cleanId(req.query?.user, 20);
@@ -10199,12 +10535,11 @@ const AGENT_PHONE_COLUMNS = `login, pass, extension, dialplan_number, server_ip,
 
 // Legacy-parity phone resolution (vicidial.php alias handling): the login an
 // agent types may be a phones_alias (alias_id -> comma list of per-server
-// phone logins) and/or a login that exists on several telephony servers (the
-// join clones the webphone to every dialer; auto-provisioned agent phones get
-// a copy per dialer too). Pick the matching phone on the ACTIVE asterisk
-// server with the fewest live agents so logins spread across all dialers;
-// fall back to non-dialer copies only when no dialer hosts one. Pass
-// phonePass=null to skip the password check (session-carried phones).
+// phone logins) and/or a login that exists on several telephony servers. Pick
+// the matching phone on an active calling/Asterisk server with the fewest live
+// agents; use alias order as the tie-break, then fall back to non-calling
+// copies only when no calling host has one. Pass phonePass=null to skip the
+// password check (session-carried phones).
 async function resolveAgentPhone(phoneLogin, phonePass) {
   let logins = [phoneLogin];
   const [alias] = await rows(
@@ -10217,14 +10552,17 @@ async function resolveAgentPhone(phoneLogin, phonePass) {
     if (list.length) logins = list;
   }
   const placeholders = logins.map(() => '?').join(',');
+  const callingServerIps = new Set((await autoPhoneServerRows()).map((server) => String(server.server_ip)));
   const candidates = await rows(
-    `SELECT ${AGENT_PHONE_COLUMNS},
-            (server_ip IN (SELECT server_ip FROM servers WHERE active = 'Y' AND active_asterisk_server = 'Y')) AS on_dialer
+    `SELECT ${AGENT_PHONE_COLUMNS}
      FROM phones WHERE login IN (${placeholders}) AND active = 'Y'`,
     logins,
     [],
   );
-  let usable = candidates;
+  let usable = candidates.map((phone) => ({
+    ...phone,
+    on_dialer: callingServerIps.has(String(phone.server_ip)) ? 1 : 0,
+  }));
   if (phonePass !== null && phonePass !== undefined) {
     usable = usable.filter((p) => String(p.pass || '') === String(phonePass));
   }
@@ -10232,15 +10570,18 @@ async function resolveAgentPhone(phoneLogin, phonePass) {
   const dialerHosted = usable.filter((p) => Number(p.on_dialer));
   const pool = dialerHosted.length ? dialerHosted : usable;
   if (pool.length > 1) {
-    // Least-loaded pick; server_ip tiebreak keeps the choice deterministic.
+    // Least-loaded pick; alias order is the VICIdial-style tiebreak.
     const loads = await rows(
       'SELECT server_ip, COUNT(*) AS cnt FROM vicidial_live_agents GROUP BY server_ip',
       [],
       [],
     );
     const byIp = new Map(loads.map((r) => [String(r.server_ip), Number(r.cnt)]));
+    const byLoginOrder = new Map(logins.map((login, index) => [login, index]));
     pool.sort((a, b) =>
       (byIp.get(String(a.server_ip)) || 0) - (byIp.get(String(b.server_ip)) || 0)
+      || (byLoginOrder.get(String(a.login)) ?? Number.MAX_SAFE_INTEGER)
+        - (byLoginOrder.get(String(b.login)) ?? Number.MAX_SAFE_INTEGER)
       || String(a.server_ip).localeCompare(String(b.server_ip)));
   }
   const { on_dialer, ...phone } = pool[0];
@@ -10432,6 +10773,7 @@ async function agentAuth(req, res) {
     user: agentUser,
     agentPhone: { ...phone, pass: undefined },
     expiresAt: Date.now() + config.sessionTtlMs,
+    validatedAt: Date.now(),
     persistedAt: Date.now(),
   };
   sessions.set(token, agentSession);
@@ -13479,7 +13821,7 @@ async function deleteUser(req, res) {
   const id = cleanId(req.params.id, 20);
   if (!id || id.length < 2) return badRequest(res, 'invalid_user_id');
   if (id === req.genxUser.user) return res.status(403).json({ ok: false, error: 'cannot_delete_self' });
-  const [target] = await rows('SELECT user, user_group FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
+  const [target] = await rows('SELECT user, user_group, phone_login FROM vicidial_users WHERE user = ? LIMIT 1', [id], []);
   if (!target) return res.status(404).json({ ok: false, error: 'user_not_found' });
   if (!scopeAllows(req.genxUser?.permissions?.adminViewableGroups, target.user_group)) {
     return res.status(403).json({ ok: false, error: 'user_not_allowed' });
@@ -13489,24 +13831,59 @@ async function deleteUser(req, res) {
     await execute('DELETE FROM vicidial_campaign_agents WHERE user = ?', [id]).catch(() => {});
     await execute('DELETE FROM vicidial_inbound_group_agents WHERE user = ?', [id]).catch(() => {});
     await execute("UPDATE vicidial_remote_agents SET status = 'INACTIVE' WHERE user_start = ?", [id]).catch(() => {});
-    // Remove the user's auto-provisioned phones (extension AND login = user
-    // id — the pattern autoProvisionAgentPhones creates, one row per dialer).
-    // A manually-assigned shared phone has a different extension/login and is
-    // deliberately left alone.
-    const ownPhones = await rows(
+    // Remove this user's auto-provisioned phones only. New auto phones are
+    // alias-backed; the old duplicate-login cleanup stays as a migration
+    // fallback. Manually assigned shared phones are deliberately left alone.
+    const phoneServers = [];
+    const [phoneAlias] = target.phone_login === id ? await rows(
+      'SELECT logins_list FROM phones_alias WHERE alias_id = ? LIMIT 1',
+      [id],
+      [],
+    ) : [];
+    const aliasLogins = String(phoneAlias?.logins_list || '')
+      .split(',')
+      .map((login) => cleanId(login, 20))
+      .filter((login) => isAutoPhoneMemberLoginForAlias(login, id));
+    if (aliasLogins.length) {
+      const placeholders = aliasLogins.map(() => '?').join(',');
+      const ownAliasPhones = await rows(
+        `SELECT server_ip
+         FROM phones
+         WHERE login IN (${placeholders})
+           AND extension = login
+           AND dialplan_number = login`,
+        aliasLogins,
+        [],
+      );
+      if (ownAliasPhones.length) {
+        await execute(
+          `DELETE FROM phones
+           WHERE login IN (${placeholders})
+             AND extension = login
+             AND dialplan_number = login`,
+          aliasLogins,
+        ).catch(() => {});
+        phoneServers.push(...ownAliasPhones.map((p) => p.server_ip));
+      }
+      await execute('DELETE FROM phones_alias WHERE alias_id = ? LIMIT 1', [id]).catch(() => {});
+    }
+    const ownLegacyPhones = await rows(
       'SELECT server_ip FROM phones WHERE extension = ? AND login = ?',
       [id, id],
       [],
     );
-    if (ownPhones.length) {
+    if (ownLegacyPhones.length) {
       await execute('DELETE FROM phones WHERE extension = ? AND login = ?', [id, id]).catch(() => {});
-      const phoneServers = ownPhones.map((p) => p.server_ip);
-      const placeholders = phoneServers.map(() => '?').join(',');
+      phoneServers.push(...ownLegacyPhones.map((p) => p.server_ip));
+    }
+    if (phoneServers.length) {
+      const uniqueServers = [...new Set(phoneServers)];
+      const placeholders = uniqueServers.map(() => '?').join(',');
       await execute(
         `UPDATE servers SET rebuild_conf_files = 'Y' WHERE active_asterisk_server = 'Y' AND server_ip IN (${placeholders})`,
-        phoneServers,
+        uniqueServers,
       ).catch(() => {});
-      await adminLog(req, 'PHONES', 'DELETE', id, 'GENX AUTO PHONE DELETE', 'DELETE FROM phones (user delete)', phoneServers.join(', '));
+      await adminLog(req, 'PHONES', 'DELETE', id, 'GENX AUTO PHONE DELETE', 'DELETE FROM phones/phones_alias (user delete)', uniqueServers.join(', '));
     }
     await adminLog(req, 'USERS', 'DELETE', id, 'GENX DELETE USER', 'DELETE FROM vicidial_users + agent rank rows', id);
     return res.json({ ok: true, data: await adminData(req.genxUser) });
@@ -15254,12 +15631,14 @@ async function adminLeadDetail(req, res) {
     [id],
     [],
   );
-  const recordings = await rows(
-    `SELECT recording_id, start_time, length_in_sec, filename, location, user
-     FROM recording_log WHERE lead_id = ? ORDER BY start_time DESC LIMIT 50`,
-    [id],
-    [],
-  );
+  const recordings = canModify(req.genxUser, 'accessRecordings')
+    ? (await rows(
+      `SELECT recording_id, start_time, length_in_sec, filename, location, user
+       FROM recording_log WHERE lead_id = ? ORDER BY start_time DESC LIMIT 50`,
+      [id],
+      [],
+    )).map((row) => maskRecordingRow(req, row))
+    : [];
   return res.json({ ok: true, lead: maskLeadRow(req, lead), list: listRow || null, calls, callbacks, recordings });
 }
 
@@ -16435,6 +16814,21 @@ function maskPhoneNumber(value, mode) {
   const keep = mode === '2_DIGITS' ? 2 : mode === '3_DIGITS' ? 3 : mode === '4_DIGITS' ? 4 : 0;
   if (!keep) return 'X'.repeat(text.length);
   return 'X'.repeat(Math.max(text.length - keep, 0)) + text.slice(-keep);
+}
+
+function maskPhoneText(value, mode) {
+  if (!value || mode === '0') return value;
+  return String(value).replace(/\d{7,}/g, (digits) => maskPhoneNumber(digits, mode));
+}
+
+function maskRecordingRow(req, row) {
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode === '0' || !row) return row;
+  return {
+    ...row,
+    filename: maskPhoneText(row.filename, phoneMode),
+    location: maskPhoneText(row.location, phoneMode),
+  };
 }
 
 function maskText(value) {
@@ -18262,7 +18656,7 @@ app.post('/api/login', async (req, res) => {
 // old credentials, throttled like login). The new value must stay usable by
 // legacy admin.php and the agent screen, so it's stored plain: 8-30 chars
 // (column is varchar(100)), printable ASCII, no
-// spaces/quotes/backslash/semicolon, not '1234'.
+  // spaces/quotes/backslash/semicolon, and not a bootstrap/default password.
 app.post('/api/login/change-password', async (req, res) => {
   try {
     const username = cleanId(req.body?.username, 20);
@@ -18275,7 +18669,7 @@ app.post('/api/login/change-password', async (req, res) => {
     if (!username || !oldPass || !newPass) return badRequest(res, 'all_fields_required');
     if (newPass.length < 8 || newPass.length > 30
       || !/^[\x21-\x7e]+$/.test(newPass) || /['"\\;]/.test(newPass)
-      || newPass === oldPass || newPass === '1234') {
+      || newPass === oldPass || ['1234', '123456'].includes(newPass)) {
       return badRequest(res, 'weak_password');
     }
     const [userRow] = await rows(
@@ -18346,6 +18740,7 @@ app.get('/api/admin/campaigns/:id/url-multi', requireAccess, listUrlMulti);
 app.post('/api/admin/campaigns/:id/url-multi', requireAccess, (req, res) => saveUrlMulti(req, res, 'create'));
 app.put('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, (req, res) => saveUrlMulti(req, res, 'update'));
 app.delete('/api/admin/campaigns/:id/url-multi/:urlId', requireAccess, deleteUrlMulti);
+app.post('/api/admin/users/bulk', requireAccess, bulkCreateUsers);
 app.post('/api/admin/users', requireAccess, (req, res) => saveUser(req, res, 'create'));
 app.put('/api/admin/users/:id', requireAccess, (req, res) => saveUser(req, res, 'update'));
 app.get('/api/admin/users/:id/api-keys', requireAccess, listApiKeys);
