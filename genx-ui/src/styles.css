@@ -3608,14 +3608,15 @@ input:-webkit-autofill:focus {
   text-transform: uppercase;
 }
 
-/* The preview card mimics the agent script tab: light background, dark
-   text, exactly what the emitted inline-styled HTML expects. */
+/* The preview frame mimics the agent script tab while keeping raw script HTML
+   outside the admin app DOM. */
 .sb-preview-card {
+  display: block;
+  width: 100%;
+  border: 0;
   border-radius: 10px;
   background: #fff;
-  color: #1c1c1c;
-  padding: 16px 18px;
-  min-height: 200px;
+  min-height: 232px;
 }
 
 .sb-actions {

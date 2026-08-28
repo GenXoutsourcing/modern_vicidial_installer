@@ -53,6 +53,7 @@ const config = {
   port: Number(process.env.GENX_UI_PORT || 3200),
   minUserLevel: Number(process.env.GENX_UI_MIN_USER_LEVEL || 7),
   sessionTtlMs: Number(process.env.GENX_UI_SESSION_TTL_MS || 8 * 60 * 60 * 1000),
+  sessionRevalidateMs: Number(process.env.GENX_UI_SESSION_REVALIDATE_MS || 60 * 1000),
   db: {
     host: process.env.GENX_UI_DB_HOST || '127.0.0.1',
     port: Number(process.env.GENX_UI_DB_PORT || 3306),
@@ -104,6 +105,10 @@ function serverFeatures() {
 const app = express();
 app.set('trust proxy', 'loopback');
 
+function requestLogPath(req) {
+  return String(req.originalUrl || req.url || '/').split('?')[0] || '/';
+}
+
 // --- Async-handler safety net -----------------------------------------------
 // Express 4 does NOT route a rejected promise from an async handler to any
 // error middleware: the rejection escapes as an unhandledRejection, which on
@@ -121,12 +126,12 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch']) {
         const out = fn(req, res, next);
         if (out && typeof out.catch === 'function') {
           out.catch((error) => {
-            console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+            console.error(`[genx-ui] ${req.method} ${requestLogPath(req)} handler error:`, error);
             if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
           });
         }
       } catch (error) {
-        console.error(`[genx-ui] ${req.method} ${req.originalUrl} handler error:`, error);
+        console.error(`[genx-ui] ${req.method} ${requestLogPath(req)} handler error:`, error);
         if (!res.headersSent) res.status(500).json({ ok: false, error: 'internal_error' });
       }
     };
@@ -671,11 +676,64 @@ function createSession(user) {
   const session = {
     user,
     expiresAt: Date.now() + config.sessionTtlMs,
+    validatedAt: Date.now(),
     persistedAt: Date.now(),
   };
   sessions.set(token, session);
   persistSession(token, session);
   return token;
+}
+
+async function refreshSessionAuthorization(session) {
+  const username = session?.user?.user;
+  if (!username) return null;
+
+  if (session.agentPhone) {
+    const [userRow] = await rows(
+      `SELECT u.user, u.full_name, u.user_level, u.user_group, u.active,
+              u.force_change_password, u.admin_hide_lead_data, u.admin_hide_phone_data,
+              ug.allowed_campaigns
+       FROM vicidial_users u
+       LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
+       WHERE u.user = ? LIMIT 1`,
+      [username],
+      [],
+    );
+    if (!userRow || userRow.active !== 'Y' || userRow.force_change_password === 'Y'
+      || Number(userRow.user_level || 0) < 1 || (await uiAccessFor(userRow.user_group)) === 'admin') {
+      return null;
+    }
+    const phone = session.agentPhone || {};
+    const [phoneRow] = await rows(
+      `SELECT login FROM phones
+       WHERE login = ? AND extension = ? AND server_ip = ? AND active = 'Y'
+       LIMIT 1`,
+      [phone.login || '', phone.extension || '', phone.server_ip || ''],
+      [],
+    );
+    if (!phoneRow) return null;
+    const allowed = accessScope(userRow.allowed_campaigns, ['-ALL-CAMPAIGNS-', 'ALL-CAMPAIGNS', '---ALL---']);
+    session.user = {
+      user: userRow.user,
+      fullName: userRow.full_name || userRow.user,
+      userLevel: Number(userRow.user_level || 1),
+      userGroup: userRow.user_group || '',
+      adminHideLeadData: userRow.admin_hide_lead_data === '1',
+      adminHidePhoneData: userRow.admin_hide_phone_data || '0',
+      permissions: { allowedCampaigns: allowed },
+    };
+    return session;
+  }
+
+  const freshUser = await loadUserContextByName(username);
+  const uiAccess = freshUser ? await uiAccessFor(freshUser.userGroup) : 'agent';
+  if (!freshUser || Number(freshUser.userLevel || 0) < config.minUserLevel || uiAccess === 'agent') {
+    return null;
+  }
+  freshUser.navSections = await navSectionsFor(freshUser.userGroup);
+  freshUser.uiAccess = uiAccess;
+  session.user = freshUser;
+  return session;
 }
 
 async function sessionFromRequest(req) {
@@ -710,6 +768,14 @@ async function sessionFromRequest(req) {
   if (session.expiresAt <= Date.now()) {
     forgetSession(token);
     return null;
+  }
+  if (Date.now() - (session.validatedAt || 0) > config.sessionRevalidateMs) {
+    const refreshed = await refreshSessionAuthorization(session);
+    if (!refreshed) {
+      await forgetSession(token);
+      return null;
+    }
+    session.validatedAt = Date.now();
   }
   session.expiresAt = Date.now() + config.sessionTtlMs;
   // Refresh the persisted expiry at most every 5 minutes, not per request.
@@ -1183,6 +1249,12 @@ function canModify(user, permission) {
 function requireModify(req, res, permission) {
   if (canModify(req.genxUser, permission)) return true;
   res.status(403).json({ ok: false, error: 'permission_denied' });
+  return false;
+}
+
+function requireRecordingAccess(req, res) {
+  if (canModify(req.genxUser, 'accessRecordings')) return true;
+  res.status(403).json({ ok: false, error: 'recording_access_denied' });
   return false;
 }
 
@@ -4880,12 +4952,12 @@ async function saveUser(req, res, mode) {
   const id = cleanId(mode === 'create' ? req.body?.user : req.params.id, 20);
   if (!id) return badRequest(res, 'invalid_user');
   const payload = userPayload(req.body || {}, req.genxUser);
-  // Blank password on create = the standing bootstrap: 1234 with a forced
+  // Blank password on create = the standing bootstrap: 123456 with a forced
   // change at first login (mirrors stock VICIdial's 6666 behavior). An
   // explicit password still defaults the force flag on unless the form
   // says otherwise.
   if (mode === 'create' && !payload.pass) {
-    payload.pass = '1234';
+    payload.pass = '123456';
     payload.force_change_password = 'Y';
   }
   if (mode === 'create' && req.body?.force_change_password === undefined) {
@@ -6503,7 +6575,7 @@ async function loadUserContextByName(username) {
             ug.admin_viewable_call_times, ug.allowed_queue_groups
      FROM vicidial_users u
      LEFT JOIN vicidial_user_groups ug ON ug.user_group = u.user_group
-     WHERE u.user = ? AND u.active = 'Y'
+     WHERE u.user = ? AND u.active = 'Y' AND COALESCE(u.force_change_password, 'N') <> 'Y'
      LIMIT 1`,
     [String(username || '')],
     [],
@@ -9921,6 +9993,7 @@ async function timeclockStatusReport(req, res) {
 
 async function transcriptsReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const id = Number(req.query?.id || 0);
   if (id > 0) {
     const [row] = await rows(
@@ -9938,7 +10011,7 @@ async function transcriptsReport(req, res) {
     } catch (error) {
       segments = [];
     }
-    return res.json({ ok: true, transcript: { ...row, segments } });
+    return res.json({ ok: true, transcript: { ...maskRecordingRow(req, row), segments } });
   }
   const q = String(req.query?.q || '').trim().slice(0, 200);
   const params = [];
@@ -9959,7 +10032,7 @@ async function transcriptsReport(req, res) {
     params,
     [],
   ).catch(() => []);
-  return res.json({ ok: true, transcripts: list, query: q });
+  return res.json({ ok: true, transcripts: list.map((row) => maskRecordingRow(req, row)), query: q });
 }
 
 // Search the recording log by lead id, agent user, or customer phone number.
@@ -9967,6 +10040,7 @@ async function transcriptsReport(req, res) {
 // at multi-million-lead scale rather than scanning recording_log by filename.
 async function recordingsSearchReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const type = String(req.query?.type || 'lead').toLowerCase();
   const q = String(req.query?.q || '').trim().slice(0, 60);
   if (!q) return res.json({ ok: true, recordings: [], type, query: '' });
@@ -10031,7 +10105,7 @@ async function recordingsSearchReport(req, res) {
       r.status_name = d ? d.status_name : null;
     }
   }
-  return res.json({ ok: true, recordings: list, type, query: q });
+  return res.json({ ok: true, recordings: list.map((row) => maskRecordingRow(req, row)), type, query: q });
 }
 
 async function hangupCauseReport(req, res) {
@@ -10123,6 +10197,7 @@ async function amdLogReport(req, res) {
 
 async function recordingAccessReport(req, res) {
   if (!requireModify(req, res, 'viewReports')) return;
+  if (!requireRecordingAccess(req, res)) return;
   const { beginDate, endDate } = parseReportDateRange(req);
   const params = [`${beginDate} 00:00:00`, `${endDate} 23:59:59`];
   const userId = cleanId(req.query?.user, 20);
@@ -10698,6 +10773,7 @@ async function agentAuth(req, res) {
     user: agentUser,
     agentPhone: { ...phone, pass: undefined },
     expiresAt: Date.now() + config.sessionTtlMs,
+    validatedAt: Date.now(),
     persistedAt: Date.now(),
   };
   sessions.set(token, agentSession);
@@ -15555,12 +15631,14 @@ async function adminLeadDetail(req, res) {
     [id],
     [],
   );
-  const recordings = await rows(
-    `SELECT recording_id, start_time, length_in_sec, filename, location, user
-     FROM recording_log WHERE lead_id = ? ORDER BY start_time DESC LIMIT 50`,
-    [id],
-    [],
-  );
+  const recordings = canModify(req.genxUser, 'accessRecordings')
+    ? (await rows(
+      `SELECT recording_id, start_time, length_in_sec, filename, location, user
+       FROM recording_log WHERE lead_id = ? ORDER BY start_time DESC LIMIT 50`,
+      [id],
+      [],
+    )).map((row) => maskRecordingRow(req, row))
+    : [];
   return res.json({ ok: true, lead: maskLeadRow(req, lead), list: listRow || null, calls, callbacks, recordings });
 }
 
@@ -16736,6 +16814,21 @@ function maskPhoneNumber(value, mode) {
   const keep = mode === '2_DIGITS' ? 2 : mode === '3_DIGITS' ? 3 : mode === '4_DIGITS' ? 4 : 0;
   if (!keep) return 'X'.repeat(text.length);
   return 'X'.repeat(Math.max(text.length - keep, 0)) + text.slice(-keep);
+}
+
+function maskPhoneText(value, mode) {
+  if (!value || mode === '0') return value;
+  return String(value).replace(/\d{7,}/g, (digits) => maskPhoneNumber(digits, mode));
+}
+
+function maskRecordingRow(req, row) {
+  const phoneMode = req.genxUser?.adminHidePhoneData || '0';
+  if (phoneMode === '0' || !row) return row;
+  return {
+    ...row,
+    filename: maskPhoneText(row.filename, phoneMode),
+    location: maskPhoneText(row.location, phoneMode),
+  };
 }
 
 function maskText(value) {
@@ -18563,7 +18656,7 @@ app.post('/api/login', async (req, res) => {
 // old credentials, throttled like login). The new value must stay usable by
 // legacy admin.php and the agent screen, so it's stored plain: 8-30 chars
 // (column is varchar(100)), printable ASCII, no
-// spaces/quotes/backslash/semicolon, not '1234'.
+  // spaces/quotes/backslash/semicolon, and not a bootstrap/default password.
 app.post('/api/login/change-password', async (req, res) => {
   try {
     const username = cleanId(req.body?.username, 20);
@@ -18576,7 +18669,7 @@ app.post('/api/login/change-password', async (req, res) => {
     if (!username || !oldPass || !newPass) return badRequest(res, 'all_fields_required');
     if (newPass.length < 8 || newPass.length > 30
       || !/^[\x21-\x7e]+$/.test(newPass) || /['"\\;]/.test(newPass)
-      || newPass === oldPass || newPass === '1234') {
+      || newPass === oldPass || ['1234', '123456'].includes(newPass)) {
       return badRequest(res, 'weak_password');
     }
     const [userRow] = await rows(

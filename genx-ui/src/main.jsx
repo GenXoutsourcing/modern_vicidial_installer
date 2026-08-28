@@ -312,6 +312,8 @@ function hasNavSection(user, section) {
 function canSeeView(user, viewKey) {
   if (!viewKey || viewKey === 'command') return true;
   if (ADMIN_ONLY_NAV_KEYS.has(viewKey)) return hasAdminNav(user);
+  if (viewKey === 'recordings') return userCan(user, 'recordings') && (hasNavSection(user, 'reports') || hasAdminNav(user));
+  if (viewKey === 'reportRecordingAccess') return userCan(user, 'recordings') && (hasNavSection(user, 'reports') || hasAdminNav(user));
   if (/^report[A-Z]/.test(viewKey)) return hasNavSection(user, 'reports') || hasAdminNav(user);
   const section = VIEW_SECTION[viewKey];
   if (section === undefined) return true;
@@ -634,7 +636,7 @@ function Login({ onLogin }) {
       await doLogin(newPass);
     } catch (requestError) {
       setError(requestError.message === 'weak_password'
-        ? 'Password must be 8-30 characters with no spaces or quotes, and not 1234'
+        ? 'Password must be 8-30 characters with no spaces or quotes, and not a default password'
         : requestError.message === 'too_many_attempts'
           ? 'Too many attempts - wait a few minutes'
           : 'Password change failed - try again');
@@ -892,6 +894,7 @@ function userCan(user, entity) {
   if (entity === 'shifts') return Boolean(user?.modifyShifts);
   if (entity === 'statuses') return Boolean(user?.modifyStatuses);
   if (entity === 'campaignStatuses') return Boolean(user?.modifyStatuses || user?.modifyCampaigns);
+  if (entity === 'recordings') return Boolean(user?.accessRecordings);
   if (entity === 'remoteAgents') return Boolean(user?.modifyRemoteagents);
   if (entity === 'dropLists') return Boolean(user?.modifyLists);
   if (entity === 'phoneAliases') return Boolean(user?.modifyPhones);
@@ -2933,7 +2936,7 @@ function actionFields(entity, mode, admin, form = {}, user = null) {
     return [
       { section: 'Identity and Login' },
       { key: 'user', label: 'User ID', disabled: mode === 'edit' },
-      { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password (blank = 1234 + forced change)', type: 'password' },
+      { key: 'pass', label: mode === 'edit' ? 'New Password' : 'Password (blank = 123456 + forced change)', type: 'password' },
       { key: 'force_change_password', label: 'Force Password Change at Next Login', type: 'select', options: yesNoOptions('Y', 'N', 'Yes', 'No') },
       { key: 'full_name', label: 'Full Name' },
       { key: 'user_level', label: 'Level', type: 'select', options: enumOptions(ensureOption(USER_LEVEL_OPTIONS, form?.user_level)) },
@@ -10092,6 +10095,31 @@ function sbEscape(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function sbAttrEscape(text) {
+  return String(text || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+const SCRIPT_FRAME_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "media-src data: blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join('; ');
+
+const SCRIPT_PREVIEW_FRAME_CSP = SCRIPT_FRAME_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+
+function scriptFrameDoc(html, { allowScripts = false } = {}) {
+  const csp = allowScripts ? SCRIPT_FRAME_CSP : SCRIPT_PREVIEW_FRAME_CSP;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${sbAttrEscape(csp)}"><style>html,body{margin:0;min-height:100%;background:#fff;color:#1c1c1c;font-family:Arial,sans-serif;}body{padding:16px 18px;overflow-wrap:anywhere;}</style></head><body>${String(html || '')}</body></html>`;
+}
+
 // One block -> its HTML (inline styles only: the agent screen and legacy
 // agc render this outside our stylesheet).
 function sbBlockHtml(block) {
@@ -10341,10 +10369,12 @@ function ScriptBuilder({ script, token, onClose, onSaved }) {
           </div>
           <div className="sb-preview">
             <p className="sb-preview-label">Agent preview (sample lead: Maria Lopez)</p>
-            {/* Builder-generated markup only: sbRenderHtml escapes all block
-                text; the raw block is admin-authored HTML, same trust level
-                as the legacy script editor it replaces. */}
-            <div className="sb-preview-card" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+            <iframe
+              className="sb-preview-card"
+              title="Agent script preview"
+              sandbox=""
+              srcDoc={scriptFrameDoc(previewHtml)}
+            />
           </div>
         </div>
         {tooLong && <p className="form-error">Script exceeds the 12,000 character limit — shorten it or it will be truncated.</p>}
@@ -11254,6 +11284,15 @@ const NATIVE_REPORT_GROUPS = REPORT_GROUPS
   .map((group) => ({ ...group, items: group.items.filter((item) => item.view) }))
   .filter((group) => group.items.length);
 
+function recordingScopedReportGroups(groups, user) {
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.view !== 'reportRecordingAccess' || userCan(user, 'recordings')),
+    }))
+    .filter((group) => group.items.length);
+}
+
 // DISPLAY-SIDE convenience only — the server is the enforcing layer for
 // every report route. Legacy vicidial_user_groups.allowed_reports stores
 // legacy report NAMES, so native GenX screens are matched by fuzzy substring
@@ -11264,11 +11303,12 @@ const NATIVE_REPORT_GROUPS = REPORT_GROUPS
 // server would happily serve them.
 function reportGroupsForUser(user) {
   const scope = user?.permissions?.allowedReports;
-  if (Number(user?.userLevel || 0) >= 9 || scope?.all) return NATIVE_REPORT_GROUPS;
+  const visibleGroups = recordingScopedReportGroups(NATIVE_REPORT_GROUPS, user);
+  if (Number(user?.userLevel || 0) >= 9 || scope?.all) return visibleGroups;
   if (!user?.viewReports) return [];
   const allowed = (scope?.values || []).map((value) => value.toLowerCase());
-  if (!allowed.length) return NATIVE_REPORT_GROUPS;
-  return NATIVE_REPORT_GROUPS
+  if (!allowed.length) return visibleGroups;
+  return visibleGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => allowed.some((value) => (
@@ -21228,7 +21268,10 @@ function AgentConsole({ token, authInfo, onExit }) {
                     title="Campaign script"
                     style={{ width: '100%', height: 420, border: 0, background: '#fff', borderRadius: 8 }}
                     sandbox="allow-scripts"
-                    srcDoc={applyScriptConditions(mergeFields(scriptData.script.script_text, { escapeHtml: true }), lead)}
+                    srcDoc={scriptFrameDoc(
+                      applyScriptConditions(mergeFields(scriptData.script.script_text, { escapeHtml: true }), lead),
+                      { allowScripts: true },
+                    )}
                   />
                 )}
               </div>
@@ -22585,6 +22628,7 @@ function AdminShell({ token, user, onLogout }) {
                 // status definitions are admin-only (campaign statuses live
                 // on the individual campaigns).
                 if (ADMIN_ONLY_NAV_KEYS.has(key) && !hasAdminNav(user)) return null;
+                if (key === 'recordings' && !userCan(user, 'recordings')) return null;
                 const item = NAV_ITEMS.find((navItem) => navItem.key === key);
                 if (!item) return null;
                 const Icon = item.icon;
