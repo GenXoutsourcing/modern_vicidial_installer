@@ -11,6 +11,20 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Manager dashboard cleanup**: the QA & Recording Review dashboard panel is
+  suppressed in the production build while QA/Recordings navigation remains
+  available to groups with recording access.
+- **User and phone provisioning**: individual and bulk user creation can
+  auto-provision a native `phones_alias` login plus one generated phone row per
+  active calling/Asterisk server. New user passwords default to `123456` with
+  `force_change_password='Y'`; phone/SIP secrets are generated per phone row.
+- **VICIdial-style phone aliases**: agent login resolves a `phones_alias`
+  login to an active member phone and load-balances by current live-agent load,
+  with alias order as the tie-break.
+- **Security hardening**: admin/agent sessions periodically revalidate current
+  user, group, force-password, and phone state; recordings endpoints require
+  `access_recordings`; campaign-script previews render in sandboxed frames; and
+  server error logs avoid full query strings.
 - **Overlay remediation sync**: installer now writes `GENX_UI_PUBLIC_HOST`,
   emits Apache Host/header/security gates for `/genx` and `/genxapi`, and
   deploys the hardened app/API source from the ViciBox clone remediation.

@@ -20,15 +20,22 @@ dnf config-manager --set-enabled crb || true
 sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
 
 cd /usr/src
+GENX_INSTALL_BRANCH="${GENX_INSTALL_BRANCH:-manager-dashboard-cleanup}"
 if [ -d modern_vicidial_installer ]; then
     cd modern_vicidial_installer
-    git pull --ff-only
+    git fetch origin "$GENX_INSTALL_BRANCH"
+    git checkout "$GENX_INSTALL_BRANCH"
+    git pull --ff-only origin "$GENX_INSTALL_BRANCH"
 else
-    git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
+    git clone --branch "$GENX_INSTALL_BRANCH" https://github.com/GenXoutsourcing/modern_vicidial_installer
 fi
 
 reboot
 ```
+
+Until these updates are merged to the default branch, leave
+`GENX_INSTALL_BRANCH=manager-dashboard-cleanup` so a fresh install includes the
+current GenX UI manager dashboard, user, phone-alias, and security updates.
 
 ## Run the installer after reboot
 
@@ -72,6 +79,11 @@ sudo ./install-genx-ui.sh
 ```
 
 The app runs locally on the server and is exposed through Apache at `/genx/`. It keeps its own service and build output outside VICIDIAL core files. Human login requires an active VICIdial user at or above the configured minimum user level.
+
+Current branch features include the cleaned manager dashboard, retained
+Recordings navigation, role-gated recordings access, bulk user creation,
+automatic alias-backed phone provisioning across calling/Asterisk servers, and
+generated per-phone SIP secrets.
 
 ## Included files
 

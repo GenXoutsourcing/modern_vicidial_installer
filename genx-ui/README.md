@@ -24,8 +24,12 @@ The current GenX shell includes:
 - active campaigns and lead pool counts
 - hourly call flow
 - campaign and live agent tables
-- native add/edit forms for campaigns, users, lists, and inbound groups
+- native add/edit forms for campaigns, users, lists, inbound groups, phones,
+  phone aliases, and user groups
+- bulk user creation with automatic `phones_alias` provisioning across active
+  calling/Asterisk servers
 - a Reports page with reviewed VICIdial report entrypoints
+- role-gated Recordings navigation and recording reports
 - a VICIdial page map for admin areas that still need native GenX screens
 
 Write actions require the matching VICIdial permission flag, such as `modify_campaigns`, `modify_users`, `modify_lists`, or `modify_ingroups`; level 9 users are allowed across these first native admin forms.
@@ -36,6 +40,9 @@ Full agent console (login, webphone, dialing, dispositions, transfers, chat) tha
 
 - **Conference engine** is read per dialer server from `servers.conf_engine` (`CONFBRIDGE` uses `vicidial_confbridges` with the `2` agent-join prefix; anything else falls back to meetme `vicidial_conferences`).
 - **Webphone** URL/key come from `system_settings.webphone_url` / user-group overrides, same as legacy `vicidial.php`.
+- **Phone aliases** are resolved like legacy VICIdial: an agent can carry a
+  `phones_alias` login, and the backend selects an active member phone on the
+  least-loaded calling server, using alias order as the tie-break.
 - **Team Chat** requires `system_settings.allow_chats = 1`; when disabled the card explains it and all chat endpoints refuse. Chat interoperates with the legacy manager chat panel (`vicidial_manager_chats` / `vicidial_manager_chat_log`).
 - **Sales Today** counts dispositions whose status has `sale = 'Y'` in `vicidial_statuses` or `vicidial_campaign_statuses`.
 - **Pause-code countdowns** use `vicidial_pause_codes.time_limit` (seconds, advisory).
@@ -72,9 +79,9 @@ System Settings (`Admin > System Settings`):
 
 Per asterisk server (`Admin > Servers`): `conf_engine` must match the dialplan (`CONFBRIDGE` needs `vicidial_confbridges` rooms; meetme needs `vicidial_conferences` rooms — vanilla installs ship meetme rooms), and `web_socket_url` / `external_server_ip` for webphones behind NAT.
 
-Phones: `is_webphone = Y` for webphone agents (conf secret is used as the SIP password), or working hard phones; standard extensions (park `8301`, DTMF `8500998`, voicemail dump) are stock dialplan.
+Phones: `is_webphone = Y` for webphone agents (conf secret is used as the SIP password), or working hard phones; standard extensions (park `8301`, DTMF `8500998`, voicemail dump) are stock dialplan. New user creation can auto-provision a `phones_alias` row for the user plus one generated phone row per active calling/Asterisk server; generated phone/SIP secrets are stored on those phone rows.
 
-Users: agents need `phone_login`/`phone_pass` set on the user record (the agent login page only asks user/pass/campaign); admin users need `user_level >= GENX_UI_MIN_USER_LEVEL` (default 7) plus the normal VICIdial permission flags per feature (`modify_*`, `delete_*`, `custom_fields_modify`, `modify_audiostore`, `modify_timeclock_log`, `vdc_agent_api_access` for Listen/Barge and supervisor pause, `agent_call_log_view` on the user group for the agent Call Log panel).
+Users: blank passwords on new individual or bulk-created users become `123456` with `force_change_password = 'Y'`; the first login must set a non-default replacement. Agents need an active direct or alias-backed `phone_login` on the user record (the agent login page only asks user/pass/campaign); admin users need `user_level >= GENX_UI_MIN_USER_LEVEL` (default 7) plus the normal VICIdial permission flags per feature (`modify_*`, `delete_*`, `custom_fields_modify`, `modify_audiostore`, `modify_timeclock_log`, `access_recordings` for recordings/reporting, `vdc_agent_api_access` for Listen/Barge and supervisor pause, `agent_call_log_view` on the user group for the agent Call Log panel).
 
 Campaigns: normal VICIdial campaign setup applies unchanged — dial method (the agent screen adapts RATIO/ADAPT vs MANUAL automatically), allowed user groups, carrier/dial prefix for outbound, scripts/web forms, pause codes (`time_limit` in seconds drives the agent countdown), campaign statuses + hotkeys, `get_call_launch` for auto-opening script/form on connect.
 
