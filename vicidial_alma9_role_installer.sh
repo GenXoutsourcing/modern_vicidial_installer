@@ -287,6 +287,12 @@ role_active_keepalives() {
     # 7 VDauto_dial_FILL, 9 timeclock auto-logout, E email — cluster
     # singletons), telephony=123468S (per-dialer processes), a server with
     # both roles=123456789ES, and everything else (web/archive/slave-only)=X.
+    #
+    # GenX (Steve, 2026-08-30): every role additionally gets 1 (AST_update.pl).
+    # That process refreshes server_updater.last_update once a second; without
+    # it a non-telephony box's heartbeat comes only from genx-server-stats.pl
+    # and the admin Reports server list shows it 0-4s behind the dialers.
+    # Asterisk therefore runs on every role (see ast_active and rc.local below).
     local db_primary=no
     if [ "$ROLE_DATABASE" = "yes" ] && [ "$ROLE_DATABASE_SLAVE" != "yes" ]; then
         db_primary=yes
@@ -294,11 +300,11 @@ role_active_keepalives() {
     if [ "$db_primary" = "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
         printf '123456789ES'
     elif [ "$db_primary" = "yes" ]; then
-        printf '579E'
+        printf '1579E'
     elif [ "$ROLE_TELEPHONY" = "yes" ]; then
         printf '123468S'
     else
-        printf 'X'
+        printf '1'
     fi
 }
 
@@ -545,13 +551,15 @@ join_register_server() {
 
     server_name=$(printf '%s' "$VICIDIAL_SERVER_ID" | tr -cd 'A-Za-z0-9_-' | cut -c1-10)
     local auto_restart
-    # Only telephony servers run Asterisk (ViciBox parity); non-tel roles get
-    # auto_restart_asterisk=N so keepalive never tries to start an idle build.
+    # Asterisk runs on every role: AST_update.pl (keepalive flag 1) needs it to
+    # keep server_updater.last_update fresh once a second. agent_login stays
+    # telephony-only -- the phones-alias load balancer filters on that flag, so
+    # only real dialers should be selectable as an agent's phone server.
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
         ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="Y"; gen_conf="Y"; auto_restart="Y"
         websock="wss://${DOMAINNAME}:8089/ws"
     else
-        ast_active="N"; ast_ver="18.21.1-vici"; agent_login="N"; gen_conf="N"; auto_restart="N"; websock=""
+        ast_active="Y"; ast_ver="18.21.1-vici"; agent_login="N"; gen_conf="N"; auto_restart="Y"; websock=""
     fi
 
     # Every cluster member gets a servers-table entry (slave DB and archive
@@ -975,10 +983,11 @@ apply_vicidial_database_defaults() {
     local server_id
     local ast_active="N" ast_ver="18.21.1-vici" auto_restart="N" agent_login="N"
 
-    # Only telephony servers run Asterisk (ViciBox parity); non-tel roles keep
-    # auto_restart_asterisk=N so keepalive never tries to start an idle build.
+    # Asterisk runs on every role so AST_update.pl can keep the 1s heartbeat;
+    # agent_login stays telephony-only (see join_register_server for why).
+    ast_active="Y"; auto_restart="Y"
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
-        ast_active="Y"; agent_login="Y"; auto_restart="Y"
+        agent_login="Y"
     fi
 
     server_id=$(printf '%s' "${cert_domain%%.*}" | tr '[:lower:]' '[:upper:]' | cut -c1-10)
@@ -2284,8 +2293,11 @@ cat <<CRONTAB >> /root/crontab-file
 CRONTAB
 fi
 
-if [ "$ROLE_DB_PRIMARY" = "yes" ] || [ "$ROLE_TELEPHONY" = "yes" ]; then
-# The 3way conference checker (--cu3way) is only useful where Asterisk runs.
+# Every role gets the keepalive cron. This was previously gated on
+# DB-primary/telephony, which left web/slave/archive-only boxes with no cron
+# entry at all -- VARactive_keepalives was then inert on those boxes and
+# editing it had no effect until the cron line was added by hand.
+# The 3way conference checker (--cu3way) is only useful where calls are placed.
 KEEPALIVE_FLAGS=""
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
     KEEPALIVE_FLAGS=" --cu3way"
@@ -2295,7 +2307,6 @@ cat <<CRONTAB >> /root/crontab-file
 ### keepalive script for astguiclient processes
 * * * * * /usr/share/astguiclient/ADMIN_keepalive_ALL.pl${KEEPALIVE_FLAGS}
 CRONTAB
-fi
 
 if [ "$ROLE_TELEPHONY" != "yes" ]; then
 cat <<CRONTAB >> /root/crontab-file
@@ -2541,7 +2552,24 @@ modprobe dahdi_dummy || true
 sleep 20
 
 
-### start up asterisk (telephony role only)
+### start up asterisk
+
+/usr/share/astguiclient/start_asterisk_boot.pl
+
+EOF
+else
+# Non-telephony roles run Asterisk too (AST_update.pl needs it for the 1s
+# server_updater heartbeat), but deliberately WITHOUT the telephony-only boot
+# steps above: AST_reset_mysql_vars would wipe live cluster state from a box
+# that places no calls, and dahdi/ip_relay are pointless without trunks.
+cat >> /etc/rc.d/rc.local <<EOF
+
+### sleep for 20 seconds before launching Asterisk
+
+sleep 20
+
+
+### start up asterisk
 
 /usr/share/astguiclient/start_asterisk_boot.pl
 

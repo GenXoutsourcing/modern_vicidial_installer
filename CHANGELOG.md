@@ -11,6 +11,23 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Role installs: non-telephony boxes kept a stale heartbeat and had no
+  keepalive cron**: the `ADMIN_keepalive_ALL.pl` cron line was only written
+  when the box was DB-primary or telephony, so a Web/Slave/Archive-only server
+  got no cron entry at all — `VARactive_keepalives` was inert there and editing
+  it did nothing until the line was added by hand. Those boxes also had no
+  `AST_update.pl` (keepalive flag `1`), so `server_updater.last_update` was
+  maintained only by `genx-server-stats.pl` on a 4s loop and the admin Reports
+  server list showed them 0-4s behind the dialers (worst case ~8s, against a
+  10s RED threshold). Every role now gets the keepalive cron and flag `1`,
+  Asterisk starts on every role via `rc.local` (deliberately without the
+  telephony-only `AST_reset_mysql_vars`/dahdi/ip_relay steps, which would wipe
+  live cluster state from a box that places no calls), `active_asterisk_server`
+  is `Y` on every role, and `genx-server-stats.pl` re-touches every 1s instead
+  of 4s as a fallback for boxes where Asterisk is down. `active_agent_login_server`
+  stays telephony-only — the phones-alias load balancer filters on it, so only
+  real dialers should be selectable as an agent's phone server.
+
 - **Firewall: webphone WSS port 8089 stays open**: all three installers were
   removing `8089/tcp` from the public zone, while the whitelist rich rules in
   the bundled `firewall.zip` `public.xml` grant whitelisted ipsets only the

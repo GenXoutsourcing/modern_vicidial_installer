@@ -133,11 +133,15 @@ if (defined $perf_log && $perf_log eq 'Y') {
 # more than 10 seconds stale (and at 90+ seconds admin.php may clear the
 # server's live calls/agents), and the GenX UI flags DOWN at 15 seconds.
 # AST_update.pl refreshes every second on telephony boxes; emulate that here
-# by re-touching the heartbeat every 4 seconds for the rest of this cron
-# minute, so the worst-case gap to the next run's first write stays ~8s.
+# by re-touching the heartbeat every second for the rest of this cron minute,
+# so the worst-case gap to the next run's first write stays ~5s and the admin
+# Reports TIME column matches the dialers instead of trailing them by 0-4s.
+# (This stays as a safety net: the role installer now also runs AST_update.pl
+# on non-telephony roles, but this script still covers boxes where Asterisk is
+# down or was never started.)
 my $started = time();
 while (time() - $started < 55) {
-    sleep(4);
+    sleep(1);
     $dbh->do("UPDATE server_updater SET last_update=NOW() WHERE server_ip=?", undef, $server_ip);
 }
 
