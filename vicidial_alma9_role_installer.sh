@@ -56,6 +56,15 @@ EXTRA_WHITELIST_IPS="${EXTRA_WHITELIST_IPS:-}"
 # Cluster note: a slave/replica must be >= the master's version, and a physical
 # datadir seed must match the source's major series — pick to match the cluster.
 MARIADB_SERIES="${MARIADB_SERIES:-10.6}"
+# OS + PHP timezone applied to this server. Default keeps the historic
+# Eastern behavior; override per cluster, e.g. SERVER_TIMEZONE=America/Los_Angeles.
+# Cluster note: every box in a cluster should use the SAME value — mixed
+# timezones skew report timestamps, timeclock and cron across the cluster.
+# This does NOT change lead dialing hours: those come from each lead's
+# gmt_offset_now vs the campaign local_call_time window. Setting a non-Eastern
+# zone also means servers.local_gmt / system_settings.default_local_gmt and
+# default_voicemail_timezone need matching values (standard, non-DST offset).
+SERVER_TIMEZONE="${SERVER_TIMEZONE:-America/New_York}"
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     echo "ERROR: Run this installer as root."
@@ -79,7 +88,7 @@ echo "      and applies the hostname you enter — even if you cancel at the"
 echo "      final confirmation. Ctrl+C now to leave the system untouched."
 dnf install -y glibc-langpack-en dnf-plugins-core yum-utils
 localectl set-locale en_US.UTF-8 || true
-timedatectl set-timezone America/New_York || true
+timedatectl set-timezone "$SERVER_TIMEZONE" || true
 
 if command -v getenforce >/dev/null 2>&1; then
     setenforce 0 || true
@@ -242,6 +251,7 @@ print_role_summary() {
     echo "Telephony  : $ROLE_TELEPHONY"
     echo "Archive    : $ROLE_ARCHIVE"
     echo "Firewall   : $ROLE_FIREWALL_ENABLED"
+    echo "Timezone   : $SERVER_TIMEZONE"
     if [ "$ROLE_WEB" = "yes" ]; then
         echo "GenX UI    : $INSTALL_GENX_UI"
     fi
@@ -1655,7 +1665,7 @@ max_input_time = 3360
 post_max_size = 448M
 upload_max_filesize = 442M
 default_socket_timeout = 3360
-date.timezone = America/New_York
+date.timezone = $SERVER_TIMEZONE
 max_input_vars = 50000
 ; END GENX_VICIDIAL_PHP
 EOF
