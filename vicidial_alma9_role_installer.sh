@@ -295,8 +295,12 @@ choose_firewall_policy() {
 role_active_keepalives() {
     # ViciBox parity (vicibox-install.pl): DB-primary=579E (5 VDadapt,
     # 7 VDauto_dial_FILL, 9 timeclock auto-logout, E email — cluster
-    # singletons), telephony=123468S (per-dialer processes), a server with
-    # both roles=123456789ES, and everything else (web/archive/slave-only)=X.
+    # singletons), telephony=123468CS (per-dialer processes), a server with
+    # both roles=123456789ECS, and everything else (web/archive/slave-only)=X.
+    # C (AST_conf_update_screen.pl, the conference updater) is required on any
+    # dialer running ConfBridge conferences — which every GenX build does, the
+    # dialplan has no MeetMe left. Omitting it left Crown and BDA with no
+    # conference updater at all (found 2026-09-04 on the MeetingsTech build).
     #
     # GenX (Steve, 2026-08-30): every role additionally gets 1 (AST_update.pl).
     # That process refreshes server_updater.last_update once a second; without
@@ -308,11 +312,11 @@ role_active_keepalives() {
         db_primary=yes
     fi
     if [ "$db_primary" = "yes" ] && [ "$ROLE_TELEPHONY" = "yes" ]; then
-        printf '123456789ES'
+        printf '123456789ECS'
     elif [ "$db_primary" = "yes" ]; then
         printf '1579E'
     elif [ "$ROLE_TELEPHONY" = "yes" ]; then
-        printf '123468S'
+        printf '123468CS'
     else
         printf '1'
     fi
