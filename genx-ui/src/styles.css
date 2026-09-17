@@ -1725,6 +1725,208 @@ body {
   resize: vertical;
 }
 
+/* System Settings runs to a few hundred fields, so the save/filter strip sticks
+   to the top rather than sitting a full page scroll away from the edit. Opaque
+   background (not the translucent --surface) so panels do not show through. */
+.settings-hero {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  background: var(--surface-strong);
+  box-shadow: 0 6px 18px rgba(3, 9, 18, 0.55);
+}
+
+.settings-hero .compact-action.is-open {
+  border-color: var(--line);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+/* Pending-changes review panel. */
+.settings-review {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 209, 102, 0.06);
+}
+
+.settings-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.settings-review-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-review-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(255, 209, 102, 0.14);
+}
+
+.settings-review-field {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-review-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.settings-review-diff .was {
+  text-decoration: line-through;
+}
+
+.settings-review-diff .now {
+  color: var(--green);
+}
+
+.settings-review-revert {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.settings-review-revert:hover {
+  border-color: var(--line);
+  color: var(--blue);
+}
+
+/* A field edited but not yet saved, so it is findable after scrolling away. */
+.field-grid label.is-changed {
+  position: relative;
+  padding-left: 9px;
+}
+
+.field-grid label.is-changed::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--amber);
+}
+
+.field-grid label.is-changed > span:first-child {
+  color: var(--amber);
+}
+
+/* Boolean two-option enums (System Settings) render as a switch instead of a
+   two-entry dropdown. The checkbox stays in the DOM but visually hidden, so the
+   wrapping <label> still labels it and click/space/tab work natively — the
+   track and value text are decoration and are hidden from assistive tech. */
+.field-grid label.field-switch {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  cursor: pointer;
+}
+
+.field-switch .switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Overrides the shared .field-grid input sizing above. */
+.field-grid .field-switch input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  min-width: 0;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.field-switch .switch-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 22px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(3, 9, 18, 0.72);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.field-switch .switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.field-switch input:checked ~ .switch-track {
+  border-color: rgba(115, 251, 211, 0.45);
+  background: rgba(115, 251, 211, 0.16);
+}
+
+.field-switch input:checked ~ .switch-track::after {
+  transform: translateX(18px);
+  background: var(--green);
+}
+
+.field-switch input:focus-visible ~ .switch-track {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.field-switch .switch-value {
+  min-width: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+
+.field-switch input:checked ~ .switch-value {
+  color: var(--green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .field-switch .switch-track,
+  .field-switch .switch-track::after {
+    transition: none;
+  }
+}
+
 .audio-chooser-link {
   padding: 0;
   border: 0;

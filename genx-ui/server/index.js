@@ -16209,6 +16209,20 @@ async function deleteSettingsContainer(req, res) {
 const SETTINGS_SECRET_RE = /pass|secret|token|systemkey|api_key|apikey/i;
 const SETTINGS_MASK = '********';
 
+// Members of a MySQL ENUM column type, or null if this is not an enum.
+// Mirrors enumMatch() in main.jsx — the two must agree, or the UI would offer
+// a value saveSystemSettings then refuses.
+function enumMembers(type) {
+  const match = /^enum\((.+)\)$/i.exec(String(type || ''));
+  if (!match) return null;
+  const parts = match[1].split(',').map((part) => part.trim());
+  // The split above is naive about commas inside a quoted member. If any part
+  // does not look like a plain quoted literal, treat the type as unparseable
+  // and skip validation rather than risk rejecting a legitimate value.
+  if (!parts.every((part) => /^'.*'$/.test(part))) return null;
+  return parts.map((part) => part.slice(1, -1).replace(/''/g, "'"));
+}
+
 async function getSystemSettings(req, res) {
   if (Number(req.genxUser?.userLevel || 0) < 9) return res.status(403).json({ ok: false, error: 'permission_denied' });
   try {
@@ -16246,6 +16260,14 @@ async function saveSystemSettings(req, res) {
       if (/int\(/.test(type) || /decimal|float|double/.test(type)) {
         value = value.replace(/[^-0-9.]/g, '') || '0';
       } else {
+        const members = enumMembers(type);
+        // An out-of-range ENUM value is NOT an error on a non-strict MySQL —
+        // it is silently stored as '' and the setting reads back blank. Reject
+        // the whole request instead, so a bad value can never quietly wipe a
+        // flag. A valid client cannot hit this; a hand-rolled API call can.
+        if (members && !members.includes(value)) {
+          return badRequest(res, `invalid_enum_value:${key}`);
+        }
         value = value.slice(0, 60000);
       }
       payload[key] = value;
