@@ -59,6 +59,7 @@ import {
   Plus,
   RefreshCcw,
   Radio,
+  RotateCcw,
   Save,
   Search,
   Server,
@@ -997,6 +998,59 @@ function ensureOption(values, currentValue) {
   const list = values.map(String);
   if (current && !list.includes(current)) return [current, ...list];
   return list;
+}
+
+// Unsaved-work guard. A view calls useUnsavedGuard(true) while it holds edits
+// the user has not saved; navigation and tab close then confirm before throwing
+// them away. Module-level registry rather than context so a deeply nested view
+// can opt in without threading a prop through AdminShell — a view is guarded by
+// adding one hook call, and unregisters automatically when it unmounts.
+const dirtyGuards = new Set();
+
+function useUnsavedGuard(isDirty) {
+  const dirtyRef = useRef(isDirty);
+  useEffect(() => {
+    dirtyRef.current = isDirty;
+  }, [isDirty]);
+  useEffect(() => {
+    const guard = () => dirtyRef.current;
+    dirtyGuards.add(guard);
+    return () => {
+      dirtyGuards.delete(guard);
+    };
+  }, []);
+}
+
+function hasUnsavedWork() {
+  for (const guard of dirtyGuards) {
+    // A guard that throws must never be able to trap the user on a page.
+    try {
+      if (guard()) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+function confirmDiscardChanges() {
+  if (!hasUnsavedWork()) return true;
+  return window.confirm('You have unsaved changes on this page. Leave and discard them?');
+}
+
+// Two-option enums that are really booleans, matched on the VALUES rather than
+// the declaration order so enum('0','1') and enum('1','0') both resolve to the
+// same on/off pair. Anything else keeps its dropdown: 3+ options, or a
+// two-option enum that isn't boolean (e.g. enum('AREACODE','FULLPHONE')).
+const BOOLEAN_ENUM_PAIRS = [
+  { on: '1', off: '0' },
+  { on: 'Y', off: 'N' },
+];
+
+function booleanEnumPair(values) {
+  if (!Array.isArray(values) || values.length !== 2) return null;
+  const set = new Set(values.map((value) => String(value)));
+  return BOOLEAN_ENUM_PAIRS.find((pair) => set.has(pair.on) && set.has(pair.off)) || null;
 }
 
 function numberRangeOptions(start, end, step = 1, currentValue) {
@@ -13141,6 +13195,7 @@ function SystemSettingsView({ user, token, onLogout }) {
   const [form, setForm] = useState({});
   const [filter, setFilter] = useState('');
   const [saveState, setSaveState] = useState('');
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -13159,6 +13214,17 @@ function SystemSettingsView({ user, token, onLogout }) {
     };
   }, [token, onLogout]);
 
+  // Computed above the early returns below: useUnsavedGuard is a hook and
+  // cannot sit behind a conditional return.
+  const changed = useMemo(() => {
+    const saved = data?.settings || {};
+    return Object.fromEntries(
+      Object.entries(form).filter(([key, value]) => String(value ?? '') !== String(saved[key] ?? '')),
+    );
+  }, [form, data]);
+  const changedCount = Object.keys(changed).length;
+  useUnsavedGuard(changedCount > 0);
+
   if (!data) return <div className="loading-band">Loading system settings</div>;
   if (data.error) return <div className="alert">{data.error}</div>;
 
@@ -13168,10 +13234,8 @@ function SystemSettingsView({ user, token, onLogout }) {
     return match[1].split(',').map((option) => option.replace(/^'|'$/g, ''));
   };
 
-  const changed = Object.fromEntries(
-    Object.entries(form).filter(([key, value]) => String(value ?? '') !== String(data.settings?.[key] ?? '')),
-  );
-  const changedCount = Object.keys(changed).length;
+  const revertField = (field) => setForm((current) => ({ ...current, [field]: data.settings?.[field] ?? '' }));
+  const revertAll = () => setForm(data.settings || {});
 
   async function save() {
     setSaveState('working');
@@ -13180,14 +13244,28 @@ function SystemSettingsView({ user, token, onLogout }) {
         method: 'PUT',
         body: JSON.stringify({ changes: changed }),
       });
-      setData((current) => ({ ...current, settings: { ...current.settings, ...changed } }));
+      // Merge only what the server reports as actually written: a field it
+      // skipped (masked secret, unknown column) has to stay dirty rather than
+      // look saved.
+      const written = Object.fromEntries((payload.updated || []).map((field) => [field, changed[field]]));
+      setData((current) => ({ ...current, settings: { ...current.settings, ...written } }));
+      setReviewOpen(false);
       setSaveState(`Saved ${payload.updated.length} setting${payload.updated.length === 1 ? '' : 's'}`);
     } catch (requestError) {
       if (requestError.status === 401) {
         onLogout();
         return;
       }
-      setSaveState(requestError.status === 403 ? 'Not permitted' : 'Save failed');
+      if (requestError.status === 403) {
+        setSaveState('Not permitted');
+        return;
+      }
+      // Name the offending field rather than a bare "Save failed" — on a page
+      // of a few hundred settings that is the only actionable part.
+      const code = String(requestError.message || '');
+      setSaveState(code.startsWith('invalid_enum_value:')
+        ? `Rejected: invalid value for ${code.slice('invalid_enum_value:'.length)}`
+        : 'Save failed');
     }
   }
 
@@ -13202,7 +13280,9 @@ function SystemSettingsView({ user, token, onLogout }) {
 
   return (
     <>
-      <section className="report-hero">
+      {/* Sticky: with a few hundred settings the Save button is otherwise a
+          full-page scroll away from whatever you just edited. */}
+      <section className="report-hero settings-hero">
         <div>
           <p className="eyebrow">System</p>
           <h2>System Settings</h2>
@@ -13216,6 +13296,15 @@ function SystemSettingsView({ user, token, onLogout }) {
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
           />
+          <button
+            type="button"
+            className={`secondary-action compact-action${reviewOpen ? ' is-open' : ''}`}
+            disabled={!changedCount}
+            aria-expanded={reviewOpen}
+            onClick={() => setReviewOpen((current) => !current)}
+          >
+            {changedCount ? `${changedCount} changed` : 'No changes'}
+          </button>
           <button type="button" className="primary-action" disabled={!changedCount || saveState === 'working'} onClick={save}>
             <Save size={16} aria-hidden="true" />
             {saveState === 'working' ? 'Saving' : `Save ${changedCount ? `(${changedCount})` : ''}`}
@@ -13223,6 +13312,37 @@ function SystemSettingsView({ user, token, onLogout }) {
           {saveState && saveState !== 'working' && <span className="connection-status">{saveState}</span>}
         </div>
       </section>
+      {reviewOpen && changedCount > 0 && (
+        <section className="settings-review">
+          <div className="settings-review-head">
+            <p className="connection-group-label">Pending changes ({changedCount})</p>
+            <button type="button" className="secondary-action compact-action" onClick={revertAll}>
+              <RotateCcw size={14} aria-hidden="true" /> Revert all
+            </button>
+          </div>
+          <ul className="settings-review-list">
+            {Object.keys(changed).sort().map((field) => (
+              <li key={field}>
+                <code className="settings-review-field">{field}</code>
+                <span className="settings-review-diff">
+                  <span className="was">{String(data.settings?.[field] ?? '') || '(empty)'}</span>
+                  <ChevronRight size={12} aria-hidden="true" />
+                  <span className="now">{String(changed[field] ?? '') || '(empty)'}</span>
+                </span>
+                <button
+                  type="button"
+                  className="settings-review-revert"
+                  title={`Revert ${field}`}
+                  aria-label={`Revert ${field}`}
+                  onClick={() => revertField(field)}
+                >
+                  <RotateCcw size={13} aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section className="admin-grid media-tools-grid">
         {Array.from(groups.entries()).map(([prefix, columns]) => (
           <Panel key={prefix} eyebrow="Settings" title={`${prefix}`} icon={SlidersHorizontal}>
@@ -13230,8 +13350,37 @@ function SystemSettingsView({ user, token, onLogout }) {
               {columns.map((column) => {
                 const options = enumMatch(column.type);
                 const isNumber = /int\(|decimal|float|double/.test(column.type);
+                const value = String(form[column.field] ?? '');
+                // A two-option boolean enum reads better as a switch than as a
+                // dropdown holding two entries. Only when the stored value is
+                // actually one of the two: an out-of-range value (a masked
+                // secret, legacy junk) has no switch position, so it falls
+                // through to the select, which preserves it via ensureOption.
+                const boolPair = options && options.includes(value) ? booleanEnumPair(options) : null;
+                const isChanged = Object.prototype.hasOwnProperty.call(changed, column.field);
+                if (boolPair) {
+                  const isOn = value === boolPair.on;
+                  return (
+                    <label key={column.field} className={`field-switch${isChanged ? ' is-changed' : ''}`}>
+                      <span>{column.field}</span>
+                      <span className="switch">
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={isOn}
+                          onChange={(event) => setForm((current) => ({
+                            ...current,
+                            [column.field]: event.target.checked ? boolPair.on : boolPair.off,
+                          }))}
+                        />
+                        <span className="switch-track" aria-hidden="true" />
+                        <span className="switch-value" aria-hidden="true">{value}</span>
+                      </span>
+                    </label>
+                  );
+                }
                 return (
-                  <label key={column.field}>
+                  <label key={column.field} className={isChanged ? 'is-changed' : undefined}>
                     <span>{column.field}</span>
                     {options ? (
                       <select value={String(form[column.field] ?? '')} onChange={(event) => setForm((current) => ({ ...current, [column.field]: event.target.value }))}>
@@ -22499,6 +22648,7 @@ function AdminShell({ token, user, onLogout }) {
   }, []);
 
   const navigateTo = useCallback((view, params = null) => {
+    if (!confirmDiscardChanges()) return;
     setViewParams(params);
     setActiveView(view);
     setAction(null);
@@ -22517,12 +22667,33 @@ function AdminShell({ token, user, onLogout }) {
     const onHashChange = () => {
       const view = viewFromHash();
       if (view === activeViewRef.current) return;
+      // hashchange fires AFTER the URL already moved, so declining here means
+      // putting it back. replaceState rather than assigning location.hash: that
+      // would push a fresh entry and leave Back pointing at the view we just
+      // refused, re-prompting on every press. replaceState fires no hashchange,
+      // so there is no echo to filter out either.
+      if (!confirmDiscardChanges()) {
+        window.history.replaceState(null, '', `#/${activeViewRef.current}`);
+        return;
+      }
       setViewParams(null);
       setAction(null);
       setActiveView(view);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Tab close / reload / navigating away from the app entirely. The browser
+  // shows its own generic wording; the string is only a legacy formality.
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!hasUnsavedWork()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
 
   const handleSaved = useCallback((nextAdminData) => {

@@ -11,6 +11,33 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **System Settings quality-of-life**: two-option boolean columns
+  (`enum('0','1')`, `enum('Y','N')`) render as inline switches instead of
+  two-entry dropdowns, keyed on the value rather than the declaration order so
+  a column declared `enum('1','0')` still reads correctly. Anything else keeps
+  its dropdown — 3+ option enums, two-option enums that are not boolean
+  (`enum('AREACODE','FULLPHONE')`), and any column whose stored value falls
+  outside its own enum list, which has no switch position and must not be
+  silently coerced. The save/filter strip is sticky, and a "N changed" panel
+  lists every pending edit as old → new with per-field and bulk revert;
+  unsaved fields are marked in the grid.
+- **Unsaved-changes guard**: the admin UI confirms before discarding pending
+  edits on in-app navigation, browser back/forward, and tab close. Declining a
+  back/forward restores the hash with `replaceState` rather than assigning
+  `location.hash`, which would push a fresh entry and re-prompt on every
+  subsequent Back press. A view opts in with one `useUnsavedGuard(dirty)` call;
+  System Settings is the first consumer.
+- **System settings save rejects out-of-range ENUM values**: previously only
+  int/decimal columns were sanitized, so an invalid enum value reached MySQL
+  and — on a non-strict server, the norm for VICIdial's MyISAM setup — was
+  silently stored as `''`, blanking the flag. `saveSystemSettings` now
+  validates against the column's declared members and returns
+  `invalid_enum_value:<field>`, which the UI surfaces by name. The parser skips
+  validation on any enum type it cannot parse cleanly rather than risk
+  rejecting a legitimate value. The UI's post-save merge also now applies only
+  the fields the server reports as written, so a skipped field stays dirty
+  instead of appearing saved.
+
 - **Role installs: non-telephony boxes kept a stale heartbeat and had no
   keepalive cron**: the `ADMIN_keepalive_ALL.pl` cron line was only written
   when the box was DB-primary or telephony, so a Web/Slave/Archive-only server
