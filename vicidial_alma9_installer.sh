@@ -19,6 +19,13 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     exit 1
 fi
 
+FILESYSTEM_PREFLIGHT="$SCRIPT_DIR/preflight-alma9-filesystem.sh"
+if [ ! -x "$FILESYSTEM_PREFLIGHT" ]; then
+    echo "ERROR: Missing executable filesystem preflight: $FILESYSTEM_PREFLIGHT"
+    exit 1
+fi
+"$FILESYSTEM_PREFLIGHT"
+
 if [ -r /etc/os-release ]; then
     . /etc/os-release
     if ! echo "${PLATFORM_ID:-}" | grep -Eq 'platform:el9|platform:almalinux9|platform:rocky9'; then
@@ -1535,6 +1542,8 @@ chown -R apache:apache /var/spool/asterisk/
 configure_audio_store_directory
 
 if [[ "$REBOOT_AFTER_INSTALL" =~ ^[Yy] ]]; then
+    dracut --regenerate-all --force
+    "$FILESYSTEM_PREFLIGHT"
     echo "Restarting AlmaLinux"
     reboot
 else

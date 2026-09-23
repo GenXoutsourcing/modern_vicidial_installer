@@ -5,6 +5,18 @@ ASSET_DIR="$SCRIPT_DIR/assets"
 
 echo "Vicidial installation AlmaLinux/RockyLinux with WebPhone and Dynamic portal"
 
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    echo "ERROR: Run this installer as root."
+    exit 1
+fi
+
+FILESYSTEM_PREFLIGHT="$SCRIPT_DIR/preflight-alma9-filesystem.sh"
+if [ ! -x "$FILESYSTEM_PREFLIGHT" ]; then
+    echo "ERROR: Missing executable filesystem preflight: $FILESYSTEM_PREFLIGHT"
+    exit 1
+fi
+"$FILESYSTEM_PREFLIGHT" || exit $?
+
 # Function to prompt user for input
 prompt() {
     local varname=$1
@@ -1038,6 +1050,9 @@ mysql -e "use asterisk; update system_settings set active_voicemail_server='$ip_
 
 
 read -p 'Press Enter to Reboot: '
+
+dracut --regenerate-all --force || exit 1
+"$FILESYSTEM_PREFLIGHT" || exit 1
 
 echo "Restarting AlmaLinux"
 

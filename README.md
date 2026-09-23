@@ -4,31 +4,54 @@ VICIDIAL installer for AlmaLinux/Rocky Linux with PHP 8.2, Asterisk 18, WebPhone
 
 ## Copy & Paste the part below first
 
-Run this first on a fresh server. The updates and reboot are important before starting the installer.
+Run this first on a fresh server. It clones the installer before the system
+update so the filesystem compatibility check can block an unsafe reboot.
 
 ```bash
-dnf install -y glibc-langpack-en dnf-plugins-core yum-utils
+set -euo pipefail
+
+dnf install -y glibc-langpack-en dnf-plugins-core yum-utils git
 
 localectl set-locale en_US.UTF-8
 
 timedatectl set-timezone America/New_York
 
-dnf update -y
-dnf install -y epel-release git
-dnf config-manager --set-enabled crb || true
-
-sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
-
 cd /usr/src
-if [ -d modern_vicidial_installer ]; then
+if [ -d modern_vicidial_installer/.git ]; then
     cd modern_vicidial_installer
     git pull --ff-only
+elif [ -e modern_vicidial_installer ]; then
+    echo "ERROR: /usr/src/modern_vicidial_installer exists but is not a Git checkout."
+    exit 1
 else
-    git clone https://github.com/GenXoutsourcing/modern_vicidial_installer
+    git clone https://github.com/GenXoutsourcing/modern_vicidial_installer.git
+    cd modern_vicidial_installer
 fi
 
+chmod +x preflight-alma9-filesystem.sh
+./preflight-alma9-filesystem.sh
+
+dnf update -y
+dnf install -y epel-release
+dnf config-manager --set-enabled crb || true
+
+sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config
+
+dracut --regenerate-all --force
+./preflight-alma9-filesystem.sh
+```
+
+Do not reboot if either preflight reports `orphan_file`. Follow its rescue-mode
+instructions first. After the update, initramfs rebuild, and second preflight
+all complete successfully, reboot explicitly:
+
+```bash
 reboot
 ```
+
+This check is also enforced when an active AlmaLinux 9 installer is started.
+It never modifies a filesystem; removing an incompatible feature requires an
+offline rescue-mode repair.
 
 ## Run the installer after reboot
 

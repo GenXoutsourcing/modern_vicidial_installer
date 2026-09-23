@@ -11,6 +11,15 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **AlmaLinux 9 filesystem reboot preflight**: fresh servers now check the
+  mounted root filesystem for the ext4 `orphan_file` feature before updates,
+  installer work, or reboot. The README preparation flow clones and runs the
+  checker before `dnf update`, regenerates every initramfs afterward, runs the
+  checker again, and leaves reboot as an explicit final action. All active
+  installers fail closed with rescue-mode recovery instructions instead of
+  allowing AlmaLinux 9's older initramfs `e2fsck` to strand a healthy RAID at
+  `systemd-fsck-root`.
+
 - **Role installs: non-telephony boxes kept a stale heartbeat and had no
   keepalive cron**: the `ADMIN_keepalive_ALL.pl` cron line was only written
   when the box was DB-primary or telephony, so a Web/Slave/Archive-only server
