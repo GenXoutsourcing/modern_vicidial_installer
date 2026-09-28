@@ -47,14 +47,27 @@ features="$(tune2fs -l "$root_device" 2>/dev/null | awk -F: '
 
 [ -n "$features" ] || fail "Could not read ext4 features from $root_device."
 
-case " $features " in
-    *" orphan_file "*)
+unsafe_feature=""
+for feature in $features; do
+    case "$feature" in
+        orphan_file|FEATURE_*)
+            unsafe_feature="$feature"
+            break
+            ;;
+    esac
+done
+
+if [ -n "$unsafe_feature" ]; then
         cat >&2 <<EOF
-ERROR: $root_device uses the ext4 orphan_file feature.
+ERROR: $root_device uses an ext4 feature that is unsafe for this initramfs:
+       $unsafe_feature
 
 Enterprise Linux 9 currently ships an e2fsck that may not understand this
 feature in the initramfs. A reboot can therefore fail at systemd-fsck-root
 even when the filesystem and RAID are healthy.
+
+Older e2fsprogs releases may display orphan_file as FEATURE_C12. Any unknown
+FEATURE_* token is treated as unsafe so this preflight fails closed.
 
 DO NOT REBOOT OR CONTINUE THE INSTALLER.
 
@@ -72,7 +85,6 @@ The final output must omit orphan_file and report a clean filesystem before
 booting from local disk.
 EOF
         exit "$EXIT_INCOMPATIBLE_FILESYSTEM"
-        ;;
-esac
+fi
 
-echo "PASS: $root_device does not use the incompatible orphan_file feature."
+echo "PASS: $root_device has no orphan_file or unknown ext4 feature tokens."

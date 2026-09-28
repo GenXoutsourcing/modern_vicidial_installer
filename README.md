@@ -41,9 +41,10 @@ dracut --regenerate-all --force
 ./preflight-alma9-filesystem.sh
 ```
 
-Do not reboot if either preflight reports `orphan_file`. Follow its rescue-mode
-instructions first. After the update, initramfs rebuild, and second preflight
-all complete successfully, reboot explicitly:
+Do not reboot if either preflight reports `orphan_file`, `FEATURE_C12`, or any
+unknown `FEATURE_*` token. Follow its rescue-mode instructions first. After the
+update, initramfs rebuild, and second preflight all complete successfully,
+reboot explicitly:
 
 ```bash
 reboot

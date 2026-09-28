@@ -18,7 +18,9 @@ the sign-in page). Tag releases as `v<version>` on this repo.
   checker again, and leaves reboot as an explicit final action. All active
   installers fail closed with rescue-mode recovery instructions instead of
   allowing AlmaLinux 9's older initramfs `e2fsck` to strand a healthy RAID at
-  `systemd-fsck-root`.
+  `systemd-fsck-root`. The detector also rejects `FEATURE_C12`, the name older
+  `tune2fs` versions use for `orphan_file`, and any other unknown `FEATURE_*`
+  token so an unrecognized ext4 feature cannot incorrectly pass the check.
 
 - **Role installs: non-telephony boxes kept a stale heartbeat and had no
   keepalive cron**: the `ADMIN_keepalive_ALL.pl` cron line was only written
