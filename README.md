@@ -6,13 +6,15 @@ VICIDIAL installer for AlmaLinux/Rocky Linux with PHP 8.2, Asterisk 18, WebPhone
 
 Run this first on a fresh server. It clones the installer before the system
 update so the filesystem compatibility check can block an unsafe reboot.
+Copy the commands directly from this code block. Do not add backslashes before
+underscores or paste the repository URL as a Markdown link.
 
 ```bash
 set -euo pipefail
 
 dnf install -y glibc-langpack-en dnf-plugins-core yum-utils git
 
-localectl set-locale en_US.UTF-8
+localectl set-locale LANG=en_US.UTF-8
 
 timedatectl set-timezone America/New_York
 
