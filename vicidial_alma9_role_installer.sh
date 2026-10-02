@@ -2535,7 +2535,8 @@ cat >> /etc/rc.d/rc.local <<EOF
 
 ### start up the apache web server
 
-systemctl start httpd.service
+# only if enabled: an HAProxy agent LB disables/masks httpd and must keep 80/443/446
+systemctl is-enabled --quiet httpd.service && systemctl start httpd.service
 
 EOF
 

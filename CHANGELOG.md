@@ -11,6 +11,15 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **rc.local no longer force-starts a disabled httpd**: every installer wrote
+  an unconditional `systemctl start httpd.service` into rc.local, which
+  overrides `systemctl disable httpd`. On an HAProxy agent load balancer
+  (httpd disabled, HAProxy owns 80/443/446) Apache won the race at boot,
+  HAProxy failed to bind, and the LB silently served the agent screen itself
+  with no load balancing. Found on the MeetingsTech c1 reboot test. rc.local
+  now starts httpd only when the unit is enabled, so every normal role is
+  unchanged.
+
 - **AlmaLinux 9 filesystem reboot preflight**: fresh servers now check the
   mounted root filesystem for the ext4 `orphan_file` feature before updates,
   installer work, or reboot. The README preparation flow clones and runs the
