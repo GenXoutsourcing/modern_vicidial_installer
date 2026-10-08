@@ -695,7 +695,7 @@ cat <<CRONTAB>> /root/crontab-file
 
 
 ### roll logs monthly on high-volume dialing systems
-30 1 1 * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --DAYS=45
+30 1 * * * /usr/share/astguiclient/ADMIN_archive_log_tables.pl --days=45
 
 ### remove old vicidial logs and asterisk logs more than 2 days old
 28 0 * * * /usr/bin/find /var/log/astguiclient -maxdepth 1 -type f -mtime +2 -print | xargs rm -f
