@@ -1295,6 +1295,57 @@ function cleanInt(value, fallback, min, max) {
   return Math.min(Math.max(parsed, min), max);
 }
 
+function sqlDateFromParts(year, month, day, zeroValue = '0000-00-00') {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return zeroValue;
+  if (y < 1900 || y > 9999 || m < 1 || m > 12 || d < 1 || d > 31) return zeroValue;
+  const check = new Date(Date.UTC(y, m - 1, d));
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() + 1 !== m || check.getUTCDate() !== d) return zeroValue;
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function normalizeLeadDateOfBirth(value, zeroValue = '0000-00-00') {
+  if (value == null) return zeroValue;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return zeroValue;
+    return sqlDateFromParts(value.getFullYear(), value.getMonth() + 1, value.getDate(), zeroValue);
+  }
+  const text = cleanText(value, 80);
+  if (!text || text === '0000-00-00' || /^0+(?:\.0+)?$/.test(text)) return zeroValue;
+
+  let match = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:\b|T|\s)/.exec(text);
+  if (match) return sqlDateFromParts(match[1], match[2], match[3], zeroValue);
+
+  match = /^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/.exec(text);
+  if (match) return sqlDateFromParts(match[1], match[2], match[3], zeroValue);
+
+  match = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(text);
+  if (match) return sqlDateFromParts(match[3], match[1], match[2], zeroValue);
+
+  match = /^(\d{4})(\d{2})(\d{2})$/.exec(text);
+  if (match) return sqlDateFromParts(match[1], match[2], match[3], zeroValue);
+
+  if (/^\d+(?:\.\d+)?$/.test(text)) {
+    const serial = Number(text);
+    if (Number.isFinite(serial) && serial >= 367 && serial <= 60000) {
+      const date = new Date(Math.round((serial - 25569) * 86400000));
+      return sqlDateFromParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), zeroValue);
+    }
+    return zeroValue;
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return zeroValue;
+  return sqlDateFromParts(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate(), zeroValue);
+}
+
+function displayLeadDateOfBirth(value) {
+  const normalized = normalizeLeadDateOfBirth(value);
+  return normalized === '0000-00-00' ? '' : normalized;
+}
+
 function quoteId(value) {
   return `\`${String(value).replace(/`/g, '``')}\``;
 }
@@ -5831,7 +5882,7 @@ function leadImportValue(field, value, defaults) {
   if (field === 'rank') return cleanInt(value, 0, -999999, 999999);
   if (field === 'owner') return cleanId(value, 20);
   if (field === 'gender') return cleanText(value, 1).toUpperCase();
-  if (field === 'date_of_birth') return cleanText(value, 10) || '0000-00-00';
+  if (field === 'date_of_birth') return normalizeLeadDateOfBirth(value);
   if (field === 'email') return cleanText(value, 70);
   return cleanText(value, field === 'comments' ? 255 : 80);
 }
@@ -9437,6 +9488,8 @@ function csvExportSender(req, res, filename, columns, dataRows) {
       let value = row[column];
       if (column === 'phone_number' || column === 'alt_phone') {
         if (phoneMode !== '0') value = maskPhoneNumber(value, phoneMode);
+      } else if (column === 'date_of_birth') {
+        value = displayLeadDateOfBirth(value);
       } else if (hideLead && ['vendor_lead_code', 'security_phrase', 'comments'].includes(column)) {
         value = maskText(value);
       }
@@ -11173,7 +11226,7 @@ async function callUrlMergeMap(live, extra) {
       postal_code: lead?.postal_code,
       country_code: lead?.country_code,
       gender: lead?.gender,
-      date_of_birth: lead?.date_of_birth,
+      date_of_birth: displayLeadDateOfBirth(lead?.date_of_birth),
       alt_phone: lead?.alt_phone,
       email: lead?.email,
       security_phrase: lead?.security_phrase,
@@ -13255,7 +13308,7 @@ async function agentUpdateLead(req, res) {
   for (const field of AGENT_LEAD_FIELDS) {
     if (req.body?.[field] !== undefined) {
       sets.push(`\`${field}\` = ?`);
-      params.push(cleanText(req.body[field], 255));
+      params.push(field === 'date_of_birth' ? normalizeLeadDateOfBirth(req.body[field]) : cleanText(req.body[field], 255));
     }
   }
   if (req.body?.phone_number !== undefined) {
@@ -15537,6 +15590,7 @@ function maskLeadRow(req, row) {
   const phoneMode = req.genxUser?.adminHidePhoneData || '0';
   const hideLead = Boolean(req.genxUser?.adminHideLeadData);
   const lead = { ...row };
+  lead.date_of_birth = displayLeadDateOfBirth(lead.date_of_birth);
   if (phoneMode !== '0') {
     lead.phone_number = maskPhoneNumber(lead.phone_number, phoneMode);
     lead.alt_phone = maskPhoneNumber(lead.alt_phone, phoneMode);
@@ -15690,6 +15744,8 @@ async function adminLeadUpdate(req, res) {
       // LEAD_UPDATE_FIELDS): the dialer owns it, and a client sending it is
       // silently ignored rather than coerced.
       payload[field] = Math.trunc(Number(body[field]) || 0);
+    } else if (field === 'date_of_birth') {
+      payload[field] = normalizeLeadDateOfBirth(body[field]);
     } else {
       payload[field] = cleanText(body[field], field === 'email' || field === 'vendor_lead_code' ? 250 : 100);
     }
@@ -16460,6 +16516,8 @@ async function downloadList(req, res) {
       let value = lead[column];
       if (column === 'phone_number' || column === 'alt_phone') {
         if (phoneMode !== '0') value = maskPhoneNumber(value, phoneMode);
+      } else if (column === 'date_of_birth') {
+        value = displayLeadDateOfBirth(value);
       } else if (hideLead && ['vendor_lead_code', 'security_phrase', 'comments'].includes(column)) {
         value = maskText(value);
       }
