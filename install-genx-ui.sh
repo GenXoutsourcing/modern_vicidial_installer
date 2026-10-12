@@ -189,6 +189,13 @@ RedirectMatch 302 ^/$ $target
 EOF
 }
 
+ensure_genx_vicidial_schema() {
+  MYSQL_PWD="$db_pass" mysql -h "$db_host" -P "$db_port" -u "$db_user" "$db_name" <<'SQL'
+ALTER TABLE vicidial_users
+  ADD COLUMN IF NOT EXISTS genx_modify_guides ENUM('0','1') NOT NULL DEFAULT '1';
+SQL
+}
+
 db_host="$(get_conf VARDB_server)"
 db_name="$(get_conf VARDB_database)"
 db_user="$(get_conf VARDB_user)"
@@ -242,6 +249,8 @@ if [ -f "$ENV_FILE" ]; then
   existing_public_host="$(grep -E '^GENX_UI_PUBLIC_HOST=' "$ENV_FILE" | unquote_env_value || true)"
   [ -n "$existing_public_host" ] && public_host="$existing_public_host"
 fi
+
+ensure_genx_vicidial_schema
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "$APP_ROOT" --shell /sbin/nologin "$APP_USER"
