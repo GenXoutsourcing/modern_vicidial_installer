@@ -3999,9 +3999,9 @@ function campaignPayload(body, currentUser) {
     web_form_address: cleanText(body.web_form_address, 2000),
     web_form_address_two: cleanText(body.web_form_address_two, 2000),
     web_form_address_three: cleanText(body.web_form_address_three, 2000),
-    start_call_url: cleanText(body.start_call_url, 2000),
-    dispo_call_url: cleanText(body.dispo_call_url, 2000),
-    na_call_url: cleanText(body.na_call_url, 2000),
+    start_call_url: urlOrAltText(body.start_call_url, 2000),
+    dispo_call_url: urlOrAltText(body.dispo_call_url, 2000),
+    na_call_url: urlOrAltText(body.na_call_url, 2000),
     timer_action: cleanChoice(body.timer_action, TIMER_ACTION_OPTIONS, 'NONE'),
     timer_action_message: cleanText(body.timer_action_message, 255),
     timer_action_seconds: cleanInt(body.timer_action_seconds, 0, 0, 99999),
@@ -4359,6 +4359,7 @@ const CAMPAIGN_URL_FIELDS = [
   // edited in the same Webform URLs pill modal.
   'web_form_target',
 ];
+const CAMPAIGN_ALT_URL_FIELDS = new Set(['start_call_url', 'dispo_call_url', 'na_call_url']);
 async function saveCampaignUrls(req, res) {
   if (!requireModify(req, res, 'modifyCampaigns')) return;
   const id = cleanId(req.params.id, 20);
@@ -4377,6 +4378,8 @@ async function saveCampaignUrls(req, res) {
     // fallback), not the permissive URL cleanText.
     payload[field] = field === 'web_form_target'
       ? codeText(req.body[field], 100, 'vdcwebform')
+      : CAMPAIGN_ALT_URL_FIELDS.has(field)
+        ? urlOrAltText(req.body[field], 2000)
       : cleanText(req.body[field], 2000);
   }
   if (!Object.keys(payload).length) return badRequest(res, 'no_url_fields');

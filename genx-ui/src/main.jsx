@@ -4631,16 +4631,25 @@ const CAMPAIGN_URL_MODALS = {
 // textarea whose value is the literal 'ALT'. Rows fire in rank order when
 // the disposition matches url_statuses ('---ALL---' = any), the lead's list
 // is in url_lists (blank = all lists) and talk time >= Min Talk Sec.
-const ALT_URL_EMPTY = {
+const emptyAltUrl = (urlLists = '') => ({
   url_id: null, active: 'Y', url_rank: '1', url_statuses: '---ALL---',
-  url_lists: '', url_call_length: '0', url_description: '', url_address: '',
-};
+  url_lists: urlLists, url_call_length: '0', url_description: '', url_address: '',
+});
 
-function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
+function urlListsMatch(urlLists, listId) {
+  const target = String(listId || '').trim();
+  const lists = String(urlLists || '').trim();
+  return !target || !lists || ` ${lists} `.includes(` ${target} `);
+}
+
+function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout, defaultUrlLists = '', filterListId = '' }) {
   const [entries, setEntries] = useState(null);
-  const [draft, setDraft] = useState(ALT_URL_EMPTY);
+  const [draft, setDraft] = useState(() => emptyAltUrl(defaultUrlLists));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const visibleEntries = filterListId && entries
+    ? entries.filter((entry) => urlListsMatch(entry.url_lists, filterListId))
+    : entries;
 
   const load = useCallback(() => {
     apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi?url_type=${urlType}`, token)
@@ -4651,6 +4660,11 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
       });
   }, [campaignId, urlType, token, onLogout]);
   useEffect(load, [load]);
+  useEffect(() => {
+    setDraft((current) => (current.url_id || current.url_address || current.url_description
+      ? current
+      : emptyAltUrl(defaultUrlLists)));
+  }, [defaultUrlLists]);
 
   async function saveDraft() {
     setBusy(true);
@@ -4662,7 +4676,7 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
       } else {
         await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi`, token, { method: 'POST', body });
       }
-      setDraft(ALT_URL_EMPTY);
+      setDraft(emptyAltUrl(defaultUrlLists));
       load();
     } catch (requestError) {
       if (requestError.status === 401) {
@@ -4680,7 +4694,7 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
   async function remove(entry) {
     try {
       await apiFetch(`/admin/campaigns/${encodeURIComponent(campaignId)}/url-multi/${entry.url_id}`, token, { method: 'DELETE' });
-      if (draft.url_id === entry.url_id) setDraft(ALT_URL_EMPTY);
+      if (draft.url_id === entry.url_id) setDraft(emptyAltUrl(defaultUrlLists));
       load();
     } catch (requestError) {
       if (requestError.status === 401) onLogout();
@@ -4690,11 +4704,11 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
   return (
     <div className="alt-url-manager">
       <p className="connection-summary">
-        Alternate URLs ({entries ? entries.length : '...'}) — fired in rank order when the disposition matches
+        Alternate URLs ({visibleEntries ? visibleEntries.length : '...'}) — fired in rank order when the disposition matches
         Statuses ('---ALL---' = any), the lead's list is in Lists (blank = all lists)
         {showTalkSec ? ' and talk time reached Min Talk Sec' : ''}. Every matching URL fires.
       </p>
-      {entries && entries.length > 0 && (
+      {visibleEntries && visibleEntries.length > 0 && (
         <DataTable
           columns={[
             { key: 'url_rank', label: 'Rank' },
@@ -4720,7 +4734,7 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
               ),
             },
           ]}
-          rows={entries.map((row) => ({ ...row, id: row.url_id }))}
+          rows={visibleEntries.map((row) => ({ ...row, id: row.url_id }))}
           emptyLabel="No alternate URLs defined yet"
         />
       )}
@@ -4763,7 +4777,7 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
         {error && <p className="form-error">{error}</p>}
         <div className="row-action-group">
           {draft.url_id && (
-            <button type="button" className="secondary-action compact-action" onClick={() => setDraft(ALT_URL_EMPTY)}>
+            <button type="button" className="secondary-action compact-action" onClick={() => setDraft(emptyAltUrl(defaultUrlLists))}>
               Cancel Edit
             </button>
           )}
@@ -4773,6 +4787,54 @@ function AltUrlManager({ campaignId, urlType, showTalkSec, token, onLogout }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ListNaCallUrlField({ field, value, campaignId, listId, token, onLogout, onChange }) {
+  const isAlt = String(value || '').trim().toUpperCase() === 'ALT';
+  return (
+    <div key={field.key} className="wide-field url-field-block">
+      {!isAlt && (
+        <label className="wide-field">
+          <span>{field.label}</span>
+          <input
+            type="text"
+            value={value ?? ''}
+            disabled={field.disabled}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        </label>
+      )}
+      {!isAlt && (
+        <p className="field-hint">
+          Type ALT above to use the no-agent alternate URLs for this list.
+        </p>
+      )}
+      {isAlt && (
+        <div className="alt-mode-head">
+          <span>{field.label}: <strong>ALT</strong> — using the alternate URLs below</span>
+          <button
+            type="button"
+            className="secondary-action compact-action"
+            onClick={() => onChange('')}
+          >
+            Turn ALT Off
+          </button>
+        </div>
+      )}
+      {isAlt && campaignId && (
+        <AltUrlManager
+          campaignId={campaignId}
+          urlType="noagent"
+          showTalkSec={false}
+          token={token}
+          onLogout={onLogout}
+          defaultUrlLists={String(listId || '')}
+          filterListId={String(listId || '')}
+        />
+      )}
+      {isAlt && !campaignId && <p className="form-error">Choose a campaign before adding alternate URLs.</p>}
     </div>
   );
 }
@@ -6649,6 +6711,17 @@ function ActionModal({ action, admin, token, user, onClose, onSaved, onLogout, o
         field={field}
         value={form[field.key]}
         token={token}
+        onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
+      />
+    ) : action.entity === 'lists' && field.key === 'na_call_url' ? (
+      <ListNaCallUrlField
+        key={field.key}
+        field={field}
+        value={form[field.key]}
+        campaignId={form.campaign_id}
+        listId={form.list_id}
+        token={token}
+        onLogout={onLogout}
         onChange={(nextValue) => setForm((current) => ({ ...current, [field.key]: nextValue }))}
       />
     ) : (
