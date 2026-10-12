@@ -104,6 +104,20 @@ copy_asset() {
     cp -f "$ASSET_DIR/$asset_name" "$destination"
 }
 
+fix_astguiclient_conf_permissions() {
+    if [ ! -f /etc/astguiclient.conf ]; then
+        return 0
+    fi
+
+    if getent group apache >/dev/null 2>&1; then
+        chown root:apache /etc/astguiclient.conf
+        chmod 0640 /etc/astguiclient.conf
+    else
+        chown root:root /etc/astguiclient.conf
+        chmod 0644 /etc/astguiclient.conf
+    fi
+}
+
 fix_vicidial_web_permissions() {
     mkdir -p /var/www/html
     chown -R root:root /var/www/html
@@ -1062,6 +1076,7 @@ sed -i s/SERVERIP/"$ip_address"/g /etc/astguiclient.conf
 
 echo "Install VICIDIAL"
 perl install.pl --no-prompt --copy_sample_conf_files=Y
+fix_astguiclient_conf_permissions
 apply_vicidial_database_defaults "$ip_address" "$DOMAINNAME"
 fix_vicidial_web_permissions
 configure_agc_options
