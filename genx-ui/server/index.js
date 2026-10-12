@@ -1311,6 +1311,11 @@ function codeText(value, max = 40, fallback = '') {
   return cleanText(value, max).replace(/[^-_.:| 0-9a-zA-Z]/g, '') || fallback;
 }
 
+function urlOrAltText(value, max = 12000) {
+  const next = cleanText(value, max);
+  return next.toUpperCase() === 'ALT' ? 'ALT' : next;
+}
+
 function cleanExactChoice(value, allowed, fallback, max = 60) {
   const next = codeText(value, max, fallback);
   return allowed.includes(next) ? next : fallback;
@@ -5360,7 +5365,7 @@ function listPayload(body) {
     web_form_address_three: cleanText(body.web_form_address_three, 12000),
     time_zone_setting: cleanExactChoice(body.time_zone_setting, ['COUNTRY_AND_AREA_CODE', 'POSTAL_CODE', 'NANPA_PREFIX', 'OWNER_TIME_ZONE_CODE'], 'COUNTRY_AND_AREA_CODE'),
     inventory_report: ynFlag(body.inventory_report, 'Y'),
-    na_call_url: cleanText(body.na_call_url, 12000),
+    na_call_url: urlOrAltText(body.na_call_url, 12000),
     status_group_id: cleanId(body.status_group_id, 20),
     user_new_lead_limit: cleanInt(body.user_new_lead_limit, -1, -1, 65000),
     daily_reset_limit: cleanInt(body.daily_reset_limit, -1, -1, 65000),
