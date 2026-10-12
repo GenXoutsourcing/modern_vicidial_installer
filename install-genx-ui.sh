@@ -163,6 +163,32 @@ AUDIOSTOREDIR
 
 ensure_audio_store_prereqs
 
+write_root_redirect() {
+  local target=$1
+
+  install -d -m 0755 /var/www/html /etc/httpd/conf.d
+  cat > /var/www/html/index.html <<EOF
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; URL=$target">
+  <title>Redirecting</title>
+  <script>window.location.replace("$target");</script>
+</head>
+<body>
+  <a href="$target">Continue</a>
+</body>
+</html>
+EOF
+  chown root:root /var/www/html/index.html
+  chmod 0644 /var/www/html/index.html
+  cat > /etc/httpd/conf.d/genx-root-redirect.conf <<EOF
+# Managed by modern_vicidial_installer
+RedirectMatch 302 ^/$ $target
+EOF
+}
+
 db_host="$(get_conf VARDB_server)"
 db_name="$(get_conf VARDB_database)"
 db_user="$(get_conf VARDB_user)"
@@ -385,6 +411,7 @@ if [ -f "$SCRIPT_DIR/genx-ui/guide/index.html" ]; then
     install -m 0644 "$SCRIPT_DIR"/genx-ui/guide/*.html /var/www/html/genxguide/
     install -m 0644 "$SCRIPT_DIR"/genx-ui/guide/img/*.jpg /var/www/html/genxguide/img/
 fi
+write_root_redirect "$BASE_PATH"
 
 # A slave DB that joins the cluster AFTER this web install would never be
 # picked up (discovery only ran at install time). This cron re-runs the same

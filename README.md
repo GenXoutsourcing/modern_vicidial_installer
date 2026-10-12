@@ -97,7 +97,7 @@ cd /usr/src/modern_vicidial_installer
 sudo ./install-genx-ui.sh
 ```
 
-The app runs locally on the server and is exposed through Apache at `/genx/`. It keeps its own service and build output outside VICIDIAL core files. Human login requires an active VICIdial user at or above the configured minimum user level.
+The app runs locally on the server and is exposed through Apache at `/genx/`. Installing it also makes the web root `/` redirect to `/genx/`; legacy-only installs keep `/` pointed at the classic VICIdial welcome/login landing. It keeps its own service and build output outside VICIDIAL core files. Human login requires an active VICIdial user at or above the configured minimum user level.
 
 Current branch features include the cleaned manager dashboard, retained
 Recordings navigation, role-gated recordings access, bulk user creation,

@@ -118,6 +118,32 @@ fix_astguiclient_conf_permissions() {
     fi
 }
 
+write_web_root_redirect() {
+    local target=$1
+
+    install -d -m 0755 /var/www/html /etc/httpd/conf.d
+    cat > /var/www/html/index.html <<EOF
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; URL=$target">
+  <title>Redirecting</title>
+  <script>window.location.replace("$target");</script>
+</head>
+<body>
+  <a href="$target">Continue</a>
+</body>
+</html>
+EOF
+    chown root:root /var/www/html/index.html
+    chmod 0644 /var/www/html/index.html
+    cat > /etc/httpd/conf.d/genx-root-redirect.conf <<EOF
+# Managed by modern_vicidial_installer
+RedirectMatch 302 ^/$ $target
+EOF
+}
+
 fix_vicidial_web_permissions() {
     mkdir -p /var/www/html
     chown -R root:root /var/www/html
@@ -1479,10 +1505,7 @@ systemctl daemon-reload
 systemctl enable rc-local.service
 systemctl start rc-local.service
 
-cat <<WELCOME > /var/www/html/index.html
-<META HTTP-EQUIV=REFRESH CONTENT="1; URL=/vicidial/welcome.php">
-Please Hold while I redirect you!
-WELCOME
+write_web_root_redirect "/vicidial/welcome.php"
 fix_vicidial_web_permissions
 
 #cd "$SCRIPT_DIR"
