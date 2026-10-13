@@ -160,3 +160,8 @@ Wicked by contrast has **43.19 GB of indexes** against 62 GB RAM and only a 95.2
 **Root cause of the all-day vdc_db_query 500s:** PHP 8.1+ mysqli default `MYSQLI_REPORT_ERROR|STRICT` → `manDiaLlogCaLL` duplicate vicidial_log insert (by design, Matt 2010: "That's normal. You can safely ignore") throws → request dies → post-insert UPDATEs (list_id, MANUAL comment, auto_calls uniqueid) skipped. ViciBox (Wicked) still ships PHP 7.4. **Per-cluster manual fix (Steve: do NOT add to the installer script):** mysqli_report line in both dbconnect files; chgrp apache + 775 on agc/.
 
 **Still to apply:** admin + api boxes (same code, PHP 8.2). **Finding:** real-time report "3-WAY" is a heuristic (>1 agent INCALL on same lead_id) and shows the newest call's timer for all — four agents hand-dialling lead 23263763 (list 998) looked like one 3-way.
+
+### 2026-10-13 17:52-18:00 — db1 sshd connection resets (NOT a cluster fault)
+- Guard reported `kex_exchange_identification: Connection reset by peer` from db1 17:52-17:56; db1 itself was healthy (117 agents, 1,012 calls, 286 threads).
+- Cause: 24 stale guard/monitor bash loops on Steve's desktop (every Monitor re-arm left the previous loop running since 09:18, plus four from 10-06) each SSH-ing db1 every 30 s → sshd MaxStartups/PerSourcePenalties dropped connections from 74.208.129.213 (190 drops 17:xx). Same mechanism as the "db2 rate-limiting" seen earlier.
+- Fix: killed all but the current loop (PIDs listed in session); 0 drops after 17:59. No server-side change made.
