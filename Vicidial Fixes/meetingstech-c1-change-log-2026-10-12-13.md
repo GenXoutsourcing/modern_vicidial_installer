@@ -182,3 +182,12 @@ Wicked by contrast has **43.19 GB of indexes** against 62 GB RAM and only a 95.2
 - Scheduled task `mtc1-live-agents-memory-conversion` DELETED (it carried the wrong 200/200/45 sizes).
 - ROLLBACK: `mysql asterisk < /root/premig/c1-ROLLBACK-memory-recipe.sql` (with 0 agents, 0 NEW rows) + `crontab /root/premig/c1-crontab-BEFORE-flush4min-20261013-212433.txt`; heap can stay at 2G. After a db1 restart agents must re-login (MEMORY tables empty); after a db2/db3 restart run the coordinated resync (Vicidial Fixes report, section on replica recovery).
 - NOT changed: FILL / local autodial delays (all 30 sip hosts are mixed; FILL host db1 default 2.5 s).
+
+### 2026-10-14 09:2x — phone 9176 created on c1 (Steve's request)
+- 30 rows in `phones` cloned from extension 3045 (one per sip, logins 9176a..9176ad, dialplan_number <serverprefix>9176, voicemail_id 9176, fullname "Steve 6666", new random conf_secret per row, same login password as the client phones, WEBRTC template). servers.rebuild_conf_files set; peer [9176] confirmed in sip-vicidial.conf on SIP1. User 6666 already had phone_login 9176.
+- Rollback: `DELETE FROM phones WHERE extension='9176'; UPDATE servers SET rebuild_conf_files='Y' WHERE max_vicidial_trunks>0;`
+
+### 2026-10-14 11:39 — c1 vicidial_manager secondary indexes HASH -> BTREE (Steve approved)
+- Cause: the 4-minute flush's `DELETE from vicidial_manager where entry_date < ...` held the MEMORY table ~8 s per run (sampled 10:29:01.8-10:29:09.6, up to 585 waiting threads) because ~53% of rows (Originate) have uniqueid='' and sit in one HASH chain, making the delete quadratic. 10-box replay with c1's row mix: all-HASH 3,068 ms vs uniqueid BTREE 244 ms vs all three secondary BTREE 152 ms.
+- Applied 11:39:28 on db1 (671 ms, 51k rows): `ALTER TABLE vicidial_manager DROP INDEX uniqueid, ADD INDEX uniqueid (uniqueid) USING BTREE, DROP INDEX callerid, ADD INDEX callerid (callerid) USING BTREE, DROP INDEX serverstat, ADD INDEX serverstat (server_ip,status) USING BTREE;` replicated to db2/db3 (verified BTREE, 0 errors). Backup `/root/premig/c1-create-vicidial_manager-BEFORE-btree-20261014-113927.txt`.
+- Rollback: same statement with `USING HASH`. Deviation from the published recipe (index type only); re-apply after any upgrade that rebuilds the table.
