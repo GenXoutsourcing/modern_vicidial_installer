@@ -165,3 +165,9 @@ Wicked by contrast has **43.19 GB of indexes** against 62 GB RAM and only a 95.2
 - Guard reported `kex_exchange_identification: Connection reset by peer` from db1 17:52-17:56; db1 itself was healthy (117 agents, 1,012 calls, 286 threads).
 - Cause: 24 stale guard/monitor bash loops on Steve's desktop (every Monitor re-arm left the previous loop running since 09:18, plus four from 10-06) each SSH-ing db1 every 30 s → sshd MaxStartups/PerSourcePenalties dropped connections from 74.208.129.213 (190 drops 17:xx). Same mechanism as the "db2 rate-limiting" seen earlier.
 - Fix: killed all but the current loop (PIDs listed in session); 0 drops after 17:59. No server-side change made.
+
+### 2026-10-13 18:05-20:25 — MEMORY conversion put on hold; 10-box verification run
+- Steve forwarded a review requiring a 10-box test before c1. Scheduled task `mtc1-live-agents-memory-conversion` DISABLED at 18:05 (c1 unchanged; re-enable or re-create with corrected column sizes if approved).
+- Docs bundled with build 260515-1937 specify VARCHAR(8000)/(8000)/(1000); c1 has a 4,923-char closer_campaigns user. 10-box columns re-altered 18:09 (backup /root/premig/live_agents+manager-200cols-BEFORE-8000-20261013-180953.sql on mt-db1).
+- 10-box (mt-*) only: replica/primary restart tests, rollback + redeploy, three 22-min load phases (40 simulated agents), inbound routing tests. Fixtures (LT*), loopback carrier, sip1 dialplan include, simulator on mt-admin, samplers and deploy/rollback SQL remain in place; teardown list in `Vicidial Fixes/meetingstech-memory-recipe-10box-verification-2026-10-13.md` section 5. mt-agent agc dir set root:apache 775 (same fix as c1).
+- 10-box end state: live_agents/manager MEMORY with 8000/8000/1000, 4-min flush cron, LTCAMP inactive.
