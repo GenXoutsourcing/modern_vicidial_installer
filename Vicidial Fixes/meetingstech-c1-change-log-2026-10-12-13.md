@@ -212,3 +212,10 @@ Wicked by contrast has **43.19 GB of indexes** against 62 GB RAM and only a 95.2
 
 ### 2026-10-15 15:05 — c1 db1 crontab: nightly log archive retention 30 -> 7 days (client request via Steve)
 - `ADMIN_archive_log_tables.pl --days=7 --recording-log-days=30 --quiet` (was --days=30). Global flag: live copies of agent_log, closer_log, call_notes, carrier/amd/dial_cid/api/user_call/agent_function/3way/server_performance logs now kept 7 days; archive tables unchanged (24-month trim); client reports read the archives. Backup/rollback in /root/premig on db1.
+
+### 2026-10-17 10:13-10:50 — 10-box ONLY: agent_log guard built and proven (c1 untouched). Steve: "put the guard patch on the 10-box first and test it"
+- Root cause of the daily "closer/vicidial_log call with no agent_log row": stock VDADready sets live_agents READY before it inserts the next agent_log row; a call caught in that gap is stamped on the previous call's row (vdc_db_query.php resolves agent_log_id from vicidial_live_agents for every action, line ~2284). Details in fixes file section 17.
+- mt-agent: backup /root/premig/vdc_db_query.php-BEFORE-alguard-20261017-101308 (stock, md5 5ebce18a), generator /root/premig/alguard2.pl (= repo scripts/agent_log_guard.pl), test copies vdc_db_query.php-{GUARD,TESTHOOK,TESTHOOK-GUARD}-20261017-v2, rollback /root/premig/ROLLBACK-alguard-20261017-101308.sh, apply /root/premig/APPLY-guard-20261017-v2.sh.
+- Runs (8 agents, 3 min each): hook only 76/181 calls lost; hook+guard 0/180 (first attempt 32 lost = opcache served the old file because cp -p kept an identical mtime, fixed with touch); guard only, normal timing 0/188, poll p95 28 ms, 0 errors.
+- Left in place: GUARD-only copy live on mt-agent (md5 363c054d). LTCAMP back to active=N; no_hopper_dialing changed Y->N on LTCAMP (needed for the dialer to feed the test; left N). mt-admin /root/lt/ltsim.py gained --slowready, --stale, --stale-actions, async VDADready with NEW_ID (backup ltsim.py.bak-stale-20261017). mt-db1 /root/premig/ltcount2.sh <agent_log_id floor> '<start>' is the lost-row counter.
+- c1: NO change. Proposed rollout in fixes file section 17.
