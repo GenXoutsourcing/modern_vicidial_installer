@@ -1325,7 +1325,8 @@ copy_asset firewall.zip
 copy_asset aggregate
 copy_asset VB-firewall
 
-mkdir -p /var/www/vhosts/dynportal
+# Apache must traverse both directories even when the caller uses umask 077.
+install -d -m 0755 /var/www/vhosts /var/www/vhosts/dynportal
 cp -f /home/dynportal.zip /var/www/vhosts/dynportal/
 cp -f /home/firewall.zip /etc/firewalld/
 cd /var/www/vhosts/dynportal/

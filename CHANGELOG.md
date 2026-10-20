@@ -11,6 +11,13 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Dynamic portal directory permissions**: all three active AlmaLinux
+  installers explicitly create or repair `/var/www/vhosts` and
+  `/var/www/vhosts/dynportal` as mode `0755`. A caller's restrictive `umask 077`
+  previously left these parent directories root-only, causing Apache
+  `AH00035` errors and HTTPS 403 responses on the port-446 portal. This
+  change preserves file permissions, authentication and TLS settings.
+
 - **rc.local no longer force-starts a disabled httpd**: every installer wrote
   an unconditional `systemctl start httpd.service` into rc.local, which
   overrides `systemctl disable httpd`. On an HAProxy agent load balancer
