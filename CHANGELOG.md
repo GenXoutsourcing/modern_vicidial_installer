@@ -11,6 +11,12 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Port-446 HTTPS upgrade**: the shared TLS portal template redirects
+  plain HTTP requests rejected by mod_ssl to the canonical HTTPS
+  `:446/valid8.php` login using its local error handler. The destination
+  uses the configured domain, not an untrusted Host header. Existing HTTPS
+  portal authentication and certificate verification remain unchanged.
+
 - **Dynamic portal directory permissions**: all three active AlmaLinux
   installers explicitly create or repair `/var/www/vhosts` and
   `/var/www/vhosts/dynportal` as mode `0755`. A caller's restrictive `umask 077`
