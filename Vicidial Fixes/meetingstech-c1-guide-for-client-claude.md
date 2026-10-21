@@ -21,6 +21,7 @@ db1 primary (74.208.140.95), db2 report replica, db3 aggregate replica. HAProxy 
 | AST_VDadapt.pl line 83 FORCE INDEX (campai_dt_stat_usr) | makes the index above get used |
 | agc/vdc_db_query.php "GENX agent_log guard" (2 sites in VDADcheckINCOMING) on agent1-4 | closes the READY-before-insert race that lost agent_log rows |
 | vicidial/functions.php dialable_leads() FORCE INDEX(list_id) on admin, api, agent1-4 | the campaign page's dialable-leads count was holding vicidial_list for 7-10 s |
+| persistent mysqli connections (`p:` prefix) in both dbconnect files on agent1-4 (2026-10-21) | removes the per-request TCP handshake to db1 that lost SYNs on the IONOS path and filled the PHP-FPM pools |
 | mysqli_report(MYSQLI_REPORT_OFF) in both dbconnect files; agc dir group-writable; PHP-FPM 150 workers; sysctl port range | PHP 8 and 200+ agents |
 | my.cnf: max_connections 6000, thread_cache 4000, max_heap_table_size 2G, tmp_table_size 512M, smaller per-thread buffers | tuning for this load |
 | Archive crons: 00:30 daily/carrier/vlog-daily, 01:00 --days=7 --recording-log-days=30 | live log tables kept to 7 days; reports read the _archive tables too |
