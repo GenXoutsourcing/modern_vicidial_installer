@@ -241,3 +241,8 @@ Wicked by contrast has **43.19 GB of indexes** against 62 GB RAM and only a 95.2
 - After (15:19, 4 hosts): SYN retransmits 0-1 per 10 s, TIME_WAIT 6.7-6.9k, 64-66 workers, 0 max_children hits, 0 500s, 0 mysqli errors, LB rtime 41-45 ms with 6-7 concurrent sessions per host; db1 Threads_connected 784 (pools of ~133 per host), 565 new connections/s (dialers/admin/api remain per-request). Watch every 10 min until 16:35.
 - Only pre-existing noise in the logs: stock "Undefined variable $use_slave_server" notice (dbconnect_mysqli.php line 84), ~2,000/day per host before and after.
 - 10-box mt-agent has run the same change since 2026-10-15.
+
+### 2026-10-21 15:43 — c1 db1 crontab: AST_flush_DBqueue every 2 min (was 4) (Steve: "move the flush to every 2 minutes")
+- Line changed: `1,5,9,...,57 * * * * AST_flush_DBqueue.pl --seconds=240 --session-flush -q` -> `1,3,5,...,59 * * * * AST_flush_DBqueue.pl --seconds=120 --session-flush -q`.
+- Why: flush runtime had grown to 12-20 s per run (60-80k vicidial_manager rows per 4 min at 250+ agents; 4-7 s on 10-14, max 16 s on 10-20, 20 s on 10-21). Halving the window halves rows per run. The flush did not block agent requests in second-by-second samples (the per-minute pile-ups of 130-170 waiters are the hopper's vicidial_list lock), but it was the one thing growing with volume.
+- Backup /root/premig/c1-crontab-BEFORE-flush2min-20261021-154337.txt, applied copy c1-crontab-AFTER-flush2min-20261021-154337.txt, rollback /root/premig/ROLLBACK-flush2min-20261021-154337.sh. flushmon.sh thresholds (last flush >360 s, runtime >60 s, overlap) unchanged and still valid.
