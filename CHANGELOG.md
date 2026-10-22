@@ -11,6 +11,12 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **PHP2Shell security gate**: all three active AlmaLinux installers refresh PHP
+  package metadata, install FPM explicitly, upgrade installed PHP packages together,
+  and require matching PHP 8.2.35-or-newer 8.2 core packages and CLI/FPM binaries.
+  Missing, vulnerable, mixed or unsupported versions stop installation. The gate
+  runs again before completion/reboot. Existing servers require a separate update.
+
 - **Port-446 HTTPS upgrade**: the shared TLS portal template redirects
   plain HTTP requests rejected by mod_ssl to the canonical HTTPS
   `:446/valid8.php` login using its local error handler. The destination
