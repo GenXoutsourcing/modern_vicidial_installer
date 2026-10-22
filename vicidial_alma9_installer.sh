@@ -583,12 +583,13 @@ fi
 
 dnf -y install dnf-plugins-core
 
-dnf install -y \
-    php php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
+dnf --refresh install -y \
+    php php-fpm php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
     php-zip php-fileinfo php-opcache php-mbstring php-imap php-odbc php-pear \
     php-xml php-xmlrpc php-soap php-intl php-process \
     screen subversion wget unzip make patch gcc gcc-c++ gd-devel readline-devel \
     curl curl-devel perl-libwww-perl ImageMagick
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --upgrade || exit 1
 dnf install -y php-pecl-mcrypt || true
 
 sleep 3
@@ -1580,6 +1581,8 @@ chown -R apache:apache /var/spool/asterisk/
 
 "${MYSQL[@]}" -e "use asterisk; update system_settings set active_voicemail_server='$ip_address', webphone_url='https://phone.viciphone.com/viciphone.php', sounds_web_server='https://$hostname';"
 configure_audio_store_directory
+
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --check || exit 1
 
 if [[ "$REBOOT_AFTER_INSTALL" =~ ^[Yy] ]]; then
     dracut --regenerate-all --force

@@ -1666,12 +1666,13 @@ fi
 
 dnf -y install dnf-plugins-core
 
-dnf install -y \
-    php php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
+dnf --refresh install -y \
+    php php-fpm php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
     php-zip php-fileinfo php-opcache php-mbstring php-imap php-odbc php-pear \
     php-xml php-xmlrpc php-soap php-intl php-process \
     screen subversion wget unzip make patch gcc gcc-c++ gd-devel readline-devel \
     curl curl-devel perl-libwww-perl ImageMagick
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --upgrade || exit 1
 dnf install -y php-pecl-mcrypt || true
 
 dnf install -y newt-devel libxml2-devel sqlite-devel libuuid-devel sox sendmail lame-devel htop iftop perl-File-Which
@@ -2988,6 +2989,8 @@ fi
 if [ "$ROLE_TELEPHONY" = "yes" ] || [ "$ROLE_WEB" = "yes" ]; then
     configure_audio_store_directory
 fi
+
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --check || exit 1
 
 if [[ "$REBOOT_AFTER_INSTALL" =~ ^[Yy] ]]; then
     dracut --regenerate-all --force

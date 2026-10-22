@@ -79,12 +79,13 @@ dnf module enable mariadb:10.5 -y
 
 dnf -y install dnf-plugins-core
 
-dnf install -y \
-    php php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
+dnf --refresh install -y \
+    php php-fpm php-cli php-common php-devel php-gd php-curl php-mysqlnd php-ldap \
     php-zip php-fileinfo php-opcache php-mbstring php-imap php-odbc php-pear \
     php-xml php-xmlrpc php-soap php-intl php-process php-pecl-mcrypt \
     screen subversion wget unzip make patch gcc gcc-c++ gd-devel readline-devel \
     curl curl-devel perl-libwww-perl ImageMagick
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --upgrade || exit 1
 
 sleep 3
 yum in -y newt-devel libxml2-devel sqlite-devel libuuid-devel sox sendmail lame-devel htop iftop perl-File-Which
@@ -1055,6 +1056,8 @@ read -p 'Press Enter to Reboot: '
 
 dracut --regenerate-all --force || exit 1
 "$FILESYSTEM_PREFLIGHT" || exit 1
+
+bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --check || exit 1
 
 echo "Restarting AlmaLinux"
 

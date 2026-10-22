@@ -2,6 +2,12 @@
 
 VICIDIAL installer for AlmaLinux/Rocky Linux with PHP 8.2, Asterisk 18, WebPhone, Dynamic Portal, SSL support, and the required conference/WebRTC configuration files.
 
+PHP security requirement: new installs require PHP **8.2.35 or newer in the 8.2
+branch** for the PHP2Shell fixes (CVE-2026-109618 / CVE-2026-109619).
+All three active installers refresh/upgrade PHP packages and stop if the core
+packages or CLI/FPM binaries fail verification. This does not update existing
+servers; do not rerun a full installer as a production patch procedure.
+
 ## Copy & Paste the part below first
 
 Run this first on a fresh server. It clones the installer before the system
