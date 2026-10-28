@@ -20,7 +20,7 @@ PHANTOM=$(Q "SELECT COUNT(*) FROM vicidial_auto_calls a JOIN servers s ON s.serv
 read MR MAGE MNEW MNEWAGE <<< "$(Q "SELECT COUNT(*), IFNULL(MAX(TIMESTAMPDIFF(SECOND,entry_date,NOW())),0), SUM(status='NEW'), IFNULL(MAX(IF(status='NEW',TIMESTAMPDIFF(SECOND,entry_date,NOW()),0)),0) FROM vicidial_manager" | tr '\t' ' ')"
 CAP=$(Q "SELECT GROUP_CONCAT(CONCAT(SUBSTRING(table_name,10),'=',ROUND(100*(data_length+index_length)/NULLIF(max_data_length,0)),'%') SEPARATOR ' ') FROM information_schema.tables WHERE table_schema='asterisk' AND engine='MEMORY' AND table_name IN ('vicidial_live_agents','vicidial_manager')")
 FL=$(Q "SELECT CONCAT(TIMESTAMPDIFF(SECOND,db_time,NOW()),'s ago, ',stage) FROM vicidial_internal_log WHERE process='AST_flush_DBqueue.pl' AND action='finished' ORDER BY db_time DESC LIMIT 1")
-ALERTS=$(grep -c "^$(date +%Y-%m-%d)" /var/log/astguiclient/flushmon-alerts.log 2>/dev/null); LASTALERT=$(grep "^$(date +%Y-%m-%d)" /var/log/astguiclient/flushmon-alerts.log 2>/dev/null | tail -1 | cut -c12-120)
+ALERTS=$(grep -c "^$(date +%Y-%m-%d)" /var/log/astguiclient/flushmon-alerts.log 2>/dev/null); ALERTS=${ALERTS:-0}; LASTALERT=$(grep "^$(date +%Y-%m-%d)" /var/log/astguiclient/flushmon-alerts.log 2>/dev/null | tail -1 | cut -c12-120)
 CL=$(Q "SELECT table_rows FROM information_schema.tables WHERE table_schema='asterisk' AND table_name='call_log'")
 PLAN=$(Q "EXPLAIN SELECT count(*) FROM vicidial_log FORCE INDEX (campai_dt_stat_usr) WHERE campaign_id='X' AND call_date > NOW()-INTERVAL 1 HOUR" | awk '{print $6}' | head -1)
 SHORT=$(grep -c "TOTAL SHORTAGE: [1-9]" /var/log/astguiclient/vdautodial_FILL.$(date +%Y-%m-%d) 2>/dev/null)
