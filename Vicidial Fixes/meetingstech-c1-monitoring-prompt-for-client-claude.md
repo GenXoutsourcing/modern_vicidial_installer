@@ -121,3 +121,11 @@ ssh root@62.151.177.143 'mysql asterisk -e "SELECT DATE_FORMAT(api_date,\"%H:%i\
 ```
 
 Normal: nothing returned (the lambdas run a few hundred calls a minute). Alert: any user/function above 3,000 in a minute. On 2026-10-28 apilambda2 ran update_lead at 8-14k per minute for an hour; db1 coped but db2 fell 99 s behind, which made the realtime report show campaign changes a minute late. Report the user, function and rate; this is the client's lambda, not a server issue.
+
+### 8. db2 lag triage — added 2026-10-28
+
+If section 4 shows db2 more than 60 s behind, run on db2:
+```
+ssh root@62.151.177.143 'mysql -N -e "SELECT CONCAT(USER,\"@\",SUBSTRING_INDEX(HOST,\":\",1),\" t=\",TIME,\"s \",LEFT(INFO,120)) FROM information_schema.PROCESSLIST WHERE USER<>\"system user\" AND COMMAND=\"Query\" AND TIME>=3 ORDER BY TIME DESC LIMIT 5"'
+```
+A long read on vicidial_log, vicidial_agent_log or vicidial_closer_log from admin-c1 or an agent host is the blocker: report its text and source. Known and fixed: per-user vicidial_log scans (index user_dt added 2026-10-28). Known client-side: apilambda2 update_lead bursts (section 7). db2 lag affects the realtime report and agent stats only; if db1 (section 1) is clean and dials/connects (section 2) are normal, calls are reaching agents and the screens are simply late.
