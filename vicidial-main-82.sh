@@ -1059,6 +1059,9 @@ dracut --regenerate-all --force || exit 1
 
 bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --check || exit 1
 
+# Native web imports require Apache-readable Perl libraries and an executable converter.
+bash "$SCRIPT_DIR/tools/ensure-web-loader-permissions.sh" || exit 1
+
 echo "Restarting AlmaLinux"
 
 reboot

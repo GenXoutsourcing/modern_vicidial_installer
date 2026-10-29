@@ -11,6 +11,13 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Native web lead-loader permissions**: active AlmaLinux installers repair only
+  root-owned mode-0700 directories under the two local Perl library roots to
+  0755, restore the native sheet2tab.pl executable mode, and require an actual
+  synthetic CSV conversion as Apache before completion. Module file contents
+  and modes are preserved. The role installer checks web roles only; no leads
+  are imported by this check. This catches installs launched with umask 077.
+
 - **PHP2Shell security gate**: all three active AlmaLinux installers refresh PHP
   package metadata, install FPM explicitly, upgrade installed PHP packages together,
   and require matching PHP 8.2.35-or-newer 8.2 core packages and CLI/FPM binaries.

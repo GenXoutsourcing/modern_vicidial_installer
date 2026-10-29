@@ -2992,6 +2992,11 @@ fi
 
 bash "$SCRIPT_DIR/tools/ensure-patched-php.sh" --check || exit 1
 
+# Native web imports require Apache-readable Perl libraries and an executable converter.
+if [ "$ROLE_WEB" = "yes" ]; then
+    bash "$SCRIPT_DIR/tools/ensure-web-loader-permissions.sh" || exit 1
+fi
+
 if [[ "$REBOOT_AFTER_INSTALL" =~ ^[Yy] ]]; then
     dracut --regenerate-all --force
     "$FILESYSTEM_PREFLIGHT"
