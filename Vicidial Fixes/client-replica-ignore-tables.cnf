@@ -1,0 +1,54 @@
+# Replication filters for a THIRD-PARTY reporting replica of a VICIdial cluster (e.g. the client's AWS replica
+# that reads from db2 on MeetingsTech c1). Put under [mysqld] on the REPLICA, restart it (or STOP SLAVE;
+# CHANGE REPLICATION FILTER ...; START SLAVE). Measured on c1 2026-10-29 from a 3-minute binlog sample:
+# the tables below are ~75% of all replicated write events and none of them hold reporting data.
+# Source binlog_format is MIXED: table filters apply per statement/row event, so a statement that UPDATEs a
+# kept table while reading an ignored one is still applied.
+
+replicate_do_db = asterisk
+
+# dialer/agent live state, rewritten every second (MEMORY tables on c1); the dialer owns them
+replicate-ignore-table = asterisk.vicidial_live_agents
+replicate-ignore-table = asterisk.vicidial_live_agents_details
+replicate-ignore-table = asterisk.vicidial_manager
+replicate-ignore-table = asterisk.vicidial_auto_calls
+replicate-ignore-table = asterisk.vicidial_hopper
+replicate-ignore-table = asterisk.server_updater
+replicate-ignore-table = asterisk.server_live_partitions
+replicate-ignore-table = asterisk.live_channels
+replicate-ignore-table = asterisk.live_sip_channels
+replicate-ignore-table = asterisk.live_inbound
+replicate-ignore-table = asterisk.live_inbound_log
+replicate-ignore-table = asterisk.parked_channels
+replicate-ignore-table = asterisk.web_client_sessions
+replicate-ignore-table = asterisk.vicidial_sessions_recent
+replicate-ignore-table = asterisk.vicidial_conferences
+replicate-ignore-table = asterisk.vicidial_confbridges
+replicate-ignore-table = asterisk.vicidial_agent_latency_log
+replicate-ignore-table = asterisk.recording_live
+replicate-ignore-table = asterisk.recording_live_log
+replicate-wild-ignore-table = asterisk.cid_channels_recent%
+
+# per-second pacing/stat scratch tables (realtime screens only)
+replicate-ignore-table = asterisk.vicidial_campaign_stats
+replicate-ignore-table = asterisk.vicidial_campaign_stats_debug
+replicate-ignore-table = asterisk.vicidial_campaign_server_stats
+replicate-ignore-table = asterisk.vicidial_campaign_hour_counts
+replicate-ignore-table = asterisk.vicidial_carrier_hour_counts
+replicate-ignore-table = asterisk.vicidial_phone_number_call_daily_counts
+replicate-ignore-table = asterisk.vicidial_lead_call_daily_counts
+replicate-ignore-table = asterisk.vicidial_lead_24hour_calls
+replicate-ignore-table = asterisk.vicidial_dial_cid_log
+replicate-ignore-table = asterisk.vicidial_api_urls
+replicate-ignore-table = asterisk.vicidial_url_log
+
+# OPTIONAL (uncomment if the replica is not used for them): Asterisk-level channel log and the dispo-URL log,
+# ~10% more of the stream together
+#replicate-ignore-table = asterisk.call_log
+#replicate-ignore-table = asterisk.vicidial_log_extended
+
+# KEEP (reporting data): vicidial_list, vicidial_log, vicidial_closer_log, vicidial_agent_log, vicidial_carrier_log,
+# vicidial_dial_log, vicidial_amd_log, recording_log, vicidial_users, vicidial_user_log, vicidial_campaigns,
+# vicidial_lists, vicidial_statuses, vicidial_campaign_statuses, vicidial_admin_log, vicidial_api_log and the *_archive tables.
+# After adding filters, also give the replica the c1 extra indexes (vicidial_log user_dt (user, call_date) and
+# campai_dt_stat_usr) if it runs per-agent or per-campaign reports.

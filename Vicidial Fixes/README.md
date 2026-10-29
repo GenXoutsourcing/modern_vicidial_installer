@@ -19,6 +19,7 @@ Field fixes and findings from live VICIdial clusters, written up for reuse. Thes
 | scripts/genx-carrier-status-map.pl | Carrier status map cron for the DB primary: --report-only / --apply / --rollback / --summary (includes 404 to CRINVL) |
 | scripts/amdy-status-map-golive.sh | AMDY status map go-live with --preview, snapshot, 255-length guard and generated rollback.sh (Aragon version) |
 | scripts/carrier-sipcause-gosub.conf | h-handler line + Gosub(gxsipcause) for carrier dialplans that fail over between trunks (otherwise SIP cause logs as 0) |
+| client-replica-ignore-tables.cnf | Replication filter block for a third-party reporting replica of a VICIdial cluster (the client AWS replica fed from c1 db2): the live-state and per-second stat tables that are ~75% of replicated write events and hold no reporting data; measured from a binlog sample 2026-10-29 |
 
 Quick index of the fixes that apply to any PHP 8 VICIdial build from this installer:
 1. `mysqli_report(MYSQLI_REPORT_OFF);` as line 2 of `agc/dbconnect_mysqli.php` and `vicidial/dbconnect_mysqli.php` (PHP 8.1+ throws on VICIdial's by-design duplicate inserts).
