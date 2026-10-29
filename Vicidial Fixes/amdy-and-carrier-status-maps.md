@@ -133,8 +133,8 @@ If BUSY/CONGESTION/CHANUNAVAIL rows all show `sip_hangup_cause = 0`, the map wil
 - In the carrier entry: `Gosub(gxsipcause,1(${TRUNK}))` right after each `Dial()`, plus the `gxsipcause` subroutine. It finds the last attempt's channel (`SIP/TBI_<n>-`) in the key list and stores its tech cause in `GXSIPCAUSE`.
 - On every SIP box: the `[default]` h line logs `${GXSIPCAUSE}` when set. Otherwise it behaves exactly as stock.
 
-Applied the same evening:
-- **No retry on carrier rejects.** BUSY (603/403/486) and CHANUNAVAIL cause 1 (404) now end the call. Retrying a 603 on another trunk only repeats the spam-flag hit. Aragon sip8 alone made 5,733 retry attempts that day.
+Applied the same evening (the retry change was REVERTED the next morning, see below):
+- **Do NOT remove the trunk retry on 603.** On 2026-10-28 the retry on BUSY (603/403/486) and CHANUNAVAIL (404) was removed on the theory that a 603 means the caller ID is spam-flagged everywhere. That was WRONG for TBI. The 603s came evenly from all three trunks, and the next trunk usually connected the call: the day before, with retry, the carrier log showed 96% ANSWER and 0.5% BUSY. Without it, the next morning showed 58% ANSWER and 28.6% BUSY (24% SIP 603). The retry was restored 2026-10-29 10:22, and in the first minute ANSWER was 90.7% and BUSY 2.7%. Keep the retry logic exactly as the carrier dialplan had it. With retry in place, CRSPAM only marks calls where the last trunk tried also returned 603.
 - **Dial timeout** = campaign dial timeout: `${IF($["${CAMPDTO}"=""]?60:${CAMPDTO})}` instead of a fixed 60. A carrier timeout longer than the campaign's let VD_amd.agi re-insert phantom XFER rows into vicidial_auto_calls.
 
 **Live reload safety:** put new lines only after `Dial()`, never before it. If priorities before `Dial()` shift, a call that is inside `Dial()` during `dialplan reload` resumes at the shifted priority. With an inserted line before `Dial()`, that is the `Dial()` again, which redials the lead. The timeout went inline in the `Dial()` line for that reason. Compare the Dial/Gosub priority numbers of the old and new entry before applying.
