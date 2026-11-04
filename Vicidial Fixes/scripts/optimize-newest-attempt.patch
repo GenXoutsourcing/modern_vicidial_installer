@@ -1,0 +1,15 @@
+# agi-VDAD_local_optimize.agi (VICIdial stock, /var/lib/asterisk/agi-bin) - GenX 2026-11-04
+# With carrier trunk failover, cid_channels_recent_<server> holds one row per Dial attempt and the stock
+# SELECT (no ORDER BY) returns the dead first attempt: the AGI redirects the wrong channel and the answered
+# call is hung up 2 s later. Fix: newest attempt wins. Stock md5 e8b95295 -> patched 9a8f527d (r4035).
+# install.pl overwrites this file - re-apply after every SVN update.
+--- agi-VDAD_local_optimize.agi.stock
++++ agi-VDAD_local_optimize.agi
+@@ line 105 @@
+-my $stmtA = "SELECT dest_channel FROM $cid_channels_recent where (...) and call_date > '$SQL2mindate'";
++my $stmtA = "SELECT dest_channel FROM $cid_channels_recent where (...) and call_date > '$SQL2mindate' ORDER BY call_date DESC, SUBSTRING_INDEX(dest_uniqueid,'.',1)+0 DESC, SUBSTRING_INDEX(dest_uniqueid,'.',-1)+0 DESC LIMIT 1";
+
+# one-liner used on Aragon (backs up the stock file first):
+#   F=/var/lib/asterisk/agi-bin/agi-VDAD_local_optimize.agi; cp -p $F /root/agi-VDAD_local_optimize.agi.bak-stock
+#   perl -i -pe 's/(and call_date > .\$SQL2mindate.)";/$1 ORDER BY call_date DESC, SUBSTRING_INDEX(dest_uniqueid,\x27.\x27,1)+0 DESC, SUBSTRING_INDEX(dest_uniqueid,\x27.\x27,-1)+0 DESC LIMIT 1";/ if /^my \$stmtA = "SELECT dest_channel FROM/' $F
+# verify: answered-after-failover channels reach 8370 (Executing [8370@default:1] AGI("SIP/TRUNK-xxxx")).

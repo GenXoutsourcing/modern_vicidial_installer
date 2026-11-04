@@ -133,13 +133,36 @@ If BUSY/CONGESTION/CHANUNAVAIL rows all show `sip_hangup_cause = 0`, the map wil
 - In the carrier entry: `Gosub(gxsipcause,1(${TRUNK}))` right after each `Dial()`, plus the `gxsipcause` subroutine. It finds the last attempt's channel (`SIP/TBI_<n>-`) in the key list and stores its tech cause in `GXSIPCAUSE`.
 - On every SIP box: the `[default]` h line logs `${GXSIPCAUSE}` when set. Otherwise it behaves exactly as stock.
 
-Applied the same evening (the retry change was REVERTED the next morning, see below):
-- **Do NOT remove the trunk retry on 603.** On 2026-10-28 the retry on BUSY (603/403/486) and CHANUNAVAIL (404) was removed on the theory that a 603 means the caller ID is spam-flagged everywhere. That was WRONG for TBI. The 603s came evenly from all three trunks, and the next trunk usually connected the call: the day before, with retry, the carrier log showed 96% ANSWER and 0.5% BUSY. Without it, the next morning showed 58% ANSWER and 28.6% BUSY (24% SIP 603). The retry was restored 2026-10-29 10:22, and in the first minute ANSWER was 90.7% and BUSY 2.7%. Keep the retry logic exactly as the carrier dialplan had it. With retry in place, CRSPAM only marks calls where the last trunk tried also returned 603.
-- **Dial timeout** = campaign dial timeout: `${IF($["${CAMPDTO}"=""]?60:${CAMPDTO})}` instead of a fixed 60. A carrier timeout longer than the campaign's let VD_amd.agi re-insert phantom XFER rows into vicidial_auto_calls.
+**Final state on Aragon (2026-10-29 12:08, carrier entry "v4"):** the carrier's ORIGINAL retry logic and `Dial(...,60,...)`, plus three additions:
+1. `Gosub(gxsipcause,1(${TRUNK}))` right after each `Dial()`.
+2. `GotoIf(${REGEX("^SIP 603" ${GXSIPCAUSE})}?done)` placed before the BUSY retry. It stops failover on 603 only; 486/480/403, 404 and 503 still fail over.
+3. The `[default]` h line logs `GXSIPCAUSE` **only when the call was not answered**: `${IF($["${GXSIPCAUSE}"!="" & "${DIALSTATUS}"!="ANSWER"]?${GXSIPCAUSE}:${HANGUPCAUSE(${HANGUPCAUSE_KEYS()},tech)})}`. Without the DIALSTATUS check, a call answered on try 2 keeps try 1's stale 603 and is counted as spam.
 
-**Live reload safety:** put new lines only after `Dial()`, never before it. If priorities before `Dial()` shift, a call that is inside `Dial()` during `dialplan reload` resumes at the shifted priority. With an inserted line before `Dial()`, that is the `Dial()` again, which redials the lead. The timeout went inline in the `Dial()` line for that reason. Compare the Dial/Gosub priority numbers of the old and new entry before applying.
+**Retry evidence, a correction to the 10-28/10-29 notes.**
+- The 10-29 morning drop to 58% ANSWER was **not** caused by removing the retry. It was a TBI-side 603 wave at 10:12-10:20 and 10:37-11:00 across 3,349 DIDs, and it stopped on its own before the retry was restored.
+- A trace of calls whose first attempt got a 603 showed every retried trunk returning 603 too.
+- After the optimize fix below let failover answers reach AMD, sip8 classified 53 failover answers: 603-first gave 32 answers and **0 HUMAN**, mostly silence and FAS; 404-first gave 14 answers and 1 HUMAN; 503-first gave 7 answers and 0 HUMAN.
+- Hence: no retry on 603, keep it for the rest.
 
-Apply: back up the carrier row and every SIP box's extensions.conf, patch the h line in `[default]` only (exactly 1 match), `dialplan reload`, `UPDATE vicidial_server_carriers` from a pre-escaped SQL file (verify the md5 round-trip of the text first), `rebuild_conf_files='Y'` on the SIPs, then an explicit `dialplan reload` once each box shows `gxsipcause` in extensions-vicidial.conf. Verified on Aragon within 3 minutes: 603 Decline, 404 Not Found, 503 Service Unavailable and 486 Busy Here were all logged.
+**BUG: every call answered on a failover try is dropped on the customer (stock `agi-VDAD_local_optimize.agi`).**
+- When the call answers, the optimize AGI looks up the real channel with `SELECT dest_channel FROM cid_channels_recent_<server> WHERE <caller id / uniqueid match> AND call_date > ...`, which has **no ORDER BY**. After a failover the table holds one row per attempt, and the first row is the dead try-1 channel.
+- The AGI therefore sends `Redirect Channel: SIP/TBI_3-<dead>` to 8370. The answering channel is never redirected, and `Hangup()` drops it 2 s after answer. Vicidial logs the call as the earlier BUSY (AB/CRSPAM, 0 s) while the carrier log says ANSWER. Proof: the AGI's Redirect line in `action_send.<date>` names the dead channel.
+- **Fix, one line:** append `ORDER BY call_date DESC, SUBSTRING_INDEX(dest_uniqueid,'.',1)+0 DESC, SUBSTRING_INDEX(dest_uniqueid,'.',-1)+0 DESC LIMIT 1` to that SELECT so the newest attempt wins. The table only ever holds `SIP/<trunk>-…` dest_channels per call, so "newest" is always the last attempt.
+- Result on Aragon: failover answers reaching AMD went from 0/46 to 52/53 on the patched box and 279/280 fleet-wide; first-try answers were unchanged (99.7%).
+- It is non-stock and `install.pl` overwrites it, so re-apply after every SVN update. Any cluster whose carrier dialplan fails over between trunks has this bug.
+
+**Live reload safety:** put new lines only after `Dial()`, never before it. If priorities before `Dial()` shift, a call that is inside `Dial()` during `dialplan reload` resumes at the shifted priority. With an inserted line before `Dial()`, that is the `Dial()` again, which redials the lead. Compare the Dial/Gosub priority numbers of the old and new entry before applying.
+
+**Apply / restore:**
+- Back up every SIP box's extensions.conf and patch the h line in `[default]` only (exactly 1 match).
+- Update `vicidial_server_carriers` with a **single-row UPDATE** from a pre-escaped SQL file. Verify the text round-trips byte-exact first.
+- **Never** restore a carrier from a `mysqldump vicidial_server_carriers --where=...` file: it contains `DROP TABLE` + `CREATE TABLE` and would wipe every other carrier.
+- Set `rebuild_conf_files='Y'` on the SIPs, then run an explicit `dialplan reload` once each box shows the change in extensions-vicidial.conf.
+
+**Outage warning (Aragon 2026-10-29):** the r4035 conf generator drops `[context]` lines from carrier dialplan entries.
+- A carrier entry that opens its own context, then "reopens" `[vicidial-auto-external]` at the end (the ElevenLabs relay entry did this), leaves every carrier listed after it stuck in the wrong context.
+- Every outbound originate then failed with `No such extension/context 781...@default` until an `include` was added. It went unnoticed overnight because dialing had stopped.
+- **After any SVN update or conf rebuild, test-dial on one SIP:** `asterisk -rx "dialplan show <prefix><number>@default"`.
 
 The pre-existing `func_hangupcause.c: Unable to find information for channel` warnings come from the stock h line on channels without dial info. They are not caused by this change.
 
