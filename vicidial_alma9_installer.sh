@@ -19,6 +19,11 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     exit 1
 fi
 
+# Every file this installer creates must come out 644/755. A caller shell with
+# umask 077 (how the Codex-driven 2026-10 builds were run) otherwise leaves web
+# files, Perl libraries, my.cnf.d and the dynportal root-only.
+umask 022
+
 FILESYSTEM_PREFLIGHT="$SCRIPT_DIR/preflight-alma9-filesystem.sh"
 if [ ! -x "$FILESYSTEM_PREFLIGHT" ]; then
     echo "ERROR: Missing executable filesystem preflight: $FILESYSTEM_PREFLIGHT"
@@ -1134,6 +1139,8 @@ echo "Replacing default VICIdial IP $OLD_SERVER_IP with current server IP $ip_ad
 perl install.pl --no-prompt
 # Stock classAudioFile.php/ADMIN_audio_store_sync.pl: blank LIST line -> cron mail + MOH reload every run.
 bash "$SCRIPT_DIR/tools/patch-audio-store-sync.sh" || exit 1
+# PHP 8.1+ mysqli throws on SQL errors; stock VICIdial expects PHP 7 return-false semantics.
+bash "$SCRIPT_DIR/tools/patch-mysqli-report.sh" || exit 1
 
 configure_pjsip_external_ip "$ip_address"
 install_audio_store_directory_helper

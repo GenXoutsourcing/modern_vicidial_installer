@@ -10,6 +10,11 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     exit 1
 fi
 
+# Every file this installer creates must come out 644/755. A caller shell with
+# umask 077 (how the Codex-driven 2026-10 builds were run) otherwise leaves web
+# files, Perl libraries, my.cnf.d and the dynportal root-only.
+umask 022
+
 FILESYSTEM_PREFLIGHT="$SCRIPT_DIR/preflight-alma9-filesystem.sh"
 if [ ! -x "$FILESYSTEM_PREFLIGHT" ]; then
     echo "ERROR: Missing executable filesystem preflight: $FILESYSTEM_PREFLIGHT"

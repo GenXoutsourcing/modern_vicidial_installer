@@ -315,6 +315,7 @@ GENX_UI_AI_ASSIST_KEY=$(quote_env "$ai_assist_key")
 GENX_UI_AI_ASSIST_MODEL=$(quote_env "$ai_assist_model")
 GENX_UI_PUBLIC_HOST=$(quote_env "$public_host")
 EOF
+umask 022
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
