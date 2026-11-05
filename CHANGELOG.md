@@ -11,6 +11,22 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Cluster joins pin the SVN revision the cluster actually runs** (role
+  installer). Order of truth: `VICIDIAL_SVN_REV` env override, then
+  `system_settings.svn_version`, then the most common `servers.svn_revision`
+  among active servers (install.pl writes that on every box, so it survives a
+  database migrated in from another cluster, where `system_settings` carries
+  the old cluster's blank value). A join now refuses to run instead of silently
+  checking out trunk HEAD when nothing is known, and prints the one-line
+  `UPDATE system_settings` to record the revision when it is blank. Found on
+  WickedGoodLeads 2026-11-05: three telephony joins got r4037 against a
+  1745-schema cluster whose servers run r4032.
+- **Conference-range template on join** prefers a server that actually has
+  `conferences` rows and runs Asterisk. Ordering by `vicidial_confbridges`
+  count alone ties on every server (300 each) and the tie could pick the
+  DB/admin host, which has no `conferences` rows - two WickedGoodLeads joins
+  came up with zero conference rooms.
+
 - **Native web lead-loader permissions**: active AlmaLinux installers repair only
   root-owned mode-0700 directories under the two local Perl library roots to
   0755, restore the native sheet2tab.pl executable mode, and require an actual

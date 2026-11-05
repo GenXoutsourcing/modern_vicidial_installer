@@ -635,7 +635,12 @@ JOINSRV
     }
 
     if [ "$ROLE_TELEPHONY" = "yes" ]; then
-        conf_src=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT server_ip FROM vicidial_confbridges WHERE server_ip<>'${ip_address}' GROUP BY server_ip ORDER BY COUNT(*) DESC LIMIT 1;")
+        # Template server for the conference ranges: prefer one that actually has
+        # conferences/vicidial_conferences rows and runs Asterisk. Ordering by the
+        # confbridge count alone ties (every server has the same 300) and the tie
+        # could land on the DB/admin host, which has confbridges but no conferences
+        # rows - two WickedGoodLeads joins came up with zero conferences 2026-11-05.
+        conf_src=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT c.server_ip FROM vicidial_confbridges c LEFT JOIN servers s ON s.server_ip=c.server_ip WHERE c.server_ip<>'${ip_address}' GROUP BY c.server_ip ORDER BY (SELECT COUNT(*) FROM conferences x WHERE x.server_ip=c.server_ip) DESC, (s.active_asterisk_server='Y') DESC, COUNT(*) DESC, c.server_ip LIMIT 1;")
         if [ -z "$conf_src" ]; then
             echo "ERROR: No existing server has vicidial_confbridges rows to copy conference ranges from."
             exit 1
@@ -2083,17 +2088,39 @@ mkdir -p /usr/src/astguiclient
 cd /usr/src/astguiclient
 
 # ViciBox-style version matching: joining servers check out the same SVN
-# revision the cluster was built with (system_settings.svn_version, recorded
-# by the primary install) instead of whatever trunk HEAD happens to be.
+# revision the cluster already runs. Order of truth:
+#   1. VICIDIAL_SVN_REV   (env override for this run)
+#   2. system_settings.svn_version   (written by a GenX primary install)
+#   3. servers.svn_revision   (install.pl writes it on every box, so it survives
+#      a database that was migrated in from another cluster's dump, where
+#      system_settings came from the old cluster and is blank)
+# Never fall through to trunk HEAD: a newer revision expects a newer schema.
+# Hit on WickedGoodLeads 2026-11-05: three joins silently got r4037 against a
+# 1745-schema cluster whose other servers run r4032.
 SVN_REV_ARGS=()
 if [ "$CLUSTER_JOIN" = "yes" ]; then
-    CLUSTER_SVN_REV=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT svn_version FROM system_settings LIMIT 1;" 2>/dev/null | tr -cd '0-9')
-    if [ -n "$CLUSTER_SVN_REV" ]; then
-        echo "Cluster was built from SVN r${CLUSTER_SVN_REV}; checking out the matching revision."
-        SVN_REV_ARGS=(-r "$CLUSTER_SVN_REV")
-    else
-        echo "WARNING: The cluster has no svn_version recorded in system_settings; using latest trunk."
-        echo "If the cluster runs an older build, set system_settings.svn_version on the primary and rerun."
+    CLUSTER_SVN_REV=$(printf '%s' "${VICIDIAL_SVN_REV:-}" | tr -cd '0-9')
+    SVN_REV_SOURCE="VICIDIAL_SVN_REV"
+    SS_SVN_REV=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT svn_version FROM system_settings LIMIT 1;" 2>/dev/null | tr -cd '0-9')
+    if [ -z "$CLUSTER_SVN_REV" ] && [ -n "$SS_SVN_REV" ]; then
+        CLUSTER_SVN_REV="$SS_SVN_REV"
+        SVN_REV_SOURCE="system_settings.svn_version"
+    fi
+    if [ -z "$CLUSTER_SVN_REV" ]; then
+        CLUSTER_SVN_REV=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT svn_revision FROM servers WHERE active='Y' AND svn_revision REGEXP '^[0-9]+$' AND svn_revision > 0 GROUP BY svn_revision ORDER BY COUNT(*) DESC, svn_revision DESC LIMIT 1;" 2>/dev/null | tr -cd '0-9')
+        SVN_REV_SOURCE="servers.svn_revision (most common among active servers)"
+    fi
+    if [ -z "$CLUSTER_SVN_REV" ]; then
+        echo "ERROR: cannot determine the SVN revision this cluster runs: system_settings.svn_version is blank"
+        echo "       and no active servers row reports one. Refusing to check out trunk HEAD against an existing schema."
+        echo "       Fix: UPDATE system_settings SET svn_version='<rev>' on the primary, or rerun with VICIDIAL_SVN_REV=<rev>."
+        exit 1
+    fi
+    echo "Cluster runs SVN r${CLUSTER_SVN_REV} (from ${SVN_REV_SOURCE}); checking out the matching revision."
+    SVN_REV_ARGS=(-r "$CLUSTER_SVN_REV")
+    if [ -z "$SS_SVN_REV" ]; then
+        echo "NOTE: system_settings.svn_version is blank on this cluster. Record it so future joins do not depend on the servers table:"
+        echo "      UPDATE system_settings SET svn_version='${CLUSTER_SVN_REV}';"
     fi
 fi
 svn checkout "${SVN_REV_ARGS[@]}" svn://svn.eflo.net/agc_2-X/trunk
