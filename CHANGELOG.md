@@ -26,6 +26,14 @@ the sign-in page). Tag releases as `v<version>` on this repo.
   count alone ties on every server (300 each) and the tie could pick the
   DB/admin host, which has no `conferences` rows - two WickedGoodLeads joins
   came up with zero conference rooms.
+- **Web root redirect no longer breaks the dynportal**: the `genx-root-redirect.conf`
+  written by both AlmaLinux installers and by `install-genx-ui.sh` used a
+  server-level `RedirectMatch 302 ^/$`, which Apache inherits into every vhost.
+  The whitelisting portal on :81/:446 (DocumentRoot `/var/www/vhosts/dynportal`)
+  therefore answered `/` with a 302 to `/vicidial/welcome.php` (404 there) or to
+  `/genx/`, so nobody who did not know to type `/valid8.php` could whitelist
+  themselves. The redirect is now scoped inside `<Directory "/var/www/html">`.
+  Existing boxes: rewrite the conf the same way and `systemctl reload httpd`.
 
 - **Native web lead-loader permissions**: active AlmaLinux installers repair only
   root-owned mode-0700 directories under the two local Perl library roots to
