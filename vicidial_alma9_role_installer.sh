@@ -71,6 +71,11 @@ if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     exit 1
 fi
 
+# Every file this installer creates must come out 644/755. A caller shell with
+# umask 077 (how the Codex-driven 2026-10 builds were run) otherwise leaves web
+# files, Perl libraries, my.cnf.d and the dynportal root-only.
+umask 022
+
 FILESYSTEM_PREFLIGHT="$SCRIPT_DIR/preflight-alma9-filesystem.sh"
 if [ ! -x "$FILESYSTEM_PREFLIGHT" ]; then
     echo "ERROR: Missing executable filesystem preflight: $FILESYSTEM_PREFLIGHT"
@@ -2314,6 +2319,8 @@ fi
 # Stock classAudioFile.php/ADMIN_audio_store_sync.pl: blank LIST line -> cron mail + MOH reload every run.
 # After the LAST install.pl run (both branches above), since install.pl re-copies the stock files.
 bash "$SCRIPT_DIR/tools/patch-audio-store-sync.sh" || exit 1
+# PHP 8.1+ mysqli throws on SQL errors; stock VICIdial expects PHP 7 return-false semantics.
+bash "$SCRIPT_DIR/tools/patch-mysqli-report.sh" || exit 1
 
 configure_pjsip_external_ip "$ip_address"
 
@@ -2866,8 +2873,10 @@ systemctl start rc-local.service
 
 if [ "$ROLE_WEB" = "yes" ]; then
     write_web_root_redirect "/vicidial/welcome.php"
-    fix_vicidial_web_permissions
 fi
+# Every role: telephony-only nodes still get the web tree from install.pl and
+# serve /RECORDINGS/MP3 through httpd, so they need the same ownership/modes.
+fix_vicidial_web_permissions
 
 chkconfig --list asterisk >/dev/null 2>&1 && chkconfig asterisk off || true
 

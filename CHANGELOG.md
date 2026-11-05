@@ -11,6 +11,28 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Installers force `umask 022`**: none of the installers set a umask, so a
+  caller shell running with `umask 077` (how the Codex-driven October builds
+  were launched) left web files, CPAN Perl libraries, `my.cnf.d` and the
+  dynportal root-only, which produced the lead-loader and portal 403s that
+  were then patched one directory at a time. All three installers now set
+  `umask 022` right after the root check; `install-genx-ui.sh` resets to 022
+  after writing its env file instead of leaving 077 for the rest of its run.
+
+- **Web permission sweep on every role again**: c8d1b07 gated
+  `fix_vicidial_web_permissions` behind the Web role, but telephony-only nodes
+  still receive the web tree from `install.pl` and serve `/RECORDINGS/MP3`
+  through httpd. The sweep runs unconditionally again; only the root redirect
+  stays Web-only.
+
+- **PHP 8 mysqli exceptions**: PHP 8.1+ defaults mysqli to throwing on every SQL
+  error, so a duplicate-key INSERT that stock VICIdial simply ignores becomes an
+  uncaught `mysqli_sql_exception` and a 500 on the agent screen (seen on
+  ahbgvici from `vicidial_agent_visibility_log`). New idempotent
+  `tools/patch-mysqli-report.sh` inserts `mysqli_report(MYSQLI_REPORT_OFF)`
+  before the connect in both stock `dbconnect_mysqli.php` files; both
+  AlmaLinux installers run it after `install.pl`. Re-run after a VICIdial upgrade.
+
 - **Web root redirect no longer breaks the dynportal**: the `genx-root-redirect.conf`
   written by both AlmaLinux installers and by `install-genx-ui.sh` used a
   server-level `RedirectMatch 302 ^/$`, which Apache inherits into every vhost.
