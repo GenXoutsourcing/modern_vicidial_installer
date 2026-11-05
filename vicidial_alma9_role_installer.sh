@@ -1,4 +1,3 @@
-
 #!/bin/bash
 set -Ee -o pipefail
 
