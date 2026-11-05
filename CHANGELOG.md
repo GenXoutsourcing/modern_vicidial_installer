@@ -20,6 +20,16 @@ the sign-in page). Tag releases as `v<version>` on this repo.
   themselves. The redirect is now scoped inside `<Directory "/var/www/html">`.
   Existing boxes: rewrite the conf the same way and `systemctl reload httpd`.
 
+- **Audio store sync: cron mail + music-on-hold reload every 15 minutes**: stock
+  `classAudioFile.php` has a space before `<?php` and a blank line after `?>`, so
+  `audio_store.php?action=LIST` starts with a stray space-plus-CRLF line; stock
+  `ADMIN_audio_store_sync.pl` treats it as a file with an empty name, wgets it
+  onto `/var/lib/asterisk/sounds/` ("Is a directory" mail per run) and counts it
+  as a new download, forcing a MOH rebuild and `res_musiconhold` reload each run.
+  New idempotent `tools/patch-audio-store-sync.sh` fixes both files; both
+  AlmaLinux installers call it after `install.pl`. Re-run it after any VICIdial
+  upgrade. Found on ahbgvici 2026-11-05 (551 mails, 335 MOH reloads in 6 days).
+
 - **Native web lead-loader permissions**: active AlmaLinux installers repair only
   root-owned mode-0700 directories under the two local Perl library roots to
   0755, restore the native sheet2tab.pl executable mode, and require an actual
