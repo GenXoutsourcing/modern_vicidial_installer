@@ -883,9 +883,14 @@ write_web_root_redirect() {
 EOF
     chown root:root /var/www/html/index.html
     chmod 0644 /var/www/html/index.html
+    # Scoped to the main docroot: a server-level RedirectMatch is inherited by
+    # every vhost, which sent the dynportal (:81/:446, DocumentRoot
+    # /var/www/vhosts/dynportal) root to a 404 instead of valid8.php.
     cat > /etc/httpd/conf.d/genx-root-redirect.conf <<EOF
 # Managed by modern_vicidial_installer
-RedirectMatch 302 ^/$ $target
+<Directory "/var/www/html">
+    RedirectMatch 302 ^/$ $target
+</Directory>
 EOF
 }
 
