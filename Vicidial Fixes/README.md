@@ -2,6 +2,8 @@
 
 Field fixes and findings from live VICIdial clusters, written up for reuse. These are NOT applied by the installer script by design (Steve's decision, 2026-10-13); apply them per cluster by hand when the symptom matches.
 
+This directory is mirrored read-only into the private GenX-Switch V1 repository (`genx-switch-v1/vicidial-fixes/`, refreshed daily). Edit the notes here; the mirror follows.
+
 | file | what it covers |
 |---|---|
 | meetingstech-c1-fixes-2026-10-13.md | Consolidated causes, fixes, measured results, rollbacks and rejected ideas from the 41-box MeetingsTech c1 cluster, 2026-10-12 to 10-21: VDadapt vicidial_log index, MySQL tuning, phantom balance dialing, PHP 8 mysqli exceptions and agc permissions, ephemeral port exhaustion, MEMORY tables for live_agents/manager (+ BTREE indexes on manager), vicidial_agent_log and vicidial_log_extended indexes, web-tier handshake loss and persistent connections (applied 10-21), replica lag, sip16 DHCP boot failure, recording pipeline verification, archive retention, post-upgrade checklist, lost agent_log rows (guard applied 10-19), dialable_leads FORCE INDEX, web-tier capacity for 100 agents/host (PHP-FPM 250 / event MPM 1024), flush every 2 min, carrier proxy 487s |
