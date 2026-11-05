@@ -1132,6 +1132,8 @@ echo "Replacing default VICIdial IP $OLD_SERVER_IP with current server IP $ip_ad
 
 
 perl install.pl --no-prompt
+# Stock classAudioFile.php/ADMIN_audio_store_sync.pl: blank LIST line -> cron mail + MOH reload every run.
+bash "$SCRIPT_DIR/tools/patch-audio-store-sync.sh" || exit 1
 
 configure_pjsip_external_ip "$ip_address"
 install_audio_store_directory_helper
