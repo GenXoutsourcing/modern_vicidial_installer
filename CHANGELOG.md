@@ -13,7 +13,8 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 - **Role installer: three cluster-build fixes** (found reviewing the Fusco
   5-server build, not yet run on a server):
-  - A NEW-system (primary DB) install now honours `VICIDIAL_SVN_REV`. Before,
+  - A NEW-system (primary DB) install now asks up front which SVN revision to
+    build (Enter = latest trunk; `VICIDIAL_SVN_REV` pre-fills the answer). Before,
     only joins did, so a primary always got trunk HEAD and there was no way to
     build a cluster on a chosen revision (e.g. to match the schema of a
     database migrated in afterwards). Unset = trunk HEAD as before.

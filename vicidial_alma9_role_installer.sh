@@ -237,6 +237,9 @@ print_role_summary() {
     echo
     echo "--- VICIdial Role Install Summary ---"
     echo "Mode       : $VICIDIAL_ROLE_MODE"
+    if [ "$CLUSTER_JOIN" != "yes" ]; then
+        echo "SVN rev    : ${VICIDIAL_SVN_REV:-latest (trunk HEAD)}"
+    fi
     if [ "$CLUSTER_JOIN" = "yes" ]; then
         echo "Cluster DB : $VICIDIAL_DB_HOST:$VICIDIAL_DB_PORT ($VICIDIAL_DB_NAME as $CLUSTER_DB_USER)"
         if [ "$ROLE_TELEPHONY" = "yes" ]; then
@@ -1566,6 +1569,19 @@ if [ "$CLUSTER_JOIN" = "yes" ]; then
         fi
     fi
 else
+    # New system: ask up front which VICIdial SVN revision to build. Empty =
+    # latest trunk. (A join never asks: it matches the cluster's revision.)
+    while true; do
+        read -p "VICIdial SVN revision to install, e.g. 4033 (Enter for the latest) [${VICIDIAL_SVN_REV:-latest}]: " SVN_REV_INPUT
+        SVN_REV_INPUT="${SVN_REV_INPUT:-${VICIDIAL_SVN_REV:-}}"
+        SVN_REV_INPUT="${SVN_REV_INPUT#r}"
+        if [ -z "$SVN_REV_INPUT" ] || [[ "$SVN_REV_INPUT" =~ ^[0-9]+$ ]]; then
+            break
+        fi
+        echo "Enter a revision number only (for example 4033), or press Enter for the latest."
+    done
+    VICIDIAL_SVN_REV="$SVN_REV_INPUT"
+
     prompt_secret MYSQL_ROOT_PASS "MySQL root password, press Enter if root has no password" "${MYSQL_ROOT_PASS:-}"
 
     if [ -z "${CRON_DB_PASS:-}" ] && [ -z "${CUSTOM_DB_PASS:-}" ]; then
