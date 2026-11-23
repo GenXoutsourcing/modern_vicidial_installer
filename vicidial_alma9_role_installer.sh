@@ -1743,8 +1743,14 @@ if [ "$ROLE_DATABASE" = "yes" ] || [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
 systemctl enable mariadb
 
 MYSQL_SERVER_ID_VALUE=1
+# A replica must refuse ordinary writes: one stray UPDATE from a report tool or
+# a mis-pointed script silently diverges it from the master. read_only does not
+# affect the replication threads, root (the installer's seed import) or
+# temporary tables, so reports that build temp tables still work.
+MYSQL_READ_ONLY_LINE="#read_only = 1 # set on replication slaves only"
 if [ "$ROLE_DATABASE_SLAVE" = "yes" ]; then
     MYSQL_SERVER_ID_VALUE=$MYSQL_SLAVE_SERVER_ID
+    MYSQL_READ_ONLY_LINE="read_only = 1 # replication slave: only the replication threads and root may write"
 fi
 
 [ -f /etc/my.cnf.original ] || cp /etc/my.cnf /etc/my.cnf.original 2>/dev/null || true
@@ -1792,6 +1798,7 @@ relay_log=/var/lib/mysql/mysql-relay-bin
 datadir = /var/lib/mysql
 server-id = ${MYSQL_SERVER_ID_VALUE} # Master should be 1, and all slaves should have a unique ID number
 slave-skip-errors = 1032,1690,1062
+${MYSQL_READ_ONLY_LINE}
 slave_parallel_threads=20
 slave-parallel-mode=optimistic
 slave_parallel_max_queued=2M
@@ -2126,6 +2133,20 @@ if [ "$CLUSTER_JOIN" = "yes" ]; then
     if [ -z "$SS_SVN_REV" ]; then
         echo "NOTE: system_settings.svn_version is blank on this cluster. Record it so future joins do not depend on the servers table:"
         echo "      UPDATE system_settings SET svn_version='${CLUSTER_SVN_REV}';"
+    fi
+else
+    # New system (primary DB): trunk HEAD unless VICIDIAL_SVN_REV pins a revision,
+    # e.g. to match the schema of a database that will be migrated in afterwards.
+    # The revision checked out here is recorded in system_settings.svn_version
+    # below, which is what later joins match.
+    PRIMARY_SVN_REV=$(printf '%s' "${VICIDIAL_SVN_REV:-}" | tr -cd '0-9')
+    if [ -n "${VICIDIAL_SVN_REV:-}" ] && [ "$PRIMARY_SVN_REV" != "${VICIDIAL_SVN_REV}" ]; then
+        echo "ERROR: VICIDIAL_SVN_REV must be a plain revision number (got '${VICIDIAL_SVN_REV}')."
+        exit 1
+    fi
+    if [ -n "$PRIMARY_SVN_REV" ]; then
+        echo "VICIDIAL_SVN_REV set; checking out SVN r${PRIMARY_SVN_REV} instead of trunk HEAD."
+        SVN_REV_ARGS=(-r "$PRIMARY_SVN_REV")
     fi
 fi
 svn checkout "${SVN_REV_ARGS[@]}" svn://svn.eflo.net/agc_2-X/trunk
@@ -2899,13 +2920,28 @@ fi
 chkconfig --list asterisk >/dev/null 2>&1 && chkconfig asterisk off || true
 
 ## add confcron user
+# AST_conf_update_screen.pl logs in to AMI as confcron with this server's
+# servers.ASTmgrSECRET (stock 1234), NOT the cron DB password. Writing
+# CRON_DB_PASS here broke the conference updater on every build with a
+# non-default DB password (failed AMI login every minute, Fusco 2026-11).
+# The servers row exists by now (install.pl on a new system,
+# join_register_server on a join); ASTMGR_SECRET overrides, 1234 is the
+# stock fallback if the row cannot be read.
 if [ "$ROLE_TELEPHONY" = "yes" ]; then
+CONFCRON_SECRET="${ASTMGR_SECRET:-}"
+if [ -z "$CONFCRON_SECRET" ]; then
+    CONFCRON_SECRET=$("${MYSQL[@]}" "$VICIDIAL_DB_NAME" -Nse "SELECT ASTmgrSECRET FROM servers WHERE server_ip='${ip_address}' LIMIT 1;" 2>/dev/null | tr -d '\r\n' || true)
+fi
+if [ -z "$CONFCRON_SECRET" ]; then
+    echo "WARNING: could not read servers.ASTmgrSECRET for ${ip_address}; using the stock AMI secret for confcron."
+    CONFCRON_SECRET="1234"
+fi
 sed -i '/^\[confcron\]$/,/^eventfilter=Event: Confbridge$/d' /etc/asterisk/manager.conf 2>/dev/null || true
 replace_managed_block /etc/asterisk/manager.conf GENX_VICIDIAL_CONFCRON <<EOF
 ; BEGIN GENX_VICIDIAL_CONFCRON
 
 [confcron]
-secret = $CRON_DB_PASS
+secret = $CONFCRON_SECRET
 read = command,reporting
 write = command,reporting
 

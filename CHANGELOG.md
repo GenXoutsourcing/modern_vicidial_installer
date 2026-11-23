@@ -11,6 +11,19 @@ the sign-in page). Tag releases as `v<version>` on this repo.
 
 ## Unreleased
 
+- **Role installer: three cluster-build fixes** (found reviewing the Fusco
+  5-server build, not yet run on a server):
+  - A NEW-system (primary DB) install now honours `VICIDIAL_SVN_REV`. Before,
+    only joins did, so a primary always got trunk HEAD and there was no way to
+    build a cluster on a chosen revision (e.g. to match the schema of a
+    database migrated in afterwards). Unset = trunk HEAD as before.
+  - The `confcron` AMI secret is this server's `servers.ASTmgrSECRET`
+    (`ASTMGR_SECRET` env override, stock `1234` fallback), not the cron DB
+    password. The conference updater logs in with ASTmgrSECRET, so every build
+    with a non-default DB password failed that AMI login once a minute.
+  - A replication slave gets `read_only = 1` in `/etc/my.cnf`. Replication
+    threads, root and temporary tables are unaffected.
+
 - **Cluster joins pin the SVN revision the cluster actually runs** (role
   installer). Order of truth: `VICIDIAL_SVN_REV` env override, then
   `system_settings.svn_version`, then the most common `servers.svn_revision`
